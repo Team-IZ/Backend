@@ -18,25 +18,43 @@ repositories {
 }
 
 dependencies {
+	// Spring Data JPA: ORM 기반 데이터 접근과 리포지토리 기능을 제공합니다.
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	// Spring Security: 인증·인가 및 보안 필터 체인을 제공합니다.
 	implementation 'org.springframework.boot:spring-boot-starter-security'
+	// Spring Validation: 요청 DTO의 Bean Validation 검증을 지원합니다.
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	// Spring Web MVC: REST API와 MVC 웹 애플리케이션 기능을 제공합니다.
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+	// Springdoc OpenAPI UI: OpenAPI 명세와 Swagger UI 문서를 제공합니다.
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
+	// JJWT API: JWT 생성·검증을 위한 컴파일 시 API를 제공합니다.
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+	// JJWT 구현체: JWT 기능의 런타임 구현을 제공합니다.
 	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
+	// JJWT Jackson 모듈: JWT 클레임의 JSON 직렬화를 지원합니다.
 	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
+	// Lombok: 반복적인 자바 보일러플레이트 코드를 생성합니다.
 	compileOnly 'org.projectlombok:lombok'
+	// Spring Boot DevTools: 개발 편의 기능과 자동 재시작을 제공합니다.
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
+	// PostgreSQL JDBC: 운영 데이터베이스 연결 드라이버입니다.
 	runtimeOnly 'org.postgresql:postgresql'
+	// Lombok Annotation Processor: Lombok 애너테이션을 처리합니다.
 	annotationProcessor 'org.projectlombok:lombok'
+	// AWS SDK BOM: AWS SDK 모듈 버전을 일관되게 관리합니다.
 	implementation platform('software.amazon.awssdk:bom:2.39.2')
+	// AWS S3 SDK: 제출물과 리포트 파일 저장소 연동을 제공합니다.
 	implementation 'software.amazon.awssdk:s3'
+	// AWS EC2 SDK: 실행 인프라 연동을 제공합니다.
 	implementation 'software.amazon.awssdk:ec2'
 	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 	testCompileOnly 'org.projectlombok:lombok'
+	// H2 Database: PostgreSQL 호환 모드로 애플리케이션 컨텍스트 테스트를 격리합니다.
+	testRuntimeOnly 'com.h2database:h2'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testAnnotationProcessor 'org.projectlombok:lombok'
 }
