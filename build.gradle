@@ -18,26 +18,46 @@ repositories {
 }
 
 dependencies {
+	// JPA 기반 데이터베이스 접근 및 ORM 기능
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	// Spring Security 기반 인증·인가 처리
 	implementation 'org.springframework.boot:spring-boot-starter-security'
+	// 요청 DTO 등의 유효성 검증
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	// REST API를 제공하는 Spring MVC 웹 애플리케이션
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+
+	// JWT 생성 및 검증을 위한 API
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+	// JWT 구현체 및 JSON(Jackson) 직렬화 지원
 	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
 	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
+
+	// 반복 코드를 줄이는 Lombok 애너테이션 (컴파일 시에만 사용)
 	compileOnly 'org.projectlombok:lombok'
+	// 개발 환경에서 자동 재시작 등 생산성 기능 제공
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
+	// 운영 데이터베이스인 PostgreSQL 연결 드라이버
 	runtimeOnly 'org.postgresql:postgresql'
+	// Lombok 애너테이션을 처리해 코드를 생성하는 컴파일러 플러그인
 	annotationProcessor 'org.projectlombok:lombok'
+
+	// AWS SDK 모듈 간 버전을 일관되게 관리하는 BOM
 	implementation platform('software.amazon.awssdk:bom:2.39.2')
+	// AWS S3 파일 저장소 및 EC2 인스턴스 연동
 	implementation 'software.amazon.awssdk:s3'
 	implementation 'software.amazon.awssdk:ec2'
+
+	// JPA, Security, Validation, Web MVC 계층별 테스트 지원
 	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	// 테스트 코드에서 사용하는 Lombok 애너테이션
 	testCompileOnly 'org.projectlombok:lombok'
+	// JUnit Platform 기반 테스트 실행기
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	// 테스트 소스의 Lombok 애너테이션 처리
 	testAnnotationProcessor 'org.projectlombok:lombok'
 }
 
