@@ -1,0 +1,34 @@
+package com.bigproject.backend.domain.cohort.presentation.dto;
+
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+import java.time.LocalDate;
+import java.util.List;
+
+public record CreateCohortRequest(
+		@NotNull Long organizationId,
+		@NotBlank String name,
+		@NotNull LocalDate startDate,
+		@NotNull LocalDate endDate,
+		@NotBlank String educationTrack,
+		List<@Valid InitialTrainee> initialTrainees
+) {
+	public CreateCohortRequest {
+		initialTrainees = initialTrainees == null ? List.of() : List.copyOf(initialTrainees);
+	}
+
+	@AssertTrue(message = "종료일은 시작일보다 빠를 수 없습니다.")
+	public boolean isValidPeriod() {
+		return startDate == null || endDate == null || !endDate.isBefore(startDate);
+	}
+
+	public record InitialTrainee(
+			@NotBlank String name,
+			@NotBlank @Email String email
+	) {
+	}
+}
