@@ -1,17 +1,16 @@
 package com.bigproject.backend.domain.cohort.domain;
 
-public class Cohort {
-}
-
-package com.bigproject.backend.domain.cohort.domain;
-
 import jakarta.persistence.*;
-        import lombok.AccessLevel;
+import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
-import java.util.UUID;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "cohort")
@@ -20,14 +19,16 @@ import java.time.LocalDate;
 public class Cohort {
 
     // ===== 1묶음: 식별자 =====
+
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "cohort_id", nullable = false, updatable = false)
     private UUID cohortId;
 
-    // ===== 2묶음: 업무 필드  =====
     @Column(name = "org_id", nullable = false, updatable = false)
     private UUID orgId;
+
+    // ===== 2묶음: 업무 필드 =====
 
     @Column(name = "name", nullable = false, length = 200)
     private String name;
