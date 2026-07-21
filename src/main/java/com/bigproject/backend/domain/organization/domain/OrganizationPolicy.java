@@ -21,11 +21,10 @@ import java.util.UUID;
  * organization_policy 테이블 매핑 엔티티.
  * 기관별 예산·데이터 보존기간·기본 공개범위 정책을 "버전" 단위로 이력 관리한다(UPDATE가 아니라 새 버전 INSERT + 이전 버전 SUPERSEDE 처리).
  *
- * ⚠️ 같은 테이블을 operations 도메인({@code com.bigproject.backend.domain.operations.domain.OrganizationPolicy})에서도
- *    별도 엔티티로 매핑한다(폴더 구조 상 두 도메인 모두 필요하다고 명시됨). 책임을 다음과 같이 나눴다.
- *      - organization 도메인: 기관 "생성" 시 최초(버전 1) 정책만 생성한다(이 클래스, createInitial()).
- *      - operations 도메인: 운영 설정 "조회/변경"(새 버전 발급)을 담당한다.
- *    두 엔티티는 서로 다른 Java 클래스이므로, 같은 org_id 행을 두 트랜잭션에서 동시에 다루지 않도록 주의가 필요하다.
+ * organization 도메인의 "기관 생성 시 최초(버전 1) 정책 생성"과 operations 도메인의 "운영 설정 조회/변경(새 버전 발급)"이
+ * 모두 이 클래스를 함께 사용한다. 원래는 두 도메인에 동일 테이블을 매핑하는 엔티티를 각각 두려 했으나,
+ * Spring Data JPA가 리포지토리 빈 이름을 패키지와 무관하게 "인터페이스 simple name"으로 등록하는 바람에
+ * 두 OrganizationPolicyRepository가 빈 이름 충돌을 일으켜(BeanDefinitionOverrideException) 이 클래스 하나로 통합했다.
  */
 @Getter
 @Entity
@@ -104,6 +103,33 @@ public class OrganizationPolicy {
 			UUID configuredBy
 	) {
 		return new OrganizationPolicy(orgId, monthlyAiBudget, currencyCode, retentionDays, defaultDisclosureScope, configuredBy);
+	}
+
+	/** 기존 활성 정책 다음 버전을 발급한다(operations 도메인의 운영 설정 변경에서 사용). currencyCode는 변경 대상이 아니므로 이전 값을 그대로 이어받는다. */
+	public static OrganizationPolicy createNextVersion(
+			OrganizationPolicy previous,
+			BigDecimal monthlyAiBudget,
+			int retentionDays,
+			DisclosureScope defaultDisclosureScope,
+			UUID configuredBy
+	) {
+		OrganizationPolicy next = new OrganizationPolicy();
+		next.orgId = previous.orgId;
+		next.policyVersion = previous.policyVersion + 1;
+		next.monthlyAiBudget = monthlyAiBudget;
+		next.currencyCode = previous.currencyCode;
+		next.retentionDays = retentionDays;
+		next.defaultDisclosureScope = defaultDisclosureScope;
+		next.effectiveFrom = Instant.now();
+		next.status = Status.ACTIVE;
+		next.configuredBy = configuredBy;
+		return next;
+	}
+
+	/** 새 버전이 발급될 때 이 버전을 과거 이력으로 전환한다. */
+	public void supersede() {
+		this.status = Status.SUPERSEDED;
+		this.effectiveTo = Instant.now();
 	}
 
 	// DB CHECK: status IN ('ACTIVE','SUPERSEDED','EXPIRED'). 별도 공용 enum 파일 없이 정책 엔티티에 종속시켜 정의한다.

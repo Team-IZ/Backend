@@ -2,15 +2,15 @@ package com.bigproject.backend.domain.operations.application;
 
 import com.bigproject.backend.domain.operations.domain.AiModel;
 import com.bigproject.backend.domain.operations.domain.AiUsage;
-import com.bigproject.backend.domain.operations.domain.OrganizationPolicy;
 import com.bigproject.backend.domain.operations.domain.StorageUsageSnapshot;
 import com.bigproject.backend.domain.operations.domain.repository.AiUsageRepository;
-import com.bigproject.backend.domain.operations.domain.repository.OrganizationPolicyRepository;
 import com.bigproject.backend.domain.operations.domain.repository.StorageUsageSnapshotRepository;
 import com.bigproject.backend.domain.operations.presentation.dto.OperationSettingResponse;
 import com.bigproject.backend.domain.operations.presentation.dto.OrganizationUsageResponse;
 import com.bigproject.backend.domain.operations.presentation.dto.UpdateOperationSettingRequest;
 import com.bigproject.backend.domain.organization.domain.Organization;
+import com.bigproject.backend.domain.organization.domain.OrganizationPolicy;
+import com.bigproject.backend.domain.organization.domain.repository.OrganizationPolicyRepository;
 import com.bigproject.backend.domain.organization.domain.repository.OrganizationRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -32,7 +32,10 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true) // 기본은 조회 트랜잭션. 쓰기가 필요한 메서드에만 @Transactional을 개별로 얹는다.
 public class OperationsServiceImpl implements OperationsService {
 
-	// organization 도메인 리포지토리를 함께 사용한다: 기관 존재 검증, organization.status 조회(운영 설정 응답에 필요)를 위함.
+	// organization 도메인의 리포지토리를 그대로 재사용한다: 기관 존재 검증, organization.status 조회(운영 설정 응답에 필요),
+	// 그리고 organization_policy 조회/버전 발급까지 모두 organization 도메인의 엔티티·리포지토리로 처리한다.
+	// (operations 도메인에 OrganizationPolicy를 별도로 두면 Spring Data JPA가 리포지토리 빈을 패키지 무관 simple name으로
+	//  등록하기 때문에 organization 도메인의 동명 리포지토리와 빈 이름이 충돌한다.)
 	private final OrganizationRepository organizationRepository;
 	private final OrganizationPolicyRepository organizationPolicyRepository;
 	private final StorageUsageSnapshotRepository storageUsageSnapshotRepository;
