@@ -3,9 +3,10 @@ package com.bigproject.backend.domain.operations.presentation.dto;
 import java.math.BigDecimal;
 import java.time.YearMonth;
 import java.util.List;
+import java.util.UUID;
 
 public record OrganizationUsageResponse(
-		Long organizationId,
+		UUID organizationId,
 		YearMonth period,
 		StorageUsage storage,
 		ActivityUsage activity,

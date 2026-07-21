@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.YearMonth;
+import java.util.UUID;
 
 @Tag(name = "Operations", description = "기관 사용량·AI 비용·운영 설정 API")
 @SecurityRequirement(name = "bearerAuth")
@@ -31,7 +32,7 @@ public class OperationsController {
 	@Operation(summary = "기관 월별 저장량·활동·AI 비용 조회")
 	@GetMapping("/usage")
 	public ResponseEntity<OrganizationUsageResponse> findUsage(
-			@PathVariable Long organizationId,
+			@PathVariable UUID organizationId,
 			@RequestParam @DateTimeFormat(pattern = "yyyy-MM") YearMonth period
 	) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
@@ -39,14 +40,14 @@ public class OperationsController {
 
 	@Operation(summary = "기관 운영 설정 조회")
 	@GetMapping("/settings")
-	public ResponseEntity<OperationSettingResponse> findSettings(@PathVariable Long organizationId) {
+	public ResponseEntity<OperationSettingResponse> findSettings(@PathVariable UUID organizationId) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
 	}
 
 	@Operation(summary = "기관 운영 설정 변경")
 	@PutMapping("/settings")
 	public ResponseEntity<OperationSettingResponse> updateSettings(
-			@PathVariable Long organizationId,
+			@PathVariable UUID organizationId,
 			@Valid @RequestBody UpdateOperationSettingRequest request
 	) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();

@@ -1,9 +1,10 @@
 package com.bigproject.backend.domain.organization.presentation.dto;
 
 import java.time.Instant;
+import java.util.UUID;
 
 public record DeleteOrganizationResponse(
-		Long organizationId,
+		UUID organizationId,
 		Instant deletedAt,
 		Instant purgeAvailableAt
 ) {
