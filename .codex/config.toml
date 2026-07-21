@@ -1,0 +1,5 @@
+# Shared Codex defaults for this repository.
+# Personal preferences belong in ~/.codex/config.toml.
+
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
