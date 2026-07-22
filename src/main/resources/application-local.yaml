@@ -1,4 +1,0 @@
-# 로컬 개발 전용: JWT_SECRET이 없으면 프로세스 시작 시 임시 키를 생성합니다.
-# 재시작하면 키가 변경되어 기존 토큰은 모두 무효화됩니다.
-jwt:
-  secret: ${JWT_SECRET:${random.uuid}${random.uuid}}
