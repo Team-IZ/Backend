@@ -10,7 +10,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -21,8 +20,8 @@ public class CohortService {
 
     /** 기수 생성  */
     @Transactional
-    public Cohort createCohort(UUID orgId, String name, LocalDate startDate,
-                               LocalDate endDate, String stage, UUID creatorUserId) {
+    public Cohort createCohort(Long orgId, String name, LocalDate startDate,
+                               LocalDate endDate, String educationTrack, Long creatorUserId) {
 
         // 규칙 1: 기관 내 기수명 중복 금지
         if (cohortRepository.existsByOrgIdAndNameAndDeletedAtIsNull(orgId, name)) {
@@ -35,7 +34,7 @@ public class CohortService {
                 .name(name)
                 .startDate(startDate)
                 .endDate(endDate)
-                .stage(stage)
+                .educationTrack(educationTrack)
                 .createdBy(creatorUserId)
                 .build();
 
@@ -43,21 +42,21 @@ public class CohortService {
     }
 
     /** 기수 단건 조회 */
-    public Cohort findCohort(UUID cohortId, UUID orgId) {
+    public Cohort findCohort(Long cohortId, Long orgId) {
         return cohortRepository.findByCohortIdAndOrgIdAndDeletedAtIsNull(cohortId, orgId)
                 .orElseThrow(() -> new IllegalArgumentException("기수를 찾을 수 없습니다."));
     }
 
     /** 기수 종료  */
     @Transactional
-    public Cohort closeCohort(UUID cohortId, UUID orgId, UUID actorUserId) {
+    public Cohort closeCohort(Long cohortId, Long orgId, Long actorUserId) {
         Cohort cohort = findCohort(cohortId, orgId);
         cohort.close(actorUserId);
         return cohort;
     }
 
     /** 기수 목록 조회 */
-    public Page<Cohort> findCohorts(UUID orgId, CohortStatus status, String query, Pageable pageable) {
+    public Page<Cohort> findCohorts(Long orgId, CohortStatus status, String query, Pageable pageable) {
         return cohortRepository.findCohorts(orgId, status, query, pageable);
     }
 }
