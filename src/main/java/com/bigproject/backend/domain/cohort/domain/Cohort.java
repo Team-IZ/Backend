@@ -10,6 +10,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "cohort")
@@ -20,12 +21,12 @@ public class Cohort {
     // ===== 1묶음: 식별자 =====
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "cohort_id", nullable = false, updatable = false)
-    private Long cohortId;
+    private UUID cohortId;
 
     @Column(name = "org_id", nullable = false, updatable = false)
-    private Long orgId;
+    private UUID orgId;
 
     // ===== 2묶음: 업무 필드 =====
 
@@ -38,8 +39,8 @@ public class Cohort {
     @Column(name = "end_date", nullable = false)
     private LocalDate endDate;
 
-    @Column(name = "education_track", nullable = false, length = 100)
-    private String educationTrack;
+    @Column(name = "stage", nullable = false, length = 100)
+    private String stage;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 100)
@@ -48,14 +49,14 @@ public class Cohort {
     // ===== 3묶음: 감사 필드 =====
 
     @Column(name = "created_by", nullable = false, updatable = false)
-    private Long createdBy;
+    private UUID createdBy;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
     @Column(name = "updated_by")
-    private Long updatedBy;
+    private UUID updatedBy;
 
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
@@ -67,8 +68,8 @@ public class Cohort {
     // ===== 4묶음: 생성과 행동 =====
 
     @Builder
-    private Cohort(Long orgId, String name, LocalDate startDate, LocalDate endDate,
-                   String educationTrack, Long createdBy) {
+    private Cohort(UUID orgId, String name, LocalDate startDate, LocalDate endDate,
+                   String stage, UUID createdBy) {
         if (startDate.isAfter(endDate)) {
             throw new IllegalArgumentException("시작일은 종료일보다 늦을 수 없습니다.");
         }
@@ -76,19 +77,19 @@ public class Cohort {
         this.name = name;
         this.startDate = startDate;
         this.endDate = endDate;
-        this.educationTrack = educationTrack;
+        this.stage = stage;
         this.status = CohortStatus.PLANNED;
         this.createdBy = createdBy;
     }
 
     /** 기수 종료 */
-    public void close(Long actorUserId) {
+    public void close(UUID actorUserId) {
         this.status = CohortStatus.CLOSED;
         this.updatedBy = actorUserId;
     }
 
     /** 소프트 삭제 */
-    public void softDelete(Long actorUserId) {
+    public void softDelete(UUID actorUserId) {
         this.deletedAt = OffsetDateTime.now();
         this.updatedBy = actorUserId;
     }

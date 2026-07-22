@@ -8,9 +8,10 @@ import jakarta.validation.constraints.NotNull;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 public record CreateCohortRequest(
-		@NotNull Long organizationId,
+		@NotNull UUID organizationId,
 		@NotBlank String name,
 		@NotNull LocalDate startDate,
 		@NotNull LocalDate endDate,
