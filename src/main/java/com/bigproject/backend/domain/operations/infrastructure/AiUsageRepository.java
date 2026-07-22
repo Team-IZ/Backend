@@ -1,4 +1,4 @@
-package com.bigproject.backend.domain.operations.domain.repository;
+package com.bigproject.backend.domain.operations.infrastructure;
 
 import com.bigproject.backend.domain.operations.domain.AiUsage;
 import org.springframework.data.jpa.repository.JpaRepository;

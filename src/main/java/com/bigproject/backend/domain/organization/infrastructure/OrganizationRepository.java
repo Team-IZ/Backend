@@ -1,4 +1,4 @@
-package com.bigproject.backend.domain.organization.domain.repository;
+package com.bigproject.backend.domain.organization.infrastructure;
 
 import com.bigproject.backend.domain.organization.domain.Organization;
 import com.bigproject.backend.domain.organization.domain.OrganizationStatus;

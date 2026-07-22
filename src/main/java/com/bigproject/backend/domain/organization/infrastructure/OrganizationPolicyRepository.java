@@ -1,4 +1,4 @@
-package com.bigproject.backend.domain.organization.domain.repository;
+package com.bigproject.backend.domain.organization.infrastructure;
 
 import com.bigproject.backend.domain.organization.domain.OrganizationPolicy;
 import org.springframework.data.jpa.repository.JpaRepository;

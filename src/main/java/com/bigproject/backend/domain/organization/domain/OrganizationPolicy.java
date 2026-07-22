@@ -25,6 +25,10 @@ import java.util.UUID;
  * 모두 이 클래스를 함께 사용한다. 원래는 두 도메인에 동일 테이블을 매핑하는 엔티티를 각각 두려 했으나,
  * Spring Data JPA가 리포지토리 빈 이름을 패키지와 무관하게 "인터페이스 simple name"으로 등록하는 바람에
  * 두 OrganizationPolicyRepository가 빈 이름 충돌을 일으켜(BeanDefinitionOverrideException) 이 클래스 하나로 통합했다.
+ *
+ * 팀 폴더 구조 표준(operations/domain/OperationSetting.java 별도 보유)과는 다르지만, 같은 테이블을 매핑하는
+ * 엔티티를 두 개로 쪼개면 컬럼 변경 시 한쪽만 고치고 누락되는 등 매핑 드리프트 위험이 더 크다고 판단해
+ * 이 구조를 유지하기로 확인함.
  */
 @Getter
 @Entity
