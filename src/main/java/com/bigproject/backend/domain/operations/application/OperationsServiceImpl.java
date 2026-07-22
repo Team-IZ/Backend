@@ -10,6 +10,7 @@ import com.bigproject.backend.domain.operations.presentation.dto.OrganizationUsa
 import com.bigproject.backend.domain.operations.presentation.dto.UpdateOperationSettingRequest;
 import com.bigproject.backend.domain.organization.domain.Organization;
 import com.bigproject.backend.domain.organization.domain.OrganizationPolicy;
+import com.bigproject.backend.domain.organization.domain.OrganizationStatus;
 import com.bigproject.backend.domain.organization.domain.repository.OrganizationPolicyRepository;
 import com.bigproject.backend.domain.organization.domain.repository.OrganizationRepository;
 import lombok.RequiredArgsConstructor;
@@ -68,6 +69,13 @@ public class OperationsServiceImpl implements OperationsService {
 	@Transactional
 	public OperationSettingResponse updateSettings(UUID organizationId, UpdateOperationSettingRequest request, UUID requesterId) {
 		Organization organization = getOrganizationOrThrow(organizationId);
+
+		// soft-delete된 기관을 changeStatus(ACTIVE/SUSPENDED)로 되돌리면 DB CHECK(ck_organization_status_2)를 위반한다:
+		// ACTIVE/SUSPENDED는 deletion_requested_at·deleted_at이 NULL이어야 하는데 삭제된 기관은 이미 값이 채워져 있다.
+		if (organization.getStatus() == OrganizationStatus.DELETED) {
+			throw new ResponseStatusException(HttpStatus.CONFLICT, "삭제된 기관은 운영 설정을 변경할 수 없습니다.");
+		}
+
 		OrganizationPolicy currentPolicy = getActivePolicyOrThrow(organizationId);
 
 		// organization_policy는 append-only 이력 테이블이므로 기존 행을 고치지 않고,

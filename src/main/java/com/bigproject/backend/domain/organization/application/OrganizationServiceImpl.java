@@ -96,6 +96,12 @@ public class OrganizationServiceImpl implements OrganizationService {
 	public OrganizationResponse updateOrganization(UUID organizationId, UpdateOrganizationRequest request, UUID requesterId) {
 		Organization organization = getOrganizationOrThrow(organizationId);
 
+		// soft-delete된 기관을 changeStatus(ACTIVE/SUSPENDED)로 되돌리면 DB CHECK(ck_organization_status_2)를 위반한다:
+		// ACTIVE/SUSPENDED는 deletion_requested_at·deleted_at이 NULL이어야 하는데 삭제된 기관은 이미 값이 채워져 있다.
+		if (organization.getStatus() == OrganizationStatus.DELETED) {
+			throw new ResponseStatusException(HttpStatus.CONFLICT, "삭제된 기관은 상태를 변경할 수 없습니다.");
+		}
+
 		// organization_policy와 동일하게 ACTIVE/SUSPENDED만 직접 지정 가능한 값이다.
 		// (UpdateOperationSettingRequest에 걸린 것과 동일한 규칙을 이 서비스 계층에서도 적용한다.)
 		if (request.status() != OrganizationStatus.ACTIVE && request.status() != OrganizationStatus.SUSPENDED) {
@@ -122,6 +128,12 @@ public class OrganizationServiceImpl implements OrganizationService {
 	@Transactional
 	public DeleteOrganizationResponse deleteOrganization(UUID organizationId) {
 		Organization organization = getOrganizationOrThrow(organizationId);
+
+		// 이미 삭제된 기관에 softDelete를 다시 적용하면 retentionUntil이 현재 시각 기준으로 다시 늘어나 버린다.
+		if (organization.getStatus() == OrganizationStatus.DELETED) {
+			throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 삭제된 기관입니다.");
+		}
+
 		int retentionDays = getActivePolicyOrThrow(organizationId).getRetentionDays();
 
 		organization.softDelete(retentionDays, null);

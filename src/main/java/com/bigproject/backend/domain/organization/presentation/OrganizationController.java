@@ -1,17 +1,20 @@
 package com.bigproject.backend.domain.organization.presentation;
 
+import com.bigproject.backend.domain.organization.application.OrganizationService;
 import com.bigproject.backend.domain.organization.domain.OrganizationStatus;
 import com.bigproject.backend.domain.organization.presentation.dto.CreateOrganizationRequest;
 import com.bigproject.backend.domain.organization.presentation.dto.DeleteOrganizationResponse;
 import com.bigproject.backend.domain.organization.presentation.dto.OrganizationListResponse;
 import com.bigproject.backend.domain.organization.presentation.dto.OrganizationResponse;
 import com.bigproject.backend.domain.organization.presentation.dto.UpdateOrganizationRequest;
+import com.bigproject.backend.global.security.SystemRequester;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -34,7 +37,10 @@ import java.util.UUID;
 @Validated
 @RestController
 @RequestMapping("/organizations")
+@RequiredArgsConstructor
 public class OrganizationController {
+
+	private final OrganizationService organizationService;
 
 	@Operation(summary = "기관 목록 조회")
 	@GetMapping
@@ -44,7 +50,7 @@ public class OrganizationController {
 			@RequestParam(defaultValue = "0") @Min(0) int page,
 			@RequestParam(defaultValue = "20") @Min(1) @Max(100) int size
 	) {
-		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+		return ResponseEntity.ok(organizationService.findOrganizations(query, status, page, size));
 	}
 
 	@Operation(summary = "기관 생성 및 기본 운영 정책 초기화")
@@ -52,13 +58,15 @@ public class OrganizationController {
 	public ResponseEntity<OrganizationResponse> createOrganization(
 			@Valid @RequestBody CreateOrganizationRequest request
 	) {
-		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+		OrganizationResponse response =
+				organizationService.createOrganization(request, SystemRequester.SYSTEM_REQUESTER_ID);
+		return ResponseEntity.status(HttpStatus.CREATED).body(response);
 	}
 
 	@Operation(summary = "기관 상세 조회")
 	@GetMapping("/{organizationId}")
 	public ResponseEntity<OrganizationResponse> findOrganization(@PathVariable UUID organizationId) {
-		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+		return ResponseEntity.ok(organizationService.findOrganization(organizationId));
 	}
 
 	@Operation(summary = "기관 이름 또는 운영 상태 변경")
@@ -67,12 +75,15 @@ public class OrganizationController {
 			@PathVariable UUID organizationId,
 			@Valid @RequestBody UpdateOrganizationRequest request
 	) {
-		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+		OrganizationResponse response = organizationService.updateOrganization(
+				organizationId, request, SystemRequester.SYSTEM_REQUESTER_ID
+		);
+		return ResponseEntity.ok(response);
 	}
 
 	@Operation(summary = "기관 soft-delete")
 	@DeleteMapping("/{organizationId}")
 	public ResponseEntity<DeleteOrganizationResponse> deleteOrganization(@PathVariable UUID organizationId) {
-		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+		return ResponseEntity.ok(organizationService.deleteOrganization(organizationId));
 	}
 }
