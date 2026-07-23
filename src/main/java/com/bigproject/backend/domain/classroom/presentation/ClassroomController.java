@@ -30,14 +30,12 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.UUID;
 
-// TODO: auth 도메인(PR #9, #11, #13)이 develop에 아직 병합되지 않은 상태에서 작성됨.
-// - organizationId: JwtFilter가 authentication.getDetails()에 UUID를 담아준다는 전제로 구현했지만,
-//   현재 머지된 JwtProvider.getOrganizationId()는 Long을 반환하고 JwtFilter도 그 Long을 그대로 details에 넣는다.
-//   auth 도메인 병합 시 JWT의 organizationId 클레임과 JwtProvider/JwtFilter가 UUID 기준으로 함께 바뀌는지 반드시 확인할 것.
-//   (지금 상태로 실제 토큰이 들어오면 UUID 캐스팅에서 ClassCastException 발생)
+// TODO: auth 도메인(PR #9, #11, #13) 병합 확인 결과 반영.
+// - organizationId: auth 도메인 병합 완료. JwtFilter가 authentication.setDetails(jwtProvider.getOrganizationId(token))로
+//   organizationId(UUID)를 details에 담아주는 것을 확인함. 현재 구현(extractOrganizationId)이 이 구조와 일치함.
 // - actorUserId(created_by): 토큰에 요청자 UUID가 담기지 않아 임시로 X-Actor-User-Id 헤더로 받고 있음.
 //   클라이언트가 임의의 UUID를 보낼 수 있는 구조이므로,
-//   auth 도메인 병합 후 인증 주체에서 추출하도록 반드시 교체할 것.
+//   인증 주체에서 요청자 UUID를 얻는 방법이 생기면 반드시 교체할 것.
 @Tag(name = "Classroom", description = "기수 반 편성과 교육생 배정 API")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
@@ -97,7 +95,7 @@ public class ClassroomController {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
 	}
 
-	// JwtFilter가 organizationId(UUID)를 authentication.getDetails()에 담아준다는 전제로 추출
+	// JwtFilter가 authentication.getDetails()에 담아준 organizationId(UUID)를 추출
 	private UUID extractOrganizationId(Authentication authentication) {
 		Object details = authentication.getDetails();
 		if (!(details instanceof UUID organizationId)) {
