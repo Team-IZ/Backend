@@ -1,11 +1,12 @@
 package com.bigproject.backend.domain.operations.presentation.dto;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 import java.time.YearMonth;
 import java.util.List;
 
 public record OrganizationUsageResponse(
-		Long organizationId,
+		UUID organizationId,
 		YearMonth period,
 		StorageUsage storage,
 		ActivityUsage activity,
