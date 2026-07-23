@@ -2,6 +2,8 @@ package com.bigproject.backend.domain.member.presentation;
 
 import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.application.MemberQueryService;
+import com.bigproject.backend.domain.member.application.TraineeCsvParser;
+import com.bigproject.backend.domain.member.application.TraineeCsvRow;
 import com.bigproject.backend.domain.member.domain.MemberSortField;
 import com.bigproject.backend.domain.member.domain.SortDirection;
 import com.bigproject.backend.domain.member.presentation.dto.MemberListResponse;
@@ -16,6 +18,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -30,6 +33,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -44,6 +48,9 @@ class MemberQueryControllerTest {
 
 	@MockitoBean
 	private MemberInvitationService memberInvitationService;
+
+	@MockitoBean
+	private TraineeCsvParser traineeCsvParser;
 
 	@MockitoBean
 	private JwtProvider jwtProvider;
@@ -122,25 +129,30 @@ class MemberQueryControllerTest {
 
 	@Test
 	@WithMockUser(username = "lead@example.com", roles = "LEAD_MANAGER")
-	void registersTraineesOnlyAtCanonicalCohortPath() throws Exception {
+	void uploadsTraineeCsvAtCanonicalCohortPath() throws Exception {
 		UUID cohortId = UUID.randomUUID();
-		when(memberInvitationService.inviteTrainees(any(), any(), anyString(), isNull()))
+		MockMultipartFile file = new MockMultipartFile(
+				"file",
+				"trainees.csv",
+				"text/csv",
+				"이름,이메일\n교육생,trainee@example.com\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+		);
+		List<TraineeCsvRow> rows = List.of(new TraineeCsvRow(2, "교육생", "trainee@example.com"));
+		when(traineeCsvParser.parse(any())).thenReturn(rows);
+		when(memberInvitationService.inviteTraineesFromCsv(cohortId, rows, "lead@example.com", null))
 				.thenReturn(new RegisterTraineesResponse(1, 1, 1, List.of()));
-		String request = """
-				{"trainees":[{"name":"교육생","email":"trainee@example.com","classroomId":null}]}
-				""";
 
-		mockMvc.perform(post("/api/v0/cohorts/{cohortId}/trainees", cohortId)
-						.with(csrf())
-						.contentType("application/json")
-						.content(request))
+		mockMvc.perform(multipart("/api/v0/cohorts/{cohortId}/trainees", cohortId)
+						.file(file)
+						.with(csrf()))
 				.andExpect(status().isCreated());
 
-		mockMvc.perform(post("/api/v0/members/cohorts/{cohortId}/trainees", cohortId)
-						.with(csrf())
-						.contentType("application/json")
-						.content(request))
+		mockMvc.perform(multipart("/api/v0/members/cohorts/{cohortId}/trainees", cohortId)
+						.file(file)
+						.with(csrf()))
 				.andExpect(status().isNotFound());
+
+		verify(memberInvitationService).inviteTraineesFromCsv(cohortId, rows, "lead@example.com", null);
 	}
 
 	@TestConfiguration(proxyBeanMethods = false)

@@ -9,6 +9,7 @@ import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.ManagerInvitationRole;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
+import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -150,7 +151,7 @@ class MemberInvitationServiceTest {
 	}
 
 	@Test
-	void leadManagerInvitesTraineesAndReportsDuplicateEmailPerRow() {
+	void leadManagerDoesNotInviteDuplicateEmailsFromCsv() {
 		UUID organizationId = UUID.randomUUID();
 		UUID cohortId = UUID.randomUUID();
 		AuthUser actor = actor(Role.LEAD_MANAGER, organizationId);
@@ -165,23 +166,70 @@ class MemberInvitationServiceTest {
 				" TRAINEE@example.com ",
 				null
 		);
-		RegisterTraineesRequest request = new RegisterTraineesRequest(List.of(first, duplicate));
-		PendingInvitation invitation = pendingInvitation(context, first.email(), Role.TRAINEE);
 		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findInvitableCohort(cohortId)).thenReturn(Optional.of(context));
-		when(invitationDispatcher.inviteTrainee(context, first, actor, "batch-1:1"))
-				.thenReturn(invitation);
 
-		var response = service.inviteTrainees(cohortId, request, "lead@example.com", "batch-1");
+		var response = service.inviteTraineesFromCsv(
+				cohortId,
+				List.of(
+						new TraineeCsvRow(2, first.name(), first.email()),
+						new TraineeCsvRow(3, duplicate.name(), duplicate.email())
+				),
+				"lead@example.com",
+				"batch-1"
+		);
 
 		assertThat(response.requestedCount()).isEqualTo(2);
-		assertThat(response.registeredCount()).isEqualTo(1);
-		assertThat(response.invitationSentCount()).isEqualTo(1);
-		assertThat(response.failures()).singleElement().satisfies(failure -> {
-			assertThat(failure.row()).isEqualTo(2);
-			assertThat(failure.reason()).contains("중복");
-		});
-		verify(invitationDispatcher).inviteTrainee(context, first, actor, "batch-1:1");
+		assertThat(response.registeredCount()).isZero();
+		assertThat(response.invitationSentCount()).isZero();
+		assertThat(response.failures()).extracting(RegisterTraineesResponse.Failure::row)
+				.containsExactly(2, 3);
+		assertThat(response.failures()).extracting(RegisterTraineesResponse.Failure::status)
+				.containsExactly(2, 2);
+		verify(invitationDispatcher, never()).inviteTrainee(
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any()
+		);
+	}
+
+	@Test
+	void csvInvitationReportsInvalidAndExistingEmailsByCsvRow() {
+		UUID organizationId = UUID.randomUUID();
+		UUID cohortId = UUID.randomUUID();
+		AuthUser actor = actor(Role.LEAD_MANAGER, organizationId);
+		InvitationContext context = new InvitationContext(organizationId, "AIVLE", cohortId, "7기");
+		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
+		when(invitationRepository.findInvitableCohort(cohortId)).thenReturn(Optional.of(context));
+		when(invitationRepository.existsOrganizationTraineeByNormalizedEmail(
+				organizationId,
+				"existing@example.com"
+		)).thenReturn(true);
+
+		var response = service.inviteTraineesFromCsv(
+				cohortId,
+				List.of(
+						new TraineeCsvRow(2, "형식 오류", "invalid-email"),
+						new TraineeCsvRow(3, "기존 사용자", "existing@example.com")
+				),
+				"lead@example.com",
+				"batch-2"
+		);
+
+		assertThat(response.requestedCount()).isEqualTo(2);
+		assertThat(response.registeredCount()).isZero();
+		assertThat(response.invitationSentCount()).isZero();
+		assertThat(response.failures()).extracting(RegisterTraineesResponse.Failure::row)
+				.containsExactly(2, 3);
+		assertThat(response.failures()).extracting(RegisterTraineesResponse.Failure::status)
+				.containsExactly(1, 3);
+		verify(invitationDispatcher, never()).inviteTrainee(
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any()
+		);
 	}
 
 	@Test
@@ -193,13 +241,9 @@ class MemberInvitationServiceTest {
 		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findInvitableCohort(cohortId)).thenReturn(Optional.of(context));
 
-		assertThatThrownBy(() -> service.inviteTrainees(
+		assertThatThrownBy(() -> service.inviteTraineesFromCsv(
 				cohortId,
-				new RegisterTraineesRequest(List.of(new RegisterTraineesRequest.Trainee(
-						"교육생",
-						"trainee@example.com",
-						null
-				))),
+				List.of(new TraineeCsvRow(2, "교육생", "trainee@example.com")),
 				"lead@example.com",
 				null
 		)).isInstanceOf(ResponseStatusException.class)
