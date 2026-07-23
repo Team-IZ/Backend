@@ -21,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.UUID;
+
 @Tag(name = "Classroom", description = "기수 반 편성과 교육생 배정 API")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
@@ -29,7 +31,7 @@ public class ClassroomController {
 
 	@Operation(summary = "기수 반 목록 조회")
 	@GetMapping
-	public ResponseEntity<ClassroomListResponse> findClassrooms(@PathVariable Long cohortId) {
+	public ResponseEntity<ClassroomListResponse> findClassrooms(@PathVariable UUID cohortId) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
 	}
 
@@ -37,7 +39,7 @@ public class ClassroomController {
 	@PreAuthorize("hasRole('LEAD_MANAGER')")
 	@PostMapping
 	public ResponseEntity<ClassroomResponse> createClassroom(
-			@PathVariable Long cohortId,
+			@PathVariable UUID cohortId,
 			@Valid @RequestBody CreateClassroomRequest request
 	) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
@@ -47,8 +49,8 @@ public class ClassroomController {
 	@PreAuthorize("hasRole('LEAD_MANAGER')")
 	@PatchMapping("/{classroomId}/managers")
 	public ResponseEntity<ClassroomResponse> updateManagers(
-			@PathVariable Long cohortId,
-			@PathVariable Long classroomId,
+			@PathVariable UUID cohortId,
+			@PathVariable UUID classroomId,
 			@Valid @RequestBody UpdateClassroomManagersRequest request
 	) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
@@ -58,7 +60,7 @@ public class ClassroomController {
 	@PreAuthorize("hasRole('LEAD_MANAGER')")
 	@PatchMapping("/trainee-assignments")
 	public ResponseEntity<AssignTraineesResponse> assignTrainees(
-			@PathVariable Long cohortId,
+			@PathVariable UUID cohortId,
 			@Valid @RequestBody AssignTraineesRequest request
 	) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
