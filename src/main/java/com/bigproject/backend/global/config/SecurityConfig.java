@@ -4,6 +4,7 @@ import com.bigproject.backend.global.exception.ErrorResponse;
 import com.bigproject.backend.global.security.JwtFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -20,6 +21,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 
 @RequiredArgsConstructor
@@ -29,6 +31,8 @@ import java.util.List;
 public class SecurityConfig {
 	private final ObjectMapper objectMapper;
 	private final JwtFilter jwtFilter;
+	@Value("${auth.login.allowed-origins}")
+	private String allowedOrigins;
 
 	@Bean
 	public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -66,13 +70,20 @@ public class SecurityConfig {
 	@Bean
 	UrlBasedCorsConfigurationSource corsConfigurationSource() {
 		CorsConfiguration configuration = new CorsConfiguration();
-		configuration.setAllowedOrigins(List.of(
-				"http://localhost:5173",
-				"https://team-iz.github.io"
-		));
+		configuration.setAllowedOrigins(Arrays.stream(allowedOrigins.split(","))
+				.map(String::trim)
+				.filter(origin -> !origin.isEmpty())
+				.toList());
 		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-		configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+		configuration.setAllowedHeaders(List.of(
+				"Authorization",
+				"Content-Type",
+				"X-Login-Entry-Path",
+				"X-Request-Id",
+				"X-Swagger-Client-Origin"
+		));
 		configuration.setExposedHeaders(List.of("Location"));
+		configuration.setAllowCredentials(true);
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
 		source.registerCorsConfiguration("/api/v0/**", configuration);
 		return source;
@@ -87,6 +98,6 @@ public class SecurityConfig {
 	) throws IOException {
 		response.setStatus(status);
 		response.setContentType("application/json;charset=UTF-8");
-		objectMapper.writeValue(response.getWriter(), ErrorResponse.of(status, error, message, path));
+		objectMapper.writeValue(response.getWriter(), ErrorResponse.of(status, error, message));
 	}
 }

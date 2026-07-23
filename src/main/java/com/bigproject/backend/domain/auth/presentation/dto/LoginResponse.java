@@ -2,14 +2,15 @@ package com.bigproject.backend.domain.auth.presentation.dto;
 
 import com.bigproject.backend.domain.member.domain.Role;
 
+import java.util.UUID;
+
 public record LoginResponse(
-		Long memberId,
+		UUID memberId,
 		String email,
 		String name,
 		Role role,
-		Long organizationId,
+		UUID organizationId,
 		String accessToken,
-		String refreshToken,
 		long accessTokenExpiresIn
 ) {
 }
