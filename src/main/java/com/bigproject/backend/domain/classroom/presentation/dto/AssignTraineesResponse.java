@@ -1,10 +1,11 @@
 package com.bigproject.backend.domain.classroom.presentation.dto;
 
 import java.util.List;
+import java.util.UUID;
 
 public record AssignTraineesResponse(
-		Long classroomId,
-		List<Long> assignedTraineeIds,
+		UUID classroomId,
+		List<UUID> assignedTraineeIds,
 		int assignedCount
 ) {
 }
