@@ -31,6 +31,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.UUID;
 
@@ -47,14 +48,13 @@ public class CohortController {
 	@Operation(summary = "기관 기수 목록 조회")
 	@GetMapping
 	public ResponseEntity<CohortListResponse> findCohorts(
-			@RequestParam UUID organizationId,
 			@RequestParam(required = false) CohortStatus status,
 			@RequestParam(required = false) String query,
 			@RequestParam(defaultValue = "0") @Min(0) int page,
 			@RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
 			Authentication authentication
 	) {
-		verifyOrganizationScope(organizationId, authentication);
+		UUID organizationId = extractOrganizationId(authentication);
 
 		Page<Cohort> cohorts = cohortService.findCohorts(
 				organizationId, status, query, PageRequest.of(page, size));
@@ -72,7 +72,7 @@ public class CohortController {
 	@Operation(summary = "기수 상세 조회")
 	@GetMapping("/{cohortId}")
 	public ResponseEntity<CohortResponse> findCohort(@PathVariable UUID cohortId, Authentication authentication) {
-		Cohort cohort = cohortService.findCohort(cohortId, organizationId(authentication));
+		Cohort cohort = cohortService.findCohort(cohortId, extractOrganizationId(authentication));
 		return ResponseEntity.ok(CohortResponse.from(cohort));
 	}
 
@@ -112,16 +112,22 @@ public class CohortController {
 			@RequestHeader("X-Actor-User-Id") UUID actorUserId,
 			Authentication authentication
 	) {
-		Cohort cohort = cohortService.closeCohort(cohortId, organizationId(authentication), actorUserId);
+		Cohort cohort = cohortService.closeCohort(cohortId, extractOrganizationId(authentication), actorUserId);
 		return ResponseEntity.ok(CohortResponse.from(cohort));
 	}
 
-	private UUID organizationId(Authentication authentication) {
-		return (UUID) authentication.getDetails();
+	// JwtFilter가 authentication.getDetails()에 담아준 organizationId(UUID)를 추출
+	private UUID extractOrganizationId(Authentication authentication) {
+		Object details = authentication.getDetails();
+		if (!(details instanceof UUID organizationId)) {
+			throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+					"인증 정보에서 organizationId(UUID)를 확인할 수 없습니다.");
+		}
+		return organizationId;
 	}
 
 	private void verifyOrganizationScope(UUID requestedOrganizationId, Authentication authentication) {
-		if (!organizationId(authentication).equals(requestedOrganizationId)) {
+		if (!extractOrganizationId(authentication).equals(requestedOrganizationId)) {
 			throw new AccessDeniedException("다른 기관의 기수에 접근할 수 없습니다.");
 		}
 	}
