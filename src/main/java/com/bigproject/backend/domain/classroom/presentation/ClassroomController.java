@@ -1,7 +1,6 @@
 package com.bigproject.backend.domain.classroom.presentation;
 
 import com.bigproject.backend.domain.classroom.application.ClassroomService;
-import com.bigproject.backend.domain.classroom.domain.Classroom;
 import com.bigproject.backend.domain.classroom.presentation.dto.AssignTraineesRequest;
 import com.bigproject.backend.domain.classroom.presentation.dto.AssignTraineesResponse;
 import com.bigproject.backend.domain.classroom.presentation.dto.ClassroomListResponse;
@@ -52,7 +51,7 @@ public class ClassroomController {
 			Authentication authentication
 	) {
 		UUID organizationId = extractOrganizationId(authentication);
-		List<ClassroomResponse> classrooms = classroomService.findClassrooms(cohortId, organizationId).stream()
+		List<ClassroomResponse> classrooms = classroomService.findClassroomViews(cohortId, organizationId).stream()
 				.map(ClassroomResponse::from)
 				.toList();
 		return ResponseEntity.ok(new ClassroomListResponse(classrooms));
@@ -68,8 +67,8 @@ public class ClassroomController {
 			@RequestHeader("X-Actor-User-Id") UUID actorUserId
 	) {
 		UUID organizationId = extractOrganizationId(authentication);
-		Classroom classroom = classroomService.createClassroom(organizationId, cohortId, request.name(), actorUserId);
-		return ResponseEntity.status(HttpStatus.CREATED).body(ClassroomResponse.from(classroom));
+		ClassroomService.ClassroomView view = classroomService.createClassroom(organizationId, cohortId, request.name(), actorUserId);
+		return ResponseEntity.status(HttpStatus.CREATED).body(ClassroomResponse.from(view));
 	}
 
 	@Operation(summary = "반 담당 매니저 변경")
@@ -78,10 +77,14 @@ public class ClassroomController {
 	public ResponseEntity<ClassroomResponse> updateManagers(
 			@PathVariable UUID cohortId,
 			@PathVariable UUID classroomId,
-			@Valid @RequestBody UpdateClassroomManagersRequest request
+			@Valid @RequestBody UpdateClassroomManagersRequest request,
+			Authentication authentication,
+			@RequestHeader("X-Actor-User-Id") UUID actorUserId
 	) {
-		// TODO: manager_assignment 테이블이 week04 DDL에 없어 구현 불가. 테이블 추가 후 구현할 것.
-		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+		UUID organizationId = extractOrganizationId(authentication);
+		ClassroomService.ClassroomView view = classroomService.updateClassroomManagers(
+				cohortId, classroomId, organizationId, request.managerIds(), actorUserId);
+		return ResponseEntity.ok(ClassroomResponse.from(view));
 	}
 
 	@Operation(summary = "교육생 일괄 반 배정")
@@ -89,10 +92,14 @@ public class ClassroomController {
 	@PatchMapping("/trainee-assignments")
 	public ResponseEntity<AssignTraineesResponse> assignTrainees(
 			@PathVariable UUID cohortId,
-			@Valid @RequestBody AssignTraineesRequest request
+			@Valid @RequestBody AssignTraineesRequest request,
+			Authentication authentication,
+			@RequestHeader("X-Actor-User-Id") UUID actorUserId
 	) {
-		// TODO: cohort_member, class_membership 도메인이 아직 구현되지 않아 구현 불가.
-		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+		UUID organizationId = extractOrganizationId(authentication);
+		List<UUID> assignedTraineeIds = classroomService.assignTrainees(
+				cohortId, request.classroomId(), request.traineeIds(), organizationId, actorUserId);
+		return ResponseEntity.ok(new AssignTraineesResponse(request.classroomId(), assignedTraineeIds, assignedTraineeIds.size()));
 	}
 
 	// JwtFilter가 authentication.getDetails()에 담아준 organizationId(UUID)를 추출

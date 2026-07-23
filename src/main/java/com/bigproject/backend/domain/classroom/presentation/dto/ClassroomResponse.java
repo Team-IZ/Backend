@@ -1,6 +1,6 @@
 package com.bigproject.backend.domain.classroom.presentation.dto;
 
-import com.bigproject.backend.domain.classroom.domain.Classroom;
+import com.bigproject.backend.domain.classroom.application.ClassroomService;
 
 import java.util.List;
 import java.util.UUID;
@@ -13,18 +13,21 @@ public record ClassroomResponse(
 		int traineeCount,
 		boolean managerAssignmentRequired
 ) {
+	// 매니저 이름은 app_user 조인이 필요해 member 도메인 의존이 생기므로 여기서는 채우지 않음 (memberId만 제공)
 	public record Manager(UUID memberId, String name) {
 	}
 
-	// manager_assignment, class_membership 테이블이 아직 없어서 담당 매니저·인원수는 실제 값을 채울 수 없음
-	public static ClassroomResponse from(Classroom classroom) {
+	public static ClassroomResponse from(ClassroomService.ClassroomView view) {
+		List<Manager> managers = view.managerUserIds().stream()
+				.map(managerUserId -> new Manager(managerUserId, ""))
+				.toList();
 		return new ClassroomResponse(
-				classroom.getClassId(),
-				classroom.getCohortId(),
-				classroom.getName(),
-				List.of(),
-				0,
-				true
+				view.classroom().getClassId(),
+				view.classroom().getCohortId(),
+				view.classroom().getName(),
+				managers,
+				Math.toIntExact(view.traineeCount()),
+				managers.isEmpty()
 		);
 	}
 }
