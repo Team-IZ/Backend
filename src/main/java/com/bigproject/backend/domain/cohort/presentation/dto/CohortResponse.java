@@ -4,10 +4,11 @@ import com.bigproject.backend.domain.cohort.domain.CohortStatus;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 public record CohortResponse(
-		Long cohortId,
-		Long organizationId,
+		UUID cohortId,
+		UUID organizationId,
 		String name,
 		CohortStatus status,
 		String educationTrack,
@@ -16,6 +17,6 @@ public record CohortResponse(
 		int traineeCount,
 		List<Manager> managers
 ) {
-	public record Manager(Long memberId, String name) {
+	public record Manager(UUID memberId, String name) {
 	}
 }

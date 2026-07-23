@@ -7,15 +7,17 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-public record MemberSummaryResponse(
+public record ManagerSummaryResponse(
 		UUID memberId,
 		String name,
 		String email,
 		Role role,
 		AccountStatus status,
 		UUID organizationId,
-		List<UUID> cohortIds,
-		List<UUID> classroomIds,
-		Instant lastLoginAt
+		Instant lastLoginAt,
+		List<ManagerAssignmentResponse> assignments
 ) {
+	public ManagerSummaryResponse {
+		assignments = List.copyOf(assignments);
+	}
 }

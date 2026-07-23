@@ -24,6 +24,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.UUID;
+
 @Tag(name = "Cohort", description = "기관 기수 생성·조회·종료 API")
 @SecurityRequirement(name = "bearerAuth")
 @Validated
@@ -34,7 +36,7 @@ public class CohortController {
 	@Operation(summary = "기관 기수 목록 조회")
 	@GetMapping
 	public ResponseEntity<CohortListResponse> findCohorts(
-			@RequestParam Long organizationId,
+			@RequestParam UUID organizationId,
 			@RequestParam(required = false) CohortStatus status,
 			@RequestParam(required = false) String query,
 			@RequestParam(defaultValue = "0") @Min(0) int page,
@@ -45,7 +47,7 @@ public class CohortController {
 
 	@Operation(summary = "기수 상세 조회")
 	@GetMapping("/{cohortId}")
-	public ResponseEntity<CohortResponse> findCohort(@PathVariable Long cohortId) {
+	public ResponseEntity<CohortResponse> findCohort(@PathVariable UUID cohortId) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
 	}
 
@@ -60,7 +62,7 @@ public class CohortController {
 	@PreAuthorize("hasRole('LEAD_MANAGER')")
 	@PatchMapping("/{cohortId}/end")
 	public ResponseEntity<CohortResponse> endCohort(
-			@PathVariable Long cohortId,
+			@PathVariable UUID cohortId,
 			@Valid @RequestBody EndCohortRequest request
 	) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
