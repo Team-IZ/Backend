@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.cohort.presentation.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Email;
@@ -23,6 +24,7 @@ public record CreateCohortRequest(
 	}
 
 	@AssertTrue(message = "종료일은 시작일보다 빠를 수 없습니다.")
+	@Schema(hidden = true)
 	public boolean isValidPeriod() {
 		return startDate == null || endDate == null || !endDate.isBefore(startDate);
 	}

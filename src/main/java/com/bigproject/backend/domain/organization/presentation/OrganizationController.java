@@ -26,6 +26,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.UUID;
+
 @Tag(name = "Organization", description = "기관 프로비저닝과 상태 관리 API")
 @SecurityRequirement(name = "bearerAuth")
 @PreAuthorize("hasRole('SUPER_ADMIN')")
@@ -55,14 +57,14 @@ public class OrganizationController {
 
 	@Operation(summary = "기관 상세 조회")
 	@GetMapping("/{organizationId}")
-	public ResponseEntity<OrganizationResponse> findOrganization(@PathVariable Long organizationId) {
+	public ResponseEntity<OrganizationResponse> findOrganization(@PathVariable UUID organizationId) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
 	}
 
 	@Operation(summary = "기관 이름 또는 운영 상태 변경")
 	@PatchMapping("/{organizationId}")
 	public ResponseEntity<OrganizationResponse> updateOrganization(
-			@PathVariable Long organizationId,
+			@PathVariable UUID organizationId,
 			@Valid @RequestBody UpdateOrganizationRequest request
 	) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
@@ -70,7 +72,7 @@ public class OrganizationController {
 
 	@Operation(summary = "기관 soft-delete")
 	@DeleteMapping("/{organizationId}")
-	public ResponseEntity<DeleteOrganizationResponse> deleteOrganization(@PathVariable Long organizationId) {
+	public ResponseEntity<DeleteOrganizationResponse> deleteOrganization(@PathVariable UUID organizationId) {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
 	}
 }
