@@ -80,7 +80,12 @@ public class OperationsServiceImpl implements OperationsService {
 
 		// organization_policy는 append-only 이력 테이블이므로 기존 행을 고치지 않고,
 		// 현재 활성 버전은 SUPERSEDED로 닫은 뒤 새 버전을 INSERT한다.
+		// Hibernate는 같은 flush 안에서 INSERT를 UPDATE보다 먼저 실행하기 때문에, supersede()만 호출하고
+		// 넘어가면 새 버전 INSERT가 먼저 나가면서 부분 유니크 인덱스(uq_organization_policy_current)를
+		// 위반한다. saveAndFlush로 UPDATE를 먼저 커밋해 순서를 강제한다.
 		currentPolicy.supersede();
+		organizationPolicyRepository.saveAndFlush(currentPolicy);
+
 		OrganizationPolicy nextPolicy = OrganizationPolicy.createNextVersion(
 				currentPolicy,
 				request.monthlyAiBudget(),
