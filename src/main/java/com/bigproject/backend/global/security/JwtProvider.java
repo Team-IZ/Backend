@@ -11,6 +11,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
+import java.util.UUID;
 
 @Component
 public class JwtProvider {
@@ -34,12 +35,20 @@ public class JwtProvider {
 		this.refreshTokenExpiration = refreshTokenExpiration;
 	}
 
-	public String createAccessToken(String email, String role, Long organizationId) {
+	public String createAccessToken(String email, String role, UUID organizationId) {
 		return createToken(email, role, organizationId, ACCESS_TOKEN_TYPE, accessTokenExpiration);
 	}
 
-	public String createRefreshToken(String email, String role, Long organizationId) {
+	public String createRefreshToken(String email, String role, UUID organizationId) {
 		return createToken(email, role, organizationId, REFRESH_TOKEN_TYPE, refreshTokenExpiration);
+	}
+
+	public long getAccessTokenExpiration() {
+		return accessTokenExpiration;
+	}
+
+	public long getRefreshTokenExpiration() {
+		return refreshTokenExpiration;
 	}
 
 	public boolean isAccessToken(String token) {
@@ -58,8 +67,13 @@ public class JwtProvider {
 		return parseClaims(token).get(ROLE_CLAIM, String.class);
 	}
 
-	public Long getOrganizationId(String token) {
-		return parseClaims(token).get(ORGANIZATION_ID_CLAIM, Long.class);
+	public UUID getOrganizationId(String token) {
+		String organizationId = parseClaims(token).get(ORGANIZATION_ID_CLAIM, String.class);
+		return organizationId == null ? null : UUID.fromString(organizationId);
+	}
+
+	public Instant getExpiration(String token) {
+		return parseClaims(token).getExpiration().toInstant();
 	}
 
 	public boolean validateToken(String token) {
@@ -71,13 +85,14 @@ public class JwtProvider {
 		}
 	}
 
-	private String createToken(String email, String role, Long organizationId, String tokenType, long expiration) {
+	private String createToken(String email, String role, UUID organizationId, String tokenType, long expiration) {
 		Instant now = Instant.now();
 		return Jwts.builder()
+				.id(UUID.randomUUID().toString())
 				.subject(email)
 				.claim(TOKEN_TYPE_CLAIM, tokenType)
 				.claim(ROLE_CLAIM, role)
-				.claim(ORGANIZATION_ID_CLAIM, organizationId)
+				.claim(ORGANIZATION_ID_CLAIM, organizationId == null ? null : organizationId.toString())
 				.issuedAt(Date.from(now))
 				.expiration(Date.from(now.plusMillis(expiration)))
 				.signWith(secretKey())
