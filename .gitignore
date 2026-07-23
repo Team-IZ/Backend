@@ -4,6 +4,7 @@ build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
+docs
 
 ### STS ###
 .apt_generated
@@ -43,4 +44,5 @@ out/
 ### Claude Code local settings ###
 .claude/settings.local.json
 
-
+### Frontend API Connection test ###
+vite-project
