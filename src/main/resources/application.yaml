@@ -48,6 +48,7 @@ springdoc:
     operations-sorter: alpha
     tags-sorter: alpha
     disable-swagger-default-url: true
+    persist-authorization: true
 
 jwt:
   secret: ${JWT_SECRET}
@@ -66,3 +67,17 @@ auth:
     path: ${REFRESH_TOKEN_COOKIE_PATH}
     secure: ${REFRESH_TOKEN_COOKIE_SECURE}
     same-site: ${REFRESH_TOKEN_COOKIE_SAME_SITE}
+
+invitation:
+  base-url: ${INVITATION_BASE_URL}
+  manager-path: ${MANAGER_INVITATION_PATH}
+  trainee-path: ${TRAINEE_INVITATION_PATH}
+  expiration: ${INVITATION_EXPIRATION}
+  mail:
+    host: ${INVITATION_MAIL_HOST:}
+    port: ${INVITATION_MAIL_PORT:587}
+    username: ${INVITATION_MAIL_USERNAME:}
+    password: ${INVITATION_MAIL_PASSWORD:}
+    from: ${INVITATION_MAIL_FROM:}
+    starttls-enabled: ${INVITATION_MAIL_STARTTLS_ENABLED:true}
+    time-zone: ${INVITATION_MAIL_TIME_ZONE:Asia/Seoul}
