@@ -79,6 +79,7 @@ public class SecurityConfig {
 				"Authorization",
 				"Content-Type",
 				"X-Login-Entry-Path",
+				"X-Request-Id",
 				"X-Swagger-Client-Origin"
 		));
 		configuration.setExposedHeaders(List.of("Location"));
