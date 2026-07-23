@@ -25,7 +25,7 @@ public interface CohortRepository extends JpaRepository<Cohort, UUID> {
             WHERE c.orgId = :orgId
               AND c.deletedAt IS NULL
               AND (:status IS NULL OR c.status = :status)
-              AND (:query IS NULL OR c.name LIKE CONCAT('%', :query, '%'))
+              AND (CAST(:query AS string) IS NULL OR c.name LIKE CONCAT('%', CAST(:query AS string), '%'))
             ORDER BY c.startDate DESC
             """)
     Page<Cohort> findCohorts(@Param("orgId") UUID orgId,
