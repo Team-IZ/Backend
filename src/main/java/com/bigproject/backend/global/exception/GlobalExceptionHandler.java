@@ -20,17 +20,11 @@ public class GlobalExceptionHandler {
 			MethodArgumentNotValidException exception,
 			HttpServletRequest request
 	) {
-		Map<String, String> fieldErrors = new LinkedHashMap<>();
-		exception.getBindingResult().getFieldErrors().forEach(error ->
-				fieldErrors.putIfAbsent(error.getField(), error.getDefaultMessage())
-		);
 		ErrorResponse response = new ErrorResponse(
 				Instant.now(),
 				HttpStatus.BAD_REQUEST.value(),
 				"Validation Failed",
-				"요청 값이 올바르지 않습니다.",
-				request.getRequestURI(),
-				fieldErrors
+				"요청 값이 올바르지 않습니다."
 		);
 		return ResponseEntity.badRequest().body(response);
 	}
@@ -44,8 +38,7 @@ public class GlobalExceptionHandler {
 		ErrorResponse response = ErrorResponse.of(
 				status,
 				exception.getStatusCode().toString(),
-				exception.getReason() == null ? "요청을 처리할 수 없습니다." : exception.getReason(),
-				request.getRequestURI()
+				exception.getReason() == null ? "요청을 처리할 수 없습니다." : exception.getReason()
 		);
 		return ResponseEntity.status(status).body(response);
 	}
