@@ -48,6 +48,7 @@ springdoc:
     operations-sorter: alpha
     tags-sorter: alpha
     disable-swagger-default-url: true
+    persist-authorization: true
 
 jwt:
   secret: ${JWT_SECRET}
