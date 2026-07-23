@@ -42,7 +42,8 @@ public class OrganizationServiceImpl implements OrganizationService {
 	@Override
 	public OrganizationListResponse findOrganizations(String query, OrganizationStatus status, int page, int size) {
 		String normalizedQuery = (query == null || query.isBlank()) ? null : normalize(query);
-		Page<Organization> result = organizationRepository.search(normalizedQuery, status, PageRequest.of(page, size));
+		String likePattern = normalizedQuery == null ? null : "%" + normalizedQuery + "%";
+		Page<Organization> result = organizationRepository.search(likePattern, status, PageRequest.of(page, size));
 
 		List<Organization> organizations = result.getContent();
 		Map<UUID, Integer> retentionDaysByOrgId = retentionDaysByOrgId(organizations);

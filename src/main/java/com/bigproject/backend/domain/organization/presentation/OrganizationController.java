@@ -7,7 +7,7 @@ import com.bigproject.backend.domain.organization.presentation.dto.DeleteOrganiz
 import com.bigproject.backend.domain.organization.presentation.dto.OrganizationListResponse;
 import com.bigproject.backend.domain.organization.presentation.dto.OrganizationResponse;
 import com.bigproject.backend.domain.organization.presentation.dto.UpdateOrganizationRequest;
-import com.bigproject.backend.global.security.SystemRequester;
+import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -41,6 +41,7 @@ import java.util.UUID;
 public class OrganizationController {
 
 	private final OrganizationService organizationService;
+	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(summary = "기관 목록 조회")
 	@GetMapping
@@ -59,7 +60,7 @@ public class OrganizationController {
 			@Valid @RequestBody CreateOrganizationRequest request
 	) {
 		OrganizationResponse response =
-				organizationService.createOrganization(request, SystemRequester.SYSTEM_REQUESTER_ID);
+				organizationService.createOrganization(request, currentUserResolver.resolveCurrentMemberId());
 		return ResponseEntity.status(HttpStatus.CREATED).body(response);
 	}
 
@@ -76,7 +77,7 @@ public class OrganizationController {
 			@Valid @RequestBody UpdateOrganizationRequest request
 	) {
 		OrganizationResponse response = organizationService.updateOrganization(
-				organizationId, request, SystemRequester.SYSTEM_REQUESTER_ID
+				organizationId, request, currentUserResolver.resolveCurrentMemberId()
 		);
 		return ResponseEntity.ok(response);
 	}

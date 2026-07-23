@@ -4,7 +4,7 @@ import com.bigproject.backend.domain.operations.application.OperationsService;
 import com.bigproject.backend.domain.operations.presentation.dto.OperationSettingResponse;
 import com.bigproject.backend.domain.operations.presentation.dto.OrganizationUsageResponse;
 import com.bigproject.backend.domain.operations.presentation.dto.UpdateOperationSettingRequest;
-import com.bigproject.backend.global.security.SystemRequester;
+import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -33,6 +33,7 @@ import java.util.UUID;
 public class OperationsController {
 
 	private final OperationsService operationsService;
+	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(summary = "기관 월별 저장량·활동·AI 비용 조회")
 	@GetMapping("/usage")
@@ -56,7 +57,7 @@ public class OperationsController {
 			@Valid @RequestBody UpdateOperationSettingRequest request
 	) {
 		OperationSettingResponse response = operationsService.updateSettings(
-				organizationId, request, SystemRequester.SYSTEM_REQUESTER_ID
+				organizationId, request, currentUserResolver.resolveCurrentMemberId()
 		);
 		return ResponseEntity.ok(response);
 	}

@@ -13,17 +13,21 @@ import java.util.UUID;
 public interface OrganizationRepository extends JpaRepository<Organization, UUID> {
 
 	/**
-	 * 기관 목록 조회용 동적 검색. normalizedQuery/status가 null이면 해당 조건은 무시된다.
+	 * 기관 목록 조회용 동적 검색. likePattern/status가 null이면 해당 조건은 무시된다.
 	 * (Controller의 findOrganizations: query, status 파라미터가 모두 선택값이기 때문)
+	 *
+	 * likePattern은 호출부(OrganizationServiceImpl)에서 "%foo%" 형태로 미리 만들어서 넘긴다.
+	 * JPQL의 CONCAT('%', :param, '%') 함수 안에 null 파라미터를 직접 넣으면 Hibernate가 파라미터 타입을
+	 * 제대로 추론하지 못해 PostgreSQL에 bytea로 바인딩되어 "character varying ~~ bytea" 오류가 발생한다.
 	 */
 	@Query("""
 			SELECT o FROM Organization o
-			WHERE (:normalizedQuery IS NULL OR o.normalizedName LIKE CONCAT('%', :normalizedQuery, '%'))
+			WHERE (:likePattern IS NULL OR o.normalizedName LIKE :likePattern)
 			  AND (:status IS NULL OR o.status = :status)
 			ORDER BY o.createdAt DESC
 			""")
 	Page<Organization> search(
-			@Param("normalizedQuery") String normalizedQuery,
+			@Param("likePattern") String likePattern,
 			@Param("status") OrganizationStatus status,
 			Pageable pageable
 	);
