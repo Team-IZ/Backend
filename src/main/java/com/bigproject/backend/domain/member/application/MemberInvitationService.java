@@ -7,6 +7,7 @@ import com.bigproject.backend.domain.member.domain.InvitationContext;
 import com.bigproject.backend.domain.member.domain.MemberInvitationRepository;
 import com.bigproject.backend.domain.member.domain.PendingInvitation;
 import com.bigproject.backend.domain.member.domain.Role;
+import com.bigproject.backend.domain.member.domain.TraineeInvitationFailureStatus;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerResponse;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
@@ -18,15 +19,23 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
 public class MemberInvitationService {
 	private static final String ACTIVE = "ACTIVE";
+	private static final Pattern EMAIL_PATTERN = Pattern.compile(
+			"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*"
+					+ "@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+					+ "(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+	);
 
 	private final AuthUserRepository authUserRepository;
 	private final MemberInvitationRepository invitationRepository;
@@ -67,9 +76,9 @@ public class MemberInvitationService {
 		);
 	}
 
-	public RegisterTraineesResponse inviteTrainees(
+	public RegisterTraineesResponse inviteTraineesFromCsv(
 			UUID cohortId,
-			RegisterTraineesRequest request,
+			List<TraineeCsvRow> rows,
 			String actorEmail,
 			String requestId
 	) {
@@ -86,40 +95,126 @@ public class MemberInvitationService {
 		int registeredCount = 0;
 		int invitationSentCount = 0;
 		List<RegisterTraineesResponse.Failure> failures = new ArrayList<>();
-		Set<String> requestedEmails = new HashSet<>();
+		Set<String> duplicateEmails = findDuplicateNormalizedEmails(rows);
 		String baseRequestId = requestId(requestId);
+		validateTraineeNames(rows);
 
-		for (int index = 0; index < request.trainees().size(); index++) {
-			int row = index + 1;
-			RegisterTraineesRequest.Trainee trainee = request.trainees().get(index);
-			String normalizedEmail = EmailNormalizer.normalize(trainee.email());
-			if (!requestedEmails.add(normalizedEmail)) {
-				failures.add(new RegisterTraineesResponse.Failure(row, trainee.email(), "요청에 중복된 이메일입니다."));
+		for (TraineeCsvRow row : rows) {
+			String name = row.name() == null ? "" : row.name().trim();
+			String email = row.email() == null ? "" : row.email().trim();
+			if (!isValidEmail(email)) {
+				failures.add(failure(
+						row,
+						email,
+						TraineeInvitationFailureStatus.INVALID_EMAIL_FORMAT
+				));
 				continue;
 			}
 
+			String normalizedEmail = EmailNormalizer.normalize(email);
+			if (duplicateEmails.contains(normalizedEmail)) {
+				failures.add(failure(
+						row,
+						email,
+						TraineeInvitationFailureStatus.DUPLICATE_EMAIL_IN_CSV
+				));
+				continue;
+			}
+			if (invitationRepository.existsOrganizationTraineeByNormalizedEmail(
+					context.organizationId(),
+					normalizedEmail
+			)) {
+				failures.add(failure(
+						row,
+						email,
+						TraineeInvitationFailureStatus.EXISTING_ORGANIZATION_TRAINEE_EMAIL
+				));
+				continue;
+			}
+
+			RegisterTraineesRequest.Trainee trainee = new RegisterTraineesRequest.Trainee(
+					name,
+					email,
+					row.classroomId()
+			);
 			try {
 				invitationDispatcher.inviteTrainee(
 						context,
 						trainee,
 						actor,
-						baseRequestId + ":" + row
+						baseRequestId + ":" + row.row()
 				);
 				registeredCount++;
-			} catch (RuntimeException exception) {
-				failures.add(new RegisterTraineesResponse.Failure(row, trainee.email(), failureReason(exception)));
-				continue;
+			} catch (InvitationConflictException | DataIntegrityViolationException exception) {
+				if (invitationRepository.existsOrganizationTraineeByNormalizedEmail(
+						context.organizationId(),
+						normalizedEmail
+				)) {
+					failures.add(failure(
+							row,
+							email,
+							TraineeInvitationFailureStatus.EXISTING_ORGANIZATION_TRAINEE_EMAIL
+					));
+					continue;
+				}
+				throw exception;
+			} catch (InvitationDeliveryException exception) {
+				throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage(), exception);
 			}
 
 			invitationSentCount++;
 		}
 
 		return new RegisterTraineesResponse(
-				request.trainees().size(),
+				rows.size(),
 				registeredCount,
 				invitationSentCount,
 				List.copyOf(failures)
 		);
+	}
+
+	private Set<String> findDuplicateNormalizedEmails(List<TraineeCsvRow> rows) {
+		Map<String, Integer> emailCounts = new HashMap<>();
+		for (TraineeCsvRow row : rows) {
+			String email = row.email() == null ? "" : row.email().trim();
+			if (isValidEmail(email)) {
+				emailCounts.merge(EmailNormalizer.normalize(email), 1, Integer::sum);
+			}
+		}
+
+		Set<String> duplicateEmails = new HashSet<>();
+		emailCounts.forEach((email, count) -> {
+			if (count > 1) {
+				duplicateEmails.add(email);
+			}
+		});
+		return duplicateEmails;
+	}
+
+	private boolean isValidEmail(String email) {
+		return !email.isBlank()
+				&& email.length() <= 320
+				&& EMAIL_PATTERN.matcher(email).matches();
+	}
+
+	private void validateTraineeNames(List<TraineeCsvRow> rows) {
+		for (TraineeCsvRow row : rows) {
+			String name = row.name() == null ? "" : row.name().trim();
+			if (name.isBlank()) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, row.row() + "행의 이름을 입력해야 합니다.");
+			}
+			if (name.length() > 200) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, row.row() + "행의 이름은 200자 이하여야 합니다.");
+			}
+		}
+	}
+
+	private RegisterTraineesResponse.Failure failure(
+			TraineeCsvRow row,
+			String email,
+			TraineeInvitationFailureStatus status
+	) {
+		return new RegisterTraineesResponse.Failure(row.row(), email, status.code());
 	}
 
 	private AuthUser activeActor(String email) {
@@ -161,20 +256,4 @@ public class MemberInvitationService {
 		return requestId == null || requestId.isBlank() ? UUID.randomUUID().toString() : requestId.trim();
 	}
 
-	private String failureReason(RuntimeException exception) {
-		if (exception instanceof InvitationConflictException) {
-			return exception.getMessage();
-		}
-		if (exception instanceof InvitationDeliveryException) {
-			return exception.getMessage();
-		}
-		if (exception instanceof ResponseStatusException responseStatusException
-				&& responseStatusException.getReason() != null) {
-			return responseStatusException.getReason();
-		}
-		if (exception instanceof DataIntegrityViolationException) {
-			return "이미 등록되었거나 초대된 이메일입니다.";
-		}
-		return "교육생 초대 정보를 저장할 수 없습니다.";
-	}
 }

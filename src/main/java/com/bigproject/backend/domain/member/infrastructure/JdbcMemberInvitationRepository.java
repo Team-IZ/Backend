@@ -46,6 +46,19 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				WHERE normalized_email = ?
 			)
 			""";
+	private static final String EXISTS_ORGANIZATION_TRAINEE = """
+			SELECT EXISTS (
+				SELECT 1
+				FROM app_user u
+				JOIN "role" r ON r.role_id = u.role_id
+				JOIN organization o ON o.org_id = u.org_id
+				WHERE u.normalized_email = ?
+					AND u.org_id = ?
+					AND r.code = 'TRAINEE'
+					AND u.deleted_at IS NULL
+					AND o.deleted_at IS NULL
+			)
+			""";
 	private static final String INSERT_PENDING_USER = """
 			INSERT INTO app_user (
 				user_id, org_id, role_id, email, normalized_email, name, password_hash,
@@ -126,6 +139,16 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 	@Override
 	public boolean existsUserByNormalizedEmail(String normalizedEmail) {
 		return Boolean.TRUE.equals(jdbcTemplate.queryForObject(EXISTS_USER, Boolean.class, normalizedEmail));
+	}
+
+	@Override
+	public boolean existsOrganizationTraineeByNormalizedEmail(UUID organizationId, String normalizedEmail) {
+		return Boolean.TRUE.equals(jdbcTemplate.queryForObject(
+				EXISTS_ORGANIZATION_TRAINEE,
+				Boolean.class,
+				normalizedEmail,
+				organizationId
+		));
 	}
 
 	@Override
