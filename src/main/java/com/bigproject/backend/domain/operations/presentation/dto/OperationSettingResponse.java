@@ -4,9 +4,10 @@ import com.bigproject.backend.domain.operations.domain.DisclosureScope;
 import com.bigproject.backend.domain.organization.domain.OrganizationStatus;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 public record OperationSettingResponse(
-		Long organizationId,
+		UUID organizationId,
 		OrganizationStatus organizationStatus,
 		BigDecimal monthlyAiBudget,
 		int dataRetentionDays,

@@ -5,16 +5,17 @@ import com.bigproject.backend.domain.member.domain.Role;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 public record MemberSummaryResponse(
-		Long memberId,
+		UUID memberId,
 		String name,
 		String email,
 		Role role,
 		AccountStatus status,
-		Long organizationId,
-		List<Long> cohortIds,
-		List<Long> classroomIds,
+		UUID organizationId,
+		List<UUID> cohortIds,
+		List<UUID> classroomIds,
 		Instant lastLoginAt
 ) {
 }
