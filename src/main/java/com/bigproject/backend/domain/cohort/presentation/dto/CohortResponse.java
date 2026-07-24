@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.cohort.presentation.dto;
 
+import com.bigproject.backend.domain.cohort.domain.Cohort;
 import com.bigproject.backend.domain.cohort.domain.CohortStatus;
 
 import java.time.LocalDate;
@@ -17,6 +18,21 @@ public record CohortResponse(
 		int traineeCount,
 		List<Manager> managers
 ) {
-	public record Manager(UUID memberId, String name) {
+	// traineeCount/managers는 member·classroom 도메인이 준비되기 전까지 빈 값으로 채운다.
+	public static CohortResponse from(Cohort cohort) {
+		return new CohortResponse(
+				cohort.getCohortId(),
+				cohort.getOrgId(),
+				cohort.getName(),
+				cohort.getStatus(),
+				cohort.getStage(),
+				cohort.getStartDate(),
+				cohort.getEndDate(),
+				0,
+				List.of()
+		);
+	}
+
+	public record Manager(Long memberId, String name) {
 	}
 }
