@@ -65,10 +65,11 @@ public class AuthService {
 				user.role().name(),
 				user.organizationId()
 		);
+		Instant loggedInAt = Instant.now();
 		Optional<RefreshTokenLineage> previousLineage = refreshTokenRepository.revokeForReplacement(
 				user.userId(),
 				user.organizationId(),
-				Instant.now()
+				loggedInAt
 		);
 		refreshTokenRepository.save(RefreshToken.issue(
 				user.userId(),
@@ -77,6 +78,7 @@ public class AuthService {
 				requestMetadata,
 				previousLineage
 		));
+		authUserRepository.updateLastLoginAt(user.userId(), loggedInAt);
 
 		LoginResponse response = new LoginResponse(
 				user.userId(),
