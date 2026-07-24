@@ -55,10 +55,11 @@ public class OrganizationController {
 					- size (기본 20, 최대 100): 페이지당 개수
 
 					**응답**
-					- 기관별 이름·상태·보존기간·생성/삭제 시각을 담은 목록
+					- 기관별 이름·상태·보존기간·기본 공개범위·생성/삭제 시각을 담은 목록
+					- cohortCount(삭제되지 않은 전체 기수 수)·managerCount(활성 매니저 수)·traineeCount(활성 교육생 수)는 \
+					cohort/app_user 테이블을 직접 집계한 값
+					- currentMonthAiCost는 이번 달(UTC 기준) ai_usage 합계 — 아직 사용 이력이 없으면 0
 					- page/size/totalElements/totalPages 페이지 메타데이터
-					- cohortCount·managerCount·traineeCount·currentMonthAiCost는 cohort/member/operations \
-					도메인 데이터가 아직 없어 항상 0
 					"""
 	)
 	@GetMapping
@@ -82,7 +83,8 @@ public class OrganizationController {
 					- dataRetentionDays (필수, 30~3650일): 데이터 보존기간
 
 					**응답**
-					- 생성된 기관 정보(organizationId 포함) — 이후 다른 API 호출 시 이 organizationId를 사용한다.
+					- 생성된 기관 정보(organizationId, dataRetentionDays, defaultDisclosureScope 등 포함) — \
+					이후 다른 API 호출 시 이 organizationId를 사용한다.
 					- 이미 사용 중인 기관명이면 409를 반환한다.
 					"""
 	)
@@ -104,7 +106,7 @@ public class OrganizationController {
 					- organizationId (경로)
 
 					**응답**
-					- 목록 조회와 동일한 형태의 단건 정보
+					- 목록 조회와 동일한 형태의 단건 정보(dataRetentionDays, defaultDisclosureScope 포함)
 					- 존재하지 않는 organizationId면 404를 반환한다.
 					"""
 	)

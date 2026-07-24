@@ -1,8 +1,10 @@
 package com.bigproject.backend.domain.organization.application;
 
 import com.bigproject.backend.domain.operations.domain.DisclosureScope;
+import com.bigproject.backend.domain.operations.infrastructure.AiUsageRepository;
 import com.bigproject.backend.domain.organization.domain.Organization;
 import com.bigproject.backend.domain.organization.domain.OrganizationPolicy;
+import com.bigproject.backend.domain.organization.domain.OrganizationStatsRepository;
 import com.bigproject.backend.domain.organization.domain.OrganizationStatus;
 import com.bigproject.backend.domain.organization.infrastructure.OrganizationPolicyRepository;
 import com.bigproject.backend.domain.organization.infrastructure.OrganizationRepository;
@@ -20,6 +22,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.YearMonth;
+import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -38,6 +44,8 @@ public class OrganizationServiceImpl implements OrganizationService {
 
 	private final OrganizationRepository organizationRepository;
 	private final OrganizationPolicyRepository organizationPolicyRepository;
+	private final OrganizationStatsRepository organizationStatsRepository;
+	private final AiUsageRepository aiUsageRepository;
 
 	@Override
 	public OrganizationListResponse findOrganizations(String query, OrganizationStatus status, int page, int size) {
@@ -46,10 +54,28 @@ public class OrganizationServiceImpl implements OrganizationService {
 		Page<Organization> result = organizationRepository.search(likePattern, status, PageRequest.of(page, size));
 
 		List<Organization> organizations = result.getContent();
-		Map<UUID, Integer> retentionDaysByOrgId = retentionDaysByOrgId(organizations);
+		Map<UUID, OrganizationPolicy> activePolicyByOrgId = activePolicyByOrgId(organizations);
+
+		// 목록의 기관 ID를 한 번에 모아서 배치 조회한다(기관 수만큼 매번 따로 조회하는 N+1을 피하기 위함).
+		List<UUID> orgIds = organizations.stream().map(Organization::getOrgId).toList();
+		Map<UUID, Integer> cohortCountByOrgId = organizationStatsRepository.countActiveCohortsByOrgId(orgIds);
+		Map<UUID, Integer> managerCountByOrgId = organizationStatsRepository.countActiveManagersByOrgId(orgIds);
+		Map<UUID, Integer> traineeCountByOrgId = organizationStatsRepository.countActiveTraineesByOrgId(orgIds);
+		Map<UUID, BigDecimal> aiCostByOrgId = currentMonthAiCostByOrgId(orgIds);
 
 		List<OrganizationResponse> content = organizations.stream()
-				.map(organization -> toResponse(organization, retentionDaysByOrgId.getOrDefault(organization.getOrgId(), 0)))
+				.map(organization -> {
+					OrganizationPolicy policy = activePolicyByOrgId.get(organization.getOrgId());
+					return toResponse(
+							organization,
+							policy == null ? 0 : policy.getRetentionDays(),
+							policy == null ? null : policy.getDefaultDisclosureScope(),
+							cohortCountByOrgId.getOrDefault(organization.getOrgId(), 0),
+							managerCountByOrgId.getOrDefault(organization.getOrgId(), 0),
+							traineeCountByOrgId.getOrDefault(organization.getOrgId(), 0),
+							aiCostByOrgId.getOrDefault(organization.getOrgId(), BigDecimal.ZERO)
+					);
+				})
 				.toList();
 
 		return new OrganizationListResponse(
@@ -70,7 +96,11 @@ public class OrganizationServiceImpl implements OrganizationService {
 		}
 
 		Organization organization = Organization.create(request.name(), normalizedName, requesterId);
-		organizationRepository.save(organization);
+		// save()만 호출하면 실제 INSERT가 트랜잭션 커밋 시점까지 미뤄질 수 있어, @CreationTimestamp로 채워지는
+		// createdAt이 이 메서드 안에서는 아직 null이다(우리 PK는 UUID를 애플리케이션에서 미리 만들어서 Hibernate가
+		// ID 확보를 위해 flush를 서두를 필요가 없기 때문). saveAndFlush로 즉시 INSERT를 실행해 createdAt을 확정한 뒤
+		// 응답을 만든다.
+		organizationRepository.saveAndFlush(organization);
 
 		OrganizationPolicy policy = OrganizationPolicy.createInitial(
 				organization.getOrgId(),
@@ -82,14 +112,22 @@ public class OrganizationServiceImpl implements OrganizationService {
 		);
 		organizationPolicyRepository.save(policy);
 
-		return toResponse(organization, policy.getRetentionDays());
+		// 방금 생성한 기관이라 기수/매니저/교육생/AI 비용이 존재할 수 없으므로 조회 없이 0으로 채운다.
+		return toResponse(organization, policy.getRetentionDays(), policy.getDefaultDisclosureScope(), 0, 0, 0, BigDecimal.ZERO);
 	}
 
 	@Override
 	public OrganizationResponse findOrganization(UUID organizationId) {
 		Organization organization = getOrganizationOrThrow(organizationId);
-		int retentionDays = getActivePolicyOrThrow(organizationId).getRetentionDays();
-		return toResponse(organization, retentionDays);
+		OrganizationPolicy policy = getActivePolicyOrThrow(organizationId);
+
+		List<UUID> singleOrgId = List.of(organizationId);
+		int cohortCount = organizationStatsRepository.countActiveCohortsByOrgId(singleOrgId).getOrDefault(organizationId, 0);
+		int managerCount = organizationStatsRepository.countActiveManagersByOrgId(singleOrgId).getOrDefault(organizationId, 0);
+		int traineeCount = organizationStatsRepository.countActiveTraineesByOrgId(singleOrgId).getOrDefault(organizationId, 0);
+		BigDecimal aiCost = currentMonthAiCostByOrgId(singleOrgId).getOrDefault(organizationId, BigDecimal.ZERO);
+
+		return toResponse(organization, policy.getRetentionDays(), policy.getDefaultDisclosureScope(), cohortCount, managerCount, traineeCount, aiCost);
 	}
 
 	@Override
@@ -121,8 +159,15 @@ public class OrganizationServiceImpl implements OrganizationService {
 		organization.changeStatus(request.status());
 		organization.touchUpdatedBy(requesterId);
 
-		int retentionDays = getActivePolicyOrThrow(organizationId).getRetentionDays();
-		return toResponse(organization, retentionDays);
+		OrganizationPolicy policy = getActivePolicyOrThrow(organizationId);
+
+		List<UUID> singleOrgId = List.of(organizationId);
+		int cohortCount = organizationStatsRepository.countActiveCohortsByOrgId(singleOrgId).getOrDefault(organizationId, 0);
+		int managerCount = organizationStatsRepository.countActiveManagersByOrgId(singleOrgId).getOrDefault(organizationId, 0);
+		int traineeCount = organizationStatsRepository.countActiveTraineesByOrgId(singleOrgId).getOrDefault(organizationId, 0);
+		BigDecimal aiCost = currentMonthAiCostByOrgId(singleOrgId).getOrDefault(organizationId, BigDecimal.ZERO);
+
+		return toResponse(organization, policy.getRetentionDays(), policy.getDefaultDisclosureScope(), cohortCount, managerCount, traineeCount, aiCost);
 	}
 
 	@Override
@@ -152,10 +197,10 @@ public class OrganizationServiceImpl implements OrganizationService {
 				.orElseThrow(() -> new IllegalStateException("기관에 활성 운영 정책이 없습니다: " + organizationId));
 	}
 
-	private Map<UUID, Integer> retentionDaysByOrgId(List<Organization> organizations) {
+	private Map<UUID, OrganizationPolicy> activePolicyByOrgId(List<Organization> organizations) {
 		List<UUID> orgIds = organizations.stream().map(Organization::getOrgId).toList();
 		return organizationPolicyRepository.findByOrgIdInAndStatus(orgIds, OrganizationPolicy.Status.ACTIVE).stream()
-				.collect(Collectors.toMap(OrganizationPolicy::getOrgId, OrganizationPolicy::getRetentionDays));
+				.collect(Collectors.toMap(OrganizationPolicy::getOrgId, policy -> policy));
 	}
 
 	// 이름 검색/중복확인에 사용하는 정규화 규칙(트림 + 소문자). organization.normalized_name 컬럼과 동일한 규칙을 적용한다.
@@ -163,19 +208,38 @@ public class OrganizationServiceImpl implements OrganizationService {
 		return name.trim().toLowerCase(Locale.ROOT);
 	}
 
-	// cohortCount, managerCount, traineeCount, currentMonthAiCost는 각각 cohort/member/operations(ai_usage) 도메인의
-	// 엔티티가 있어야 정확히 계산할 수 있다. 이번 작업 범위(organization, operations)에는 cohort/member 엔티티가 없으므로
-	// 우선 0/ZERO로 채우고, 해당 도메인 구현 후 실제 집계 로직으로 교체가 필요하다.
-	private OrganizationResponse toResponse(Organization organization, int retentionDays) {
+	// 이번 달(UTC 기준) 1일 00:00 ~ 다음 달 1일 00:00 직전까지의 AI 비용 합계를 기관별로 조회한다.
+	// operations.findUsage()가 특정 월(period)을 파라미터로 받는 것과 달리, 여기서는 항상 "이번 달"만 본다.
+	private Map<UUID, BigDecimal> currentMonthAiCostByOrgId(Collection<UUID> orgIds) {
+		if (orgIds.isEmpty()) {
+			return Map.of();
+		}
+		YearMonth currentMonth = YearMonth.now(ZoneOffset.UTC);
+		Instant from = currentMonth.atDay(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+		Instant to = currentMonth.plusMonths(1).atDay(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+		return aiUsageRepository.sumCostByOrgId(orgIds, from, to).stream()
+				.collect(Collectors.toMap(AiUsageRepository.OrgAiCostTotal::orgId, AiUsageRepository.OrgAiCostTotal::totalCost));
+	}
+
+	private OrganizationResponse toResponse(
+			Organization organization,
+			int retentionDays,
+			DisclosureScope defaultDisclosureScope,
+			int cohortCount,
+			int managerCount,
+			int traineeCount,
+			BigDecimal currentMonthAiCost
+	) {
 		return new OrganizationResponse(
 				organization.getOrgId(),
 				organization.getName(),
 				organization.getStatus(),
-				0,
-				0,
-				0,
-				BigDecimal.ZERO,
+				cohortCount,
+				managerCount,
+				traineeCount,
+				currentMonthAiCost,
 				retentionDays,
+				defaultDisclosureScope,
 				organization.getCreatedAt(),
 				organization.getDeletedAt()
 		);
