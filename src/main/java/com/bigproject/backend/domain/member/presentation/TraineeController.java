@@ -4,6 +4,7 @@ import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.application.MemberQueryService;
 import com.bigproject.backend.domain.member.application.TraineeCsvParser;
 import com.bigproject.backend.domain.member.domain.AccountStatus;
+import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import com.bigproject.backend.domain.member.presentation.dto.TraineeListResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -12,6 +13,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
@@ -25,6 +27,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -102,7 +105,7 @@ public class TraineeController {
 			@ApiResponse(responseCode = "404", description = "등록 가능한 기수를 찾을 수 없음")
 	})
 	@PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-	public ResponseEntity<RegisterTraineesResponse> registerTrainees(
+	public ResponseEntity<RegisterTraineesResponse> registerTraineesFromCsv(
 			@Parameter(description = "교육생을 등록할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
 			@PathVariable UUID cohortId,
 			@Parameter(description = "첫 행이 '이름,이메일'인 UTF-8 CSV 파일")
@@ -115,6 +118,37 @@ public class TraineeController {
 		return ResponseEntity.status(HttpStatus.CREATED).body(memberInvitationService.inviteTraineesFromCsv(
 				cohortId,
 				traineeCsvParser.parse(file),
+				authentication.getName(),
+				requestId
+		));
+	}
+
+	@Operation(
+			summary = "직접 입력 교육생 등록 및 초대",
+			description = "총괄 매니저가 이름·이메일을 여러 행으로 직접 입력하면 행별로 교육생 계정과 "
+					+ "초대 토큰을 생성하고 메일을 발송합니다. CSV 업로드와 별도 초대 경로로 구분합니다."
+	)
+	@PreAuthorize("hasRole('LEAD_MANAGER')")
+	@ApiResponses({
+			@ApiResponse(responseCode = "201", description = "교육생 등록·초대 처리 완료; 행별 실패는 응답 본문에 포함"),
+			@ApiResponse(responseCode = "400", description = "교육생 목록·이름·이메일 값이 올바르지 않음"),
+			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "총괄 매니저 권한·계정 상태 또는 기관 범위가 허용되지 않음"),
+			@ApiResponse(responseCode = "404", description = "등록 가능한 기수를 찾을 수 없음")
+	})
+	@PostMapping(path = "/invitations", consumes = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<RegisterTraineesResponse> registerTrainees(
+			@Parameter(description = "교육생을 등록할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID cohortId,
+			@Valid @RequestBody RegisterTraineesRequest request,
+			@Parameter(description = "일괄 등록 요청 추적용 식별자이며 생략 시 서버가 생성합니다.", example = "trainee-direct-001")
+			@RequestHeader(value = REQUEST_ID_HEADER, required = false) String requestId,
+			@Parameter(hidden = true)
+			Authentication authentication
+	) {
+		return ResponseEntity.status(HttpStatus.CREATED).body(memberInvitationService.inviteTrainees(
+				cohortId,
+				request,
 				authentication.getName(),
 				requestId
 		));
