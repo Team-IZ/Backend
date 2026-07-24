@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.organization.presentation.dto;
 
+import com.bigproject.backend.domain.operations.domain.DisclosureScope;
 import com.bigproject.backend.domain.organization.domain.OrganizationStatus;
 
 import java.math.BigDecimal;
@@ -15,6 +16,7 @@ public record OrganizationResponse(
 		int traineeCount,
 		BigDecimal currentMonthAiCost,
 		int dataRetentionDays,
+		DisclosureScope defaultDisclosureScope,
 		Instant createdAt,
 		Instant deletedAt
 ) {
