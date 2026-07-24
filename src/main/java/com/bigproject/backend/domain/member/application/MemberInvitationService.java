@@ -116,7 +116,7 @@ public class MemberInvitationService {
 				failures.add(failure(
 						row,
 						email,
-						TraineeInvitationFailureStatus.DUPLICATE_EMAIL_IN_CSV
+						TraineeInvitationFailureStatus.DUPLICATE_EMAIL_IN_REQUEST
 				));
 				continue;
 			}
@@ -134,8 +134,7 @@ public class MemberInvitationService {
 
 			RegisterTraineesRequest.Trainee trainee = new RegisterTraineesRequest.Trainee(
 					name,
-					email,
-					row.classroomId()
+					email
 			);
 			try {
 				invitationDispatcher.inviteTrainee(

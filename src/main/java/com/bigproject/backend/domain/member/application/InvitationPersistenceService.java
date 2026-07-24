@@ -92,13 +92,6 @@ public class InvitationPersistenceService {
 		String email = trainee.email().trim();
 		String normalizedEmail = EmailNormalizer.normalize(email);
 		ensureNewEmail(normalizedEmail);
-		if (trainee.classroomId() != null) {
-			invitationRepository.validateClassroom(
-					context.organizationId(),
-					context.cohortId(),
-					trainee.classroomId()
-			);
-		}
 
 		Instant now = Instant.now();
 		UUID memberId = invitationRepository.createPendingUser(
@@ -127,7 +120,7 @@ public class InvitationPersistenceService {
 				invitation.tokenId(),
 				context.organizationId(),
 				context.cohortId(),
-				trainee.classroomId(),
+				null,
 				actor.userId(),
 				now
 		);
@@ -193,7 +186,6 @@ public class InvitationPersistenceService {
 	private Map<String, Object> traineePayload(RegisterTraineesRequest.Trainee trainee) {
 		Map<String, Object> payload = basePayload();
 		payload.put("name", trainee.name().trim());
-		payload.put("classroomId", trainee.classroomId());
 		return payload;
 	}
 
