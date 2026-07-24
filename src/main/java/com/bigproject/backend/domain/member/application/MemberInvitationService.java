@@ -82,6 +82,33 @@ public class MemberInvitationService {
 			String actorEmail,
 			String requestId
 	) {
+		return inviteTrainees(cohortId, rows, actorEmail, requestId);
+	}
+
+	public RegisterTraineesResponse inviteTrainees(
+			UUID cohortId,
+			RegisterTraineesRequest request,
+			String actorEmail,
+			String requestId
+	) {
+		List<TraineeCsvRow> rows = new ArrayList<>(request.trainees().size());
+		for (int index = 0; index < request.trainees().size(); index++) {
+			RegisterTraineesRequest.Trainee trainee = request.trainees().get(index);
+			rows.add(new TraineeCsvRow(
+					index + 1,
+					trainee.name(),
+					trainee.email()
+			));
+		}
+		return inviteTrainees(cohortId, rows, actorEmail, requestId);
+	}
+
+	private RegisterTraineesResponse inviteTrainees(
+			UUID cohortId,
+			List<TraineeCsvRow> rows,
+			String actorEmail,
+			String requestId
+	) {
 		AuthUser actor = activeActor(actorEmail);
 		if (actor.role() != Role.LEAD_MANAGER) {
 			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "총괄 매니저만 교육생을 초대할 수 있습니다.");
@@ -116,7 +143,7 @@ public class MemberInvitationService {
 				failures.add(failure(
 						row,
 						email,
-						TraineeInvitationFailureStatus.DUPLICATE_EMAIL_IN_CSV
+						TraineeInvitationFailureStatus.DUPLICATE_EMAIL_IN_REQUEST
 				));
 				continue;
 			}
@@ -134,8 +161,7 @@ public class MemberInvitationService {
 
 			RegisterTraineesRequest.Trainee trainee = new RegisterTraineesRequest.Trainee(
 					name,
-					email,
-					row.classroomId()
+					email
 			);
 			try {
 				invitationDispatcher.inviteTrainee(

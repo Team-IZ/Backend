@@ -158,13 +158,11 @@ class MemberInvitationServiceTest {
 		InvitationContext context = new InvitationContext(organizationId, "AIVLE", cohortId, "7기");
 		RegisterTraineesRequest.Trainee first = new RegisterTraineesRequest.Trainee(
 				"교육생",
-				"trainee@example.com",
-				null
+				"trainee@example.com"
 		);
 		RegisterTraineesRequest.Trainee duplicate = new RegisterTraineesRequest.Trainee(
 				"중복",
-				" TRAINEE@example.com ",
-				null
+				" TRAINEE@example.com "
 		);
 		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findInvitableCohort(cohortId)).thenReturn(Optional.of(context));
@@ -186,6 +184,70 @@ class MemberInvitationServiceTest {
 				.containsExactly(2, 3);
 		assertThat(response.failures()).extracting(RegisterTraineesResponse.Failure::status)
 				.containsExactly(2, 2);
+		verify(invitationDispatcher, never()).inviteTrainee(
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any()
+		);
+	}
+
+	@Test
+	void leadManagerDirectlyInvitesMultipleTrainees() {
+		UUID organizationId = UUID.randomUUID();
+		UUID cohortId = UUID.randomUUID();
+		AuthUser actor = actor(Role.LEAD_MANAGER, organizationId);
+		InvitationContext context = new InvitationContext(organizationId, "AIVLE", cohortId, "7기");
+		RegisterTraineesRequest.Trainee first = new RegisterTraineesRequest.Trainee(
+				"교육생1",
+				"trainee1@example.com"
+		);
+		RegisterTraineesRequest.Trainee second = new RegisterTraineesRequest.Trainee(
+				"교육생2",
+				"trainee2@example.com"
+		);
+		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
+		when(invitationRepository.findInvitableCohort(cohortId)).thenReturn(Optional.of(context));
+
+		var response = service.inviteTrainees(
+				cohortId,
+				new RegisterTraineesRequest(List.of(first, second)),
+				"lead@example.com",
+				"direct-1"
+		);
+
+		assertThat(response.requestedCount()).isEqualTo(2);
+		assertThat(response.registeredCount()).isEqualTo(2);
+		assertThat(response.invitationSentCount()).isEqualTo(2);
+		assertThat(response.failures()).isEmpty();
+		verify(invitationDispatcher).inviteTrainee(context, first, actor, "direct-1:1");
+		verify(invitationDispatcher).inviteTrainee(context, second, actor, "direct-1:2");
+	}
+
+	@Test
+	void directInvitationReportsInvalidEmailByInputRow() {
+		UUID organizationId = UUID.randomUUID();
+		UUID cohortId = UUID.randomUUID();
+		AuthUser actor = actor(Role.LEAD_MANAGER, organizationId);
+		InvitationContext context = new InvitationContext(organizationId, "AIVLE", cohortId, "7기");
+		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
+		when(invitationRepository.findInvitableCohort(cohortId)).thenReturn(Optional.of(context));
+
+		var response = service.inviteTrainees(
+				cohortId,
+				new RegisterTraineesRequest(List.of(
+						new RegisterTraineesRequest.Trainee("홍길동", "fdsafsdafsafsaffa")
+				)),
+				"lead@example.com",
+				"direct-invalid"
+		);
+
+		assertThat(response.requestedCount()).isEqualTo(1);
+		assertThat(response.registeredCount()).isZero();
+		assertThat(response.invitationSentCount()).isZero();
+		assertThat(response.failures()).containsExactly(
+				new RegisterTraineesResponse.Failure(1, "fdsafsdafsafsaffa", 1)
+		);
 		verify(invitationDispatcher, never()).inviteTrainee(
 				org.mockito.ArgumentMatchers.any(),
 				org.mockito.ArgumentMatchers.any(),
