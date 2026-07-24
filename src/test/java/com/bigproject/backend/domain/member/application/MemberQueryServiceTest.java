@@ -12,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -75,7 +76,6 @@ class MemberQueryServiceTest {
 		UUID organizationId = UUID.randomUUID();
 		UUID managerId = UUID.randomUUID();
 		UUID cohortId = UUID.randomUUID();
-		UUID assignmentId = UUID.randomUUID();
 		when(authUserRepository.findByNormalizedEmail("lead@example.com"))
 				.thenReturn(Optional.of(actor(Role.LEAD_MANAGER, organizationId, "lead@example.com")));
 		when(memberQueryRepository.existsOrganization(organizationId)).thenReturn(true);
@@ -88,12 +88,12 @@ class MemberQueryServiceTest {
 						"PENDING",
 						false,
 						organizationId,
-						null
+						Instant.parse("2026-07-01T15:30:00Z")
 				)
 		), 1));
 		when(memberQueryRepository.findManagerAssignments(List.of(managerId))).thenReturn(List.of(
 				new MemberQueryRepository.ManagerAssignmentRow(
-						assignmentId,
+						UUID.randomUUID(),
 						managerId,
 						"COHORT",
 						cohortId,
@@ -103,6 +103,30 @@ class MemberQueryServiceTest {
 						Instant.parse("2026-07-01T00:00:00Z"),
 						null,
 						"ACTIVE"
+				),
+				new MemberQueryRepository.ManagerAssignmentRow(
+						UUID.randomUUID(),
+						managerId,
+						"CLASS",
+						cohortId,
+						"7기",
+						UUID.randomUUID(),
+						"A반",
+						Instant.parse("2026-07-02T00:00:00Z"),
+						null,
+						"ACTIVE"
+				),
+				new MemberQueryRepository.ManagerAssignmentRow(
+						UUID.randomUUID(),
+						managerId,
+						"CLASS",
+						UUID.randomUUID(),
+						"6기",
+						UUID.randomUUID(),
+						"A반",
+						Instant.parse("2025-07-02T00:00:00Z"),
+						Instant.parse("2026-01-01T00:00:00Z"),
+						"INACTIVE"
 				)
 		));
 
@@ -121,12 +145,51 @@ class MemberQueryServiceTest {
 		assertThat(response.totalElements()).isEqualTo(1);
 		assertThat(response.totalPages()).isEqualTo(1);
 		assertThat(response.content()).singleElement().satisfies(manager -> {
-			assertThat(manager.status()).isEqualTo(AccountStatus.INVITED);
-			assertThat(manager.assignments()).singleElement().satisfies(assignment -> {
-				assertThat(assignment.assignmentId()).isEqualTo(assignmentId);
-				assertThat(assignment.cohortName()).isEqualTo("7기");
-			});
+			assertThat(manager.role()).isEqualTo("담당");
+			assertThat(manager.cohortNames()).containsExactly("7기");
+			assertThat(manager.status()).isEqualTo("초대됨");
+			assertThat(manager.lastLoginDate()).isEqualTo(LocalDate.of(2026, 7, 2));
 		});
+	}
+
+	@Test
+	void mapsLeadManagerToOrganizationWideActiveSummary() {
+		UUID organizationId = UUID.randomUUID();
+		when(authUserRepository.findByNormalizedEmail("admin@example.com"))
+				.thenReturn(Optional.of(actor(Role.SUPER_ADMIN, null, "admin@example.com")));
+		when(memberQueryRepository.existsOrganization(organizationId)).thenReturn(true);
+		when(memberQueryRepository.findManagers(any())).thenReturn(new MemberQueryRepository.Page<>(List.of(
+				new MemberQueryRepository.ManagerRow(
+						UUID.randomUUID(),
+						"총괄",
+						"lead@example.com",
+						Role.LEAD_MANAGER,
+						"ACTIVE",
+						false,
+						organizationId,
+						null
+				)
+		), 1));
+
+		var response = service.findManagers(
+				organizationId,
+				null,
+				null,
+				null,
+				0,
+				20,
+				MemberSortField.NAME,
+				SortDirection.ASC,
+				"admin@example.com"
+		);
+
+		assertThat(response.content()).singleElement().satisfies(manager -> {
+			assertThat(manager.role()).isEqualTo("총괄");
+			assertThat(manager.cohortNames()).containsExactly("기관 전체");
+			assertThat(manager.status()).isEqualTo("활성화");
+			assertThat(manager.lastLoginDate()).isNull();
+		});
+		verify(memberQueryRepository).findManagerAssignments(List.of());
 	}
 
 	@Test

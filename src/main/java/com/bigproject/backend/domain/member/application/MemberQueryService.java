@@ -7,7 +7,6 @@ import com.bigproject.backend.domain.member.domain.MemberQueryRepository;
 import com.bigproject.backend.domain.member.domain.MemberSortField;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.domain.SortDirection;
-import com.bigproject.backend.domain.member.presentation.dto.ManagerAssignmentResponse;
 import com.bigproject.backend.domain.member.presentation.dto.ManagerSummaryResponse;
 import com.bigproject.backend.domain.member.presentation.dto.MemberListResponse;
 import com.bigproject.backend.domain.member.presentation.dto.TraineeListResponse;
@@ -18,6 +17,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +32,7 @@ import java.util.UUID;
 @Transactional(readOnly = true)
 public class MemberQueryService {
 	private static final String ACTIVE = "ACTIVE";
+	private static final ZoneId SERVICE_ZONE_ID = ZoneId.of("Asia/Seoul");
 
 	private final AuthUserRepository authUserRepository;
 	private final MemberQueryRepository memberQueryRepository;
@@ -62,17 +65,18 @@ public class MemberQueryService {
 						direction
 				)
 		);
-		Map<UUID, List<ManagerAssignmentResponse>> assignments = managerAssignments(result.content());
+		Map<UUID, List<String>> cohortNames = managerCohortNames(result.content());
 		List<ManagerSummaryResponse> content = result.content().stream()
 				.map(row -> new ManagerSummaryResponse(
 						row.memberId(),
 						row.name(),
 						row.email(),
-						row.role(),
-						apiStatus(row.databaseStatus(), row.deleted()),
-						row.organizationId(),
-						row.lastLoginAt(),
-						assignments.getOrDefault(row.memberId(), List.of())
+						managerRoleName(row.role()),
+						row.role() == Role.LEAD_MANAGER
+								? List.of("기관 전체")
+								: cohortNames.getOrDefault(row.memberId(), List.of()),
+						managerStatusName(apiStatus(row.databaseStatus(), row.deleted())),
+						lastLoginDate(row.lastLoginAt())
 				))
 				.toList();
 		return new MemberListResponse(content, page, size, result.totalElements(), totalPages(result.totalElements(), size));
@@ -183,28 +187,47 @@ public class MemberQueryService {
 		}
 	}
 
-	private Map<UUID, List<ManagerAssignmentResponse>> managerAssignments(
+	private Map<UUID, List<String>> managerCohortNames(
 			List<MemberQueryRepository.ManagerRow> managers
 	) {
 		List<UUID> managerIds = managers.stream()
 				.filter(manager -> manager.role() == Role.MANAGER)
 				.map(MemberQueryRepository.ManagerRow::memberId)
 				.toList();
-		Map<UUID, List<ManagerAssignmentResponse>> result = new LinkedHashMap<>();
+		Map<UUID, List<String>> current = new LinkedHashMap<>();
+		Map<UUID, List<String>> history = new LinkedHashMap<>();
 		for (MemberQueryRepository.ManagerAssignmentRow row : memberQueryRepository.findManagerAssignments(managerIds)) {
-			result.computeIfAbsent(row.managerId(), ignored -> new ArrayList<>()).add(new ManagerAssignmentResponse(
-					row.assignmentId(),
-					row.scope(),
-					row.cohortId(),
-					row.cohortName(),
-					row.classroomId(),
-					row.classroomName(),
-					row.assignedAt(),
-					row.unassignedAt(),
-					row.status()
-			));
+			Map<UUID, List<String>> target = row.unassignedAt() == null && ACTIVE.equals(row.status())
+					? current
+					: history;
+			List<String> names = target.computeIfAbsent(row.managerId(), ignored -> new ArrayList<>());
+			if (!names.contains(row.cohortName())) {
+				names.add(row.cohortName());
+			}
 		}
+		Map<UUID, List<String>> result = new LinkedHashMap<>(history);
+		current.forEach(result::put);
 		return result;
+	}
+
+	private String managerRoleName(Role role) {
+		return switch (role) {
+			case LEAD_MANAGER -> "총괄";
+			case MANAGER -> "담당";
+			default -> throw new IllegalStateException("지원하지 않는 매니저 역할입니다: " + role);
+		};
+	}
+
+	private String managerStatusName(AccountStatus status) {
+		return switch (status) {
+			case ACTIVE -> "활성화";
+			case INVITED -> "초대됨";
+			case LOCKED, INACTIVE -> "비활성화";
+		};
+	}
+
+	private LocalDate lastLoginDate(Instant lastLoginAt) {
+		return lastLoginAt == null ? null : lastLoginAt.atZone(SERVICE_ZONE_ID).toLocalDate();
 	}
 
 	private Map<UUID, MemberQueryRepository.CurrentClassroomRow> currentClassrooms(

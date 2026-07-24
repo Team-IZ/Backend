@@ -55,7 +55,7 @@ public class MemberController {
 	@Operation(
 			summary = "기관 매니저 목록 조회",
 			description = "슈퍼어드민은 organizationId가 필수이며, 총괄 매니저는 자기 기관만 조회합니다. "
-					+ "role을 생략하면 총괄·일반 매니저를 모두 반환하고 DB의 PENDING 상태는 INVITED로 노출합니다."
+					+ "role을 생략하면 총괄·담당 매니저를 모두 반환하며 권한·상태는 한글 표시명, 최근 로그인은 날짜로 제공합니다."
 	)
 	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'LEAD_MANAGER')")
 	@ApiResponses({

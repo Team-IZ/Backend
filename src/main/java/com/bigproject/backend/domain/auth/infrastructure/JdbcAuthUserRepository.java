@@ -8,7 +8,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Optional;
+import java.util.UUID;
 
 @Repository
 @RequiredArgsConstructor
@@ -55,5 +57,22 @@ public class JdbcAuthUserRepository implements AuthUserRepository {
 				},
 				normalizedEmail
 		).stream().findFirst();
+	}
+
+	@Override
+	public void updateLastLoginAt(UUID userId, Instant lastLoginAt) {
+		int updatedRows = jdbcTemplate.update(
+				"""
+				UPDATE app_user
+				SET last_login_at = ?
+				WHERE user_id = ?
+					AND deleted_at IS NULL
+				""",
+				Timestamp.from(lastLoginAt),
+				userId
+		);
+		if (updatedRows != 1) {
+			throw new IllegalStateException("로그인 사용자의 최근 로그인 시각을 갱신할 수 없습니다.");
+		}
 	}
 }

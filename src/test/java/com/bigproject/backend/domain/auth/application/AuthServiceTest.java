@@ -16,6 +16,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -51,7 +52,9 @@ class AuthServiceTest {
 	void issuesRoleBearingAccessTokenAndSeparateRefreshToken() {
 		UUID organizationId = UUID.randomUUID();
 		AuthUser user = activeUser(Role.LEAD_MANAGER, organizationId);
-		AuthService service = serviceReturning(user);
+		AuthUserRepository repository = repositoryReturning(user);
+		AuthService service = serviceWith(repository);
+		Instant beforeLogin = Instant.now();
 
 		LoginResult result = service.login(
 				new LoginRequest(" LEAD@example.com ", PASSWORD),
@@ -75,6 +78,9 @@ class AuthServiceTest {
 		assertThat(savedToken.expiresAt()).isEqualTo(jwtProvider.getExpiration(result.refreshToken()));
 		assertThat(savedToken.issuedIp()).isEqualTo("127.0.0.1");
 		assertThat(savedToken.issuedUserAgent()).isEqualTo("test-user-agent");
+		ArgumentCaptor<Instant> loginAtCaptor = ArgumentCaptor.forClass(Instant.class);
+		verify(repository).updateLastLoginAt(eq(user.userId()), loginAtCaptor.capture());
+		assertThat(loginAtCaptor.getValue()).isBetween(beforeLogin, Instant.now());
 	}
 
 	@Test
@@ -94,7 +100,9 @@ class AuthServiceTest {
 
 	@Test
 	void rejectsRoleThatDoesNotMatchLoginPathBeforeIssuingTokens() {
-		AuthService service = serviceReturning(activeUser(Role.SUPER_ADMIN, null));
+		AuthUser user = activeUser(Role.SUPER_ADMIN, null);
+		AuthUserRepository repository = repositoryReturning(user);
+		AuthService service = serviceWith(repository);
 
 		assertThatThrownBy(() -> service.login(
 				new LoginRequest("lead@example.com", PASSWORD),
@@ -103,6 +111,7 @@ class AuthServiceTest {
 				REQUEST_METADATA
 		)).isInstanceOf(ResponseStatusException.class)
 				.hasMessageContaining("역할과 로그인 진입 경로");
+		verify(repository, never()).updateLastLoginAt(any(), any());
 	}
 
 	@Test
@@ -121,7 +130,8 @@ class AuthServiceTest {
 
 	@Test
 	void returnsSameLoginFailureWhenOnlyEmailIsIncorrect() {
-		AuthUserRepository repository = normalizedEmail -> Optional.empty();
+		AuthUserRepository repository = mock(AuthUserRepository.class);
+		when(repository.findByNormalizedEmail(any())).thenReturn(Optional.empty());
 		AuthService service = serviceWith(repository);
 
 		assertLoginFailure(() -> service.login(
@@ -146,7 +156,8 @@ class AuthServiceTest {
 
 	@Test
 	void returnsSameLoginFailureWhenEmailAndPasswordAreIncorrect() {
-		AuthUserRepository repository = normalizedEmail -> Optional.empty();
+		AuthUserRepository repository = mock(AuthUserRepository.class);
+		when(repository.findByNormalizedEmail(any())).thenReturn(Optional.empty());
 		AuthService service = serviceWith(repository);
 
 		assertLoginFailure(() -> service.login(
@@ -251,8 +262,13 @@ class AuthServiceTest {
 	}
 
 	private AuthService serviceReturning(AuthUser user) {
-		AuthUserRepository repository = normalizedEmail -> Optional.of(user);
-		return serviceWith(repository);
+		return serviceWith(repositoryReturning(user));
+	}
+
+	private AuthUserRepository repositoryReturning(AuthUser user) {
+		AuthUserRepository repository = mock(AuthUserRepository.class);
+		when(repository.findByNormalizedEmail(any())).thenReturn(Optional.of(user));
+		return repository;
 	}
 
 	private AuthService serviceWith(AuthUserRepository repository) {
