@@ -7,6 +7,7 @@ import com.bigproject.backend.domain.member.application.TraineeCsvRow;
 import com.bigproject.backend.domain.member.domain.MemberSortField;
 import com.bigproject.backend.domain.member.domain.SortDirection;
 import com.bigproject.backend.domain.member.presentation.dto.MemberListResponse;
+import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import com.bigproject.backend.domain.member.presentation.dto.TraineeListResponse;
 import com.bigproject.backend.global.config.ApiPathConfig;
@@ -16,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.mock.web.MockMultipartFile;
@@ -153,6 +155,50 @@ class MemberQueryControllerTest {
 				.andExpect(status().isNotFound());
 
 		verify(memberInvitationService).inviteTraineesFromCsv(cohortId, rows, "lead@example.com", null);
+	}
+
+	@Test
+	@WithMockUser(username = "lead@example.com", roles = "LEAD_MANAGER")
+	void directlyInvitesMultipleTraineesWithJson() throws Exception {
+		UUID cohortId = UUID.randomUUID();
+		RegisterTraineesRequest request = new RegisterTraineesRequest(List.of(
+				new RegisterTraineesRequest.Trainee("교육생1", "trainee1@example.com"),
+				new RegisterTraineesRequest.Trainee("교육생2", "trainee2@example.com")
+		));
+		when(memberInvitationService.inviteTrainees(cohortId, request, "lead@example.com", "direct-1"))
+				.thenReturn(new RegisterTraineesResponse(2, 2, 2, List.of()));
+
+		mockMvc.perform(post("/api/v0/cohorts/{cohortId}/trainees/invitations", cohortId)
+						.contentType(MediaType.APPLICATION_JSON)
+						.header("X-Request-Id", "direct-1")
+						.content("""
+								{
+								  "trainees": [
+								    {"name": "교육생1", "email": "trainee1@example.com"},
+								    {"name": "교육생2", "email": "trainee2@example.com"}
+								  ]
+								}
+								""")
+						.with(csrf()))
+				.andExpect(status().isCreated());
+
+		verify(memberInvitationService).inviteTrainees(cohortId, request, "lead@example.com", "direct-1");
+	}
+
+	@Test
+	@WithMockUser(username = "lead@example.com", roles = "LEAD_MANAGER")
+	void rejectsInvalidDirectTraineeRows() throws Exception {
+		mockMvc.perform(post("/api/v0/cohorts/{cohortId}/trainees/invitations", UUID.randomUUID())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "trainees": [
+								    {"name": "", "email": "invalid-email"}
+								  ]
+								}
+								""")
+						.with(csrf()))
+				.andExpect(status().isBadRequest());
 	}
 
 	@TestConfiguration(proxyBeanMethods = false)
