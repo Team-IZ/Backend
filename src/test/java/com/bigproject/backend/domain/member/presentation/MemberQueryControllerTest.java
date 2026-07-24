@@ -6,6 +6,7 @@ import com.bigproject.backend.domain.member.application.TraineeCsvParser;
 import com.bigproject.backend.domain.member.application.TraineeCsvRow;
 import com.bigproject.backend.domain.member.domain.MemberSortField;
 import com.bigproject.backend.domain.member.domain.SortDirection;
+import com.bigproject.backend.domain.member.domain.TraineeInvitationFailureStatus;
 import com.bigproject.backend.domain.member.presentation.dto.MemberListResponse;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
@@ -37,6 +38,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(controllers = {MemberController.class, TraineeController.class})
@@ -187,13 +189,53 @@ class MemberQueryControllerTest {
 
 	@Test
 	@WithMockUser(username = "lead@example.com", roles = "LEAD_MANAGER")
-	void rejectsInvalidDirectTraineeRows() throws Exception {
+	void returnsRowFailureForInvalidDirectTraineeEmail() throws Exception {
+		UUID cohortId = UUID.randomUUID();
+		RegisterTraineesRequest request = new RegisterTraineesRequest(List.of(
+				new RegisterTraineesRequest.Trainee("홍길동", "fdsafsdafsafsaffa")
+		));
+		when(memberInvitationService.inviteTrainees(cohortId, request, "lead@example.com", null))
+				.thenReturn(new RegisterTraineesResponse(
+						1,
+						0,
+						0,
+						List.of(new RegisterTraineesResponse.Failure(
+								1,
+								"fdsafsdafsafsaffa",
+								TraineeInvitationFailureStatus.INVALID_EMAIL_FORMAT.code()
+						))
+				));
+
+		mockMvc.perform(post("/api/v0/cohorts/{cohortId}/trainees/invitations", cohortId)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "trainees": [
+								    {"name": "홍길동", "email": "fdsafsdafsafsaffa"}
+								  ]
+								}
+								""")
+						.with(csrf()))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.requestedCount").value(1))
+				.andExpect(jsonPath("$.registeredCount").value(0))
+				.andExpect(jsonPath("$.invitationSentCount").value(0))
+				.andExpect(jsonPath("$.failures[0].row").value(1))
+				.andExpect(jsonPath("$.failures[0].email").value("fdsafsdafsafsaffa"))
+				.andExpect(jsonPath("$.failures[0].status").value(1));
+
+		verify(memberInvitationService).inviteTrainees(cohortId, request, "lead@example.com", null);
+	}
+
+	@Test
+	@WithMockUser(username = "lead@example.com", roles = "LEAD_MANAGER")
+	void rejectsBlankDirectTraineeName() throws Exception {
 		mockMvc.perform(post("/api/v0/cohorts/{cohortId}/trainees/invitations", UUID.randomUUID())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
 								  "trainees": [
-								    {"name": "", "email": "invalid-email"}
+								    {"name": "", "email": "trainee@example.com"}
 								  ]
 								}
 								""")

@@ -225,6 +225,38 @@ class MemberInvitationServiceTest {
 	}
 
 	@Test
+	void directInvitationReportsInvalidEmailByInputRow() {
+		UUID organizationId = UUID.randomUUID();
+		UUID cohortId = UUID.randomUUID();
+		AuthUser actor = actor(Role.LEAD_MANAGER, organizationId);
+		InvitationContext context = new InvitationContext(organizationId, "AIVLE", cohortId, "7기");
+		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
+		when(invitationRepository.findInvitableCohort(cohortId)).thenReturn(Optional.of(context));
+
+		var response = service.inviteTrainees(
+				cohortId,
+				new RegisterTraineesRequest(List.of(
+						new RegisterTraineesRequest.Trainee("홍길동", "fdsafsdafsafsaffa")
+				)),
+				"lead@example.com",
+				"direct-invalid"
+		);
+
+		assertThat(response.requestedCount()).isEqualTo(1);
+		assertThat(response.registeredCount()).isZero();
+		assertThat(response.invitationSentCount()).isZero();
+		assertThat(response.failures()).containsExactly(
+				new RegisterTraineesResponse.Failure(1, "fdsafsdafsafsaffa", 1)
+		);
+		verify(invitationDispatcher, never()).inviteTrainee(
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any()
+		);
+	}
+
+	@Test
 	void csvInvitationReportsInvalidAndExistingEmailsByCsvRow() {
 		UUID organizationId = UUID.randomUUID();
 		UUID cohortId = UUID.randomUUID();
