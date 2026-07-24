@@ -14,6 +14,8 @@ public interface MemberInvitationRepository {
 
 	boolean existsUserByNormalizedEmail(String normalizedEmail);
 
+	boolean existsOrganizationTraineeByNormalizedEmail(UUID organizationId, String normalizedEmail);
+
 	void validateManagerAssignments(UUID organizationId, List<ManagerAssignmentRequest> assignments);
 
 	void validateClassroom(UUID organizationId, UUID cohortId, UUID classroomId);
