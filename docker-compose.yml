@@ -1,0 +1,99 @@
+name: iz-backend
+
+# ---------------------------------------------------------------------------
+# DB는 외부 관리형 PostgreSQL(세션 풀러 경유)을 사용한다.
+# EC2 안에 Postgres 컨테이너를 띄우지 않는다.
+# 어느 DB에 붙는지는 이 파일이 알지 못한다 — 전적으로 .env 가 정한다.
+#
+# 설계 원칙: "나중에 갈아엎지 않고 층을 쌓는다"
+#
+#   지금        : app(컨테이너) → 외부 관리형 PostgreSQL
+#   다음 층 ①   : 외부 관리형 PostgreSQL → AWS RDS  ... .env의 DB_HOST/DB_NAME 만 교체
+#   다음 층 ②   : Caddy로 HTTPS 종단    ... APP_PUBLISH_PORT 를 127.0.0.1:8080 으로
+#                                          바꾸고 caddy 서비스 추가
+#   다음 층 ③   : 레지스트리에서 pull    ... .env에 APP_IMAGE 지정 후 --no-build
+#
+# 접속 정보는 이 파일에도 Dockerfile에도 소스에도 값이 없다.
+# 전부 .env → 환경변수 경로로만 들어간다.
+# ---------------------------------------------------------------------------
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # 레지스트리를 쓰게 되면 .env에 APP_IMAGE=ghcr.io/team-iz/backend:<tag> 만 넣으면 된다.
+    image: ${APP_IMAGE:-iz-backend:latest}
+    container_name: iz-app
+    restart: unless-stopped
+
+    # .env의 모든 키를 컨테이너 환경변수로 주입한다(JWT·메일·초대 설정 등).
+    env_file:
+      - .env
+
+    # env_file보다 우선순위가 높다. DB 접속 정보는 여기서 조립해 확정한다.
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
+
+      # ─────────────────────────────────────────────────────────────────
+      # ★ DB 전환 지점 — 여기만 보면 된다 ★
+      #
+      #  현재  : jdbc:postgresql://<db-host>:<db-port>/<db-name>
+      #          실제 값은 .env 에만 존재한다. 이 파일에는 남기지 않는다.
+      #  RDS면 : .env에서 DB_HOST/DB_NAME 을 RDS 엔드포인트로 바꾸기만 하면 된다.
+      #
+      #  기본값(:-)을 일부러 주지 않았다. 값이 비면 조용히 잘못된 곳에 붙는 대신
+      #  compose 단계에서 바로 드러나게 하기 위함이다.
+      # ─────────────────────────────────────────────────────────────────
+      DB_URL: "jdbc:postgresql://${DB_HOST:?DB_HOST 가 .env에 없습니다}:${DB_PORT:?DB_PORT 가 .env에 없습니다}/${DB_NAME:?DB_NAME 이 .env에 없습니다}?${DB_OPTIONS:-sslmode=require&ApplicationName=iz-backend-ec2&connectTimeout=10&socketTimeout=30&tcpKeepAlive=true}"
+      DB_USERNAME: ${DB_USERNAME:?DB_USERNAME 이 .env에 없습니다}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 가 .env에 없습니다}
+
+      # 원격 DB라 커넥션 하나가 비싸다. EC2에서는 풀을 작게 잡는다.
+      # 관리형 DB의 동시 커넥션 한도를 로컬 개발자들과 나눠 쓰는 점도 고려한 값.
+      #
+      # application.yaml 이 ${DB_POOL_SIZE:10} 형태로 이 이름을 직접 참조한다.
+      # (SPRING_DATASOURCE_HIKARI_... 형태의 환경변수는 Spring 의 relaxed binding 이
+      #  하이픈을 '제거'하는 규칙이라 maximum-pool-size 에 바인딩되지 않는다. 쓰지 말 것.)
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_POOL_MIN_IDLE: ${DB_POOL_MIN_IDLE:-2}
+
+      # ─────────────────────────────────────────────────────────────────
+      # JVM 힙 — t3.micro(1GB) 기준
+      #
+      #  mem_limit 700m 에서 힙을 60%(=420m)로 잡는다.
+      #  비힙(메타스페이스 160m + 코드캐시·스레드스택·GC ≈ 90m) 이 약 250m 필요한데,
+      #  70%로 두면 490m + 250m = 740m > 700m 이라 컨테이너가 OOM Kill 된다.
+      #  0.6L + 250 ≤ L  →  L ≥ 625m  이므로 700m/60% 가 안전한 조합이다.
+      #
+      #  .env에 JAVA_OPTS를 정의하면 재빌드 없이 덮어쓸 수 있다.
+      # ─────────────────────────────────────────────────────────────────
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:MaxMetaspaceSize=160m -Xss512k -XX:+ExitOnOutOfMemoryError}
+
+    # 기본 80 → 보안그룹이 80/443만 열려 있으므로 바로 Swagger 공유가 된다.
+    # Caddy를 앞에 세우는 순간 .env에서 APP_PUBLISH_PORT=127.0.0.1:8080 으로 바꾼다.
+    ports:
+      - "${APP_PUBLISH_PORT:-80}:8080"
+
+    # 아직 actuator 의존성이 없으므로 "HTTP 응답이 오는가"로만 확인한다.
+    # (401/404도 정상 — 앱이 살아 있다는 뜻)
+    # actuator 추가 후에는 http://localhost:8080/actuator/health/readiness 로 교체.
+    #
+    # start_period가 넉넉한 이유: 원격 DB까지 왕복이 있어 Hikari 초기 커넥션
+    # 확보에 시간이 더 걸린다. 부팅 중 healthcheck 실패로 재시작 루프에 빠지지 않게 한다.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+    # OS(~170m) + Docker 데몬(~100m) 몫을 남긴다. 700 + 270 ≈ 970MB < 1024MB.
+    # 컨테이너 DB를 걷어낸 덕에 스왑이 '필수'가 아니라 '보험'이 됐다.
+    mem_limit: 700m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
