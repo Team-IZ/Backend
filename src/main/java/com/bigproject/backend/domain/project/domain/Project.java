@@ -1,7 +1,5 @@
 package com.bigproject.backend.domain.project.domain;
 
-package com.bigproject.backend.domain.project.domain;
-
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -112,13 +110,25 @@ public class Project {
         this.createdBy = createdBy;
     }
 
-    /** 프로젝트 종료 */
+    // 첫 checkpoint가 열리면 진행 중으로 전환. PLANNED가 아니면 잘못된 호출이므로 막는다.
+    public void start(UUID actorUserId) {
+        if (this.status != ProjectStatus.PLANNED) {
+            throw new IllegalStateException("예정 상태의 프로젝트만 시작할 수 있습니다.");
+        }
+        this.status = ProjectStatus.RUNNING;
+        this.updatedBy = actorUserId;
+    }
+
+    // 프로젝트 종료. 이미 종료된 상태면 조용히 넘어간다(멱등) — 버튼 두 번 눌러도 안전.
     public void close(UUID actorUserId) {
+        if (this.status == ProjectStatus.CLOSED) {
+            return;
+        }
         this.status = ProjectStatus.CLOSED;
         this.updatedBy = actorUserId;
     }
 
-    /** 소프트 삭제 */
+    // 소프트 삭제
     public void softDelete(UUID actorUserId) {
         this.deletedAt = OffsetDateTime.now();
         this.updatedBy = actorUserId;
