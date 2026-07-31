@@ -18,7 +18,6 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-
 public class CheckpointService {
 
     // 화면 "검증 개념 3건 고정"에서 온 상수 — 회차 하나는 항상 이 개수의 검증 개념을 가져야 한다
@@ -65,8 +64,8 @@ public class CheckpointService {
         return checkpointRepository.save(checkpoint);
     }
 
-    public Checkpoint findCheckpoint(UUID checkpointId, UUID planId) {
-        return checkpointRepository.findByCheckpointIdAndPlanId(checkpointId, planId)
+    public Checkpoint findCheckpoint(UUID checkpointId) {
+        return checkpointRepository.findByCheckpointId(checkpointId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "회차를 찾을 수 없습니다."));
     }
 
@@ -82,31 +81,30 @@ public class CheckpointService {
 
     // 응시 창을 연다. 검증 개념 3건이 안 채워졌으면 막고, 첫 회차 오픈이면 프로젝트도 RUNNING으로 전환
     @Transactional
-    public void openCheckpoint(UUID checkpointId, UUID planId, UUID projectId, UUID orgId, UUID actorUserId) {
+    public void openCheckpoint(UUID checkpointId, UUID projectId, UUID orgId, UUID actorUserId) {
         assertReadyToOpen(checkpointId);
 
-        Checkpoint checkpoint = findCheckpoint(checkpointId, planId);
+        Checkpoint checkpoint = findCheckpoint(checkpointId);
         checkpoint.open();
 
-        // 첫 checkpoint가 열리는 순간에만 프로젝트를 RUNNING으로. 이미 RUNNING이면 start()가
-        // 예외를 던지므로, 여기선 프로젝트 상태를 먼저 확인하지 않고 그냥 시도 후 무시하는 대신
-        // 서비스 차원에서 "이미 시작됐으면 넘어간다"로 처리한다 (TODO: 더 명확한 방식으로 개선 여지)
+        // 첫 checkpoint가 열리는 순간에만 프로젝트를 RUNNING으로.
+        // 이미 RUNNING이면 start()가 예외를 던지므로 여기서 무시한다 (두 번째 이후 회차 오픈은 정상 케이스)
         try {
             projectService.markRunning(projectId, orgId, actorUserId);
         } catch (IllegalStateException ignored) {
-            // 이미 RUNNING이면 여기로 온다 — 두 번째 이후 회차 오픈은 정상 케이스
+            // 이미 RUNNING이면 여기로 온다
         }
     }
 
     @Transactional
-    public void closeCheckpoint(UUID checkpointId, UUID planId) {
-        Checkpoint checkpoint = findCheckpoint(checkpointId, planId);
+    public void closeCheckpoint(UUID checkpointId) {
+        Checkpoint checkpoint = findCheckpoint(checkpointId);
         checkpoint.close();
     }
 
     @Transactional
-    public void completeCheckpoint(UUID checkpointId, UUID planId) {
-        Checkpoint checkpoint = findCheckpoint(checkpointId, planId);
+    public void completeCheckpoint(UUID checkpointId) {
+        Checkpoint checkpoint = findCheckpoint(checkpointId);
         checkpoint.complete();
     }
 }
