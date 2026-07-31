@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public class  ProjectRepository extends JpaRepository<Project, UUID>  {
+public interface ProjectRepository extends JpaRepository<Project, UUID> {
 
     // 테넌트 격리: 단건 조회에도 항상 orgId를 같이 건다.
     // findById만 두면 남의 기관 프로젝트를 ID만 알면 조회할 수 있게 된다

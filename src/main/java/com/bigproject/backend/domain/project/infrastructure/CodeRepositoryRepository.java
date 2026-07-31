@@ -1,7 +1,5 @@
 package com.bigproject.backend.domain.project.infrastructure;
 
-package com.bigproject.backend.domain.project.infrastructure;
-
 import com.bigproject.backend.domain.project.domain.CodeRepository;
 import org.springframework.data.jpa.repository.JpaRepository;
 

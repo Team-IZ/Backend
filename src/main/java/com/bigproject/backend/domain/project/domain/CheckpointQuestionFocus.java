@@ -1,4 +1,4 @@
-ackage com.bigproject.backend.domain.project.domain;
+package com.bigproject.backend.domain.project.domain;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
