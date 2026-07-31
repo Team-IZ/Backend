@@ -33,6 +33,12 @@ public class Cohort {
     @Column(name = "name", nullable = false, length = 200)
     private String name;
 
+    @Column(name = "cohort_no", nullable = false)
+    private Integer cohortNo;
+
+    @Column(name = "track_code", nullable = false, length = 100)
+    private String trackCode;
+
     @Column(name = "start_date", nullable = false)
     private LocalDate startDate;
 
@@ -69,7 +75,7 @@ public class Cohort {
 
     @Builder
     private Cohort(UUID orgId, String name, LocalDate startDate, LocalDate endDate,
-                   String stage, UUID createdBy) {
+                   String stage, Integer cohortNo, String trackCode, UUID createdBy) {
         if (startDate.isAfter(endDate)) {
             throw new IllegalArgumentException("시작일은 종료일보다 늦을 수 없습니다.");
         }
@@ -78,6 +84,8 @@ public class Cohort {
         this.startDate = startDate;
         this.endDate = endDate;
         this.stage = stage;
+        this.cohortNo = cohortNo;
+        this.trackCode = trackCode;
         this.status = CohortStatus.PLANNED;
         this.createdBy = createdBy;
     }

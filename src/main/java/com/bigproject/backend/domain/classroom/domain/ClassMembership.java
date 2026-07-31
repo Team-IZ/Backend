@@ -30,6 +30,10 @@ public class ClassMembership {
 	@Column(name = "cohort_member_id", nullable = false, updatable = false)
 	private UUID cohortMemberId;
 
+	// 배정된 사람을 사용자 기준으로 바로 조회하기 위한 컬럼 (cohort_member 조인 없이 조회용)
+	@Column(name = "user_id", nullable = false, updatable = false)
+	private UUID userId;
+
 	// 어느 기관 소속인지. 다른 기관 데이터가 보이면 안 되니까 조회할 때 항상 이 값도 같이 확인합니다.
 	@Column(name = "org_id", nullable = false, updatable = false)
 	private UUID orgId;
@@ -52,17 +56,26 @@ public class ClassMembership {
 	private OffsetDateTime createdAt;
 
 	@Builder
-	private ClassMembership(UUID classId, UUID cohortMemberId, UUID orgId, OffsetDateTime assignedAt,
-			String assignmentBatchId, UUID assignedBy) {
+	private ClassMembership(UUID classId, UUID cohortMemberId, UUID userId, UUID orgId,
+							OffsetDateTime assignedAt, String assignmentBatchId, UUID assignedBy) {
 		this.classId = classId;
 		this.cohortMemberId = cohortMemberId;
+		this.userId = userId;
 		this.orgId = orgId;
 		this.assignedAt = assignedAt;
 		this.assignmentBatchId = assignmentBatchId;
 		this.assignedBy = assignedBy;
 	}
 
+	// 배정 해제. 이미 해제된 배정을 또 해제해도 조용히 넘어가고(멱등),
+	// 배정 시각보다 이른 시각으로 해제하려는 시도는 막는다
 	public void unassign(OffsetDateTime unassignedAt) {
+		if (this.unassignedAt != null) {
+			return;
+		}
+		if (unassignedAt.isBefore(this.assignedAt)) {
+			throw new IllegalArgumentException("배정 해제 시각이 배정 시각보다 이릅니다.");
+		}
 		this.unassignedAt = unassignedAt;
 	}
 }

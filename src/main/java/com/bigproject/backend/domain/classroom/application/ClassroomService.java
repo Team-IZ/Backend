@@ -143,6 +143,7 @@ public class ClassroomService {
                 .map(cohortMember -> ClassMembership.builder()
                         .classId(classroomId)
                         .cohortMemberId(cohortMember.getCohortMemberId())
+                        .userId(cohortMember.getUserId())
                         .orgId(orgId)
                         .assignedAt(now)
                         .assignmentBatchId(batchId)

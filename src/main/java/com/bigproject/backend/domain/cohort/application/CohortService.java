@@ -24,7 +24,8 @@ public class CohortService {
     // 기수 생성
     @Transactional
     public Cohort createCohort(UUID orgId, String name, LocalDate startDate,
-                               LocalDate endDate, String educationTrack, UUID creatorUserId) {
+                               LocalDate endDate, String educationTrack,
+                               Integer cohortNo, String trackCode, UUID creatorUserId) {
 
         // 규칙 1: 기관 내 기수명 중복 금지
         if (cohortRepository.existsByOrgIdAndNameAndDeletedAtIsNull(orgId, name)) {
@@ -38,6 +39,8 @@ public class CohortService {
                 .startDate(startDate)
                 .endDate(endDate)
                 .stage(educationTrack)
+                .cohortNo(cohortNo)
+                .trackCode(trackCode)
                 .createdBy(creatorUserId)
                 .build();
 
