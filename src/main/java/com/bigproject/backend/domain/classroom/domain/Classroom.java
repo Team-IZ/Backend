@@ -36,6 +36,12 @@ public class Classroom {
     @Column(name = "name", nullable = false, length = 200)
     private String name;
 
+    @Column(name = "capacity", nullable = false)
+    private Integer capacity;
+
+    @Column(name = "lifecycle_status", nullable = false, length = 30)
+    private String lifecycleStatus;
+
     @Column(name = "created_by", nullable = false, updatable = false)
     private UUID createdBy;
 
@@ -51,11 +57,16 @@ public class Classroom {
     @Column(name = "deleted_at")
     private OffsetDateTime deletedAt;
 
+    @Column(name = "closed_at")
+    private OffsetDateTime closedAt;
+
     @Builder
-    private Classroom(UUID orgId, UUID cohortId, String name, UUID createdBy) {
+    private Classroom(UUID orgId, UUID cohortId, String name, Integer capacity, UUID createdBy) {
         this.orgId = orgId;
         this.cohortId = cohortId;
         this.name = name;
+        this.capacity = capacity;
+        this.lifecycleStatus = "ACTIVE";
         this.createdBy = createdBy;
     }
 

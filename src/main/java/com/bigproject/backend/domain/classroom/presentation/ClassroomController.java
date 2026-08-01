@@ -67,7 +67,8 @@ public class ClassroomController {
 			@RequestHeader("X-Actor-User-Id") UUID actorUserId
 	) {
 		UUID organizationId = extractOrganizationId(authentication);
-		ClassroomService.ClassroomView view = classroomService.createClassroom(organizationId, cohortId, request.name(), actorUserId);
+		ClassroomService.ClassroomView view = classroomService.createClassroom(
+				organizationId, cohortId, request.name(), request.capacity(), actorUserId);
 		return ResponseEntity.status(HttpStatus.CREATED).body(ClassroomResponse.from(view));
 	}
 
