@@ -16,7 +16,6 @@ public record CreateCohortRequest(
 		@NotBlank String name,
 		@NotNull LocalDate startDate,
 		@NotNull LocalDate endDate,
-		@NotBlank String educationTrack,
 		List<@Valid InitialTrainee> initialTrainees
 ) {
 	public CreateCohortRequest {

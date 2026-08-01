@@ -94,7 +94,6 @@ public class CohortController {
 				request.name(),
 				request.startDate(),
 				request.endDate(),
-				request.educationTrack(),
 				actorUserId
 		);
 		return ResponseEntity.status(HttpStatus.CREATED).body(CohortResponse.from(cohort));

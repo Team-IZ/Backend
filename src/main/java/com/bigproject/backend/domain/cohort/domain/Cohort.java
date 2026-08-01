@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.cohort.domain;
 
+import com.bigproject.backend.domain.operations.domain.DisclosureScope;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -39,11 +40,8 @@ public class Cohort {
     @Column(name = "end_date", nullable = false)
     private LocalDate endDate;
 
-    @Column(name = "stage", nullable = false, length = 100)
-    private String stage;
-
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, length = 100)
+    @Column(name = "status", nullable = false, length = 30)
     private CohortStatus status;
 
     // ===== 3묶음: 감사 필드 =====
@@ -65,11 +63,27 @@ public class Cohort {
     @Column(name = "deleted_at")
     private OffsetDateTime deletedAt;
 
+    @Column(name = "closed_at")
+    private OffsetDateTime closedAt;
+
+    @Column(name = "retention_until")
+    private OffsetDateTime retentionUntil;
+
+    @Column(name = "retention_policy_id")
+    private UUID retentionPolicyId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "disclosure_scope", nullable = false, length = 30)
+    private DisclosureScope disclosureScope;
+
+    @Column(name = "disclosure_policy_id", nullable = false)
+    private UUID disclosurePolicyId;
+
     // ===== 4묶음: 생성과 행동 =====
 
     @Builder
     private Cohort(UUID orgId, String name, LocalDate startDate, LocalDate endDate,
-                   String stage, UUID createdBy) {
+                   UUID createdBy, DisclosureScope disclosureScope, UUID disclosurePolicyId) {
         if (startDate.isAfter(endDate)) {
             throw new IllegalArgumentException("시작일은 종료일보다 늦을 수 없습니다.");
         }
@@ -77,14 +91,16 @@ public class Cohort {
         this.name = name;
         this.startDate = startDate;
         this.endDate = endDate;
-        this.stage = stage;
         this.status = CohortStatus.PLANNED;
         this.createdBy = createdBy;
+        this.disclosureScope = disclosureScope;
+        this.disclosurePolicyId = disclosurePolicyId;
     }
 
     /** 기수 종료 */
     public void close(UUID actorUserId) {
         this.status = CohortStatus.CLOSED;
+        this.closedAt = OffsetDateTime.now();
         this.updatedBy = actorUserId;
     }
 
