@@ -23,7 +23,7 @@ public interface OperationsService {
 	 * 기관 운영 설정 변경. organization_policy는 append-only 버전 이력이므로
 	 * "수정"이 아니라 기존 활성 버전을 SUPERSEDED로 전환하고 새 버전을 발급하는 방식으로 동작한다.
 	 *
-	 * @param requesterId 감사 컬럼(organization_policy.configured_by, organization.updated_by)에 기록될 요청자 UUID.
+	 * @param requesterId 감사 컬럼(organization_policy.created_by, organization.updated_by)에 기록될 요청자 UUID.
 	 */
 	OperationSettingResponse updateSettings(UUID organizationId, UpdateOperationSettingRequest request, UUID requesterId);
 }

@@ -11,8 +11,10 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -22,11 +24,7 @@ import java.util.UUID;
  * organization 테이블 매핑 엔티티.
  * 서비스의 최상위 기관(테넌트) 마스터로, 기관명/운영 상태/삭제(보존) 유예 이력을 관리한다.
  *
- * ⚠️ status 컬럼의 DB CHECK 제약은 ('ACTIVE','SUSPENDED','DELETION_PENDING','DELETED')이지만,
- *    기존에 정의된 {@link OrganizationStatus} enum에는 DELETION_PENDING이 없고 대신
- *    BUDGET_EXCEEDED, PENDING_LEAD_MANAGER 값이 존재한다. enum 파일은 기존 산출물이라 값을 그대로 유지했으므로,
- *    실제 삭제 흐름은 DELETION_PENDING 중간 상태 없이 곧바로 DELETED로 전이하도록 구현했다(softDelete 참고).
- *    추후 DDL과 enum 값 정합성을 함께 맞추는 작업이 필요하다.
+ * status 값은 테이블 정의서의 CHECK 제약(ACTIVE, SUSPENDED, DELETION_PENDING, DELETED)과 동일하다.
  */
 @Getter
 @Entity
@@ -46,6 +44,22 @@ public class Organization {
 	@Column(name = "normalized_name", nullable = false, length = 200)
 	private String normalizedName;
 
+	@Column(name = "slug", length = 64)
+	private String slug;
+
+	@Column(name = "display_code", length = 32)
+	private String displayCode;
+
+	@Column(name = "email_domain", length = 255)
+	private String emailDomain;
+
+	@Column(name = "create_idempotency_key")
+	private UUID createIdempotencyKey;
+
+	@JdbcTypeCode(SqlTypes.CHAR)
+	@Column(name = "create_request_fingerprint", columnDefinition = "char(64)")
+	private String createRequestFingerprint;
+
 	@Enumerated(EnumType.STRING)
 	@Column(name = "status", nullable = false, length = 100)
 	private OrganizationStatus status;
@@ -62,6 +76,34 @@ public class Organization {
 
 	@Column(name = "deletion_requested_at")
 	private Instant deletionRequestedAt;
+
+	@Column(name = "deletion_idempotency_key")
+	private UUID deletionIdempotencyKey;
+
+	@JdbcTypeCode(SqlTypes.CHAR)
+	@Column(name = "deletion_request_fingerprint", columnDefinition = "char(64)")
+	private String deletionRequestFingerprint;
+
+	@Column(name = "deletion_requested_by")
+	private UUID deletionRequestedBy;
+
+	@Column(name = "purge_status", nullable = false, length = 30)
+	private String purgeStatus;
+
+	@Column(name = "purge_started_at")
+	private Instant purgeStartedAt;
+
+	@Column(name = "purge_failed_at")
+	private Instant purgeFailedAt;
+
+	@Column(name = "purge_failure_code", length = 100)
+	private String purgeFailureCode;
+
+	@Column(name = "restored_at")
+	private Instant restoredAt;
+
+	@Column(name = "restored_by")
+	private UUID restoredBy;
 
 	@Column(name = "deleted_at")
 	private Instant deletedAt;
@@ -90,6 +132,7 @@ public class Organization {
 		this.name = name;
 		this.normalizedName = normalizedName;
 		this.status = OrganizationStatus.ACTIVE;
+		this.purgeStatus = "NONE";
 		this.createdBy = createdBy;
 	}
 
@@ -109,7 +152,7 @@ public class Organization {
 
 	/**
 	 * 운영 상태 변경. ACTIVE/SUSPENDED만 직접 지정할 수 있는 값이며,
-	 * 그 외 값(BUDGET_EXCEEDED, PENDING_LEAD_MANAGER, DELETED)은 시스템이 파생시키는 상태이므로
+	 * 그 외 값(DELETION_PENDING, DELETED)은 시스템이 파생시키는 상태이므로
 	 * 호출 전 서비스 계층에서 검증한다.
 	 */
 	public void changeStatus(OrganizationStatus status) {
@@ -131,6 +174,7 @@ public class Organization {
 		Instant now = Instant.now();
 		this.status = OrganizationStatus.DELETED;
 		this.deletionRequestedAt = now;
+		this.deletionRequestedBy = updatedBy;
 		this.deletedAt = now;
 		this.retentionUntil = now.plus(retentionDays, ChronoUnit.DAYS);
 		this.updatedBy = updatedBy;
