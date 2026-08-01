@@ -5,6 +5,7 @@ import java.util.UUID;
 
 public record ConsentRecord(
 		UUID consentId,
+		UUID organizationId,
 		UUID userId,
 		ConsentCode consentCode,
 		int policyVersion,
