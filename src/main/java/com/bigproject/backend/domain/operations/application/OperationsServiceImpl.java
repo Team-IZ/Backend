@@ -101,18 +101,16 @@ public class OperationsServiceImpl implements OperationsService {
 		return toResponse(organization, nextPolicy);
 	}
 
-	// storage_usage_snapshot의 카테고리별 byte_count 합계를 OrganizationUsageResponse.StorageUsage의 4개 항목에 매핑한다.
+	// storage_usage_snapshot의 카테고리별 used_bytes 합계를 OrganizationUsageResponse.StorageUsage의 4개 항목에 매핑한다.
 	// CURRICULUM_PDF, DATABASE 카테고리는 별도 항목이 없어 totalBytes에만 반영된다.
 	private OrganizationUsageResponse.StorageUsage resolveStorageUsage(UUID organizationId, Instant from, Instant to) {
 		List<StorageUsageSnapshot> snapshots = storageUsageSnapshotRepository
-				.findByOrgIdAndAggregationStatusAndAsOfAtGreaterThanEqualAndAsOfAtLessThan(
-						organizationId, StorageUsageSnapshot.AggregationStatus.SUCCEEDED, from, to
-				);
+				.findByOrgIdAndCapturedAtGreaterThanEqualAndCapturedAtLessThan(organizationId, from, to);
 
 		Map<StorageUsageSnapshot.StorageCategory, Long> byteCountByCategory = snapshots.stream()
 				.collect(Collectors.groupingBy(
 						StorageUsageSnapshot::getStorageCategory,
-						Collectors.summingLong(snapshot -> snapshot.getByteCount() == null ? 0L : snapshot.getByteCount())
+						Collectors.summingLong(StorageUsageSnapshot::getUsedBytes)
 				));
 
 		long totalBytes = byteCountByCategory.values().stream().mapToLong(Long::longValue).sum();
@@ -164,7 +162,10 @@ public class OperationsServiceImpl implements OperationsService {
 		long outputTokens = group.stream().mapToLong(AiUsage::getOutputTokenCount).sum();
 		BigDecimal cost = group.stream().map(AiUsage::resolveCost).reduce(BigDecimal.ZERO, BigDecimal::add);
 		// 100만 토큰당 단가 = 건당 입력 단가(토큰당) * 1,000,000. 같은 그룹 내 단가는 동일하다고 가정하고 첫 건 값을 사용한다.
-		BigDecimal unitPricePerMillionTokens = group.get(0).getInputUnitPrice().multiply(BigDecimal.valueOf(1_000_000));
+		BigDecimal inputUnitPrice = group.get(0).getInputUnitPrice();
+		BigDecimal unitPricePerMillionTokens = inputUnitPrice == null
+				? BigDecimal.ZERO
+				: inputUnitPrice.multiply(BigDecimal.valueOf(1_000_000));
 
 		return new OrganizationUsageResponse.ModelUsage(
 				key.featureCode().name(),

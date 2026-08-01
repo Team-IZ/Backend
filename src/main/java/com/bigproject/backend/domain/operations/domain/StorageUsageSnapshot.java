@@ -27,14 +27,23 @@ public class StorageUsageSnapshot {
 
 	@Id
 	@UuidGenerator
-	@Column(name = "storage_snapshot_id", updatable = false, nullable = false)
-	private UUID storageSnapshotId;
+	@Column(name = "snapshot_id", updatable = false, nullable = false)
+	private UUID snapshotId;
 
 	@Column(name = "org_id", nullable = false, updatable = false)
 	private UUID orgId;
 
-	@Column(name = "as_of_at", nullable = false, updatable = false)
-	private Instant asOfAt;
+	@Column(name = "measurement_batch_id", nullable = false, updatable = false)
+	private UUID measurementBatchId;
+
+	@Column(name = "used_bytes", nullable = false, updatable = false)
+	private Long usedBytes;
+
+	@Column(name = "file_count", nullable = false, updatable = false)
+	private Integer fileCount;
+
+	@Column(name = "captured_at", nullable = false, updatable = false)
+	private Instant capturedAt;
 
 	// DB CHECK: storage_category IN ('CODE_ARTIFACT','SESSION_TRANSCRIPT','SCORE_EVIDENCE','REPORT_EXPORT','CURRICULUM_PDF','DATABASE')
 	@Enumerated(EnumType.STRING)
@@ -45,13 +54,6 @@ public class StorageUsageSnapshot {
 	@Column(name = "storage_scope", nullable = false, updatable = false, length = 100)
 	private String storageScope;
 
-	// 집계 실패(aggregationStatus=FAILED) 시에는 null이다(DB CHECK로 강제됨).
-	@Column(name = "object_count", updatable = false)
-	private Integer objectCount;
-
-	@Column(name = "byte_count", updatable = false)
-	private Long byteCount;
-
 	// DB CHECK: source_type IN ('DB_METADATA','DB_SYSTEM_CATALOG','CLOUD_API','CLOUD_INVENTORY','CLOUD_METRIC')
 	@Enumerated(EnumType.STRING)
 	@Column(name = "source_type", nullable = false, updatable = false, length = 100)
@@ -60,25 +62,11 @@ public class StorageUsageSnapshot {
 	@Column(name = "measurement_method", nullable = false, updatable = false, length = 100)
 	private String measurementMethod;
 
-	@Column(name = "source_ref", nullable = false, updatable = false)
+	@Column(name = "source_ref", updatable = false)
 	private String sourceRef;
-
-	@Column(name = "collection_started_at", nullable = false, updatable = false)
-	private Instant collectionStartedAt;
-
-	@Column(name = "collected_at", nullable = false, updatable = false)
-	private Instant collectedAt;
 
 	@Column(name = "calculation_version", nullable = false, updatable = false)
 	private Integer calculationVersion;
-
-	// DB CHECK: aggregation_status IN ('SUCCEEDED','FAILED')
-	@Enumerated(EnumType.STRING)
-	@Column(name = "aggregation_status", nullable = false, updatable = false, length = 100)
-	private AggregationStatus aggregationStatus;
-
-	@Column(name = "failure_reason", updatable = false)
-	private String failureReason;
 
 	@Column(name = "source_watermark", updatable = false)
 	private String sourceWatermark;
@@ -95,7 +83,4 @@ public class StorageUsageSnapshot {
 		DB_METADATA, DB_SYSTEM_CATALOG, CLOUD_API, CLOUD_INVENTORY, CLOUD_METRIC
 	}
 
-	public enum AggregationStatus {
-		SUCCEEDED, FAILED
-	}
 }
