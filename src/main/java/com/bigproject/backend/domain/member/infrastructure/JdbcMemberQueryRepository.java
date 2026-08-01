@@ -123,8 +123,8 @@ public class JdbcMemberQueryRepository implements MemberQueryRepository {
 				SELECT
 					ma.assignment_id,
 					ma.manager_user_id,
-					ma.role_scope,
-					ma.cohort_id,
+					'CLASS' AS role_scope,
+					cl.cohort_id,
 					c.name AS cohort_name,
 					ma.class_id,
 					cl.name AS class_name,
@@ -132,8 +132,8 @@ public class JdbcMemberQueryRepository implements MemberQueryRepository {
 					ma.unassigned_at,
 					ma.status
 				FROM manager_assignment ma
-				JOIN cohort c ON c.cohort_id = ma.cohort_id
-				LEFT JOIN "class" cl ON cl.class_id = ma.class_id
+				JOIN "class" cl ON cl.class_id = ma.class_id
+				JOIN cohort c ON c.cohort_id = cl.cohort_id
 				WHERE ma.manager_user_id IN (%s)
 				ORDER BY
 					CASE WHEN ma.unassigned_at IS NULL THEN 0 ELSE 1 END,

@@ -75,7 +75,7 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				purpose, token_hash, payload, issued_at, expires_at, used_at,
 				invalidated_at, invalidated_reason, replaced_by_token_id,
 				issued_by, issued_request_id, used_request_id, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, NULL, NULL, NULL, NULL, ?, ?, '', ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, NULL, NULL, NULL, NULL, ?, ?, NULL, ?)
 			""";
 	private static final String INVALIDATE_PREVIOUS_TOKENS = """
 			UPDATE one_time_token
@@ -91,21 +91,21 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 			""";
 	private static final String INSERT_MANAGER_ASSIGNMENT = """
 			INSERT INTO manager_assignment (
-				assignment_id, manager_user_id, org_id, role_scope, cohort_id,
-				class_id, assigned_at, unassigned_at, status, assigned_by, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'ACTIVE', ?, ?)
+				assignment_id, manager_user_id, org_id, class_id,
+				assigned_at, unassigned_at, status, assigned_by, created_at
+			) VALUES (?, ?, ?, ?, ?, NULL, 'ACTIVE', ?, ?)
 			""";
 	private static final String INSERT_COHORT_MEMBER = """
 			INSERT INTO cohort_member (
 				cohort_member_id, cohort_id, user_id, org_id, joined_at,
-				left_at, status, invitation_token_id, created_at
-			) VALUES (?, ?, ?, ?, ?, NULL, 'INVITED', ?, ?)
+				left_at, status, created_at
+			) VALUES (?, ?, ?, ?, ?, NULL, 'INVITED', ?)
 			""";
 	private static final String INSERT_CLASS_MEMBERSHIP = """
 			INSERT INTO class_membership (
 				class_membership_id, class_id, cohort_member_id, org_id,
-				assigned_at, unassigned_at, assignment_batch_id, assigned_by, created_at
-			) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)
+				assigned_at, unassigned_at, assigned_by, created_at
+			) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
 			""";
 
 	private final JdbcTemplate jdbcTemplate;
@@ -154,6 +154,10 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 	@Override
 	public void validateManagerAssignments(UUID organizationId, List<ManagerAssignmentRequest> assignments) {
 		for (ManagerAssignmentRequest assignment : assignments) {
+			if (assignment.classroomIds().isEmpty()) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+						"테이블 정의서 v06에서는 매니저 배정에 반 ID가 필요합니다.");
+			}
 			Integer cohortCount = jdbcTemplate.queryForObject(
 					"SELECT COUNT(*) FROM cohort WHERE cohort_id = ? AND org_id = ? AND deleted_at IS NULL",
 					Integer.class,
@@ -259,12 +263,8 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 		Timestamp timestamp = Timestamp.from(assignedAt);
 		for (ManagerAssignmentRequest assignment : assignments) {
 			Set<UUID> classroomIds = new HashSet<>(assignment.classroomIds());
-			if (classroomIds.isEmpty()) {
-				insertManagerAssignment(memberId, organizationId, assignedBy, assignment.cohortId(), null, "COHORT", timestamp);
-			} else {
-				for (UUID classroomId : classroomIds) {
-					insertManagerAssignment(memberId, organizationId, assignedBy, assignment.cohortId(), classroomId, "CLASS", timestamp);
-				}
+			for (UUID classroomId : classroomIds) {
+				insertManagerAssignment(memberId, organizationId, assignedBy, classroomId, timestamp);
 			}
 		}
 	}
@@ -288,7 +288,6 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				memberId,
 				organizationId,
 				timestamp,
-				tokenId,
 				timestamp
 		);
 		if (classroomId != null) {
@@ -299,7 +298,6 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 					cohortMemberId,
 					organizationId,
 					timestamp,
-					tokenId.toString(),
 					assignedBy,
 					timestamp
 			);
@@ -310,9 +308,7 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 			UUID memberId,
 			UUID organizationId,
 			UUID assignedBy,
-			UUID cohortId,
 			UUID classroomId,
-			String scope,
 			Timestamp assignedAt
 	) {
 		jdbcTemplate.update(
@@ -320,8 +316,6 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				UUID.randomUUID(),
 				memberId,
 				organizationId,
-				scope,
-				cohortId,
 				classroomId,
 				assignedAt,
 				assignedBy,

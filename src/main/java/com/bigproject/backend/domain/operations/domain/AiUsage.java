@@ -43,6 +43,9 @@ public class AiUsage {
 	@JoinColumn(name = "model_id", nullable = false, updatable = false)
 	private AiModel model;
 
+	@Column(name = "model_instance_id", nullable = false, updatable = false)
+	private UUID modelInstanceId;
+
 	@Column(name = "actor_user_id", updatable = false)
 	private UUID actorUserId;
 
@@ -51,12 +54,47 @@ public class AiUsage {
 	@Column(name = "feature_code", nullable = false, updatable = false, length = 100)
 	private FeatureCode featureCode;
 
-	// source_type은 DDL에 고정 값 목록(CHECK)이 없어 문자열 그대로 보관한다.
-	@Column(name = "source_type", nullable = false, updatable = false, length = 100)
-	private String sourceType;
+	@Column(name = "cohort_id", updatable = false)
+	private UUID cohortId;
 
-	@Column(name = "source_id", nullable = false, updatable = false)
-	private String sourceId;
+	@Column(name = "class_id", updatable = false)
+	private UUID classId;
+
+	@Column(name = "project_id", updatable = false)
+	private UUID projectId;
+
+	@Column(name = "context_type", nullable = false, updatable = false, length = 100)
+	private String contextType;
+
+	@Column(name = "context_id", updatable = false)
+	private String contextId;
+
+	@Column(name = "trigger_type", nullable = false, updatable = false, length = 30)
+	private String triggerType;
+
+	@Column(name = "tier_code", updatable = false, length = 30)
+	private String tierCode;
+
+	@Column(name = "tier_policy_id", updatable = false)
+	private UUID tierPolicyId;
+
+	@Column(name = "grading_policy_id", updatable = false)
+	private UUID gradingPolicyId;
+
+	@Column(name = "calibration_version_id", updatable = false)
+	private UUID calibrationVersionId;
+
+	@Column(name = "attribution_status", nullable = false, updatable = false, length = 30)
+	private String attributionStatus;
+
+	@Column(name = "unallocated_reason_code", updatable = false, length = 100)
+	private String unallocatedReasonCode;
+
+	@Column(name = "class_attribution_status", nullable = false, updatable = false, length = 30)
+	private String classAttributionStatus;
+
+	@Column(name = "class_unallocated_reason_code", updatable = false, length = 100)
+	private String classUnallocatedReasonCode;
 
 	@Column(name = "request_id", nullable = false, updatable = false)
 	private String requestId;
@@ -76,16 +114,22 @@ public class AiUsage {
 	@Column(name = "cached_token_count", nullable = false, updatable = false)
 	private Long cachedTokenCount;
 
-	@Column(name = "input_unit_price", nullable = false, updatable = false, precision = 18, scale = 6)
+	@Column(name = "pricing_status", nullable = false, updatable = false, length = 30)
+	private String pricingStatus;
+
+	@Column(name = "input_unit_price", updatable = false, precision = 18, scale = 6)
 	private BigDecimal inputUnitPrice;
 
-	@Column(name = "output_unit_price", nullable = false, updatable = false, precision = 18, scale = 6)
+	@Column(name = "output_unit_price", updatable = false, precision = 18, scale = 6)
 	private BigDecimal outputUnitPrice;
 
-	@Column(name = "currency_code", nullable = false, updatable = false, length = 3)
+	@Column(name = "cached_input_unit_price", updatable = false, precision = 18, scale = 6)
+	private BigDecimal cachedInputUnitPrice;
+
+	@Column(name = "currency_code", updatable = false, length = 3)
 	private String currencyCode;
 
-	@Column(name = "estimated_cost", nullable = false, updatable = false, precision = 18, scale = 6)
+	@Column(name = "estimated_cost", updatable = false, precision = 18, scale = 6)
 	private BigDecimal estimatedCost;
 
 	// 실제 청구 확정 전에는 null일 수 있어(정산 지연 등), 표시 시에는 actualCost가 있으면 우선 사용하고 없으면 estimatedCost를 쓴다.
@@ -94,7 +138,7 @@ public class AiUsage {
 
 	// DB CHECK: status IN ('SUCCEEDED', 'FAILED', 'PARTIAL')
 	@Enumerated(EnumType.STRING)
-	@Column(name = "status", nullable = false, updatable = false, length = 100)
+	@Column(name = "status", nullable = false, updatable = false, length = 30)
 	private Status status;
 
 	@Column(name = "failure_code", updatable = false, length = 100)
@@ -112,11 +156,11 @@ public class AiUsage {
 
 	/** 실제 비용이 확정됐으면 실제 비용을, 아니면 추정 비용을 반환한다. */
 	public BigDecimal resolveCost() {
-		return actualCost != null ? actualCost : estimatedCost;
+		return actualCost != null ? actualCost : estimatedCost != null ? estimatedCost : BigDecimal.ZERO;
 	}
 
 	public enum FeatureCode {
-		GRADING, SESSION_DIALOG, SUMMARY_DRAFT, CURRICULUM_ANALYSIS
+		CODE_ANALYSIS, CURRICULUM_ANALYSIS, QUESTION_GENERATION, ANSWER_GRADING, SUMMARY_DRAFT
 	}
 
 	public enum Status {

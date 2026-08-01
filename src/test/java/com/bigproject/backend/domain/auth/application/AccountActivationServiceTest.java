@@ -222,6 +222,7 @@ class AccountActivationServiceTest {
 		return new AccountActivationTarget(
 				UUID.randomUUID(),
 				UUID.randomUUID(),
+				UUID.randomUUID(),
 				"invitee@example.com",
 				"초대 사용자",
 				role,

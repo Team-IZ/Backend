@@ -16,6 +16,7 @@ import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
@@ -52,7 +53,7 @@ public class AiModel {
 
 	// 모델의 기능/제약 정보(JSON). 별도 파싱 없이 원문 JSON 문자열로만 보관한다.
 	@JdbcTypeCode(SqlTypes.JSON)
-	@Column(name = "capability_payload", nullable = false, columnDefinition = "jsonb")
+	@Column(name = "capability_payload", columnDefinition = "jsonb")
 	private String capabilityPayload;
 
 	@Column(name = "context_window", nullable = false)
@@ -64,11 +65,29 @@ public class AiModel {
 	@Column(name = "data_processing_region", nullable = false)
 	private String dataProcessingRegion;
 
-	@Column(name = "effective_from", nullable = false)
-	private Instant effectiveFrom;
+	@Column(name = "input_unit_price", precision = 18, scale = 6)
+	private BigDecimal inputUnitPrice;
 
-	@Column(name = "effective_to")
-	private Instant effectiveTo;
+	@Column(name = "output_unit_price", precision = 18, scale = 6)
+	private BigDecimal outputUnitPrice;
+
+	@Column(name = "cached_input_unit_price", precision = 18, scale = 6)
+	private BigDecimal cachedInputUnitPrice;
+
+	@Column(name = "currency_code", length = 3)
+	private String currencyCode;
+
+	@Column(name = "price_unit_token_count")
+	private Integer priceUnitTokenCount;
+
+	@Column(name = "price_effective_from")
+	private Instant priceEffectiveFrom;
+
+	@Column(name = "price_updated_by")
+	private UUID priceUpdatedBy;
+
+	@Column(name = "price_updated_at")
+	private Instant priceUpdatedAt;
 
 	@CreationTimestamp
 	@Column(name = "created_at", nullable = false, updatable = false)

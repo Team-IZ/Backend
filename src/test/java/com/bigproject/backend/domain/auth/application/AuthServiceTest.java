@@ -220,7 +220,7 @@ class AuthServiceTest {
 		UUID organizationId = UUID.randomUUID();
 		AuthUser user = activeUser(Role.LEAD_MANAGER, organizationId);
 		UUID previousTokenId = UUID.randomUUID();
-		String tokenFamilyId = UUID.randomUUID().toString();
+		UUID tokenFamilyId = UUID.randomUUID();
 		when(refreshTokenRepository.revokeForReplacement(eq(user.userId()), eq(organizationId), any()))
 				.thenReturn(Optional.of(new RefreshTokenLineage(previousTokenId, tokenFamilyId)));
 		AuthService service = serviceReturning(user);

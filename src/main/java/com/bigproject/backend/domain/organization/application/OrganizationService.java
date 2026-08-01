@@ -21,7 +21,7 @@ public interface OrganizationService {
 	/**
 	 * 기관 생성 + 최초 운영 정책(organization_policy 버전 1) 초기화.
 	 *
-	 * @param requesterId 감사 컬럼(organization.created_by, organization_policy.configured_by)에 기록될 요청자 UUID.
+	 * @param requesterId 감사 컬럼(organization.created_by, organization_policy.created_by)에 기록될 요청자 UUID.
 	 *                    Controller에 인증 주체를 꺼내는 로직이 아직 연결되지 않아 서비스 계층 파라미터로 우선 분리해두었다.
 	 */
 	OrganizationResponse createOrganization(CreateOrganizationRequest request, UUID requesterId);

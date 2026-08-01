@@ -12,6 +12,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UuidGenerator;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -54,12 +55,39 @@ public class OrganizationPolicy {
 	@Column(name = "currency_code", nullable = false, updatable = false, length = 3)
 	private String currencyCode;
 
+	@Column(name = "monthly_token_limit", updatable = false)
+	private Long monthlyTokenLimit;
+
+	@Column(name = "storage_limit_bytes", updatable = false)
+	private Long storageLimitBytes;
+
 	@Column(name = "retention_days", nullable = false, updatable = false)
 	private Integer retentionDays;
 
 	@Enumerated(EnumType.STRING)
 	@Column(name = "default_disclosure_scope", nullable = false, updatable = false, length = 100)
 	private DisclosureScope defaultDisclosureScope;
+
+	@Column(name = "question_generation_tier_code", nullable = false, updatable = false, length = 30)
+	private String questionGenerationTierCode;
+
+	@Column(name = "summary_tier_code", nullable = false, updatable = false, length = 30)
+	private String summaryTierCode;
+
+	@Column(name = "allow_manager_invite", nullable = false, updatable = false)
+	private Boolean allowManagerInvite;
+
+	@Column(name = "allow_data_export", nullable = false, updatable = false)
+	private Boolean allowDataExport;
+
+	@Column(name = "allow_zip_submission", nullable = false, updatable = false)
+	private Boolean allowZipSubmission;
+
+	@Column(name = "allow_github_integration", nullable = false, updatable = false)
+	private Boolean allowGithubIntegration;
+
+	@Column(name = "enable_big_project_contribution_analysis", nullable = false, updatable = false)
+	private Boolean enableBigProjectContributionAnalysis;
 
 	@Column(name = "effective_from", nullable = false, updatable = false)
 	private Instant effectiveFrom;
@@ -71,12 +99,19 @@ public class OrganizationPolicy {
 	@Column(name = "status", nullable = false, length = 100)
 	private Status status;
 
-	@Column(name = "configured_by", nullable = false, updatable = false)
+	@Column(name = "created_by", nullable = false, updatable = false)
 	private UUID configuredBy;
 
 	@CreationTimestamp
 	@Column(name = "created_at", nullable = false, updatable = false)
 	private Instant createdAt;
+
+	@Column(name = "updated_by")
+	private UUID updatedBy;
+
+	@UpdateTimestamp
+	@Column(name = "updated_at", nullable = false)
+	private Instant updatedAt;
 
 	private OrganizationPolicy(
 			UUID orgId,
@@ -92,6 +127,13 @@ public class OrganizationPolicy {
 		this.currencyCode = currencyCode;
 		this.retentionDays = retentionDays;
 		this.defaultDisclosureScope = defaultDisclosureScope;
+		this.questionGenerationTierCode = "BALANCED";
+		this.summaryTierCode = "BALANCED";
+		this.allowManagerInvite = true;
+		this.allowDataExport = true;
+		this.allowZipSubmission = true;
+		this.allowGithubIntegration = true;
+		this.enableBigProjectContributionAnalysis = true;
 		this.effectiveFrom = Instant.now();
 		this.status = Status.ACTIVE;
 		this.configuredBy = configuredBy;
@@ -124,6 +166,15 @@ public class OrganizationPolicy {
 		next.currencyCode = previous.currencyCode;
 		next.retentionDays = retentionDays;
 		next.defaultDisclosureScope = defaultDisclosureScope;
+		next.monthlyTokenLimit = previous.monthlyTokenLimit;
+		next.storageLimitBytes = previous.storageLimitBytes;
+		next.questionGenerationTierCode = previous.questionGenerationTierCode;
+		next.summaryTierCode = previous.summaryTierCode;
+		next.allowManagerInvite = previous.allowManagerInvite;
+		next.allowDataExport = previous.allowDataExport;
+		next.allowZipSubmission = previous.allowZipSubmission;
+		next.allowGithubIntegration = previous.allowGithubIntegration;
+		next.enableBigProjectContributionAnalysis = previous.enableBigProjectContributionAnalysis;
 		next.effectiveFrom = Instant.now();
 		next.status = Status.ACTIVE;
 		next.configuredBy = configuredBy;
