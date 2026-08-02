@@ -77,7 +77,7 @@ public class CohortController {
 	}
 
 	@Operation(summary = "기수 생성")
-	@PreAuthorize("hasRole('LEAD_MANAGER')")
+	@PreAuthorize("hasRole('OPERATOR')")
 	@PostMapping
 	public ResponseEntity<CohortResponse> createCohort(
 			@Valid @RequestBody CreateCohortRequest request,
@@ -100,7 +100,7 @@ public class CohortController {
 	}
 
 	@Operation(summary = "기수 종료")
-	@PreAuthorize("hasRole('LEAD_MANAGER')")
+	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/{cohortId}/end")
 	public ResponseEntity<CohortResponse> endCohort(
 			@PathVariable UUID cohortId,

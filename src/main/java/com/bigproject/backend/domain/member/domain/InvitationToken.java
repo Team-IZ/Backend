@@ -7,6 +7,7 @@ public record InvitationToken(
 		UUID tokenId,
 		UUID organizationId,
 		UUID userId,
+		UUID invitationId,
 		String targetEmail,
 		String normalizedTargetEmail,
 		InvitationPurpose purpose,

@@ -59,9 +59,9 @@ public class AccountActivationService {
 		AccountActivationTarget target = findTarget(
 				request.invitationToken(),
 				request.userId(),
-				InvitationPurpose.INVITE_MANAGER
+				InvitationPurpose.INVITE_OPERATOR_MANAGER
 		);
-		if (target.role() != Role.LEAD_MANAGER && target.role() != Role.MANAGER) {
+		if (target.role() != Role.OPERATOR && target.role() != Role.MANAGER) {
 			throw invalidInvitation();
 		}
 		return activate(

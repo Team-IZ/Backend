@@ -11,9 +11,9 @@ import jakarta.validation.constraints.Size;
 import java.util.UUID;
 
 public record TraineeActivationRequest(
-		@Schema(description = "초대 대상 교육생 사용자 ID", type = "string", format = "uuid")
+		@Schema(description = "초대 토큰 해석 응답의 PENDING 교육생 사용자 ID", type = "string", format = "uuid", example = "UUID")
 		@NotNull @JsonProperty("user_id") UUID userId,
-		@Schema(description = "교육생 초대 링크의 일회용 원문 토큰", example = "invitation-token")
+		@Schema(description = "INVITE_TRAINEE 초대 링크의 현재 일회용 원문 토큰", example = "invitation-token")
 		@NotBlank @Size(max = 512) String invitationToken,
 		@Schema(description = "영문·숫자·특수문자를 포함한 8~64자 비밀번호", example = "Password1!")
 		@NotBlank

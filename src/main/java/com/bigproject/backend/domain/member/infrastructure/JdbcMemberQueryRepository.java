@@ -259,7 +259,7 @@ public class JdbcMemberQueryRepository implements MemberQueryRepository {
 
 	private void appendRoleFilter(StringBuilder sql, List<Object> parameters, Role role) {
 		if (role == null) {
-			sql.append(" AND r.code IN ('LEAD_MANAGER', 'MANAGER')");
+			sql.append(" AND r.code IN ('OPERATOR', 'MANAGER')");
 			return;
 		}
 		sql.append(" AND r.code = ?");

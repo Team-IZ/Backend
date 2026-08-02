@@ -72,7 +72,7 @@ public class MemberQueryService {
 						row.name(),
 						row.email(),
 						managerRoleName(row.role()),
-						row.role() == Role.LEAD_MANAGER
+						row.role() == Role.OPERATOR
 								? List.of("기관 전체")
 								: cohortNames.getOrDefault(row.memberId(), List.of()),
 						managerStatusName(apiStatus(row.databaseStatus(), row.deleted())),
@@ -92,7 +92,7 @@ public class MemberQueryService {
 			String actorEmail
 	) {
 		AuthUser actor = activeActor(actorEmail);
-		if (actor.role() != Role.LEAD_MANAGER && actor.role() != Role.MANAGER) {
+		if (actor.role() != Role.OPERATOR && actor.role() != Role.MANAGER) {
 			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "매니저만 교육생 명단을 조회할 수 있습니다.");
 		}
 		MemberQueryRepository.CohortScope cohort = memberQueryRepository.findCohortScope(cohortId)
@@ -158,16 +158,16 @@ public class MemberQueryService {
 				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "슈퍼어드민은 organizationId를 지정해야 합니다.");
 			}
 			organizationId = requestedOrganizationId;
-		} else if (actor.role() == Role.LEAD_MANAGER) {
+		} else if (actor.role() == Role.OPERATOR) {
 			organizationId = actor.organizationId();
 			if (organizationId == null) {
-				throw new ResponseStatusException(HttpStatus.FORBIDDEN, "소속 기관이 없는 총괄 매니저입니다.");
+				throw new ResponseStatusException(HttpStatus.FORBIDDEN, "소속 기관이 없는 오퍼레이터입니다.");
 			}
 			if (requestedOrganizationId != null && !organizationId.equals(requestedOrganizationId)) {
 				throw new ResponseStatusException(HttpStatus.FORBIDDEN, "다른 기관의 매니저는 조회할 수 없습니다.");
 			}
 		} else {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "총괄 매니저 이상만 매니저 목록을 조회할 수 있습니다.");
+			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "오퍼레이터 이상만 매니저 목록을 조회할 수 있습니다.");
 		}
 		if (!memberQueryRepository.existsOrganization(organizationId)) {
 			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "기관을 찾을 수 없습니다.");
@@ -176,8 +176,8 @@ public class MemberQueryService {
 	}
 
 	private void validateManagerRoleFilter(Role role) {
-		if (role != null && role != Role.LEAD_MANAGER && role != Role.MANAGER) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "role은 LEAD_MANAGER 또는 MANAGER만 허용합니다.");
+		if (role != null && role != Role.OPERATOR && role != Role.MANAGER) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "role은 OPERATOR 또는 MANAGER만 허용합니다.");
 		}
 	}
 
@@ -212,7 +212,7 @@ public class MemberQueryService {
 
 	private String managerRoleName(Role role) {
 		return switch (role) {
-			case LEAD_MANAGER -> "총괄";
+			case OPERATOR -> "오퍼레이터";
 			case MANAGER -> "담당";
 			default -> throw new IllegalStateException("지원하지 않는 매니저 역할입니다: " + role);
 		};

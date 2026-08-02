@@ -5,12 +5,10 @@ import com.bigproject.backend.domain.member.domain.InvitationContext;
 import com.bigproject.backend.domain.member.domain.PendingInvitation;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
-import com.bigproject.backend.domain.member.presentation.dto.ManagerInvitationRole;
 import org.junit.jupiter.api.Test;
 import org.springframework.mail.MailSendException;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,10 +30,9 @@ class TransactionalInvitationDispatcherTest {
 		UUID organizationId = UUID.randomUUID();
 		InvitationContext context = InvitationContext.organization(organizationId, "AIVLE");
 		InviteManagerRequest request = new InviteManagerRequest(
-				"lead@example.com",
-				ManagerInvitationRole.LEAD_MANAGER,
+				"operator@example.com",
 				null,
-				List.of()
+				null
 		);
 		AuthUser actor = new AuthUser(
 				UUID.randomUUID(),
@@ -53,9 +50,10 @@ class TransactionalInvitationDispatcherTest {
 		PendingInvitation invitation = new PendingInvitation(
 				UUID.randomUUID(),
 				UUID.randomUUID(),
+				UUID.randomUUID(),
 				request.email(),
 				"raw-token",
-				request.role().toRole(),
+				Role.OPERATOR,
 				now,
 				now.plusSeconds(3600),
 				context

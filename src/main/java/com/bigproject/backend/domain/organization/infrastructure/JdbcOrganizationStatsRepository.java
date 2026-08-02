@@ -38,14 +38,14 @@ public class JdbcOrganizationStatsRepository implements OrganizationStatsReposit
 		if (organizationIds.isEmpty()) {
 			return Map.of();
 		}
-		// LEAD_MANAGER/MANAGER 둘 다 "매니저"로 집계한다(member 도메인의 findManagers 기본 필터와 동일한 기준).
+		// OPERATOR/MANAGER 둘 다 "매니저"로 집계한다(member 도메인의 findManagers 기본 필터와 동일한 기준).
 		String sql = """
 				SELECT u.org_id, COUNT(*) AS cnt
 				FROM app_user u
 				JOIN "role" r ON r.role_id = u.role_id
 				WHERE u.deleted_at IS NULL
 					AND u.status = 'ACTIVE'
-					AND r.code IN ('LEAD_MANAGER', 'MANAGER')
+					AND r.code IN ('OPERATOR', 'MANAGER')
 					AND u.org_id IN (%s)
 				GROUP BY u.org_id
 				""".formatted(placeholders(organizationIds));
