@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.member.presentation;
 
+import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
 import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.application.MemberQueryService;
 import com.bigproject.backend.domain.member.application.TraineeCsvParser;
@@ -60,6 +61,9 @@ class MemberQueryControllerTest {
 
 	@MockitoBean
 	private JwtProvider jwtProvider;
+
+	@MockitoBean
+	private AuthUserRepository authUserRepository;
 
 	@Test
 	void requiresAuthenticationForManagerDirectory() throws Exception {

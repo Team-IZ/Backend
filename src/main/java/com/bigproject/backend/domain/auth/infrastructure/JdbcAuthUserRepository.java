@@ -25,6 +25,7 @@ public class JdbcAuthUserRepository implements AuthUserRepository {
 				u.status,
 				u.is_email_verified,
 				u.login_blocked_until,
+				u.password_changed_at,
 				r.code AS role_code,
 				o.status AS organization_status
 			FROM app_user u
@@ -51,6 +52,7 @@ public class JdbcAuthUserRepository implements AuthUserRepository {
 							rs.getString("status"),
 							rs.getBoolean("is_email_verified"),
 							lockedUntil == null ? null : lockedUntil.toInstant(),
+							instant(rs.getTimestamp("password_changed_at")),
 							Role.valueOf(rs.getString("role_code")),
 							rs.getString("organization_status")
 					);
@@ -74,5 +76,9 @@ public class JdbcAuthUserRepository implements AuthUserRepository {
 		if (updatedRows != 1) {
 			throw new IllegalStateException("로그인 사용자의 최근 로그인 시각을 갱신할 수 없습니다.");
 		}
+	}
+
+	private Instant instant(Timestamp timestamp) {
+		return timestamp == null ? null : timestamp.toInstant();
 	}
 }

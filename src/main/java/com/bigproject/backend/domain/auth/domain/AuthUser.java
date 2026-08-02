@@ -14,7 +14,34 @@ public record AuthUser(
 		String status,
 		boolean emailVerified,
 		Instant lockedUntil,
+		Instant passwordChangedAt,
 		Role role,
 		String organizationStatus
 ) {
+	public AuthUser(
+			UUID userId,
+			UUID organizationId,
+			String email,
+			String name,
+			String passwordHash,
+			String status,
+			boolean emailVerified,
+			Instant lockedUntil,
+			Role role,
+			String organizationStatus
+	) {
+		this(
+				userId,
+				organizationId,
+				email,
+				name,
+				passwordHash,
+				status,
+				emailVerified,
+				lockedUntil,
+				null,
+				role,
+				organizationStatus
+		);
+	}
 }
