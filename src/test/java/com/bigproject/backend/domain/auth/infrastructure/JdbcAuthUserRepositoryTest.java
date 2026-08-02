@@ -32,6 +32,7 @@ class JdbcAuthUserRepositoryTest {
 					status VARCHAR(30) NOT NULL,
 					is_email_verified BOOLEAN NOT NULL,
 					login_blocked_until TIMESTAMP WITH TIME ZONE,
+					password_changed_at TIMESTAMP WITH TIME ZONE,
 					last_login_at TIMESTAMP WITH TIME ZONE,
 					deleted_at TIMESTAMP WITH TIME ZONE
 				)
@@ -43,7 +44,7 @@ class JdbcAuthUserRepositoryTest {
 		jdbcTemplate.update("INSERT INTO organization VALUES (?, 'ACTIVE')", organizationId);
 		jdbcTemplate.update("INSERT INTO \"role\" VALUES (?, 'OPERATOR')", roleId);
 		jdbcTemplate.update(
-				"INSERT INTO app_user VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', TRUE, NULL, NULL, NULL)",
+				"INSERT INTO app_user VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', TRUE, NULL, CURRENT_TIMESTAMP, NULL, NULL)",
 				userId,
 				organizationId,
 				roleId,

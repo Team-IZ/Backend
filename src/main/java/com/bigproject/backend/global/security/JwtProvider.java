@@ -18,6 +18,7 @@ public class JwtProvider {
 	private static final String TOKEN_TYPE_CLAIM = "tokenType";
 	private static final String ROLE_CLAIM = "role";
 	private static final String ORGANIZATION_ID_CLAIM = "organizationId";
+	private static final String PASSWORD_CHANGED_AT_CLAIM = "passwordChangedAt";
 	private static final String ACCESS_TOKEN_TYPE = "access";
 	private static final String REFRESH_TOKEN_TYPE = "refresh";
 
@@ -36,11 +37,19 @@ public class JwtProvider {
 	}
 
 	public String createAccessToken(String email, String role, UUID organizationId) {
-		return createToken(email, role, organizationId, ACCESS_TOKEN_TYPE, accessTokenExpiration);
+		return createAccessToken(email, role, organizationId, null);
+	}
+
+	public String createAccessToken(String email, String role, UUID organizationId, Instant passwordChangedAt) {
+		return createToken(email, role, organizationId, passwordChangedAt, ACCESS_TOKEN_TYPE, accessTokenExpiration);
 	}
 
 	public String createRefreshToken(String email, String role, UUID organizationId) {
-		return createToken(email, role, organizationId, REFRESH_TOKEN_TYPE, refreshTokenExpiration);
+		return createRefreshToken(email, role, organizationId, null);
+	}
+
+	public String createRefreshToken(String email, String role, UUID organizationId, Instant passwordChangedAt) {
+		return createToken(email, role, organizationId, passwordChangedAt, REFRESH_TOKEN_TYPE, refreshTokenExpiration);
 	}
 
 	public long getAccessTokenExpiration() {
@@ -76,6 +85,15 @@ public class JwtProvider {
 		return parseClaims(token).getExpiration().toInstant();
 	}
 
+	public Instant getIssuedAt(String token) {
+		return parseClaims(token).getIssuedAt().toInstant();
+	}
+
+	public Instant getPasswordChangedAt(String token) {
+		Object value = parseClaims(token).get(PASSWORD_CHANGED_AT_CLAIM);
+		return value instanceof Number number ? Instant.ofEpochMilli(number.longValue()) : null;
+	}
+
 	public boolean validateToken(String token) {
 		try {
 			parseClaims(token);
@@ -85,7 +103,14 @@ public class JwtProvider {
 		}
 	}
 
-	private String createToken(String email, String role, UUID organizationId, String tokenType, long expiration) {
+	private String createToken(
+			String email,
+			String role,
+			UUID organizationId,
+			Instant passwordChangedAt,
+			String tokenType,
+			long expiration
+	) {
 		Instant now = Instant.now();
 		return Jwts.builder()
 				.id(UUID.randomUUID().toString())
@@ -93,6 +118,7 @@ public class JwtProvider {
 				.claim(TOKEN_TYPE_CLAIM, tokenType)
 				.claim(ROLE_CLAIM, role)
 				.claim(ORGANIZATION_ID_CLAIM, organizationId == null ? null : organizationId.toString())
+				.claim(PASSWORD_CHANGED_AT_CLAIM, passwordChangedAt == null ? null : passwordChangedAt.toEpochMilli())
 				.issuedAt(Date.from(now))
 				.expiration(Date.from(now.plusMillis(expiration)))
 				.signWith(secretKey())
