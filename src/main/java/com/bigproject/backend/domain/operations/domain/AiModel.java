@@ -124,6 +124,52 @@ public class AiModel {
 		return perMillionTokens(outputUnitPrice);
 	}
 
+	/** 100만 토큰당 캐시 입력 단가. 미설정이면 null. */
+	public BigDecimal cachedInputPricePerMillionTokens() {
+		return perMillionTokens(cachedInputUnitPrice);
+	}
+
+	/**
+	 * 현재 단가를 갈아끼운다(SA-03 단가 수정).
+	 *
+	 * <p>입력·출력 단가가 모두 {@code null}이면 <b>단가 미설정</b>으로 되돌리고 통화·적용시각도 비운다 —
+	 * 0으로 남겨 두면 "무료"로 오해되고, 사용량 집계가 비용을 0으로 더해 청구액이 실제보다 작아 보인다.
+	 *
+	 * <p>단가 이력은 이 테이블에 쌓지 않는다. 호출 시점 단가는 {@code ai_usage}가 복사해 보관하므로
+	 * 과거 청구 근거는 그쪽에 남는다.
+	 */
+	public void applyPricing(
+			BigDecimal inputUnitPrice,
+			BigDecimal outputUnitPrice,
+			BigDecimal cachedInputUnitPrice,
+			int priceUnitTokenCount,
+			UUID updatedBy
+	) {
+		this.inputUnitPrice = inputUnitPrice;
+		this.outputUnitPrice = outputUnitPrice;
+		this.cachedInputUnitPrice = cachedInputUnitPrice;
+
+		if (inputUnitPrice == null && outputUnitPrice == null) {
+			this.currencyCode = null;
+			this.priceUnitTokenCount = null;
+			this.priceEffectiveFrom = null;
+			this.priceUpdatedBy = updatedBy;
+			this.priceUpdatedAt = null;
+			return;
+		}
+
+		// DB CHECK: 단가가 설정되면 통화는 USD여야 하고 적용시각·수정시각이 필수다.
+		this.currencyCode = PLATFORM_CURRENCY_CODE;
+		this.priceUnitTokenCount = priceUnitTokenCount;
+		Instant now = Instant.now();
+		this.priceEffectiveFrom = now;
+		this.priceUpdatedBy = updatedBy;
+		this.priceUpdatedAt = now;
+	}
+
+	/** 단가 통화. DB CHECK(currency_code IS NULL OR currency_code = 'USD')와 같은 값. */
+	public static final String PLATFORM_CURRENCY_CODE = "USD";
+
 	private BigDecimal perMillionTokens(BigDecimal unitPrice) {
 		if (unitPrice == null) {
 			return null;

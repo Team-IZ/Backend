@@ -51,7 +51,29 @@ public enum OrganizationErrorCode {
 
 	// ── SA-02 사용량 ──
 	/** case 6 · 집계를 못 읽었을 때. 0으로 그리면 청구액이 실제보다 작아 보인다. */
-	USAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "사용량을 불러오지 못했습니다.");
+	USAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "사용량을 불러오지 못했습니다."),
+
+	// ── SA-03 플랫폼 설정 ──
+	/** 채점 모델 정책이 아직 없다. 플랫폼 초기 설정이 끝나지 않은 상태다. */
+	GRADING_POLICY_NOT_FOUND(HttpStatus.CONFLICT, "활성 채점 모델 정책이 없습니다."),
+	/** 존재하지 않거나 비활성(INACTIVE) 모델을 정책·티어에 지정하려 한 경우. */
+	AI_MODEL_NOT_AVAILABLE(HttpStatus.BAD_REQUEST, "사용할 수 없는 AI 모델입니다."),
+	/** 이미 사용 중인 캘리브레이션 버전 코드. version_code는 전체 UNIQUE다. */
+	CALIBRATION_VERSION_CODE_TAKEN(HttpStatus.CONFLICT, "이미 사용 중인 캘리브레이션 버전 코드입니다."),
+	/**
+	 * 재캘리브레이션이 이미 진행 중이다. 겹쳐 실행하면 어느 버전이 결과 비교 기준인지 알 수 없어진다 —
+	 * 진행 중 버전이 끝나거나 실패로 정리된 뒤에 다시 시도해야 한다.
+	 */
+	CALIBRATION_IN_PROGRESS(HttpStatus.CONFLICT, "재캘리브레이션이 이미 진행 중입니다."),
+	CALIBRATION_VERSION_NOT_FOUND(HttpStatus.NOT_FOUND, "캘리브레이션 버전을 찾을 수 없습니다."),
+	/** 티어 매핑을 찾을 수 없다(기능·티어 조합이 아직 설정되지 않음). */
+	TIER_POLICY_NOT_FOUND(HttpStatus.NOT_FOUND, "티어 모델 매핑을 찾을 수 없습니다."),
+	SUPER_ADMIN_NOT_FOUND(HttpStatus.NOT_FOUND, "슈퍼어드민 계정을 찾을 수 없습니다."),
+	/**
+	 * 마지막 활성 슈퍼어드민은 정지할 수 없다. SA-02의 {@link #LAST_OPERATOR}와 같은 이유이며,
+	 * 이쪽은 풀어 줄 상위 권한이 아예 없어서 더 치명적이다.
+	 */
+	LAST_SUPER_ADMIN(HttpStatus.CONFLICT, "이 플랫폼의 마지막 슈퍼어드민입니다.");
 
 	private final HttpStatus status;
 	private final String defaultMessage;
