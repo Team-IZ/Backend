@@ -71,8 +71,6 @@ auth:
 
 invitation:
   base-url: ${INVITATION_BASE_URL}
-  manager-path: ${MANAGER_INVITATION_PATH}
-  trainee-path: ${TRAINEE_INVITATION_PATH}
   expiration: ${INVITATION_EXPIRATION}
   mail:
     host: ${INVITATION_MAIL_HOST:}
