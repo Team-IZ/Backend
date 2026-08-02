@@ -52,10 +52,10 @@ public class TraineeController {
 
 	@Operation(
 			summary = "기수 교육생 명단 조회",
-			description = "총괄·일반 매니저가 자기 기관의 선택 기수 전체 명단을 조회합니다. "
+			description = "오퍼레이터·일반 매니저가 자기 기관의 선택 기수 전체 명단을 조회합니다. "
 					+ "담당 반에 따른 세부 열람 제한은 적용하지 않으며, DB의 PENDING 상태는 INVITED로 노출합니다."
 	)
-	@PreAuthorize("hasAnyRole('LEAD_MANAGER', 'MANAGER')")
+	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "기수 교육생 명단 조회 성공"),
 			@ApiResponse(responseCode = "400", description = "반·상태·검색 또는 페이지 값이 올바르지 않음"),

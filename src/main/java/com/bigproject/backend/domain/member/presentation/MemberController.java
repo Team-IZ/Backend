@@ -54,10 +54,10 @@ public class MemberController {
 
 	@Operation(
 			summary = "기관 매니저 목록 조회",
-			description = "슈퍼어드민은 organizationId가 필수이며, 총괄 매니저는 자기 기관만 조회합니다. "
-					+ "role을 생략하면 총괄·담당 매니저를 모두 반환하며 권한·상태는 한글 표시명, 최근 로그인은 날짜로 제공합니다."
+			description = "슈퍼어드민은 organizationId가 필수이며, 오퍼레이터는 자기 기관만 조회합니다. "
+					+ "role을 생략하면 오퍼레이터·담당 매니저를 모두 반환하며 권한·상태는 한글 표시명, 최근 로그인은 날짜로 제공합니다."
 	)
-	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'LEAD_MANAGER')")
+	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'OPERATOR')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "기관 범위 매니저 목록 조회 성공"),
 			@ApiResponse(responseCode = "400", description = "필터·정렬·페이지 값 또는 슈퍼어드민 기관 ID가 올바르지 않음"),
@@ -143,7 +143,7 @@ public class MemberController {
 	}
 
 	@Operation(summary = "회원 계정 상태 변경", description = "회원 계정 상태와 변경 사유를 기록하는 미구현 API입니다.")
-	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'LEAD_MANAGER')")
+	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'OPERATOR')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "계정 상태 변경 권한이 없음"),

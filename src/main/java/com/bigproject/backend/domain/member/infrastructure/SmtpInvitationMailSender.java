@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.member.infrastructure;
 import com.bigproject.backend.domain.member.application.InvitationLinkFactory;
 import com.bigproject.backend.domain.member.application.InvitationMailSender;
 import com.bigproject.backend.domain.member.domain.PendingInvitation;
+import com.bigproject.backend.domain.member.domain.Role;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import jakarta.mail.MessagingException;
@@ -49,7 +50,7 @@ public class SmtpInvitationMailSender implements InvitationMailSender {
 
 	@Override
 	public void sendManagerInvitation(PendingInvitation invitation) {
-		String roleName = invitation.role().name().equals("LEAD_MANAGER") ? "총괄 매니저" : "일반 매니저";
+		String roleName = invitation.role() == Role.OPERATOR ? "오퍼레이터" : "일반 매니저";
 		String invitationLink = linkFactory.managerLink(invitation);
 		send(
 				invitation.email(),
