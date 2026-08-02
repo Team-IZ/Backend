@@ -54,10 +54,10 @@ public class MemberController {
 
 	@Operation(
 			summary = "기관 매니저 목록 조회",
-			description = "슈퍼어드민은 organizationId가 필수이며, 총괄 매니저는 자기 기관만 조회합니다. "
-					+ "role을 생략하면 총괄·담당 매니저를 모두 반환하며 권한·상태는 한글 표시명, 최근 로그인은 날짜로 제공합니다."
+			description = "슈퍼어드민은 organizationId가 필수이며, 오퍼레이터는 자기 기관만 조회합니다. "
+					+ "role을 생략하면 오퍼레이터·담당 매니저를 모두 반환하며 권한·상태는 한글 표시명, 최근 로그인은 날짜로 제공합니다."
 	)
-	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'LEAD_MANAGER')")
+	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'OPERATOR')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "기관 범위 매니저 목록 조회 성공"),
 			@ApiResponse(responseCode = "400", description = "필터·정렬·페이지 값 또는 슈퍼어드민 기관 ID가 올바르지 않음"),
@@ -69,7 +69,7 @@ public class MemberController {
 	public ResponseEntity<MemberListResponse> findMembers(
 			@Parameter(description = "조회할 기관 ID이며 슈퍼어드민은 필수입니다.", example = "123e4567-e89b-12d3-a456-426614174000")
 			@RequestParam(required = false) UUID organizationId,
-			@Parameter(description = "조회할 매니저 역할이며 생략 시 총괄·일반 매니저를 모두 조회합니다.", example = "MANAGER")
+			@Parameter(description = "조회할 매니저 역할이며 생략 시 오퍼레이터·일반 매니저를 모두 조회합니다.", example = "MANAGER")
 			@RequestParam(required = false) Role role,
 			@Parameter(description = "조회할 계정 상태이며 생략 시 모든 상태를 조회합니다.", example = "ACTIVE")
 			@RequestParam(required = false) AccountStatus status,
@@ -112,23 +112,30 @@ public class MemberController {
 		return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
 	}
 
-	@Operation(summary = "기관 매니저 초대", description = "권한에 따라 기관의 총괄 또는 일반 매니저를 생성하고 초대 메일을 발송합니다.")
-	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'LEAD_MANAGER')")
+	@Operation(
+			summary = "기관 운영자 초대",
+			description = "슈퍼어드민은 지정 기관의 오퍼레이터만, 오퍼레이터는 자기 기관의 매니저만 초대합니다. "
+					+ "요청에는 역할을 받지 않고 서버가 호출자 역할로 대상 역할을 결정합니다. "
+					+ "오퍼레이터 초대는 email만 사용하며 cohortId와 targetClassId를 허용하지 않습니다. "
+					+ "매니저 초대는 cohortId가 필수이고 targetClassId는 선택이며, 생략하면 가입 후 미배정 상태가 됩니다."
+	)
+	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'OPERATOR')")
 	@ApiResponses({
-			@ApiResponse(responseCode = "201", description = "매니저 계정 생성 및 초대 발송 성공"),
-			@ApiResponse(responseCode = "400", description = "이메일·역할 또는 기수·반 배정 조건이 올바르지 않음"),
+			@ApiResponse(responseCode = "201", description = "초대 원장·현재 토큰 생성 및 메일 발송 성공; 계정 활성화 완료를 의미하지 않음"),
+			@ApiResponse(responseCode = "400", description = "이메일 형식 또는 호출자 역할에 따른 기수·반 입력 조건이 올바르지 않음"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "403", description = "초대 역할·기관 범위 또는 계정 상태가 허용되지 않음"),
+			@ApiResponse(responseCode = "403", description = "호출자가 SUPER_ADMIN·OPERATOR가 아니거나 오퍼레이터가 다른 기관을 지정함"),
 			@ApiResponse(responseCode = "404", description = "초대 대상 기관을 찾을 수 없음"),
-			@ApiResponse(responseCode = "409", description = "이미 등록되었거나 초대된 이메일임"),
-			@ApiResponse(responseCode = "502", description = "초대 메일 발송에 실패함")
+			@ApiResponse(responseCode = "409", description = "이미 등록된 계정 또는 동일 대상의 미완료 초대가 존재함"),
+			@ApiResponse(responseCode = "500", description = "이메일 중복이 아닌 DB 제약 위반 등으로 초대 정보를 저장하지 못함"),
+			@ApiResponse(responseCode = "502", description = "초대 메일 발송 실패로 초대 트랜잭션을 완료하지 못함")
 	})
 	@PostMapping("/organizations/{organizationId}/manager-invitations")
 	public ResponseEntity<InviteManagerResponse> inviteManager(
-			@Parameter(description = "매니저를 초대할 기관 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@Parameter(description = "초대 대상 기관 ID. SUPER_ADMIN은 지정 기관, OPERATOR는 자기 소속 기관만 허용됩니다.", example = "123e4567-e89b-12d3-a456-426614174000")
 			@PathVariable UUID organizationId,
 			@Valid @RequestBody InviteManagerRequest request,
-			@Parameter(description = "초대 요청 추적용 식별자이며 생략 시 서버가 생성합니다.", example = "invite-request-001")
+			@Parameter(description = "초대 생성·토큰 발급 추적용 요청 ID이며 생략 시 서버가 생성합니다.", example = "invite-request-001")
 			@RequestHeader(value = REQUEST_ID_HEADER, required = false) String requestId,
 			@Parameter(hidden = true)
 			Authentication authentication
@@ -143,7 +150,7 @@ public class MemberController {
 	}
 
 	@Operation(summary = "회원 계정 상태 변경", description = "회원 계정 상태와 변경 사유를 기록하는 미구현 API입니다.")
-	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'LEAD_MANAGER')")
+	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'OPERATOR')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "계정 상태 변경 권한이 없음"),
@@ -159,10 +166,10 @@ public class MemberController {
 	}
 
 	@Operation(summary = "담당 매니저의 기수·반 배정 변경", description = "일반 매니저의 담당 기수·반과 변경 사유를 기록하는 미구현 API입니다.")
-	@PreAuthorize("hasRole('LEAD_MANAGER')")
+	@PreAuthorize("hasRole('OPERATOR')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "403", description = "총괄 매니저 권한이 없음"),
+			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한이 없음"),
 			@ApiResponse(responseCode = "501", description = "매니저 배정 변경 기능이 아직 구현되지 않음")
 	})
 	@PatchMapping("/{memberId}/manager-assignments")

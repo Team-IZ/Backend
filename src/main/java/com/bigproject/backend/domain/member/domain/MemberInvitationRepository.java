@@ -14,6 +14,8 @@ public interface MemberInvitationRepository {
 
 	boolean existsUserByNormalizedEmail(String normalizedEmail);
 
+	boolean existsIncompleteInvitationByNormalizedEmail(String normalizedEmail);
+
 	boolean existsOrganizationTraineeByNormalizedEmail(UUID organizationId, String normalizedEmail);
 
 	void validateManagerAssignments(UUID organizationId, List<ManagerAssignmentRequest> assignments);
@@ -22,7 +24,20 @@ public interface MemberInvitationRepository {
 
 	UUID createPendingUser(UUID organizationId, String email, String normalizedEmail, String name, Role role, String passwordHash, Instant now);
 
+	UUID createInvitation(
+			UUID organizationId,
+			String email,
+			String normalizedEmail,
+			Role targetRole,
+			UUID targetCohortId,
+			UUID targetClassId,
+			UUID invitedBy,
+			Instant invitedAt
+	);
+
 	void saveToken(InvitationToken token);
+
+	void markInvitationSent(UUID invitationId, UUID tokenId, Instant sentAt);
 
 	void invalidatePreviousTokens(InvitationToken replacement, Instant invalidatedAt);
 

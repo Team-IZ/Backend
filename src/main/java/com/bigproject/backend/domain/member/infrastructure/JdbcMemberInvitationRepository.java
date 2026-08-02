@@ -46,6 +46,14 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				WHERE normalized_email = ?
 			)
 			""";
+	private static final String EXISTS_INCOMPLETE_INVITATION = """
+			SELECT EXISTS (
+				SELECT 1
+				FROM user_invitation
+				WHERE target_email_normalized = ?
+					AND status IN ('PENDING', 'SENT', 'DELIVERY_FAILED', 'EXPIRED')
+			)
+			""";
 	private static final String EXISTS_ORGANIZATION_TRAINEE = """
 			SELECT EXISTS (
 				SELECT 1
@@ -63,19 +71,39 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 			INSERT INTO app_user (
 				user_id, org_id, role_id, email, normalized_email, name, password_hash,
 				status, is_email_verified, failed_login_count, password_changed_at,
-				commit_email_status, created_at, updated_at, row_version
+				created_at, updated_at, row_version
 			) VALUES (
 				?, ?, (SELECT role_id FROM "role" WHERE code = ?), ?, ?, ?, ?,
-				'PENDING', FALSE, 0, ?, 'UNVERIFIED', ?, ?, 0
+				'PENDING', FALSE, 0, ?, ?, ?, 0
 			)
 			""";
 	private static final String INSERT_TOKEN = """
 			INSERT INTO one_time_token (
-				token_id, org_id, user_id, target_email, target_email_normalized,
+				token_id, org_id, user_id, invitation_id, target_email, target_email_normalized,
 				purpose, token_hash, payload, issued_at, expires_at, used_at,
 				invalidated_at, invalidated_reason, replaced_by_token_id,
 				issued_by, issued_request_id, used_request_id, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, NULL, NULL, NULL, NULL, ?, ?, NULL, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, NULL, NULL, NULL, NULL, ?, ?, NULL, ?)
+			""";
+	private static final String INSERT_INVITATION = """
+			INSERT INTO user_invitation (
+				invitation_id, org_id, target_email, target_email_normalized,
+				target_role_code, target_cohort_id, target_class_id, status,
+				invited_by, invited_at, resend_count, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?)
+			""";
+	private static final String MARK_INVITATION_SENT = """
+			UPDATE user_invitation
+			SET status = 'SENT',
+				current_token_id = ?,
+				sent_at = ?,
+				failure_stage = NULL,
+				failure_code = NULL,
+				failure_reason = NULL,
+				failed_at = NULL,
+				updated_at = ?
+			WHERE invitation_id = ?
+				AND status = 'PENDING'
 			""";
 	private static final String INVALIDATE_PREVIOUS_TOKENS = """
 			UPDATE one_time_token
@@ -142,6 +170,15 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 	}
 
 	@Override
+	public boolean existsIncompleteInvitationByNormalizedEmail(String normalizedEmail) {
+		return Boolean.TRUE.equals(jdbcTemplate.queryForObject(
+				EXISTS_INCOMPLETE_INVITATION,
+				Boolean.class,
+				normalizedEmail
+		));
+	}
+
+	@Override
 	public boolean existsOrganizationTraineeByNormalizedEmail(UUID organizationId, String normalizedEmail) {
 		return Boolean.TRUE.equals(jdbcTemplate.queryForObject(
 				EXISTS_ORGANIZATION_TRAINEE,
@@ -154,10 +191,6 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 	@Override
 	public void validateManagerAssignments(UUID organizationId, List<ManagerAssignmentRequest> assignments) {
 		for (ManagerAssignmentRequest assignment : assignments) {
-			if (assignment.classroomIds().isEmpty()) {
-				throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-						"테이블 정의서 v06에서는 매니저 배정에 반 ID가 필요합니다.");
-			}
 			Integer cohortCount = jdbcTemplate.queryForObject(
 					"SELECT COUNT(*) FROM cohort WHERE cohort_id = ? AND org_id = ? AND deleted_at IS NULL",
 					Integer.class,
@@ -220,12 +253,46 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 	}
 
 	@Override
+	public UUID createInvitation(
+			UUID organizationId,
+			String email,
+			String normalizedEmail,
+			Role targetRole,
+			UUID targetCohortId,
+			UUID targetClassId,
+			UUID invitedBy,
+			Instant invitedAt
+	) {
+		UUID invitationId = UUID.randomUUID();
+		Timestamp timestamp = Timestamp.from(invitedAt);
+		int inserted = jdbcTemplate.update(
+				INSERT_INVITATION,
+				invitationId,
+				organizationId,
+				email,
+				normalizedEmail,
+				targetRole.name(),
+				targetCohortId,
+				targetClassId,
+				invitedBy,
+				timestamp,
+				timestamp,
+				timestamp
+		);
+		if (inserted != 1) {
+			throw new IllegalStateException("초대 원장을 생성할 수 없습니다.");
+		}
+		return invitationId;
+	}
+
+	@Override
 	public void saveToken(InvitationToken token) {
 		jdbcTemplate.update(
 				INSERT_TOKEN,
 				token.tokenId(),
 				token.organizationId(),
 				token.userId(),
+				token.invitationId(),
 				token.targetEmail(),
 				token.normalizedTargetEmail(),
 				token.purpose().name(),
@@ -237,6 +304,21 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				token.issuedRequestId(),
 				Timestamp.from(token.issuedAt())
 		);
+	}
+
+	@Override
+	public void markInvitationSent(UUID invitationId, UUID tokenId, Instant sentAt) {
+		Timestamp timestamp = Timestamp.from(sentAt);
+		int updated = jdbcTemplate.update(
+				MARK_INVITATION_SENT,
+				tokenId,
+				timestamp,
+				timestamp,
+				invitationId
+		);
+		if (updated != 1) {
+			throw new IllegalStateException("초대 발송 상태를 저장할 수 없습니다.");
+		}
 	}
 
 	@Override

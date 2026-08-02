@@ -13,9 +13,9 @@ public record ManagerSummaryResponse(
 		String name,
 		@Schema(description = "매니저 이메일", example = "manager@example.com")
 		String email,
-		@Schema(description = "매니저 권한 표시명", allowableValues = {"총괄", "담당"}, example = "담당")
+		@Schema(description = "매니저 권한 표시명", allowableValues = {"오퍼레이터", "담당"}, example = "담당")
 		String role,
-		@Schema(description = "담당 기수명 목록이며 총괄 매니저는 기관 전체를 반환합니다.", example = "[\"7기\", \"8기\"]")
+		@Schema(description = "담당 기수명 목록이며 오퍼레이터는 기관 전체를 반환합니다.", example = "[\"7기\", \"8기\"]")
 		List<String> cohortNames,
 		@Schema(description = "계정 상태 표시명", allowableValues = {"활성화", "초대됨", "비활성화"}, example = "활성화")
 		String status,

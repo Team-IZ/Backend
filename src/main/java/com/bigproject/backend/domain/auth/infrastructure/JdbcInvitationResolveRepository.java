@@ -17,10 +17,13 @@ public class JdbcInvitationResolveRepository implements InvitationResolveReposit
 	private static final String FIND_RESOLVABLE_INVITATION = """
 			SELECT u.user_id, u.email
 			FROM one_time_token ott
+			JOIN user_invitation ui ON ui.invitation_id = ott.invitation_id
 			JOIN app_user u ON u.user_id = ott.user_id
 			JOIN organization o ON o.org_id = ott.org_id
 			WHERE ott.token_hash = ?
-				AND ott.purpose IN ('INVITE_MANAGER', 'INVITE_TRAINEE')
+				AND ott.purpose IN ('INVITE_OPERATOR_MANAGER', 'INVITE_TRAINEE')
+				AND ui.current_token_id = ott.token_id
+				AND ui.status = 'SENT'
 				AND ott.used_at IS NULL
 				AND ott.invalidated_at IS NULL
 				AND ott.expires_at > ?

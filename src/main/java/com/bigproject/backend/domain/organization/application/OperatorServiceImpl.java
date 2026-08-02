@@ -4,7 +4,6 @@ import com.bigproject.backend.domain.member.application.InvitationConflictExcept
 import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerResponse;
-import com.bigproject.backend.domain.member.presentation.dto.ManagerInvitationRole;
 import com.bigproject.backend.domain.organization.domain.OperatorAccountStatus;
 import com.bigproject.backend.domain.organization.domain.Organization;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
@@ -60,18 +59,21 @@ public class OperatorServiceImpl implements OperatorService {
 
 		assertEmailDomainAllowed(organizationId, request.email());
 
-		// 목업 모달에는 이메일 입력 하나뿐이다. 역할은 오퍼레이터로 고정하고 기수·반은 비워서 넘긴다
-		// (member 도메인이 "총괄 매니저는 기관 전체를 담당하므로 기수·반을 배정하지 않는다"를 검증한다).
+		/*
+		 * 목업 모달에는 이메일 입력 하나뿐이다.
+		 *
+		 * v06 이후 member 도메인이 대상 역할을 <b>호출자 역할로 서버가 결정</b>하도록 바뀌었다 —
+		 * 슈퍼어드민이 호출하면 OPERATOR, 오퍼레이터가 호출하면 MANAGER다. 이 API는 슈퍼어드민 전용
+		 * (컨트롤러 @PreAuthorize)이라 역할을 따로 넘기지 않아도 오퍼레이터 초대가 된다.
+		 * 목업 SA-02: "슈퍼어드민은 첫 오퍼레이터 하나만 넣는다(부트스트랩)".
+		 *
+		 * 기수·반은 오퍼레이터가 기관 전체를 담당하므로 반드시 비워서 보낸다(member 도메인이 검증한다).
+		 */
 		InviteManagerResponse invited;
 		try {
 			invited = memberInvitationService.inviteManager(
 					organizationId,
-					new InviteManagerRequest(
-							request.email(),
-							ManagerInvitationRole.LEAD_MANAGER,
-							null,
-							List.of()
-					),
+					new InviteManagerRequest(request.email(), null, null),
 					actorEmail,
 					requestId
 			);
