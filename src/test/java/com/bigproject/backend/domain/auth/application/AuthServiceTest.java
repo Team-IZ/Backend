@@ -51,7 +51,7 @@ class AuthServiceTest {
 	@Test
 	void issuesRoleBearingAccessTokenAndSeparateRefreshToken() {
 		UUID organizationId = UUID.randomUUID();
-		AuthUser user = activeUser(Role.LEAD_MANAGER, organizationId);
+		AuthUser user = activeUser(Role.OPERATOR, organizationId);
 		AuthUserRepository repository = repositoryReturning(user);
 		AuthService service = serviceWith(repository);
 		Instant beforeLogin = Instant.now();
@@ -63,9 +63,9 @@ class AuthServiceTest {
 				REQUEST_METADATA
 		);
 
-		assertThat(result.response().role()).isEqualTo(Role.LEAD_MANAGER);
+		assertThat(result.response().role()).isEqualTo(Role.OPERATOR);
 		assertThat(result.response().organizationId()).isEqualTo(organizationId);
-		assertThat(jwtProvider.getRole(result.response().accessToken())).isEqualTo("LEAD_MANAGER");
+		assertThat(jwtProvider.getRole(result.response().accessToken())).isEqualTo("OPERATOR");
 		assertThat(jwtProvider.getOrganizationId(result.response().accessToken())).isEqualTo(organizationId);
 		assertThat(jwtProvider.isRefreshToken(result.refreshToken())).isTrue();
 
@@ -218,9 +218,9 @@ class AuthServiceTest {
 	@Test
 	void revokesPreviousTokenBeforeSavingReplacementWithParentLineage() {
 		UUID organizationId = UUID.randomUUID();
-		AuthUser user = activeUser(Role.LEAD_MANAGER, organizationId);
+		AuthUser user = activeUser(Role.OPERATOR, organizationId);
 		UUID previousTokenId = UUID.randomUUID();
-		String tokenFamilyId = UUID.randomUUID().toString();
+		UUID tokenFamilyId = UUID.randomUUID();
 		when(refreshTokenRepository.revokeForReplacement(eq(user.userId()), eq(organizationId), any()))
 				.thenReturn(Optional.of(new RefreshTokenLineage(previousTokenId, tokenFamilyId)));
 		AuthService service = serviceReturning(user);

@@ -7,7 +7,6 @@ import com.bigproject.backend.domain.classroom.presentation.dto.ClassroomListRes
 import com.bigproject.backend.domain.classroom.presentation.dto.ClassroomResponse;
 import com.bigproject.backend.domain.classroom.presentation.dto.CreateClassroomRequest;
 import com.bigproject.backend.domain.classroom.presentation.dto.UpdateClassroomManagersRequest;
-import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,6 +21,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -29,12 +29,12 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.UUID;
 
-// organizationId: JwtFilter가 authentication.setDetails(...)로 담아준 값을 꺼낸다.
-//
-// actorUserId: 이전에는 X-Actor-User-Id 헤더로 받았으나 CurrentUserResolver로 교체했다.
-//   헤더 방식은 클라이언트가 임의의 UUID를 보낼 수 있어서, class.created_by / class_membership.assigned_by
-//   같은 감사 필드를 남의 이름으로 위조할 수 있었다. 감사 필드는 절대 요청에서 받지 않는다.
-//   CurrentUserResolver는 organization·operations 도메인이 이미 쓰고 있는 공용 컴포넌트다.
+// TODO: auth 도메인(PR #9, #11, #13) 병합 확인 결과 반영.
+// - organizationId: auth 도메인 병합 완료. JwtFilter가 authentication.setDetails(jwtProvider.getOrganizationId(token))로
+//   organizationId(UUID)를 details에 담아주는 것을 확인함. 현재 구현(extractOrganizationId)이 이 구조와 일치함.
+// - actorUserId(created_by): 토큰에 요청자 UUID가 담기지 않아 임시로 X-Actor-User-Id 헤더로 받고 있음.
+//   클라이언트가 임의의 UUID를 보낼 수 있는 구조이므로,
+//   인증 주체에서 요청자 UUID를 얻는 방법이 생기면 반드시 교체할 것.
 @Tag(name = "Classroom", description = "기수 반 편성과 교육생 배정 API")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
@@ -43,7 +43,6 @@ import java.util.UUID;
 public class ClassroomController {
 
 	private final ClassroomService classroomService;
-	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(summary = "기수 반 목록 조회")
 	@GetMapping
@@ -58,50 +57,47 @@ public class ClassroomController {
 		return ResponseEntity.ok(new ClassroomListResponse(classrooms));
 	}
 
-	// 반 생성 시 담당 매니저를 함께 저장한다.
-	// 이전에는 request.managerIds()를 서비스로 넘기지 않아, 반 추가 모달에서 담당 매니저를 골라도
-	// 에러 없이 조용히 버려졌다.
 	@Operation(summary = "반 생성")
-	@PreAuthorize("hasRole('LEAD_MANAGER')")
+	@PreAuthorize("hasRole('OPERATOR')")
 	@PostMapping
 	public ResponseEntity<ClassroomResponse> createClassroom(
 			@PathVariable UUID cohortId,
 			@Valid @RequestBody CreateClassroomRequest request,
-			Authentication authentication
+			Authentication authentication,
+			@RequestHeader("X-Actor-User-Id") UUID actorUserId
 	) {
 		UUID organizationId = extractOrganizationId(authentication);
-		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
 		ClassroomService.ClassroomView view = classroomService.createClassroom(
-				organizationId, cohortId, request.name(), request.managerIds(), actorUserId);
+				organizationId, cohortId, request.name(), request.capacity(), actorUserId);
 		return ResponseEntity.status(HttpStatus.CREATED).body(ClassroomResponse.from(view));
 	}
 
 	@Operation(summary = "반 담당 매니저 변경")
-	@PreAuthorize("hasRole('LEAD_MANAGER')")
+	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/{classroomId}/managers")
 	public ResponseEntity<ClassroomResponse> updateManagers(
 			@PathVariable UUID cohortId,
 			@PathVariable UUID classroomId,
 			@Valid @RequestBody UpdateClassroomManagersRequest request,
-			Authentication authentication
+			Authentication authentication,
+			@RequestHeader("X-Actor-User-Id") UUID actorUserId
 	) {
 		UUID organizationId = extractOrganizationId(authentication);
-		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
 		ClassroomService.ClassroomView view = classroomService.updateClassroomManagers(
 				cohortId, classroomId, organizationId, request.managerIds(), actorUserId);
 		return ResponseEntity.ok(ClassroomResponse.from(view));
 	}
 
 	@Operation(summary = "교육생 일괄 반 배정")
-	@PreAuthorize("hasRole('LEAD_MANAGER')")
+	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/trainee-assignments")
 	public ResponseEntity<AssignTraineesResponse> assignTrainees(
 			@PathVariable UUID cohortId,
 			@Valid @RequestBody AssignTraineesRequest request,
-			Authentication authentication
+			Authentication authentication,
+			@RequestHeader("X-Actor-User-Id") UUID actorUserId
 	) {
 		UUID organizationId = extractOrganizationId(authentication);
-		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
 		List<UUID> assignedTraineeIds = classroomService.assignTrainees(
 				cohortId, request.classroomId(), request.traineeIds(), organizationId, actorUserId);
 		return ResponseEntity.ok(new AssignTraineesResponse(request.classroomId(), assignedTraineeIds, assignedTraineeIds.size()));

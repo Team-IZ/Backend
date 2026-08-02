@@ -58,12 +58,14 @@ public class AuthService {
 		String accessToken = jwtProvider.createAccessToken(
 				user.email(),
 				user.role().name(),
-				user.organizationId()
+				user.organizationId(),
+				user.passwordChangedAt()
 		);
 		String refreshToken = jwtProvider.createRefreshToken(
 				user.email(),
 				user.role().name(),
-				user.organizationId()
+				user.organizationId(),
+				user.passwordChangedAt()
 		);
 		Instant loggedInAt = Instant.now();
 		Optional<RefreshTokenLineage> previousLineage = refreshTokenRepository.revokeForReplacement(
@@ -122,7 +124,8 @@ public class AuthService {
 		String accessToken = jwtProvider.createAccessToken(
 				user.email(),
 				user.role().name(),
-				user.organizationId()
+				user.organizationId(),
+				user.passwordChangedAt()
 		);
 		refreshTokenRepository.updateLastUsed(tokenSession.tokenId(), usedAt, requestMetadata);
 		return new RefreshTokenResponse(accessToken, jwtProvider.getAccessTokenExpiration());

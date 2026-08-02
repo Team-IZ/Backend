@@ -3,7 +3,6 @@ package com.bigproject.backend.domain.classroom.application;
 import com.bigproject.backend.domain.classroom.domain.ClassMembership;
 import com.bigproject.backend.domain.classroom.domain.Classroom;
 import com.bigproject.backend.domain.classroom.domain.ManagerAssignment;
-import com.bigproject.backend.domain.classroom.domain.RoleScope;
 import com.bigproject.backend.domain.classroom.infrastructure.ClassMembershipRepository;
 import com.bigproject.backend.domain.classroom.infrastructure.ClassroomRepository;
 import com.bigproject.backend.domain.classroom.infrastructure.ManagerAssignmentRepository;
@@ -29,9 +28,6 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class ClassroomService {
 
-    // 담당 매니저 배정의 업무 상태값. 코드 카탈로그가 도입되면 enum·코드 테이블 검증으로 옮긴다.
-    private static final String ASSIGNMENT_STATUS_ACTIVE = "ACTIVE";
-
     private final ClassroomRepository classroomRepository;
     private final CohortMemberRepository cohortMemberRepository;
     private final ClassMembershipRepository classMembershipRepository;
@@ -42,13 +38,9 @@ public class ClassroomService {
     public record ClassroomView(Classroom classroom, List<UUID> managerUserIds, long traineeCount) {
     }
 
-    // 반 생성 + 담당 매니저 배정을 한 트랜잭션으로 처리한다.
-    // 두 호출로 나누면 중간에 실패했을 때 "담당 없는 반"이 남고, 목록에 경고가 붙은 채로 방치된다.
     @Transactional
-    public ClassroomView createClassroom(UUID orgId, UUID cohortId, String name,
-                                         List<UUID> managerUserIds, UUID creatorUserId) {
+    public ClassroomView createClassroom(UUID orgId, UUID cohortId, String name, Integer capacity, UUID creatorUserId) {
         // 같은 기수 안에서 반 이름이 겹치면 안 되는데 DB에 제약이 없어서 여기서 확인
-        // (동시 요청 두 건은 이 검사를 통과할 수 있다. 부분 유니크 인덱스를 추가하면 DB가 막아준다.)
         if (classroomRepository.existsByCohortIdAndNameAndDeletedAtIsNull(cohortId, name)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 존재하는 반 이름입니다: " + name);
         }
@@ -57,21 +49,13 @@ public class ClassroomService {
                 .orgId(orgId)
                 .cohortId(cohortId)
                 .name(name)
+                .capacity(capacity)
                 .createdBy(creatorUserId)
                 .build();
+        classroomRepository.save(classroom);
 
-        // saveAndFlush로 class 행을 먼저 INSERT한다.
-        // manager_assignment.class_id는 class를 참조하는 FK인데, 두 엔티티를 UUID로만 연결해 둔 탓에
-        // Hibernate가 이 의존을 알지 못한다. application.yaml의 order_inserts=true가 INSERT 순서를
-        // 엔티티 종류별로 재배열하므로, 명시적으로 flush하지 않으면 FK 위반이 날 수 있다.
-        classroomRepository.saveAndFlush(classroom);
-
-        OffsetDateTime now = OffsetDateTime.now();
-        List<UUID> assignedManagerIds = replaceClassroomManagers(
-                cohortId, classroom.getClassId(), orgId, managerUserIds, creatorUserId, now);
-
-        // 방금 만든 반이라 교육생이 있을 수 없으므로 조회 없이 0으로 조립
-        return new ClassroomView(classroom, assignedManagerIds, 0);
+        // 방금 만든 반이라 담당 매니저·교육생이 있을 수 없으므로 조회 없이 바로 빈 값으로 조립
+        return new ClassroomView(classroom, List.of(), 0);
     }
 
     public Classroom findClassroom(UUID classId, UUID orgId) {
@@ -105,24 +89,19 @@ public class ClassroomService {
     // 교육생 일괄 반 배정: 기존 활성 배정은 해제하고, 대상 반으로 새 배정을 만듦
     @Transactional
     public List<UUID> assignTrainees(UUID cohortId, UUID classroomId, List<UUID> traineeUserIds, UUID orgId,
-                                     UUID actorUserId) {
+            UUID actorUserId) {
         Classroom classroom = findClassroom(classroomId, orgId);
         if (!classroom.getCohortId().equals(cohortId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "반을 찾을 수 없습니다.");
         }
 
         List<UUID> distinctTraineeUserIds = traineeUserIds.stream().distinct().toList();
-
-        // leftAtIsNull 조건이 반드시 필요하다. 두 가지를 막는다.
-        //   1) 중도 이탈한 교육생이 반에 배정되는 것
-        //   2) 아래 toMap의 IllegalStateException(Duplicate key) — 같은 사람이 이탈 후 재등록하면
-        //      같은 (cohort_id, user_id)로 cohort_member 행이 2건 생겨 500 에러가 난다
-        List<CohortMember> cohortMembers = cohortMemberRepository.findByCohortIdAndOrgIdAndUserIdInAndLeftAtIsNull(
+        List<CohortMember> cohortMembers = cohortMemberRepository.findByCohortIdAndOrgIdAndUserIdIn(
                 cohortId, orgId, distinctTraineeUserIds);
         Map<UUID, CohortMember> cohortMembersByUserId = cohortMembers.stream()
                 .collect(Collectors.toMap(CohortMember::getUserId, Function.identity()));
 
-        // 요청받은 user_id 중 이 기수에 유효하게 소속되지 않은 사람이 있으면 배정 자체를 거부
+        // 요청받은 user_id 중 이 기수에 소속되지 않은 사람이 있으면 배정 자체를 거부
         List<UUID> missingTraineeIds = distinctTraineeUserIds.stream()
                 .filter(userId -> !cohortMembersByUserId.containsKey(userId))
                 .toList();
@@ -136,17 +115,14 @@ public class ClassroomService {
                 .findByCohortMemberIdInAndOrgIdAndUnassignedAtIsNull(cohortMemberIds, orgId);
 
         OffsetDateTime now = OffsetDateTime.now();
-        activeMemberships.forEach(membership -> membership.unassign(now));
+        activeMemberships.forEach(membership -> membership.unassign(now, actorUserId, "REASSIGNED"));
 
-        String batchId = UUID.randomUUID().toString();
         List<ClassMembership> newMemberships = cohortMembers.stream()
                 .map(cohortMember -> ClassMembership.builder()
                         .classId(classroomId)
                         .cohortMemberId(cohortMember.getCohortMemberId())
-                        .userId(cohortMember.getUserId())
                         .orgId(orgId)
                         .assignedAt(now)
-                        .assignmentBatchId(batchId)
                         .assignedBy(actorUserId)
                         .build())
                 .toList();
@@ -158,45 +134,31 @@ public class ClassroomService {
     // 반 담당 매니저 변경: 기존 활성 배정은 해제하고, managerIds로 새 배정을 만듦 (빈 목록이면 전체 해제만 수행)
     @Transactional
     public ClassroomView updateClassroomManagers(UUID cohortId, UUID classroomId, UUID orgId,
-                                                 List<UUID> managerUserIds, UUID actorUserId) {
+            List<UUID> managerUserIds, UUID actorUserId) {
         Classroom classroom = findClassroom(classroomId, orgId);
         if (!classroom.getCohortId().equals(cohortId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "반을 찾을 수 없습니다.");
         }
 
-        replaceClassroomManagers(cohortId, classroomId, orgId, managerUserIds, actorUserId, OffsetDateTime.now());
-        return toView(classroom, orgId);
-    }
-
-    // 담당 매니저 전체 교체. 반 생성과 담당 변경이 같은 규칙을 쓰도록 한 곳에 모았다.
-    // @return 실제로 배정된 매니저 user_id 목록(중복 제거된 결과)
-    private List<UUID> replaceClassroomManagers(UUID cohortId, UUID classroomId, UUID orgId,
-                                                List<UUID> managerUserIds, UUID actorUserId, OffsetDateTime now) {
         List<ManagerAssignment> activeAssignments = managerAssignmentRepository
                 .findByClassIdAndOrgIdAndUnassignedAtIsNull(classroomId, orgId);
-        activeAssignments.forEach(assignment -> assignment.unassign(now));
+        OffsetDateTime now = OffsetDateTime.now();
+        activeAssignments.forEach(assignment -> assignment.unassign(now, actorUserId, "REASSIGNED"));
 
-        List<UUID> distinctManagerUserIds = managerUserIds == null
-                ? List.of()
-                : managerUserIds.stream().distinct().toList();
-        if (distinctManagerUserIds.isEmpty()) {
-            return List.of();
-        }
-
+        List<UUID> distinctManagerUserIds = managerUserIds.stream().distinct().toList();
         List<ManagerAssignment> newAssignments = distinctManagerUserIds.stream()
                 .map(managerUserId -> ManagerAssignment.builder()
                         .managerUserId(managerUserId)
                         .orgId(orgId)
-                        .roleScope(RoleScope.CLASS)
-                        .cohortId(cohortId)
                         .classId(classroomId)
                         .assignedAt(now)
-                        .status(ASSIGNMENT_STATUS_ACTIVE)
+                        .status("ACTIVE")
                         .assignedBy(actorUserId)
                         .build())
                 .toList();
         managerAssignmentRepository.saveAll(newAssignments);
-        return distinctManagerUserIds;
+
+        return toView(classroom, orgId);
     }
 
     // 반 하나를 뷰로 조립. 내부적으로 N+1 방지용 배치 조회 로직(toViews)을 재사용

@@ -45,8 +45,12 @@ public class InvitationPersistenceService {
 	) {
 		String email = request.email().trim();
 		String normalizedEmail = EmailNormalizer.normalize(email);
+		Role invitedRole = switch (actor.role()) {
+			case SUPER_ADMIN -> Role.OPERATOR;
+			case OPERATOR -> Role.MANAGER;
+			default -> throw new IllegalArgumentException("운영자 초대를 발송할 수 없는 역할입니다: " + actor.role());
+		};
 		ensureNewEmail(normalizedEmail);
-		Role invitedRole = request.role().toRole();
 		List<ManagerAssignmentRequest> assignments = managerAssignments(request);
 		invitationRepository.validateManagerAssignments(context.organizationId(), assignments);
 
@@ -60,14 +64,25 @@ public class InvitationPersistenceService {
 				pendingPasswordHash(),
 				now
 		);
-		PendingInvitation invitation = createToken(
-				context,
-				memberId,
+		UUID invitationId = invitationRepository.createInvitation(
+				context.organizationId(),
 				email,
 				normalizedEmail,
 				invitedRole,
-				InvitationPurpose.INVITE_MANAGER,
-				managerPayload(request),
+				request.cohortId(),
+				request.targetClassId(),
+				actor.userId(),
+				now
+		);
+		PendingInvitation invitation = createToken(
+				context,
+				memberId,
+				invitationId,
+				email,
+				normalizedEmail,
+				invitedRole,
+				InvitationPurpose.INVITE_OPERATOR_MANAGER,
+				managerPayload(request, invitedRole),
 				actor.userId(),
 				requestId,
 				now
@@ -103,9 +118,20 @@ public class InvitationPersistenceService {
 				pendingPasswordHash(),
 				now
 		);
+		UUID invitationId = invitationRepository.createInvitation(
+				context.organizationId(),
+				email,
+				normalizedEmail,
+				Role.TRAINEE,
+				context.cohortId(),
+				null,
+				actor.userId(),
+				now
+		);
 		PendingInvitation invitation = createToken(
 				context,
 				memberId,
+				invitationId,
 				email,
 				normalizedEmail,
 				Role.TRAINEE,
@@ -130,6 +156,7 @@ public class InvitationPersistenceService {
 	private PendingInvitation createToken(
 			InvitationContext context,
 			UUID memberId,
+			UUID invitationId,
 			String email,
 			String normalizedEmail,
 			Role role,
@@ -144,6 +171,7 @@ public class InvitationPersistenceService {
 				UUID.randomUUID(),
 				context.organizationId(),
 				memberId,
+				invitationId,
 				email,
 				normalizedEmail,
 				purpose,
@@ -158,6 +186,7 @@ public class InvitationPersistenceService {
 		invitationRepository.invalidatePreviousTokens(token, now);
 		return new PendingInvitation(
 				memberId,
+				invitationId,
 				token.tokenId(),
 				email,
 				rawToken,
@@ -168,11 +197,20 @@ public class InvitationPersistenceService {
 		);
 	}
 
-	private Map<String, Object> managerPayload(InviteManagerRequest request) {
+	@Transactional
+	public void markInvitationSent(PendingInvitation invitation) {
+		invitationRepository.markInvitationSent(
+				invitation.invitationId(),
+				invitation.tokenId(),
+				Instant.now()
+		);
+	}
+
+	private Map<String, Object> managerPayload(InviteManagerRequest request, Role invitedRole) {
 		Map<String, Object> payload = basePayload();
-		payload.put("role", request.role().name());
+		payload.put("role", invitedRole.name());
 		payload.put("cohortId", request.cohortId());
-		payload.put("classroomIds", request.classroomIds());
+		payload.put("targetClassId", request.targetClassId());
 		return payload;
 	}
 
@@ -180,7 +218,10 @@ public class InvitationPersistenceService {
 		if (request.cohortId() == null) {
 			return List.of();
 		}
-		return List.of(new ManagerAssignmentRequest(request.cohortId(), request.classroomIds()));
+		List<UUID> classroomIds = request.targetClassId() == null
+				? List.of()
+				: List.of(request.targetClassId());
+		return List.of(new ManagerAssignmentRequest(request.cohortId(), classroomIds));
 	}
 
 	private Map<String, Object> traineePayload(RegisterTraineesRequest.Trainee trainee) {
@@ -205,7 +246,8 @@ public class InvitationPersistenceService {
 	}
 
 	private void ensureNewEmail(String normalizedEmail) {
-		if (invitationRepository.existsUserByNormalizedEmail(normalizedEmail)) {
+		if (invitationRepository.existsUserByNormalizedEmail(normalizedEmail)
+				|| invitationRepository.existsIncompleteInvitationByNormalizedEmail(normalizedEmail)) {
 			throw new InvitationConflictException("이미 등록되었거나 초대된 이메일입니다.");
 		}
 	}

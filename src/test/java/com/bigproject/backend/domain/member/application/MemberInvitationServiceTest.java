@@ -7,10 +7,10 @@ import com.bigproject.backend.domain.member.domain.MemberInvitationRepository;
 import com.bigproject.backend.domain.member.domain.PendingInvitation;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
-import com.bigproject.backend.domain.member.presentation.dto.ManagerInvitationRole;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -36,12 +36,12 @@ class MemberInvitationServiceTest {
 	);
 
 	@Test
-	void superAdminInvitesLeadManager() {
+	void superAdminInvitesOperatorWithoutClientSuppliedRole() {
 		UUID organizationId = UUID.randomUUID();
 		AuthUser actor = actor(Role.SUPER_ADMIN, null);
 		InvitationContext context = InvitationContext.organization(organizationId, "AIVLE");
-		InviteManagerRequest request = new InviteManagerRequest("lead@example.com", ManagerInvitationRole.LEAD_MANAGER, null, List.of());
-		PendingInvitation invitation = pendingInvitation(context, request.email(), request.role().toRole());
+		InviteManagerRequest request = new InviteManagerRequest("operator@example.com", null, null);
+		PendingInvitation invitation = pendingInvitation(context, request.email(), Role.OPERATOR);
 		when(authUserRepository.findByNormalizedEmail("admin@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findActiveOrganization(organizationId)).thenReturn(Optional.of(context));
 		when(invitationDispatcher.inviteManager(context, request, actor, "request-1"))
@@ -55,22 +55,72 @@ class MemberInvitationServiceTest {
 		);
 
 		assertThat(response.memberId()).isEqualTo(invitation.memberId());
-		assertThat(response.role()).isEqualTo(Role.LEAD_MANAGER);
+		assertThat(response.role()).isEqualTo(Role.OPERATOR);
 		verify(invitationDispatcher).inviteManager(context, request, actor, "request-1");
 	}
 
 	@Test
-	void leadManagerInvitesManagerInOwnOrganization() {
+	void reportsUnknownManagerInvitationConstraintAsServerError() {
 		UUID organizationId = UUID.randomUUID();
-		AuthUser actor = actor(Role.LEAD_MANAGER, organizationId);
+		AuthUser actor = actor(Role.SUPER_ADMIN, null);
+		InvitationContext context = InvitationContext.organization(organizationId, "AIVLE");
+		InviteManagerRequest request = new InviteManagerRequest(
+				"operator@example.com",
+				null,
+				null
+		);
+		DataIntegrityViolationException databaseException = new DataIntegrityViolationException("purpose check");
+		when(authUserRepository.findByNormalizedEmail("admin@example.com")).thenReturn(Optional.of(actor));
+		when(invitationRepository.findActiveOrganization(organizationId)).thenReturn(Optional.of(context));
+		when(invitationDispatcher.inviteManager(context, request, actor, "request-constraint"))
+				.thenThrow(databaseException);
+
+		assertThatThrownBy(() -> service.inviteManager(
+				organizationId,
+				request,
+				"admin@example.com",
+				"request-constraint"
+		)).isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("500 INTERNAL_SERVER_ERROR")
+				.hasMessageContaining("초대 정보를 저장할 수 없습니다.")
+				.hasCause(databaseException);
+	}
+
+	@Test
+	void reportsConcurrentInvitationConstraintAsConflict() {
+		UUID organizationId = UUID.randomUUID();
+		AuthUser actor = actor(Role.SUPER_ADMIN, null);
+		InvitationContext context = InvitationContext.organization(organizationId, "AIVLE");
+		InviteManagerRequest request = new InviteManagerRequest("operator@example.com", null, null);
+		DataIntegrityViolationException databaseException = new DataIntegrityViolationException("unique violation");
+		when(authUserRepository.findByNormalizedEmail("admin@example.com")).thenReturn(Optional.of(actor));
+		when(invitationRepository.findActiveOrganization(organizationId)).thenReturn(Optional.of(context));
+		when(invitationDispatcher.inviteManager(context, request, actor, "request-race"))
+				.thenThrow(databaseException);
+		when(invitationRepository.existsIncompleteInvitationByNormalizedEmail("operator@example.com"))
+				.thenReturn(true);
+
+		assertThatThrownBy(() -> service.inviteManager(
+				organizationId,
+				request,
+				"admin@example.com",
+				"request-race"
+		)).isInstanceOf(InvitationConflictException.class)
+				.hasMessage("이미 등록되었거나 초대된 이메일입니다.")
+				.hasCause(databaseException);
+	}
+
+	@Test
+	void operatorInvitesManagerInOwnOrganization() {
+		UUID organizationId = UUID.randomUUID();
+		AuthUser actor = actor(Role.OPERATOR, organizationId);
 		InvitationContext context = InvitationContext.organization(organizationId, "AIVLE");
 		InviteManagerRequest request = new InviteManagerRequest(
 				"manager@example.com",
-				ManagerInvitationRole.MANAGER,
 				UUID.randomUUID(),
-				List.of(UUID.randomUUID(), UUID.randomUUID())
+				UUID.randomUUID()
 		);
-		PendingInvitation invitation = pendingInvitation(context, request.email(), request.role().toRole());
+		PendingInvitation invitation = pendingInvitation(context, request.email(), Role.MANAGER);
 		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findActiveOrganization(organizationId)).thenReturn(Optional.of(context));
 		when(invitationDispatcher.inviteManager(context, request, actor, "request-2"))
@@ -83,18 +133,18 @@ class MemberInvitationServiceTest {
 	}
 
 	@Test
-	void rejectsManagerRoleInvitationFromSuperAdmin() {
+	void rejectsOperatorInvitationWithManagerScopeFromSuperAdmin() {
 		UUID organizationId = UUID.randomUUID();
 		when(authUserRepository.findByNormalizedEmail("admin@example.com"))
 				.thenReturn(Optional.of(actor(Role.SUPER_ADMIN, null)));
 
 		assertThatThrownBy(() -> service.inviteManager(
 				organizationId,
-				new InviteManagerRequest("manager@example.com", ManagerInvitationRole.MANAGER, UUID.randomUUID(), List.of()),
+				new InviteManagerRequest("operator@example.com", UUID.randomUUID(), null),
 				"admin@example.com",
 				null
 		)).isInstanceOf(ResponseStatusException.class)
-				.hasMessageContaining("초대할 권한");
+				.hasMessageContaining("기수·반을 배정하지 않습니다");
 		verify(invitationDispatcher, never()).inviteManager(
 				org.mockito.ArgumentMatchers.any(),
 				org.mockito.ArgumentMatchers.any(),
@@ -107,11 +157,11 @@ class MemberInvitationServiceTest {
 	void rejectsManagerInvitationWithoutCohort() {
 		UUID organizationId = UUID.randomUUID();
 		when(authUserRepository.findByNormalizedEmail("lead@example.com"))
-				.thenReturn(Optional.of(actor(Role.LEAD_MANAGER, organizationId)));
+				.thenReturn(Optional.of(actor(Role.OPERATOR, organizationId)));
 
 		assertThatThrownBy(() -> service.inviteManager(
 				organizationId,
-				new InviteManagerRequest("manager@example.com", ManagerInvitationRole.MANAGER, null, List.of()),
+				new InviteManagerRequest("manager@example.com", null, null),
 				"lead@example.com",
 				null
 		)).isInstanceOf(ResponseStatusException.class)
@@ -125,7 +175,7 @@ class MemberInvitationServiceTest {
 	}
 
 	@Test
-	void rejectsLeadManagerInvitationWithCohortAssignment() {
+	void rejectsOperatorInvitationWithCohortAssignment() {
 		UUID organizationId = UUID.randomUUID();
 		when(authUserRepository.findByNormalizedEmail("admin@example.com"))
 				.thenReturn(Optional.of(actor(Role.SUPER_ADMIN, null)));
@@ -133,10 +183,9 @@ class MemberInvitationServiceTest {
 		assertThatThrownBy(() -> service.inviteManager(
 				organizationId,
 				new InviteManagerRequest(
-						"lead@example.com",
-						ManagerInvitationRole.LEAD_MANAGER,
+						"operator@example.com",
 						UUID.randomUUID(),
-						List.of(UUID.randomUUID())
+						null
 				),
 				"admin@example.com",
 				null
@@ -151,10 +200,52 @@ class MemberInvitationServiceTest {
 	}
 
 	@Test
+	void rejectsManagerFromSendingOperatorOrManagerInvitation() {
+		UUID organizationId = UUID.randomUUID();
+		when(authUserRepository.findByNormalizedEmail("lead@example.com"))
+				.thenReturn(Optional.of(actor(Role.MANAGER, organizationId)));
+
+		assertThatThrownBy(() -> service.inviteManager(
+				organizationId,
+				new InviteManagerRequest("target@example.com", UUID.randomUUID(), null),
+				"lead@example.com",
+				null
+		)).isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("슈퍼어드민과 오퍼레이터만");
+		verify(invitationDispatcher, never()).inviteManager(
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any()
+		);
+	}
+
+	@Test
+	void rejectsSuperAdminFromInvitingTrainees() {
+		UUID cohortId = UUID.randomUUID();
+		when(authUserRepository.findByNormalizedEmail("admin@example.com"))
+				.thenReturn(Optional.of(actor(Role.SUPER_ADMIN, null)));
+
+		assertThatThrownBy(() -> service.inviteTraineesFromCsv(
+				cohortId,
+				List.of(new TraineeCsvRow(2, "교육생", "trainee@example.com")),
+				"admin@example.com",
+				null
+		)).isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("오퍼레이터만");
+		verify(invitationDispatcher, never()).inviteTrainee(
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any(),
+				org.mockito.ArgumentMatchers.any()
+		);
+	}
+
+	@Test
 	void leadManagerDoesNotInviteDuplicateEmailsFromCsv() {
 		UUID organizationId = UUID.randomUUID();
 		UUID cohortId = UUID.randomUUID();
-		AuthUser actor = actor(Role.LEAD_MANAGER, organizationId);
+		AuthUser actor = actor(Role.OPERATOR, organizationId);
 		InvitationContext context = new InvitationContext(organizationId, "AIVLE", cohortId, "7기");
 		RegisterTraineesRequest.Trainee first = new RegisterTraineesRequest.Trainee(
 				"교육생",
@@ -196,7 +287,7 @@ class MemberInvitationServiceTest {
 	void leadManagerDirectlyInvitesMultipleTrainees() {
 		UUID organizationId = UUID.randomUUID();
 		UUID cohortId = UUID.randomUUID();
-		AuthUser actor = actor(Role.LEAD_MANAGER, organizationId);
+		AuthUser actor = actor(Role.OPERATOR, organizationId);
 		InvitationContext context = new InvitationContext(organizationId, "AIVLE", cohortId, "7기");
 		RegisterTraineesRequest.Trainee first = new RegisterTraineesRequest.Trainee(
 				"교육생1",
@@ -228,7 +319,7 @@ class MemberInvitationServiceTest {
 	void directInvitationReportsInvalidEmailByInputRow() {
 		UUID organizationId = UUID.randomUUID();
 		UUID cohortId = UUID.randomUUID();
-		AuthUser actor = actor(Role.LEAD_MANAGER, organizationId);
+		AuthUser actor = actor(Role.OPERATOR, organizationId);
 		InvitationContext context = new InvitationContext(organizationId, "AIVLE", cohortId, "7기");
 		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findInvitableCohort(cohortId)).thenReturn(Optional.of(context));
@@ -260,7 +351,7 @@ class MemberInvitationServiceTest {
 	void csvInvitationReportsInvalidAndExistingEmailsByCsvRow() {
 		UUID organizationId = UUID.randomUUID();
 		UUID cohortId = UUID.randomUUID();
-		AuthUser actor = actor(Role.LEAD_MANAGER, organizationId);
+		AuthUser actor = actor(Role.OPERATOR, organizationId);
 		InvitationContext context = new InvitationContext(organizationId, "AIVLE", cohortId, "7기");
 		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findInvitableCohort(cohortId)).thenReturn(Optional.of(context));
@@ -298,7 +389,7 @@ class MemberInvitationServiceTest {
 	void rejectsTraineeInvitationForAnotherOrganizationCohort() {
 		UUID actorOrganizationId = UUID.randomUUID();
 		UUID cohortId = UUID.randomUUID();
-		AuthUser actor = actor(Role.LEAD_MANAGER, actorOrganizationId);
+		AuthUser actor = actor(Role.OPERATOR, actorOrganizationId);
 		InvitationContext context = new InvitationContext(UUID.randomUUID(), "Other", cohortId, "1기");
 		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findInvitableCohort(cohortId)).thenReturn(Optional.of(context));
@@ -330,6 +421,7 @@ class MemberInvitationServiceTest {
 	private PendingInvitation pendingInvitation(InvitationContext context, String email, Role role) {
 		Instant now = Instant.now();
 		return new PendingInvitation(
+				UUID.randomUUID(),
 				UUID.randomUUID(),
 				UUID.randomUUID(),
 				email,

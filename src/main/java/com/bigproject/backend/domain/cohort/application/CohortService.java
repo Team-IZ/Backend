@@ -3,6 +3,8 @@ package com.bigproject.backend.domain.cohort.application;
 import com.bigproject.backend.domain.cohort.domain.Cohort;
 import com.bigproject.backend.domain.cohort.domain.CohortStatus;
 import com.bigproject.backend.domain.cohort.infrastructure.CohortRepository;
+import com.bigproject.backend.domain.organization.domain.OrganizationPolicy;
+import com.bigproject.backend.domain.organization.infrastructure.OrganizationPolicyRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -20,12 +22,12 @@ import java.util.UUID;
 public class CohortService {
 
     private final CohortRepository cohortRepository;
+    private final OrganizationPolicyRepository organizationPolicyRepository;
 
     // 기수 생성
     @Transactional
     public Cohort createCohort(UUID orgId, String name, LocalDate startDate,
-                               LocalDate endDate, String educationTrack,
-                               Integer cohortNo, String trackCode, UUID creatorUserId) {
+                               LocalDate endDate, UUID creatorUserId) {
 
         // 규칙 1: 기관 내 기수명 중복 금지
         if (cohortRepository.existsByOrgIdAndNameAndDeletedAtIsNull(orgId, name)) {
@@ -33,15 +35,18 @@ public class CohortService {
         }
 
         // 규칙 2: 기간 검증은 엔티티 생성자가 수행
+        OrganizationPolicy policy = organizationPolicyRepository
+                .findByOrgIdAndStatus(orgId, OrganizationPolicy.Status.ACTIVE)
+                .orElseThrow(() -> new IllegalStateException("기관에 활성 운영 정책이 없습니다: " + orgId));
+
         Cohort cohort = Cohort.builder()
                 .orgId(orgId)
                 .name(name)
                 .startDate(startDate)
                 .endDate(endDate)
-                .stage(educationTrack)
-                .cohortNo(cohortNo)
-                .trackCode(trackCode)
                 .createdBy(creatorUserId)
+                .disclosureScope(policy.getDefaultDisclosureScope())
+                .disclosurePolicyId(policy.getPolicyId())
                 .build();
 
         return cohortRepository.save(cohort);

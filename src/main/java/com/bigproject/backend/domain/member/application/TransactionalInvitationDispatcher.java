@@ -38,6 +38,7 @@ public class TransactionalInvitationDispatcher {
 					invitation.role()
 			);
 			mailSender.sendManagerInvitation(invitation);
+			persistenceService.markInvitationSent(invitation);
 			log.info(
 					"매니저 초대 메일 발송 성공: tokenId={}, organizationId={}, role={}",
 					invitation.tokenId(),
@@ -75,6 +76,7 @@ public class TransactionalInvitationDispatcher {
 					invitation.context().cohortId()
 			);
 			mailSender.sendTraineeInvitation(invitation, trainee.name().trim());
+			persistenceService.markInvitationSent(invitation);
 			log.info(
 					"교육생 초대 메일 발송 성공: tokenId={}, organizationId={}, cohortId={}",
 					invitation.tokenId(),

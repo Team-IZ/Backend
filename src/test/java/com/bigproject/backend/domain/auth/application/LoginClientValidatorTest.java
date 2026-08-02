@@ -25,7 +25,7 @@ class LoginClientValidatorTest {
 
 	@Test
 	void acceptsLeadManagerAndManagerOnManagerLoginPath() {
-		validator.validate("http://localhost:5173", "/manager/login", Role.LEAD_MANAGER);
+		validator.validate("http://localhost:5173", "/manager/login", Role.OPERATOR);
 		validator.validate("http://localhost:5173", "/manager/login", Role.MANAGER);
 	}
 

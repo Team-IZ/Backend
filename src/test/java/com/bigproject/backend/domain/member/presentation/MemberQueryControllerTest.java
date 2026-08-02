@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.member.presentation;
 
+import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
 import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.application.MemberQueryService;
 import com.bigproject.backend.domain.member.application.TraineeCsvParser;
@@ -61,6 +62,9 @@ class MemberQueryControllerTest {
 	@MockitoBean
 	private JwtProvider jwtProvider;
 
+	@MockitoBean
+	private AuthUserRepository authUserRepository;
+
 	@Test
 	void requiresAuthenticationForManagerDirectory() throws Exception {
 		mockMvc.perform(get("/api/v0/members"))
@@ -120,7 +124,7 @@ class MemberQueryControllerTest {
 	}
 
 	@Test
-	@WithMockUser(username = "lead@example.com", roles = "LEAD_MANAGER")
+	@WithMockUser(username = "lead@example.com", roles = "OPERATOR")
 	void validatesManagerDirectoryQueryParameters() throws Exception {
 		mockMvc.perform(get("/api/v0/members")
 						.param("organizationId", "not-a-uuid"))
@@ -154,7 +158,7 @@ class MemberQueryControllerTest {
 	}
 
 	@Test
-	@WithMockUser(username = "lead@example.com", roles = "LEAD_MANAGER")
+	@WithMockUser(username = "lead@example.com", roles = "OPERATOR")
 	void uploadsTraineeCsvAtCanonicalCohortPath() throws Exception {
 		UUID cohortId = UUID.randomUUID();
 		MockMultipartFile file = new MockMultipartFile(
@@ -182,7 +186,7 @@ class MemberQueryControllerTest {
 	}
 
 	@Test
-	@WithMockUser(username = "lead@example.com", roles = "LEAD_MANAGER")
+	@WithMockUser(username = "lead@example.com", roles = "OPERATOR")
 	void directlyInvitesMultipleTraineesWithJson() throws Exception {
 		UUID cohortId = UUID.randomUUID();
 		RegisterTraineesRequest request = new RegisterTraineesRequest(List.of(
@@ -210,7 +214,7 @@ class MemberQueryControllerTest {
 	}
 
 	@Test
-	@WithMockUser(username = "lead@example.com", roles = "LEAD_MANAGER")
+	@WithMockUser(username = "lead@example.com", roles = "OPERATOR")
 	void returnsRowFailureForInvalidDirectTraineeEmail() throws Exception {
 		UUID cohortId = UUID.randomUUID();
 		RegisterTraineesRequest request = new RegisterTraineesRequest(List.of(
@@ -250,7 +254,7 @@ class MemberQueryControllerTest {
 	}
 
 	@Test
-	@WithMockUser(username = "lead@example.com", roles = "LEAD_MANAGER")
+	@WithMockUser(username = "lead@example.com", roles = "OPERATOR")
 	void rejectsBlankDirectTraineeName() throws Exception {
 		mockMvc.perform(post("/api/v0/cohorts/{cohortId}/trainees/invitations", UUID.randomUUID())
 						.contentType(MediaType.APPLICATION_JSON)

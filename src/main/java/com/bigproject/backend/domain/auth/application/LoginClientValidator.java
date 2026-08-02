@@ -37,7 +37,7 @@ public class LoginClientValidator {
 
 		boolean matches = switch (role) {
 			case SUPER_ADMIN -> superAdminLoginPath.equals(normalizedPath);
-			case LEAD_MANAGER, MANAGER -> managerLoginPath.equals(normalizedPath);
+			case OPERATOR, MANAGER -> managerLoginPath.equals(normalizedPath);
 			case TRAINEE -> false;
 		};
 

@@ -8,31 +8,24 @@ import org.springframework.web.util.UriComponentsBuilder;
 @Component
 public class InvitationLinkFactory {
 	private final String baseUrl;
-	private final String managerPath;
-	private final String traineePath;
 
 	public InvitationLinkFactory(
-			@Value("${invitation.base-url:http://localhost:5173}") String baseUrl,
-			@Value("${invitation.manager-path:/manager/signup}") String managerPath,
-			@Value("${invitation.trainee-path:/trainee/activation}") String traineePath
+			@Value("${invitation.base-url:http://localhost:5173}") String baseUrl
 	) {
 		this.baseUrl = baseUrl;
-		this.managerPath = managerPath;
-		this.traineePath = traineePath;
 	}
 
 	public String managerLink(PendingInvitation invitation) {
-		return create(managerPath, invitation.rawToken());
+		return create("op-", invitation.rawToken());
 	}
 
 	public String traineeLink(PendingInvitation invitation) {
-		return create(traineePath, invitation.rawToken());
+		return create("stu-", invitation.rawToken());
 	}
 
-	private String create(String path, String token) {
+	private String create(String tokenPrefix, String token) {
 		return UriComponentsBuilder.fromUriString(baseUrl)
-				.path(path)
-				.queryParam("token", token)
+				.pathSegment("invite", tokenPrefix + token)
 				.build()
 				.encode()
 				.toUriString();
