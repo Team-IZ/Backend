@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.organization.domain;
 
+import com.bigproject.backend.domain.operations.domain.AiTier;
 import com.bigproject.backend.domain.operations.domain.DisclosureScope;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -11,8 +12,8 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.annotations.UuidGenerator;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -52,12 +53,15 @@ public class OrganizationPolicy {
 	@Column(name = "monthly_ai_budget", nullable = false, updatable = false, precision = 18, scale = 6)
 	private BigDecimal monthlyAiBudget;
 
+	// v06 DB CHECK: currency_code = 'USD'. 플랫폼 공통 통화이며 기관별 변경을 허용하지 않는다.
 	@Column(name = "currency_code", nullable = false, updatable = false, length = 3)
 	private String currencyCode;
 
+	/** 월간 토큰 상한. NULL은 무제한이다. */
 	@Column(name = "monthly_token_limit", updatable = false)
 	private Long monthlyTokenLimit;
 
+	/** 저장량 상한(바이트). NULL은 무제한이다. */
 	@Column(name = "storage_limit_bytes", updatable = false)
 	private Long storageLimitBytes;
 
@@ -68,12 +72,22 @@ public class OrganizationPolicy {
 	@Column(name = "default_disclosure_scope", nullable = false, updatable = false, length = 100)
 	private DisclosureScope defaultDisclosureScope;
 
+	/*
+	 * v06 신규 — 기관이 고르는 AI 모델 티어. 실제 모델 ID는 플랫폼 정책(platform_ai_tier_model_policy)이 정하고,
+	 * 기관은 티어 이름만 선택한다(목업 OP-06 §7: "모델별 단가는 SA-03 — 플랫폼이 정하고 기관은 티어 이름만 본다").
+	 */
+	@Enumerated(EnumType.STRING)
 	@Column(name = "question_generation_tier_code", nullable = false, updatable = false, length = 30)
-	private String questionGenerationTierCode;
+	private AiTier questionGenerationTierCode;
 
+	@Enumerated(EnumType.STRING)
 	@Column(name = "summary_tier_code", nullable = false, updatable = false, length = 30)
-	private String summaryTierCode;
+	private AiTier summaryTierCode;
 
+	/*
+	 * v06 신규 기능 토글 5종. 목업 SA-02 ④ 설정 탭의 스위치들이며, 이전에는 컬럼이 없어
+	 * OperationsSchemaPending에서 null로 대체하고 저장 자체를 무시하고 있었다.
+	 */
 	@Column(name = "allow_manager_invite", nullable = false, updatable = false)
 	private Boolean allowManagerInvite;
 
@@ -99,13 +113,15 @@ public class OrganizationPolicy {
 	@Column(name = "status", nullable = false, length = 100)
 	private Status status;
 
+	// v06에서 configured_by → created_by로 이름이 바뀌고 updated_by/updated_at이 추가됐다.
 	@Column(name = "created_by", nullable = false, updatable = false)
-	private UUID configuredBy;
+	private UUID createdBy;
 
 	@CreationTimestamp
 	@Column(name = "created_at", nullable = false, updatable = false)
 	private Instant createdAt;
 
+	/** 이 버전을 종료·대체 처리한 사용자. 정책값 자체를 덮어쓰는 용도가 아니다. */
 	@Column(name = "updated_by")
 	private UUID updatedBy;
 
@@ -113,78 +129,90 @@ public class OrganizationPolicy {
 	@Column(name = "updated_at", nullable = false)
 	private Instant updatedAt;
 
-	private OrganizationPolicy(
-			UUID orgId,
-			BigDecimal monthlyAiBudget,
-			String currencyCode,
-			Integer retentionDays,
-			DisclosureScope defaultDisclosureScope,
-			UUID configuredBy
-	) {
+	/** 플랫폼 공통 과금 통화. DB CHECK(currency_code = 'USD')와 동일하며 기관별로 바꿀 수 없다. */
+	public static final String PLATFORM_CURRENCY_CODE = "USD";
+
+	private OrganizationPolicy(UUID orgId, int policyVersion, Settings settings, UUID createdBy) {
 		this.orgId = orgId;
-		this.policyVersion = 1;
-		this.monthlyAiBudget = monthlyAiBudget;
-		this.currencyCode = currencyCode;
-		this.retentionDays = retentionDays;
-		this.defaultDisclosureScope = defaultDisclosureScope;
-		this.questionGenerationTierCode = "BALANCED";
-		this.summaryTierCode = "BALANCED";
-		this.allowManagerInvite = true;
-		this.allowDataExport = true;
-		this.allowZipSubmission = true;
-		this.allowGithubIntegration = true;
-		this.enableBigProjectContributionAnalysis = true;
+		this.policyVersion = policyVersion;
+		this.currencyCode = PLATFORM_CURRENCY_CODE;
 		this.effectiveFrom = Instant.now();
 		this.status = Status.ACTIVE;
-		this.configuredBy = configuredBy;
+		this.createdBy = createdBy;
+		apply(settings);
+	}
+
+	private void apply(Settings settings) {
+		this.monthlyAiBudget = settings.monthlyAiBudget();
+		this.monthlyTokenLimit = settings.monthlyTokenLimit();
+		this.storageLimitBytes = settings.storageLimitBytes();
+		this.retentionDays = settings.retentionDays();
+		this.defaultDisclosureScope = settings.defaultDisclosureScope();
+		this.questionGenerationTierCode = settings.questionGenerationTierCode();
+		this.summaryTierCode = settings.summaryTierCode();
+		this.allowManagerInvite = settings.allowManagerInvite();
+		this.allowDataExport = settings.allowDataExport();
+		this.allowZipSubmission = settings.allowZipSubmission();
+		this.allowGithubIntegration = settings.allowGithubIntegration();
+		this.enableBigProjectContributionAnalysis = settings.enableBigProjectContributionAnalysis();
 	}
 
 	/** 기관 생성 시 발급되는 최초(버전 1) 정책. */
-	public static OrganizationPolicy createInitial(
-			UUID orgId,
-			BigDecimal monthlyAiBudget,
-			String currencyCode,
-			int retentionDays,
-			DisclosureScope defaultDisclosureScope,
-			UUID configuredBy
-	) {
-		return new OrganizationPolicy(orgId, monthlyAiBudget, currencyCode, retentionDays, defaultDisclosureScope, configuredBy);
+	public static OrganizationPolicy createInitial(UUID orgId, Settings settings, UUID createdBy) {
+		return new OrganizationPolicy(orgId, 1, settings, createdBy);
 	}
 
-	/** 기존 활성 정책 다음 버전을 발급한다(operations 도메인의 운영 설정 변경에서 사용). currencyCode는 변경 대상이 아니므로 이전 값을 그대로 이어받는다. */
-	public static OrganizationPolicy createNextVersion(
-			OrganizationPolicy previous,
-			BigDecimal monthlyAiBudget,
-			int retentionDays,
-			DisclosureScope defaultDisclosureScope,
-			UUID configuredBy
-	) {
-		OrganizationPolicy next = new OrganizationPolicy();
-		next.orgId = previous.orgId;
-		next.policyVersion = previous.policyVersion + 1;
-		next.monthlyAiBudget = monthlyAiBudget;
-		next.currencyCode = previous.currencyCode;
-		next.retentionDays = retentionDays;
-		next.defaultDisclosureScope = defaultDisclosureScope;
-		next.monthlyTokenLimit = previous.monthlyTokenLimit;
-		next.storageLimitBytes = previous.storageLimitBytes;
-		next.questionGenerationTierCode = previous.questionGenerationTierCode;
-		next.summaryTierCode = previous.summaryTierCode;
-		next.allowManagerInvite = previous.allowManagerInvite;
-		next.allowDataExport = previous.allowDataExport;
-		next.allowZipSubmission = previous.allowZipSubmission;
-		next.allowGithubIntegration = previous.allowGithubIntegration;
-		next.enableBigProjectContributionAnalysis = previous.enableBigProjectContributionAnalysis;
-		next.effectiveFrom = Instant.now();
-		next.status = Status.ACTIVE;
-		next.configuredBy = configuredBy;
-		return next;
+	/**
+	 * 기존 활성 정책의 다음 버전을 발급한다(operations 도메인의 운영 설정 변경에서 사용).
+	 * 통화는 플랫폼 공통 고정이라 변경 대상이 아니다.
+	 */
+	public static OrganizationPolicy createNextVersion(OrganizationPolicy previous, Settings settings, UUID createdBy) {
+		return new OrganizationPolicy(previous.orgId, previous.policyVersion + 1, settings, createdBy);
+	}
+
+	/** 이 정책 버전의 현재 값들을 Settings로 꺼낸다. 부분 수정 요청을 병합할 때의 기준값으로 쓴다. */
+	public Settings toSettings() {
+		return new Settings(
+				monthlyAiBudget,
+				monthlyTokenLimit,
+				storageLimitBytes,
+				retentionDays,
+				defaultDisclosureScope,
+				questionGenerationTierCode,
+				summaryTierCode,
+				allowManagerInvite,
+				allowDataExport,
+				allowZipSubmission,
+				allowGithubIntegration,
+				enableBigProjectContributionAnalysis
+		);
 	}
 
 	/** 새 버전이 발급될 때 이 버전을 과거 이력으로 전환한다. */
-	public void supersede() {
+	public void supersede(UUID updatedBy) {
 		this.status = Status.SUPERSEDED;
 		this.effectiveTo = Instant.now();
+		this.updatedBy = updatedBy;
+	}
+
+	/**
+	 * 정책 버전이 담는 "변경 가능한 값"의 묶음. 버전형 테이블이라 부분 수정이 없고 항상 전체를 실어 새 버전을 만든다.
+	 * 파라미터가 12개라 메서드 인자로 늘어놓지 않고 한 덩어리로 받는다.
+	 */
+	public record Settings(
+			BigDecimal monthlyAiBudget,
+			Long monthlyTokenLimit,
+			Long storageLimitBytes,
+			Integer retentionDays,
+			DisclosureScope defaultDisclosureScope,
+			AiTier questionGenerationTierCode,
+			AiTier summaryTierCode,
+			Boolean allowManagerInvite,
+			Boolean allowDataExport,
+			Boolean allowZipSubmission,
+			Boolean allowGithubIntegration,
+			Boolean enableBigProjectContributionAnalysis
+	) {
 	}
 
 	// DB CHECK: status IN ('ACTIVE','SUPERSEDED','EXPIRED'). 별도 공용 enum 파일 없이 정책 엔티티에 종속시켜 정의한다.
