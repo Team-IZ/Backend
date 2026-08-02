@@ -139,10 +139,13 @@ public class AuthController {
 				.build();
 	}
 
-	@Operation(summary = "초대 토큰으로 가입 대상 사용자 조회", description = "초대 토큰을 검증해 가입 대상 사용자 ID와 이메일을 반환합니다.")
+	@Operation(
+			summary = "초대 토큰 해석",
+			description = "현재 SENT 상태인 초대 원장과 현재 토큰의 목적·만료·사용·무효화 여부를 검증해 가입/활성화 대상 사용자 ID와 읽기 전용 이메일을 반환합니다."
+	)
 	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "유효한 초대 대상 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "초대 토큰 누락·만료·사용 완료 또는 유효하지 않음")
+			@ApiResponse(responseCode = "200", description = "현재 유효한 OPERATOR·MANAGER·TRAINEE 초대 대상 해석 성공"),
+			@ApiResponse(responseCode = "400", description = "토큰 누락·위변조·만료·사용 완료·교체 또는 초대 상태가 SENT가 아님")
 	})
 	@PostMapping("/invitations/resolve")
 	public ResponseEntity<InvitationResolveResponse> resolveInvitation(
@@ -151,11 +154,15 @@ public class AuthController {
 		return ResponseEntity.ok(invitationResolveService.resolve(request));
 	}
 
-	@Operation(summary = "초대받은 매니저 회원가입", description = "매니저 초대 토큰과 필수 동의를 검증해 계정을 활성화합니다.")
+	@Operation(
+			summary = "초대받은 오퍼레이터·매니저 가입",
+			description = "INVITE_OPERATOR_MANAGER 현재 토큰과 초대 대상 역할(OPERATOR 또는 MANAGER), 사용자 ID, 비밀번호 확인, 필수 동의 2개를 검증합니다. "
+					+ "성공하면 계정·이메일 검증·동의·초대 수락·토큰 사용을 원자적으로 확정합니다."
+	)
 	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "매니저 계정 활성화 성공"),
-			@ApiResponse(responseCode = "400", description = "요청·비밀번호·동의 또는 초대 토큰이 유효하지 않음"),
-			@ApiResponse(responseCode = "409", description = "초대 또는 계정 상태가 동시에 변경됨")
+			@ApiResponse(responseCode = "200", description = "OPERATOR 또는 MANAGER 계정 활성화와 초대 ACCEPTED 전환 성공"),
+			@ApiResponse(responseCode = "400", description = "사용자 ID·비밀번호 확인·필수 동의·현재 초대 토큰 또는 대상 역할이 유효하지 않음"),
+			@ApiResponse(responseCode = "409", description = "동시 요청으로 계정·초대·토큰 상태가 먼저 변경됨")
 	})
 	@PostMapping("/manager-signup")
 	public ResponseEntity<ActivateAccountResponse> signupManager(
@@ -173,11 +180,15 @@ public class AuthController {
 		));
 	}
 
-	@Operation(summary = "초대받은 교육생 계정 활성화", description = "교육생 초대 토큰과 필수 동의를 검증해 계정·기수 소속을 활성화합니다.")
+	@Operation(
+			summary = "초대받은 교육생 계정 활성화",
+			description = "INVITE_TRAINEE 현재 토큰과 PENDING 교육생·기수 소속, 비밀번호 확인, 필수 동의 4개와 선택 동의 1개를 검증합니다. "
+					+ "성공하면 계정·기수 소속 활성화, 이메일 검증, 동의, 초대 수락과 토큰 사용을 원자적으로 확정합니다."
+	)
 	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "교육생 계정과 기수 소속 활성화 성공"),
-			@ApiResponse(responseCode = "400", description = "요청·비밀번호·동의 또는 초대 토큰이 유효하지 않음"),
-			@ApiResponse(responseCode = "409", description = "초대·계정 또는 기수 소속 상태가 동시에 변경됨")
+			@ApiResponse(responseCode = "200", description = "TRAINEE 계정·기수 소속 활성화와 초대 ACCEPTED 전환 성공"),
+			@ApiResponse(responseCode = "400", description = "사용자 ID·비밀번호 확인·필수 동의·현재 교육생 초대 토큰 또는 명단 범위가 유효하지 않음"),
+			@ApiResponse(responseCode = "409", description = "동시 요청으로 계정·기수 소속·초대·토큰 상태가 먼저 변경됨")
 	})
 	@PostMapping("/trainee-activation")
 	public ResponseEntity<ActivateAccountResponse> activateTrainee(

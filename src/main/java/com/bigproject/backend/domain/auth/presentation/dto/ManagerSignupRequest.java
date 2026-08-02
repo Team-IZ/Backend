@@ -11,11 +11,11 @@ import jakarta.validation.constraints.Size;
 import java.util.UUID;
 
 public record ManagerSignupRequest(
-		@Schema(description = "초대 대상 매니저 사용자 ID", type = "string", format = "uuid")
+		@Schema(description = "초대 토큰 해석 응답의 OPERATOR 또는 MANAGER 대상 사용자 ID", type = "string", format = "uuid", example = "UUID")
 		@NotNull @JsonProperty("user_id") UUID userId,
-		@Schema(description = "매니저 초대 링크의 일회용 원문 토큰", example = "invitation-token")
+		@Schema(description = "INVITE_OPERATOR_MANAGER 초대 링크의 현재 일회용 원문 토큰", example = "invitation-token")
 		@NotBlank @Size(max = 512) String invitationToken,
-		@Schema(description = "화면에 표시할 매니저 이름", example = "홍길동")
+		@Schema(description = "활성화할 오퍼레이터 또는 매니저의 표시 이름", example = "홍길동")
 		@NotBlank @Size(max = 200) String name,
 		@Schema(description = "영문·숫자·특수문자를 포함한 8~64자 비밀번호", example = "Password1!")
 		@NotBlank
