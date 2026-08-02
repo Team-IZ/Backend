@@ -5,6 +5,7 @@ import com.bigproject.backend.domain.auth.application.AuthService;
 import com.bigproject.backend.domain.auth.application.InvitationResolveService;
 import com.bigproject.backend.domain.auth.application.LoginResult;
 import com.bigproject.backend.domain.auth.application.LoginOriginResolver;
+import com.bigproject.backend.domain.auth.application.PasswordResetService;
 import com.bigproject.backend.domain.auth.domain.TokenRequestMetadata;
 import com.bigproject.backend.domain.auth.presentation.dto.ActivateAccountResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.InvitationResolveRequest;
@@ -12,6 +13,10 @@ import com.bigproject.backend.domain.auth.presentation.dto.InvitationResolveResp
 import com.bigproject.backend.domain.auth.presentation.dto.LoginRequest;
 import com.bigproject.backend.domain.auth.presentation.dto.LoginResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.ManagerSignupRequest;
+import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetConfirmationRequest;
+import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetConfirmationResponse;
+import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetRequest;
+import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetRequestResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.RefreshTokenResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.TraineeActivationRequest;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,6 +29,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -47,6 +53,46 @@ public class AuthController {
 	private final InvitationResolveService invitationResolveService;
 	private final RefreshTokenCookieManager refreshTokenCookieManager;
 	private final LoginOriginResolver loginOriginResolver;
+	private final PasswordResetService passwordResetService;
+
+	@Operation(
+			summary = "비밀번호 재설정 안내 요청",
+			description = "계정 존재 여부와 상태를 노출하지 않고 재설정 또는 계정 활성화 안내 메일 처리를 요청합니다."
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "202", description = "계정 상태와 무관한 동일 안내 응답"),
+			@ApiResponse(responseCode = "400", description = "이메일 형식 오류")
+	})
+	@PostMapping("/password-reset/requests")
+	public ResponseEntity<PasswordResetRequestResponse> requestPasswordReset(
+			@Valid @RequestBody PasswordResetRequest request,
+			@Parameter(description = "요청 추적용 식별자이며 생략 시 서버가 생성합니다.")
+			@RequestHeader(value = REQUEST_ID_HEADER, required = false) String requestId
+	) {
+		return ResponseEntity.status(HttpStatus.ACCEPTED)
+				.body(passwordResetService.request(request.email(), requestId(requestId)));
+	}
+
+	@Operation(
+			summary = "비밀번호 재설정 확정",
+			description = "1회용 재설정 토큰과 새 비밀번호를 검증하고 모든 로그인 연장 세션을 폐기합니다."
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "비밀번호 변경 완료"),
+			@ApiResponse(responseCode = "400", description = "유효하지 않은 토큰 또는 요청 형식 오류"),
+			@ApiResponse(responseCode = "409", description = "이미 사용된 토큰"),
+			@ApiResponse(responseCode = "410", description = "만료된 토큰"),
+			@ApiResponse(responseCode = "422", description = "비밀번호 정책 미충족 또는 현재 비밀번호와 동일"),
+			@ApiResponse(responseCode = "500", description = "변경 저장 실패 및 롤백")
+	})
+	@PostMapping("/password-reset/confirmations")
+	public ResponseEntity<PasswordResetConfirmationResponse> confirmPasswordReset(
+			@Valid @RequestBody PasswordResetConfirmationRequest request,
+			@Parameter(description = "요청 추적용 식별자이며 생략 시 서버가 생성합니다.")
+			@RequestHeader(value = REQUEST_ID_HEADER, required = false) String requestId
+	) {
+		return ResponseEntity.ok(passwordResetService.confirm(request, requestId(requestId)));
+	}
 
 	@Operation(summary = "로그인", description = "이메일·비밀번호와 로그인 진입 경로를 검증해 액세스·리프레시 토큰을 발급합니다.")
 	@ApiResponses({
