@@ -90,6 +90,11 @@ public class OperatorController {
 					- 생성된 계정 자리(memberId)와 PENDING 상태. 받는 사람은 초대 메일 링크로 AU-02에서 \
 					이름·비밀번호만 정하면 활성화된다.
 
+					**이메일 도메인 제한 없음** — 기관에 emailDomain이 설정돼 있어도 \
+					오퍼레이터는 **아무 주소로나**(개인 이메일 포함) 초대할 수 있다. 오퍼레이터는 기관의 첫 계정이라 \
+					초대받는 시점에 그 기관 메일함을 가질 수 없기 때문이다. 도메인 제한은 오퍼레이터가 \
+					매니저·교육생을 초대하는 경로(OP-06)에 적용된다.
+
 					**오류**
 					- 409: 이미 등록되었거나 초대된 이메일
 					- 502: 초대 메일 발송 실패. ⚠ 현재는 이때 **계정 자리도 롤백된다** — \
@@ -99,7 +104,6 @@ public class OperatorController {
 	@ApiResponses({
 			@ApiResponse(responseCode = "201", description = "오퍼레이터 계정 생성 및 초대 발송 성공"),
 			@ApiResponse(responseCode = "404", description = "활성 기관을 찾을 수 없음"),
-			@ApiResponse(responseCode = "400", description = "DOMAIN_NOT_ALLOWED · 기관 도메인 밖 주소"),
 			@ApiResponse(responseCode = "409", description = "ALREADY_INVITED · 이미 등록되었거나 초대된 이메일"),
 			@ApiResponse(responseCode = "502", description = "INVITE_MAIL_FAILED · 초대 메일 발송 실패")
 	})

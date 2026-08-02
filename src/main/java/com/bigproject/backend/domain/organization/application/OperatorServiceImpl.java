@@ -5,7 +5,6 @@ import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerResponse;
 import com.bigproject.backend.domain.organization.domain.OperatorAccountStatus;
-import com.bigproject.backend.domain.organization.domain.Organization;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationException;
 import com.bigproject.backend.domain.organization.domain.OrganizationOperatorRepository;
@@ -57,8 +56,6 @@ public class OperatorServiceImpl implements OperatorService {
 	) {
 		assertOrganizationExists(organizationId);
 
-		assertEmailDomainAllowed(organizationId, request.email());
-
 		/*
 		 * 목업 모달에는 이메일 입력 하나뿐이다.
 		 *
@@ -68,6 +65,14 @@ public class OperatorServiceImpl implements OperatorService {
 		 * 목업 SA-02: "슈퍼어드민은 첫 오퍼레이터 하나만 넣는다(부트스트랩)".
 		 *
 		 * 기수·반은 오퍼레이터가 기관 전체를 담당하므로 반드시 비워서 보낸다(member 도메인이 검증한다).
+		 *
+		 * <b>organization.email_domain 검증을 여기서 하지 않는다(의도적).</b> 목업 case 2·N1은
+		 * DOMAIN_NOT_ALLOWED로 기관 도메인 밖 주소를 막게 돼 있었지만, 오퍼레이터 초대에 적용하면 모순이 생긴다 —
+		 * 오퍼레이터는 기관의 <b>첫 계정(부트스트랩)</b>이라 초대를 받는 시점에는 그 기관 메일함을 가질 수 없다.
+		 * 기관 도메인 주소는 오퍼레이터가 들어와 IT를 세팅한 <b>뒤에</b> 생기므로, 제한을 걸면 아무도 초대할 수 없다.
+		 * 그래서 email_domain은 기관 프로필 정보로 저장만 하고, 이 제한은 오퍼레이터가 매니저·교육생을 초대하는
+		 * 경로(OP-06)에 두는 것이 맞다 — 그때는 이미 기관 메일 체계가 존재한다.
+		 * DOMAIN_NOT_ALLOWED 에러코드를 지우지 않고 남겨둔 이유도 이것이다.
 		 */
 		InviteManagerResponse invited;
 		try {
@@ -150,30 +155,6 @@ public class OperatorServiceImpl implements OperatorService {
 		}
 
 		return buildListResponse(organizationId);
-	}
-
-	/**
-	 * 목업 case 2·N1 · DOMAIN_NOT_ALLOWED — 기관 도메인 밖 주소로는 초대할 수 없다.
-	 *
-	 * <p>v06에서 organization.email_domain 컬럼이 생겨 <b>이 검증이 실제로 동작한다</b>
-	 * (이전에는 상수가 항상 null이라 아무것도 막지 못했다).
-	 * 도메인이 비어 있으면 제한을 두지 않는다는 뜻이므로 통과시킨다(정의서: "NULL이면 도메인 제한을 적용하지 않는다").
-	 */
-	private void assertEmailDomainAllowed(UUID organizationId, String email) {
-		String allowedDomain = organizationRepository.findById(organizationId)
-				.map(Organization::getEmailDomain)
-				.orElse(null);
-		if (allowedDomain == null || allowedDomain.isBlank()) {
-			return;
-		}
-		int at = email.lastIndexOf('@');
-		String domain = at < 0 ? "" : email.substring(at + 1);
-		if (!allowedDomain.equalsIgnoreCase(domain)) {
-			throw new OrganizationException(
-					OrganizationErrorCode.DOMAIN_NOT_ALLOWED,
-					"이 기관은 " + allowedDomain + " 주소로만 초대할 수 있습니다."
-			);
-		}
 	}
 
 	/**
