@@ -11,8 +11,10 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -72,6 +74,8 @@ public class Organization {
 	@Column(name = "create_idempotency_key", updatable = false)
 	private UUID createIdempotencyKey;
 
+	// DDL이 CHAR(64)라 JDBC 타입을 명시한다. 지정하지 않으면 Hibernate가 varchar로 보고 validate에서 타입 불일치가 난다.
+	@JdbcTypeCode(SqlTypes.CHAR)
 	@Column(name = "create_request_fingerprint", updatable = false, length = 64)
 	private String createRequestFingerprint;
 
@@ -83,6 +87,7 @@ public class Organization {
 	@Column(name = "deletion_idempotency_key")
 	private UUID deletionIdempotencyKey;
 
+	@JdbcTypeCode(SqlTypes.CHAR)
 	@Column(name = "deletion_request_fingerprint", length = 64)
 	private String deletionRequestFingerprint;
 
