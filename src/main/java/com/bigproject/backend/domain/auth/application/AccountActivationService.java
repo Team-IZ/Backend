@@ -18,7 +18,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,12 +27,12 @@ import java.util.UUID;
 public class AccountActivationService {
 	private static final String INVALID_INVITATION_MESSAGE = "유효하지 않거나 만료된 초대입니다.";
 	private static final String CAPTURE_CHANNEL = "INVITE_LINK";
-	private static final int BCRYPT_PASSWORD_MAX_BYTES = 72;
 
 	private final AccountActivationRepository accountActivationRepository;
 	private final OneTimeTokenHasher tokenHasher;
 	private final PasswordEncoder passwordEncoder;
 	private final int consentPolicyVersion;
+	private final PasswordPolicy passwordPolicy = new PasswordPolicy();
 
 	public AccountActivationService(
 			AccountActivationRepository accountActivationRepository,
@@ -59,9 +58,9 @@ public class AccountActivationService {
 		AccountActivationTarget target = findTarget(
 				request.invitationToken(),
 				request.userId(),
-				InvitationPurpose.INVITE_MANAGER
+				InvitationPurpose.INVITE_OPERATOR_MANAGER
 		);
-		if (target.role() != Role.LEAD_MANAGER && target.role() != Role.MANAGER) {
+		if (target.role() != Role.OPERATOR && target.role() != Role.MANAGER) {
 			throw invalidInvitation();
 		}
 		return activate(
@@ -198,6 +197,7 @@ public class AccountActivationService {
 			);
 			records.add(new ConsentRecord(
 					UUID.randomUUID(),
+					target.organizationId(),
 					target.userId(),
 					choice.code(),
 					consentPolicyVersion,
@@ -217,8 +217,11 @@ public class AccountActivationService {
 		if (password == null || !password.equals(passwordConfirmation)) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "비밀번호 확인이 일치하지 않습니다.");
 		}
-		if (password.getBytes(StandardCharsets.UTF_8).length > BCRYPT_PASSWORD_MAX_BYTES) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "비밀번호가 허용 길이를 초과했습니다.");
+		if (!passwordPolicy.isStrong(password)) {
+			throw new ResponseStatusException(
+					HttpStatus.BAD_REQUEST,
+					"비밀번호는 8~64자이며 영문, 숫자, 특수문자를 포함해야 합니다."
+			);
 		}
 	}
 

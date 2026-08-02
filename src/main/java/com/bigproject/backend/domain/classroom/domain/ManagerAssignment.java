@@ -31,16 +31,7 @@ public class ManagerAssignment {
 	@Column(name = "org_id", nullable = false, updatable = false)
 	private UUID orgId;
 
-	// DB에 CHECK 제약(COHORT/CLASS)이 있는 값이라 enum으로 처리
-	@Enumerated(EnumType.STRING)
-	@Column(name = "role_scope", nullable = false, length = 100, updatable = false)
-	private RoleScope roleScope;
-
-	@Column(name = "cohort_id", nullable = false, updatable = false)
-	private UUID cohortId;
-
-	// 기수 전체 담당(COHORT)이면 null
-	@Column(name = "class_id", updatable = false)
+	@Column(name = "class_id", nullable = false, updatable = false)
 	private UUID classId;
 
 	@Column(name = "assigned_at", nullable = false, updatable = false)
@@ -50,30 +41,37 @@ public class ManagerAssignment {
 	private OffsetDateTime unassignedAt;
 
 	// CHECK 제약이 없는 카탈로그형 코드라 String으로 처리
-	@Column(name = "status", nullable = false, length = 100)
+	@Column(name = "status", nullable = false, length = 30)
 	private String status;
 
 	@Column(name = "assigned_by", nullable = false, updatable = false)
 	private UUID assignedBy;
+
+	@Column(name = "unassigned_by")
+	private UUID unassignedBy;
+
+	@Column(name = "unassigned_reason", length = 50)
+	private String unassignedReason;
 
 	@CreationTimestamp
 	@Column(name = "created_at", nullable = false, updatable = false)
 	private OffsetDateTime createdAt;
 
 	@Builder
-	private ManagerAssignment(UUID managerUserId, UUID orgId, RoleScope roleScope, UUID cohortId, UUID classId,
+	private ManagerAssignment(UUID managerUserId, UUID orgId, UUID classId,
 			OffsetDateTime assignedAt, String status, UUID assignedBy) {
 		this.managerUserId = managerUserId;
 		this.orgId = orgId;
-		this.roleScope = roleScope;
-		this.cohortId = cohortId;
 		this.classId = classId;
 		this.assignedAt = assignedAt;
 		this.status = status;
 		this.assignedBy = assignedBy;
 	}
 
-	public void unassign(OffsetDateTime unassignedAt) {
+	public void unassign(OffsetDateTime unassignedAt, UUID unassignedBy, String unassignedReason) {
 		this.unassignedAt = unassignedAt;
+		this.unassignedBy = unassignedBy;
+		this.unassignedReason = unassignedReason;
+		this.status = "ENDED";
 	}
 }

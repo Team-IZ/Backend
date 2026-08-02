@@ -58,7 +58,7 @@ public class ClassroomController {
 	}
 
 	@Operation(summary = "반 생성")
-	@PreAuthorize("hasRole('LEAD_MANAGER')")
+	@PreAuthorize("hasRole('OPERATOR')")
 	@PostMapping
 	public ResponseEntity<ClassroomResponse> createClassroom(
 			@PathVariable UUID cohortId,
@@ -67,12 +67,13 @@ public class ClassroomController {
 			@RequestHeader("X-Actor-User-Id") UUID actorUserId
 	) {
 		UUID organizationId = extractOrganizationId(authentication);
-		ClassroomService.ClassroomView view = classroomService.createClassroom(organizationId, cohortId, request.name(), actorUserId);
+		ClassroomService.ClassroomView view = classroomService.createClassroom(
+				organizationId, cohortId, request.name(), request.capacity(), actorUserId);
 		return ResponseEntity.status(HttpStatus.CREATED).body(ClassroomResponse.from(view));
 	}
 
 	@Operation(summary = "반 담당 매니저 변경")
-	@PreAuthorize("hasRole('LEAD_MANAGER')")
+	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/{classroomId}/managers")
 	public ResponseEntity<ClassroomResponse> updateManagers(
 			@PathVariable UUID cohortId,
@@ -88,7 +89,7 @@ public class ClassroomController {
 	}
 
 	@Operation(summary = "교육생 일괄 반 배정")
-	@PreAuthorize("hasRole('LEAD_MANAGER')")
+	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/trainee-assignments")
 	public ResponseEntity<AssignTraineesResponse> assignTrainees(
 			@PathVariable UUID cohortId,

@@ -7,6 +7,7 @@ import java.util.UUID;
 public record AccountActivationTarget(
 		UUID tokenId,
 		UUID userId,
+		UUID organizationId,
 		String email,
 		String name,
 		Role role,

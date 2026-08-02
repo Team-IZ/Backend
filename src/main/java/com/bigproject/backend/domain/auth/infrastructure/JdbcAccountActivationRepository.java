@@ -22,17 +22,21 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 			SELECT
 				ott.token_id,
 				u.user_id,
+				u.org_id,
 				u.email,
 				u.name,
 				u.row_version,
 				r.code AS role_code
 			FROM one_time_token ott
+			JOIN user_invitation ui ON ui.invitation_id = ott.invitation_id
 			JOIN app_user u ON u.user_id = ott.user_id
 			JOIN "role" r ON r.role_id = u.role_id
 			JOIN organization o ON o.org_id = ott.org_id
 			WHERE ott.token_hash = ?
 				AND ott.user_id = ?
 				AND ott.purpose = ?
+				AND ui.current_token_id = ott.token_id
+				AND ui.status = 'SENT'
 				AND ott.used_at IS NULL
 				AND ott.invalidated_at IS NULL
 				AND ott.expires_at > ?
@@ -42,7 +46,7 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 				AND u.normalized_email = ott.target_email_normalized
 				AND o.status = 'ACTIVE'
 				AND o.deleted_at IS NULL
-			FOR UPDATE OF ott, u, o
+			FOR UPDATE OF ott, ui, u, o
 			""";
 	private static final String ACTIVATE_USER = """
 			UPDATE app_user
@@ -52,7 +56,7 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 				is_email_verified = TRUE,
 				email_verified_at = ?,
 				failed_login_count = 0,
-				locked_until = NULL,
+				login_blocked_until = NULL,
 				password_changed_at = ?,
 				updated_at = ?,
 				row_version = row_version + 1
@@ -63,17 +67,16 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 			""";
 	private static final String INSERT_CONSENT_RECORD = """
 			INSERT INTO consent_record (
-				consent_id, user_id, consent_code, policy_version, agreed,
-				agreed_at, withdrawn_at, capture_channel, source_ip,
+				consent_id, org_id, user_id, consent_code, policy_version, agreed,
+				agreed_at, capture_channel, source_ip,
 				user_agent, locale, evidence_hash, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, CAST(? AS inet), ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS inet), ?, ?, ?, ?)
 			""";
 	private static final String ACTIVATE_TRAINEE_MEMBERSHIP = """
 			UPDATE cohort_member
 			SET status = 'ACTIVE',
 				joined_at = ?
 			WHERE user_id = ?
-				AND invitation_token_id = ?
 				AND status = 'INVITED'
 			""";
 	private static final String MARK_INVITATION_USED = """
@@ -84,6 +87,18 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 				AND used_at IS NULL
 				AND invalidated_at IS NULL
 				AND expires_at > ?
+			""";
+	private static final String MARK_INVITATION_ACCEPTED = """
+			UPDATE user_invitation ui
+			SET status = 'ACCEPTED',
+				accepted_at = ?,
+				accepted_user_id = ott.user_id,
+				updated_at = ?
+			FROM one_time_token ott
+			WHERE ui.invitation_id = ott.invitation_id
+				AND ott.token_id = ?
+				AND ui.current_token_id = ott.token_id
+				AND ui.status = 'SENT'
 			""";
 
 	private final JdbcTemplate jdbcTemplate;
@@ -100,6 +115,7 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 				(rs, rowNum) -> new AccountActivationTarget(
 						rs.getObject("token_id", UUID.class),
 						rs.getObject("user_id", UUID.class),
+						rs.getObject("org_id", UUID.class),
 						rs.getString("email"),
 						rs.getString("name"),
 						Role.valueOf(rs.getString("role_code")),
@@ -140,6 +156,7 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 			int inserted = jdbcTemplate.update(
 					INSERT_CONSENT_RECORD,
 					consent.consentId(),
+					consent.organizationId(),
 					consent.userId(),
 					consent.consentCode().name(),
 					consent.policyVersion(),
@@ -163,14 +180,16 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 		return jdbcTemplate.update(
 				ACTIVATE_TRAINEE_MEMBERSHIP,
 				Timestamp.from(activatedAt),
-				userId,
-				invitationTokenId
+				userId
 		) == 1;
 	}
 
 	@Override
 	public boolean markInvitationUsed(UUID tokenId, String requestId, Instant usedAt) {
 		Timestamp timestamp = Timestamp.from(usedAt);
-		return jdbcTemplate.update(MARK_INVITATION_USED, timestamp, requestId, tokenId, timestamp) == 1;
+		if (jdbcTemplate.update(MARK_INVITATION_USED, timestamp, requestId, tokenId, timestamp) != 1) {
+			return false;
+		}
+		return jdbcTemplate.update(MARK_INVITATION_ACCEPTED, timestamp, timestamp, tokenId) == 1;
 	}
 }

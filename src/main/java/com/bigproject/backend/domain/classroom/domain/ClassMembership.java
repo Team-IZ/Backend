@@ -40,12 +40,14 @@ public class ClassMembership {
 	@Column(name = "unassigned_at")
 	private OffsetDateTime unassignedAt;
 
-	// 한 번의 일괄 배정 요청으로 만들어진 행들을 묶어서 추적하기 위한 식별자
-	@Column(name = "assignment_batch_id")
-	private String assignmentBatchId;
-
-	@Column(name = "assigned_by")
+	@Column(name = "assigned_by", nullable = false, updatable = false)
 	private UUID assignedBy;
+
+	@Column(name = "unassigned_by")
+	private UUID unassignedBy;
+
+	@Column(name = "unassigned_reason", length = 50)
+	private String unassignedReason;
 
 	@CreationTimestamp
 	@Column(name = "created_at", nullable = false, updatable = false)
@@ -53,16 +55,17 @@ public class ClassMembership {
 
 	@Builder
 	private ClassMembership(UUID classId, UUID cohortMemberId, UUID orgId, OffsetDateTime assignedAt,
-			String assignmentBatchId, UUID assignedBy) {
+			UUID assignedBy) {
 		this.classId = classId;
 		this.cohortMemberId = cohortMemberId;
 		this.orgId = orgId;
 		this.assignedAt = assignedAt;
-		this.assignmentBatchId = assignmentBatchId;
 		this.assignedBy = assignedBy;
 	}
 
-	public void unassign(OffsetDateTime unassignedAt) {
+	public void unassign(OffsetDateTime unassignedAt, UUID unassignedBy, String unassignedReason) {
 		this.unassignedAt = unassignedAt;
+		this.unassignedBy = unassignedBy;
+		this.unassignedReason = unassignedReason;
 	}
 }

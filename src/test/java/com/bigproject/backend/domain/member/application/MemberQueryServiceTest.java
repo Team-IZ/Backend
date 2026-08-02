@@ -54,7 +54,7 @@ class MemberQueryServiceTest {
 	void rejectsTraineeRoleAsManagerDirectoryFilter() {
 		UUID organizationId = UUID.randomUUID();
 		when(authUserRepository.findByNormalizedEmail("lead@example.com"))
-				.thenReturn(Optional.of(actor(Role.LEAD_MANAGER, organizationId, "lead@example.com")));
+				.thenReturn(Optional.of(actor(Role.OPERATOR, organizationId, "lead@example.com")));
 
 		assertThatThrownBy(() -> service.findManagers(
 				null,
@@ -77,7 +77,7 @@ class MemberQueryServiceTest {
 		UUID managerId = UUID.randomUUID();
 		UUID cohortId = UUID.randomUUID();
 		when(authUserRepository.findByNormalizedEmail("lead@example.com"))
-				.thenReturn(Optional.of(actor(Role.LEAD_MANAGER, organizationId, "lead@example.com")));
+				.thenReturn(Optional.of(actor(Role.OPERATOR, organizationId, "lead@example.com")));
 		when(memberQueryRepository.existsOrganization(organizationId)).thenReturn(true);
 		when(memberQueryRepository.findManagers(any())).thenReturn(new MemberQueryRepository.Page<>(List.of(
 				new MemberQueryRepository.ManagerRow(
@@ -161,9 +161,9 @@ class MemberQueryServiceTest {
 		when(memberQueryRepository.findManagers(any())).thenReturn(new MemberQueryRepository.Page<>(List.of(
 				new MemberQueryRepository.ManagerRow(
 						UUID.randomUUID(),
-						"총괄",
+						"오퍼레이터",
 						"lead@example.com",
-						Role.LEAD_MANAGER,
+						Role.OPERATOR,
 						"ACTIVE",
 						false,
 						organizationId,
@@ -184,7 +184,7 @@ class MemberQueryServiceTest {
 		);
 
 		assertThat(response.content()).singleElement().satisfies(manager -> {
-			assertThat(manager.role()).isEqualTo("총괄");
+			assertThat(manager.role()).isEqualTo("오퍼레이터");
 			assertThat(manager.cohortNames()).containsExactly("기관 전체");
 			assertThat(manager.status()).isEqualTo("활성화");
 			assertThat(manager.lastLoginDate()).isNull();
@@ -258,7 +258,7 @@ class MemberQueryServiceTest {
 		UUID cohortId = UUID.randomUUID();
 		UUID classroomId = UUID.randomUUID();
 		when(authUserRepository.findByNormalizedEmail("lead@example.com"))
-				.thenReturn(Optional.of(actor(Role.LEAD_MANAGER, organizationId, "lead@example.com")));
+				.thenReturn(Optional.of(actor(Role.OPERATOR, organizationId, "lead@example.com")));
 		when(memberQueryRepository.findCohortScope(cohortId))
 				.thenReturn(Optional.of(new MemberQueryRepository.CohortScope(cohortId, organizationId)));
 		when(memberQueryRepository.classroomBelongsToCohort(classroomId, cohortId, organizationId)).thenReturn(false);

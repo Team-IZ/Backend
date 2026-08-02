@@ -3,7 +3,6 @@ package com.bigproject.backend.domain.classroom.application;
 import com.bigproject.backend.domain.classroom.domain.ClassMembership;
 import com.bigproject.backend.domain.classroom.domain.Classroom;
 import com.bigproject.backend.domain.classroom.domain.ManagerAssignment;
-import com.bigproject.backend.domain.classroom.domain.RoleScope;
 import com.bigproject.backend.domain.classroom.infrastructure.ClassMembershipRepository;
 import com.bigproject.backend.domain.classroom.infrastructure.ClassroomRepository;
 import com.bigproject.backend.domain.classroom.infrastructure.ManagerAssignmentRepository;
@@ -40,7 +39,7 @@ public class ClassroomService {
     }
 
     @Transactional
-    public ClassroomView createClassroom(UUID orgId, UUID cohortId, String name, UUID creatorUserId) {
+    public ClassroomView createClassroom(UUID orgId, UUID cohortId, String name, Integer capacity, UUID creatorUserId) {
         // 같은 기수 안에서 반 이름이 겹치면 안 되는데 DB에 제약이 없어서 여기서 확인
         if (classroomRepository.existsByCohortIdAndNameAndDeletedAtIsNull(cohortId, name)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 존재하는 반 이름입니다: " + name);
@@ -50,6 +49,7 @@ public class ClassroomService {
                 .orgId(orgId)
                 .cohortId(cohortId)
                 .name(name)
+                .capacity(capacity)
                 .createdBy(creatorUserId)
                 .build();
         classroomRepository.save(classroom);
@@ -115,16 +115,14 @@ public class ClassroomService {
                 .findByCohortMemberIdInAndOrgIdAndUnassignedAtIsNull(cohortMemberIds, orgId);
 
         OffsetDateTime now = OffsetDateTime.now();
-        activeMemberships.forEach(membership -> membership.unassign(now));
+        activeMemberships.forEach(membership -> membership.unassign(now, actorUserId, "REASSIGNED"));
 
-        String batchId = UUID.randomUUID().toString();
         List<ClassMembership> newMemberships = cohortMembers.stream()
                 .map(cohortMember -> ClassMembership.builder()
                         .classId(classroomId)
                         .cohortMemberId(cohortMember.getCohortMemberId())
                         .orgId(orgId)
                         .assignedAt(now)
-                        .assignmentBatchId(batchId)
                         .assignedBy(actorUserId)
                         .build())
                 .toList();
@@ -145,15 +143,13 @@ public class ClassroomService {
         List<ManagerAssignment> activeAssignments = managerAssignmentRepository
                 .findByClassIdAndOrgIdAndUnassignedAtIsNull(classroomId, orgId);
         OffsetDateTime now = OffsetDateTime.now();
-        activeAssignments.forEach(assignment -> assignment.unassign(now));
+        activeAssignments.forEach(assignment -> assignment.unassign(now, actorUserId, "REASSIGNED"));
 
         List<UUID> distinctManagerUserIds = managerUserIds.stream().distinct().toList();
         List<ManagerAssignment> newAssignments = distinctManagerUserIds.stream()
                 .map(managerUserId -> ManagerAssignment.builder()
                         .managerUserId(managerUserId)
                         .orgId(orgId)
-                        .roleScope(RoleScope.CLASS)
-                        .cohortId(cohortId)
                         .classId(classroomId)
                         .assignedAt(now)
                         .status("ACTIVE")
