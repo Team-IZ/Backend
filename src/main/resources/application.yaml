@@ -80,3 +80,8 @@ invitation:
     from: ${INVITATION_MAIL_FROM:}
     starttls-enabled: ${INVITATION_MAIL_STARTTLS_ENABLED:true}
     time-zone: ${INVITATION_MAIL_TIME_ZONE:Asia/Seoul}
+
+password-reset:
+  base-url: ${PASSWORD_RESET_BASE_URL:http://localhost:5173}
+  expiration: ${PASSWORD_RESET_EXPIRATION:PT30M}
+  request-cooldown: ${PASSWORD_RESET_REQUEST_COOLDOWN:PT1M}
