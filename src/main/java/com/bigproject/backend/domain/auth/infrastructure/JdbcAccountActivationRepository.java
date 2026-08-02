@@ -22,6 +22,7 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 			SELECT
 				ott.token_id,
 				u.user_id,
+				u.org_id,
 				u.email,
 				u.name,
 				u.row_version,
@@ -52,7 +53,7 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 				is_email_verified = TRUE,
 				email_verified_at = ?,
 				failed_login_count = 0,
-				locked_until = NULL,
+				login_blocked_until = NULL,
 				password_changed_at = ?,
 				updated_at = ?,
 				row_version = row_version + 1
@@ -63,17 +64,16 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 			""";
 	private static final String INSERT_CONSENT_RECORD = """
 			INSERT INTO consent_record (
-				consent_id, user_id, consent_code, policy_version, agreed,
-				agreed_at, withdrawn_at, capture_channel, source_ip,
+				consent_id, org_id, user_id, consent_code, policy_version, agreed,
+				agreed_at, capture_channel, source_ip,
 				user_agent, locale, evidence_hash, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, CAST(? AS inet), ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS inet), ?, ?, ?, ?)
 			""";
 	private static final String ACTIVATE_TRAINEE_MEMBERSHIP = """
 			UPDATE cohort_member
 			SET status = 'ACTIVE',
 				joined_at = ?
 			WHERE user_id = ?
-				AND invitation_token_id = ?
 				AND status = 'INVITED'
 			""";
 	private static final String MARK_INVITATION_USED = """
@@ -100,6 +100,7 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 				(rs, rowNum) -> new AccountActivationTarget(
 						rs.getObject("token_id", UUID.class),
 						rs.getObject("user_id", UUID.class),
+						rs.getObject("org_id", UUID.class),
 						rs.getString("email"),
 						rs.getString("name"),
 						Role.valueOf(rs.getString("role_code")),
@@ -140,6 +141,7 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 			int inserted = jdbcTemplate.update(
 					INSERT_CONSENT_RECORD,
 					consent.consentId(),
+					consent.organizationId(),
 					consent.userId(),
 					consent.consentCode().name(),
 					consent.policyVersion(),
@@ -163,8 +165,7 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 		return jdbcTemplate.update(
 				ACTIVATE_TRAINEE_MEMBERSHIP,
 				Timestamp.from(activatedAt),
-				userId,
-				invitationTokenId
+				userId
 		) == 1;
 	}
 

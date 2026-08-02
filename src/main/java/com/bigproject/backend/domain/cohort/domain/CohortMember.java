@@ -42,9 +42,6 @@ public class CohortMember {
 	@Column(name = "left_at")
 	private OffsetDateTime leftAt;
 
-	@Column(name = "invitation_token_id")
-	private UUID invitationTokenId;
-
 	@CreationTimestamp
 	@Column(name = "created_at", nullable = false, updatable = false)
 	private OffsetDateTime createdAt;

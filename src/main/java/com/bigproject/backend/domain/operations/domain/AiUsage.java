@@ -94,16 +94,36 @@ public class AiUsage {
 	private AiTier tierCode;
 
 	/*
+	 * 실행 당시 적용된 플랫폼 정책 스냅샷. 나중에 정책이 바뀌어도 이 호출이 어떤 기준으로 실행됐는지 재현할 수 있다.
+	 * 질문 생성·요약은 티어 정책을, 답변 채점은 채점 모델 정책과 캘리브레이션 버전을 남긴다(해당 없으면 NULL).
+	 */
+	@Column(name = "tier_policy_id", updatable = false)
+	private UUID tierPolicyId;
+
+	@Column(name = "grading_policy_id", updatable = false)
+	private UUID gradingPolicyId;
+
+	@Column(name = "calibration_version_id", updatable = false)
+	private UUID calibrationVersionId;
+
+	/*
 	 * 비용 귀속 상태. 기수·프로젝트를 확정하지 못한 호출을 0으로 숨기지 않고 `미귀속`으로 드러내기 위한 값이다
 	 * (목업 SA-02: "집계 실패를 0으로 보여주지 않는다").
+	 * 미귀속 사유 코드는 왜 귀속에 실패했는지를 남겨 운영자가 원인을 좁힐 수 있게 한다.
 	 */
 	@Enumerated(EnumType.STRING)
 	@Column(name = "attribution_status", nullable = false, updatable = false, length = 30)
 	private AttributionStatus attributionStatus;
 
+	@Column(name = "unallocated_reason_code", updatable = false, length = 100)
+	private String unallocatedReasonCode;
+
 	@Enumerated(EnumType.STRING)
 	@Column(name = "class_attribution_status", nullable = false, updatable = false, length = 30)
 	private ClassAttributionStatus classAttributionStatus;
+
+	@Column(name = "class_unallocated_reason_code", updatable = false, length = 100)
+	private String classUnallocatedReasonCode;
 
 	@Column(name = "request_id", nullable = false, updatable = false)
 	private String requestId;

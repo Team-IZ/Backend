@@ -24,7 +24,7 @@ public class JdbcAuthUserRepository implements AuthUserRepository {
 				u.password_hash,
 				u.status,
 				u.is_email_verified,
-				u.locked_until,
+				u.login_blocked_until,
 				r.code AS role_code,
 				o.status AS organization_status
 			FROM app_user u
@@ -41,7 +41,7 @@ public class JdbcAuthUserRepository implements AuthUserRepository {
 		return jdbcTemplate.query(
 				FIND_BY_NORMALIZED_EMAIL,
 				(rs, rowNum) -> {
-					Timestamp lockedUntil = rs.getTimestamp("locked_until");
+					Timestamp lockedUntil = rs.getTimestamp("login_blocked_until");
 					return new AuthUser(
 							rs.getObject("user_id", java.util.UUID.class),
 							rs.getObject("org_id", java.util.UUID.class),

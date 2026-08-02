@@ -51,13 +51,15 @@ public class JdbcRefreshTokenRepository implements RefreshTokenRepository {
 			""";
 	private static final String REVOKE_ACTIVE_BY_USER = """
 			UPDATE refresh_token
-			SET revoked_at = ?
+			SET revoked_at = ?,
+				revoked_reason = 'ROTATED'
 			WHERE user_id = ?
 				AND revoked_at IS NULL
 			""";
 	private static final String REVOKE_BY_TOKEN_HASH = """
 			UPDATE refresh_token
-			SET revoked_at = ?
+			SET revoked_at = ?,
+				revoked_reason = 'LOGOUT'
 			WHERE token_hash = ?
 				AND revoked_at IS NULL
 			""";
@@ -114,7 +116,7 @@ public class JdbcRefreshTokenRepository implements RefreshTokenRepository {
 				FIND_LATEST_LINEAGE,
 				(rs, rowNum) -> new RefreshTokenLineage(
 						rs.getObject("token_id", UUID.class),
-						rs.getString("token_family_id")
+						rs.getObject("token_family_id", UUID.class)
 				),
 				userId
 		).stream().findFirst();

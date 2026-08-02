@@ -198,6 +198,7 @@ public class AccountActivationService {
 			);
 			records.add(new ConsentRecord(
 					UUID.randomUUID(),
+					target.organizationId(),
 					target.userId(),
 					choice.code(),
 					consentPolicyVersion,
