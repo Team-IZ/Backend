@@ -28,12 +28,15 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 				u.row_version,
 				r.code AS role_code
 			FROM one_time_token ott
+			JOIN user_invitation ui ON ui.invitation_id = ott.invitation_id
 			JOIN app_user u ON u.user_id = ott.user_id
 			JOIN "role" r ON r.role_id = u.role_id
 			JOIN organization o ON o.org_id = ott.org_id
 			WHERE ott.token_hash = ?
 				AND ott.user_id = ?
 				AND ott.purpose = ?
+				AND ui.current_token_id = ott.token_id
+				AND ui.status = 'SENT'
 				AND ott.used_at IS NULL
 				AND ott.invalidated_at IS NULL
 				AND ott.expires_at > ?
@@ -43,7 +46,7 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 				AND u.normalized_email = ott.target_email_normalized
 				AND o.status = 'ACTIVE'
 				AND o.deleted_at IS NULL
-			FOR UPDATE OF ott, u, o
+			FOR UPDATE OF ott, ui, u, o
 			""";
 	private static final String ACTIVATE_USER = """
 			UPDATE app_user
@@ -84,6 +87,18 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 				AND used_at IS NULL
 				AND invalidated_at IS NULL
 				AND expires_at > ?
+			""";
+	private static final String MARK_INVITATION_ACCEPTED = """
+			UPDATE user_invitation ui
+			SET status = 'ACCEPTED',
+				accepted_at = ?,
+				accepted_user_id = ott.user_id,
+				updated_at = ?
+			FROM one_time_token ott
+			WHERE ui.invitation_id = ott.invitation_id
+				AND ott.token_id = ?
+				AND ui.current_token_id = ott.token_id
+				AND ui.status = 'SENT'
 			""";
 
 	private final JdbcTemplate jdbcTemplate;
@@ -172,6 +187,9 @@ public class JdbcAccountActivationRepository implements AccountActivationReposit
 	@Override
 	public boolean markInvitationUsed(UUID tokenId, String requestId, Instant usedAt) {
 		Timestamp timestamp = Timestamp.from(usedAt);
-		return jdbcTemplate.update(MARK_INVITATION_USED, timestamp, requestId, tokenId, timestamp) == 1;
+		if (jdbcTemplate.update(MARK_INVITATION_USED, timestamp, requestId, tokenId, timestamp) != 1) {
+			return false;
+		}
+		return jdbcTemplate.update(MARK_INVITATION_ACCEPTED, timestamp, timestamp, tokenId) == 1;
 	}
 }
