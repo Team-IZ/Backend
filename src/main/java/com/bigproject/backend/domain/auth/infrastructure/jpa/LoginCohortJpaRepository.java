@@ -1,6 +1,6 @@
 package com.bigproject.backend.domain.auth.infrastructure.jpa;
 
-import com.bigproject.backend.domain.cohort.domain.Cohort;
+import com.bigproject.backend.domain.academicoperations.domain.Cohort;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
