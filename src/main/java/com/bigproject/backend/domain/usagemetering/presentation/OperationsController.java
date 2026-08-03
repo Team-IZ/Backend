@@ -25,7 +25,7 @@ import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
-@Tag(name = "Operations", description = "기관 사용량·AI 비용·운영 설정 API (v2 IA: SA-02 ③④ / OP-06 ⑤)")
+@Tag(name = "Usage Metering", description = "AI 호출량·토큰·비용, 저장소 사용량, 기관 한도, 비용 집계 API (v2 IA: SA-02 ③④ / OP-06 ⑤)")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
 @RequestMapping("/organizations/{organizationId}/operations")

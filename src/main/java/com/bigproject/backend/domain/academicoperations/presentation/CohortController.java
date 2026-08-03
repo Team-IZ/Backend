@@ -35,7 +35,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.UUID;
 
-@Tag(name = "Cohort", description = "기관 기수 생성·조회·종료 API")
+@Tag(name = "Academic Operations", description = "기수, 반, 교육생 소속 이력, 매니저 반 배정 API")
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RequiredArgsConstructor

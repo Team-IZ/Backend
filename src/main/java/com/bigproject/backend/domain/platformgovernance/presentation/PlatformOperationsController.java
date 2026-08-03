@@ -29,8 +29,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.UUID;
 
 @Tag(
-		name = "Platform Operations",
-		description = "전 기관에 걸리는 플랫폼 설정 API (v2 IA: SA-03 플랫폼 설정 — 모델·단가 / 슈퍼어드민 계정)"
+		name = "Platform Governance",
+		description = "플랫폼 전역 AI 모델 정책, 모델 티어, 단가, 보정 버전, 전역 설정 API (v2 IA: SA-03 플랫폼 설정 — 모델·단가 / 슈퍼어드민 계정)"
 )
 @SecurityRequirement(name = "bearerAuth")
 @PreAuthorize("hasRole('SUPER_ADMIN')")

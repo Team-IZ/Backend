@@ -40,7 +40,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.net.URI;
 import java.util.UUID;
 
-@Tag(name = "Member", description = "매니저와 교육생 계정·초대·배정 API")
+@Tag(name = "Member", description = "사용자 계정, 역할, 초대, 활성화, 계정 상태, 약관 동의 API (매니저·교육생)")
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController

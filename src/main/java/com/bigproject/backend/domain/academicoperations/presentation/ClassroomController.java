@@ -35,7 +35,8 @@ import java.util.UUID;
 // - actorUserId(created_by): 토큰에 요청자 UUID가 담기지 않아 임시로 X-Actor-User-Id 헤더로 받고 있음.
 //   클라이언트가 임의의 UUID를 보낼 수 있는 구조이므로,
 //   인증 주체에서 요청자 UUID를 얻는 방법이 생기면 반드시 교체할 것.
-@Tag(name = "Classroom", description = "기수 반 편성과 교육생 배정 API")
+// 태그는 Academic Operations 도메인으로 합친다. 설명은 CohortController 쪽 @Tag가 대표로 싣는다.
+@Tag(name = "Academic Operations")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
 @RequestMapping("/cohorts/{cohortId}/classrooms")

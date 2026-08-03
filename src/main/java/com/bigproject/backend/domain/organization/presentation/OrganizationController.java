@@ -42,7 +42,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
 
-@Tag(name = "Organization", description = "기관 프로비저닝과 상태 관리 API (v2 IA: SA-01 기관 목록 / SA-02 기관 상세)")
+@Tag(name = "Organization", description = "기관 프로비저닝, 기관 상태, 계약, 기관별 운영 정책, 기관 삭제·복구 API (v2 IA: SA-01 기관 목록 / SA-02 기관 상세)")
 @SecurityRequirement(name = "bearerAuth")
 @PreAuthorize("hasRole('SUPER_ADMIN')")
 @Validated
