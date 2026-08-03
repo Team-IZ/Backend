@@ -15,7 +15,7 @@ package com.bigproject.backend.domain.organization.domain;
  *   <tr><td>활성 세션 수</td><td>06_MEAS 세션 계열 테이블</td><td>테이블 없음 → 0</td></tr>
  * </table>
  *
- * @see com.bigproject.backend.domain.operations.domain.OperationsSchemaPending
+ * @see com.bigproject.backend.domain.usagemetering.domain.OperationsSchemaPending
  */
 public final class OrganizationSchemaPending {
 

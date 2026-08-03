@@ -1,6 +1,5 @@
 package com.bigproject.backend.domain.auth.application;
 
-import com.bigproject.backend.domain.member.domain.Role;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -8,37 +7,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class LoginClientValidatorTest {
 	private final LoginClientValidator validator = new LoginClientValidator(
-			"http://localhost:5173,https://team-iz.github.io",
-			"/superadmin/login",
-			"/manager/login"
+			"http://localhost:5173,https://team-iz.github.io"
 	);
 
 	@Test
-	void acceptsSuperAdminOnlyOnSuperAdminLoginPath() {
-		validator.validate("http://localhost:5173", "/superadmin/login", Role.SUPER_ADMIN);
-
-		assertThatThrownBy(() ->
-				validator.validate("http://localhost:5173", "/manager/login", Role.SUPER_ADMIN)
-		).isInstanceOf(ResponseStatusException.class)
-				.hasMessageContaining("역할과 로그인 진입 경로");
+	void acceptsConfiguredOriginWithoutCheckingLoginPathOrRole() {
+		validator.validateOrigin("http://localhost:5173");
+		validator.validateOrigin("https://team-iz.github.io");
 	}
 
 	@Test
-	void acceptsLeadManagerAndManagerOnManagerLoginPath() {
-		validator.validate("http://localhost:5173", "/manager/login", Role.OPERATOR);
-		validator.validate("http://localhost:5173", "/manager/login", Role.MANAGER);
-	}
-
-	@Test
-	void rejectsUnknownOriginAndTraineeLogin() {
+	void rejectsUnknownOrigin() {
 		assertThatThrownBy(() ->
-				validator.validate("http://localhost:5174", "/manager/login", Role.MANAGER)
+				validator.validateOrigin("http://localhost:5174")
 		).isInstanceOf(ResponseStatusException.class)
 				.hasMessageContaining("허용되지 않은 클라이언트");
-
-		assertThatThrownBy(() ->
-				validator.validate("http://localhost:5173", "/manager/login", Role.TRAINEE)
-		).isInstanceOf(ResponseStatusException.class)
-				.hasMessageContaining("역할과 로그인 진입 경로");
 	}
 }
