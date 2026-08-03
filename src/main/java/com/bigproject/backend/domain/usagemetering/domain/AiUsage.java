@@ -45,12 +45,14 @@ public class AiUsage {
 	@JoinColumn(name = "model_id", nullable = false, updatable = false)
 	private AiModel model;
 
-	/**
-	 * 실제 호출에 사용된 모델 인스턴스(ai_model_instance). v06 신규 NOT NULL FK다.
-	 * 이 도메인은 조회 전용이라 인스턴스 엔티티까지 만들지 않고 원시 UUID만 보관한다.
-	 */
-	@Column(name = "model_instance_id", nullable = false, updatable = false)
-	private UUID modelInstanceId;
+  
+//	/**
+//	 * 실제 호출에 사용된 모델 인스턴스(ai_model_instance). v06 신규 NOT NULL FK다.
+//	 * 이 도메인은 조회 전용이라 인스턴스 엔티티까지 만들지 않고 원시 UUID만 보관한다.
+//	 */
+//	@Column(name = "model_instance_id", nullable = false, updatable = false)
+//	private UUID modelInstanceId;
+
 
 	@Column(name = "actor_user_id", updatable = false)
 	private UUID actorUserId;
