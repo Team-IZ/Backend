@@ -59,8 +59,6 @@ jwt:
 auth:
   login:
     allowed-origins: ${AUTH_LOGIN_ALLOWED_ORIGINS}
-    super-admin-path: ${SUPER_ADMIN_LOGIN_PATH}
-    manager-path: ${MANAGER_LOGIN_PATH}
     swagger-origin-override-enabled: ${AUTH_SWAGGER_ORIGIN_OVERRIDE_ENABLED}
     swagger-ui-origin: ${AUTH_SWAGGER_UI_ORIGIN}
   refresh-cookie:

@@ -1,9 +1,9 @@
 package com.bigproject.backend.domain.organization.application;
 
-import com.bigproject.backend.domain.operations.domain.AiTier;
-import com.bigproject.backend.domain.operations.domain.DisclosureScope;
-import com.bigproject.backend.domain.operations.infrastructure.AiUsageRepository;
-import com.bigproject.backend.domain.operations.infrastructure.OrgAiCostTotal;
+import com.bigproject.backend.domain.platformgovernance.domain.AiTier;
+import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
+import com.bigproject.backend.domain.usagemetering.infrastructure.AiUsageRepository;
+import com.bigproject.backend.domain.usagemetering.infrastructure.OrgAiCostTotal;
 import com.bigproject.backend.domain.organization.domain.Organization;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationException;

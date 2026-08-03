@@ -39,12 +39,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
 
-@Tag(name = "Auth", description = "로그인, 토큰 재발급, 초대 계정 활성화 API")
+@Tag(name = "Auth", description = "로그인, Access/Refresh Token 재발급·세션 폐기, 비밀번호 재설정, 초대 계정 활성화 API")
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
 public class AuthController {
-	public static final String LOGIN_ENTRY_PATH_HEADER = "X-Login-Entry-Path";
 	public static final String SWAGGER_CLIENT_ORIGIN_HEADER = "X-Swagger-Client-Origin";
 	private static final String REQUEST_ID_HEADER = "X-Request-Id";
 
@@ -94,17 +93,15 @@ public class AuthController {
 		return ResponseEntity.ok(passwordResetService.confirm(request, requestId(requestId)));
 	}
 
-	@Operation(summary = "로그인", description = "이메일·비밀번호와 로그인 진입 경로를 검증해 액세스·리프레시 토큰을 발급합니다.")
+	@Operation(summary = "통합 로그인", description = "이메일·비밀번호를 검증하고 서버가 계정 역할과 접근 범위에 맞는 이동 경로를 결정해 토큰과 함께 반환합니다.")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "로그인 성공 및 토큰 발급"),
 			@ApiResponse(responseCode = "400", description = "요청 형식 오류 또는 로그인 정보 불일치"),
-			@ApiResponse(responseCode = "403", description = "계정·기관 상태 또는 요청 Origin·로그인 경로 불일치")
+			@ApiResponse(responseCode = "403", description = "계정·기관 상태 또는 요청 Origin이 허용되지 않음")
 	})
 	@PostMapping("/login")
 	public ResponseEntity<LoginResponse> login(
 			@Valid @RequestBody LoginRequest request,
-			@Parameter(description = "접속한 프론트엔드 로그인 화면 경로", example = "/manager/login")
-			@RequestHeader(LOGIN_ENTRY_PATH_HEADER) String loginEntryPath,
 			@Parameter(
 					description = "Swagger UI 테스트 시 실제 프론트엔드 Origin. 일반 프론트 요청에서는 생략합니다.",
 					example = "http://localhost:5173"
@@ -117,7 +114,6 @@ public class AuthController {
 		LoginResult result = authService.login(
 				request,
 				origin,
-				loginEntryPath,
 				requestMetadata(servletRequest)
 		);
 		return ResponseEntity.ok()
