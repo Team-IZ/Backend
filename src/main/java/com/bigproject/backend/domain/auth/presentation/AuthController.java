@@ -39,7 +39,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
 
-@Tag(name = "Auth", description = "로그인, 토큰 재발급, 초대 계정 활성화 API")
+@Tag(name = "Auth", description = "로그인, Access/Refresh Token 재발급·세션 폐기, 비밀번호 재설정, 초대 계정 활성화 API")
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
