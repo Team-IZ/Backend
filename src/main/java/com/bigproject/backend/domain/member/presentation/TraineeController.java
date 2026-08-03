@@ -37,7 +37,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.UUID;
 
-@Tag(name = "Trainee", description = "기수 교육생 명단 조회·등록 API")
+// 태그는 Member 도메인으로 합친다. 설명은 MemberController 쪽 @Tag가 대표로 싣는다.
+@Tag(name = "Member")
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController

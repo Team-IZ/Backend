@@ -1,7 +1,7 @@
 package com.bigproject.backend.domain.organization.domain;
 
-import com.bigproject.backend.domain.operations.domain.AiTier;
-import com.bigproject.backend.domain.operations.domain.DisclosureScope;
+import com.bigproject.backend.domain.platformgovernance.domain.AiTier;
+import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
