@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.auth.application;
 
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
+import com.bigproject.backend.domain.auth.domain.LoginCohortRepository;
 import com.bigproject.backend.domain.auth.domain.RefreshToken;
 import com.bigproject.backend.domain.auth.domain.RefreshTokenLineage;
 import com.bigproject.backend.domain.auth.domain.RefreshTokenRepository;
@@ -41,10 +42,10 @@ class AuthServiceTest {
 	private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 	private final JwtProvider jwtProvider = new JwtProvider(SECRET, 1_800_000, 604_800_000);
 	private final LoginClientValidator loginClientValidator = new LoginClientValidator(
-			"http://localhost:5173",
-			"/superadmin/login",
-			"/manager/login"
+			"http://localhost:5173"
 	);
+	private final LoginCohortRepository loginCohortRepository = mock(LoginCohortRepository.class);
+	private final LoginDestinationResolver loginDestinationResolver = new LoginDestinationResolver(loginCohortRepository);
 	private final RefreshTokenRepository refreshTokenRepository = mock(RefreshTokenRepository.class);
 	private final RefreshTokenHasher refreshTokenHasher = new RefreshTokenHasher();
 
@@ -55,16 +56,18 @@ class AuthServiceTest {
 		AuthUserRepository repository = repositoryReturning(user);
 		AuthService service = serviceWith(repository);
 		Instant beforeLogin = Instant.now();
+		when(loginCohortRepository.findLatestNameForOrganization(organizationId))
+				.thenReturn(Optional.of("AIVLE 7기"));
 
 		LoginResult result = service.login(
 				new LoginRequest(" LEAD@example.com ", PASSWORD),
 				"http://localhost:5173",
-				"/manager/login",
 				REQUEST_METADATA
 		);
 
 		assertThat(result.response().role()).isEqualTo(Role.OPERATOR);
 		assertThat(result.response().organizationId()).isEqualTo(organizationId);
+		assertThat(result.response().redirectPath()).isEqualTo("/cohorts/AIVLE%207%EA%B8%B0");
 		assertThat(jwtProvider.getRole(result.response().accessToken())).isEqualTo("OPERATOR");
 		assertThat(jwtProvider.getOrganizationId(result.response().accessToken())).isEqualTo(organizationId);
 		assertThat(jwtProvider.isRefreshToken(result.refreshToken())).isTrue();
@@ -84,34 +87,18 @@ class AuthServiceTest {
 	}
 
 	@Test
-	void allowsSuperAdminWithoutOrganizationOnSuperAdminPath() {
+	void allowsSuperAdminWithoutOrganizationAndReturnsAdminDestination() {
 		AuthService service = serviceReturning(activeUser(Role.SUPER_ADMIN, null));
 
 		LoginResult result = service.login(
 				new LoginRequest("lead@example.com", PASSWORD),
 				"http://localhost:5173",
-				"/superadmin/login",
 				REQUEST_METADATA
 		);
 
+		assertThat(result.response().redirectPath()).isEqualTo("/admin/orgs");
 		assertThat(jwtProvider.getRole(result.response().accessToken())).isEqualTo("SUPER_ADMIN");
 		assertThat(jwtProvider.getOrganizationId(result.response().accessToken())).isNull();
-	}
-
-	@Test
-	void rejectsRoleThatDoesNotMatchLoginPathBeforeIssuingTokens() {
-		AuthUser user = activeUser(Role.SUPER_ADMIN, null);
-		AuthUserRepository repository = repositoryReturning(user);
-		AuthService service = serviceWith(repository);
-
-		assertThatThrownBy(() -> service.login(
-				new LoginRequest("lead@example.com", PASSWORD),
-				"http://localhost:5173",
-				"/manager/login",
-				REQUEST_METADATA
-		)).isInstanceOf(ResponseStatusException.class)
-				.hasMessageContaining("역할과 로그인 진입 경로");
-		verify(repository, never()).updateLastLoginAt(any(), any());
 	}
 
 	@Test
@@ -122,7 +109,6 @@ class AuthServiceTest {
 		assertThatThrownBy(() -> service.login(
 				new LoginRequest("lead@example.com", PASSWORD),
 				"http://localhost:5173",
-				"/manager/login",
 				REQUEST_METADATA
 		)).isInstanceOf(ResponseStatusException.class)
 				.hasMessageContaining("기관 인증 컨텍스트");
@@ -137,7 +123,6 @@ class AuthServiceTest {
 		assertLoginFailure(() -> service.login(
 				new LoginRequest("missing@example.com", PASSWORD),
 				"http://localhost:5173",
-				"/manager/login",
 				REQUEST_METADATA
 		));
 	}
@@ -149,7 +134,6 @@ class AuthServiceTest {
 		assertLoginFailure(() -> service.login(
 				new LoginRequest("lead@example.com", "wrong-password"),
 				"http://localhost:5173",
-				"/manager/login",
 				REQUEST_METADATA
 		));
 	}
@@ -163,7 +147,6 @@ class AuthServiceTest {
 		assertLoginFailure(() -> service.login(
 				new LoginRequest("missing@example.com", "wrong-password"),
 				"http://localhost:5173",
-				"/manager/login",
 				REQUEST_METADATA
 		));
 	}
@@ -176,7 +159,6 @@ class AuthServiceTest {
 		LoginResult loginResult = service.login(
 				new LoginRequest("lead@example.com", PASSWORD),
 				"http://localhost:5173",
-				"/manager/login",
 				REQUEST_METADATA
 		);
 		ArgumentCaptor<RefreshToken> tokenCaptor = ArgumentCaptor.forClass(RefreshToken.class);
@@ -202,13 +184,11 @@ class AuthServiceTest {
 		LoginResult first = service.login(
 				new LoginRequest("lead@example.com", PASSWORD),
 				"http://localhost:5173",
-				"/superadmin/login",
 				REQUEST_METADATA
 		);
 		LoginResult second = service.login(
 				new LoginRequest("lead@example.com", PASSWORD),
 				"http://localhost:5173",
-				"/superadmin/login",
 				REQUEST_METADATA
 		);
 
@@ -228,7 +208,6 @@ class AuthServiceTest {
 		service.login(
 				new LoginRequest("lead@example.com", PASSWORD),
 				"http://localhost:5173",
-				"/manager/login",
 				REQUEST_METADATA
 		);
 
@@ -277,6 +256,7 @@ class AuthServiceTest {
 				passwordEncoder,
 				jwtProvider,
 				loginClientValidator,
+				loginDestinationResolver,
 				refreshTokenRepository,
 				refreshTokenHasher
 		);
