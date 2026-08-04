@@ -21,4 +21,7 @@ public interface CohortMemberRepository extends JpaRepository<CohortMember, UUID
 	 */
 	List<CohortMember> findByCohortIdAndOrgIdAndUserIdInAndLeftAtIsNull(
 			UUID cohortId, UUID orgId, List<UUID> userIds);
+
+	// 기수 종료 시 cascade 해제 대상 조회용: 이 기수의 유효한 구성원 전체
+	List<CohortMember> findByCohortIdAndOrgIdAndLeftAtIsNull(UUID cohortId, UUID orgId);
 }

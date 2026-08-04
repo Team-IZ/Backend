@@ -23,6 +23,7 @@ public class CohortService {
 
     private final CohortRepository cohortRepository;
     private final OrganizationPolicyRepository organizationPolicyRepository;
+    private final ClassroomService classroomService;
 
     // 기수 생성
     @Transactional
@@ -58,11 +59,12 @@ public class CohortService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "기수를 찾을 수 없습니다."));
     }
 
-    // 기수 종료
+    // 기수 종료: 기수 상태 변경 + 소속 반 배정·매니저 배정 일괄 해제
     @Transactional
     public Cohort closeCohort(UUID cohortId, UUID orgId, UUID actorUserId) {
         Cohort cohort = findCohort(cohortId, orgId);
         cohort.close(actorUserId);
+        classroomService.releaseAllAssignmentsForCohort(cohortId, orgId, actorUserId);
         return cohort;
     }
 
