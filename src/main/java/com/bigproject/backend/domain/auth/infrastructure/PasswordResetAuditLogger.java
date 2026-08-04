@@ -2,16 +2,15 @@ package com.bigproject.backend.domain.auth.infrastructure;
 
 import com.bigproject.backend.domain.auth.domain.PasswordResetAccount;
 import com.bigproject.backend.domain.auth.domain.PasswordResetToken;
+import com.bigproject.backend.domain.auth.infrastructure.jpa.AuditLogJpaRepository;
 import com.bigproject.backend.domain.member.application.OneTimeTokenHasher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -19,16 +18,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 public class PasswordResetAuditLogger {
-	private static final String INSERT = """
-			INSERT INTO audit_log (
-				audit_id, org_id, actor_user_id, actor_type, event_code, action,
-				target_type, target_id, result, failure_reason,
-				before_snapshot, after_snapshot, request_id, trace_id, correlation_id,
-				source_ip, user_agent, occurred_at, recorded_at, integrity_hash
-			) VALUES (?, ?, NULL, 'SYSTEM', ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, NULL, ?, ?, ?)
-			""";
-
-	private final JdbcTemplate jdbcTemplate;
+	private final AuditLogJpaRepository auditLogRepository;
 	private final OneTimeTokenHasher hasher;
 
 	@Transactional
@@ -101,9 +91,7 @@ public class PasswordResetAuditLogger {
 				now.toString(),
 				auditRequestId.toString()
 		));
-		Timestamp timestamp = Timestamp.from(now);
-		jdbcTemplate.update(
-				INSERT,
+		int inserted = auditLogRepository.insert(
 				auditId,
 				organizationId,
 				eventCode,
@@ -114,10 +102,12 @@ public class PasswordResetAuditLogger {
 				failureReason,
 				auditRequestId,
 				requestId,
-				timestamp,
-				timestamp,
+				now,
 				integrityHash
 		);
+		if (inserted != 1) {
+			throw new IllegalStateException("비밀번호 재설정 감사 로그를 저장할 수 없습니다.");
+		}
 	}
 
 	private UUID requestUuid(String requestId) {

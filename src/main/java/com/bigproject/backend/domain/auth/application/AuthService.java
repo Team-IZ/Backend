@@ -35,6 +35,7 @@ public class AuthService {
 	private final PasswordEncoder passwordEncoder;
 	private final JwtProvider jwtProvider;
 	private final LoginClientValidator loginClientValidator;
+	private final LoginDestinationResolver loginDestinationResolver;
 	private final RefreshTokenRepository refreshTokenRepository;
 	private final RefreshTokenHasher refreshTokenHasher;
 
@@ -42,7 +43,6 @@ public class AuthService {
 	public LoginResult login(
 			LoginRequest request,
 			String origin,
-			String loginEntryPath,
 			TokenRequestMetadata requestMetadata
 	) {
 		Optional<AuthUser> candidate = authUserRepository.findByNormalizedEmail(normalizeEmail(request.email()));
@@ -53,7 +53,8 @@ public class AuthService {
 		AuthUser user = candidate.get();
 
 		validateAccount(user);
-		loginClientValidator.validate(origin, loginEntryPath, user.role());
+		loginClientValidator.validateOrigin(origin);
+		String redirectPath = loginDestinationResolver.resolveRedirectPath(user);
 
 		String accessToken = jwtProvider.createAccessToken(
 				user.email(),
@@ -88,6 +89,7 @@ public class AuthService {
 				user.name(),
 				user.role(),
 				user.organizationId(),
+				redirectPath,
 				accessToken,
 				jwtProvider.getAccessTokenExpiration()
 		);

@@ -11,6 +11,7 @@ public record LoginResponse(
 		String name,
 		Role role,
 		@Schema(type = "string", example = "UUID") UUID organizationId,
+		@Schema(description = "클라이언트 내부 이동 경로", example = "/cohorts/12%EA%B8%B0") String redirectPath,
 		String accessToken,
 		long accessTokenExpiresIn
 ) {
