@@ -60,6 +60,14 @@ dependencies {
 	testCompileOnly 'org.projectlombok:lombok'
 	// H2 Database: PostgreSQL 호환 모드로 애플리케이션 컨텍스트 테스트를 격리합니다.
 	testRuntimeOnly 'com.h2database:h2'
+	// Testcontainers BOM: Testcontainers 모듈 버전을 일관되게 관리합니다.
+	testImplementation platform('org.testcontainers:testcontainers-bom:2.0.5')
+	// Testcontainers JUnit 5 지원: 실제 DBMS 컨테이너의 생명주기를 테스트와 연동합니다.
+	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+	// Testcontainers PostgreSQL: 운영과 동일한 PostgreSQL에서 네이티브 SQL 리포지토리를 검증합니다.
+	testImplementation 'org.testcontainers:testcontainers-postgresql'
+	// PostgreSQL JDBC(테스트): Testcontainers로 띄운 PostgreSQL에 접속합니다.
+	testRuntimeOnly 'org.postgresql:postgresql'
 	// JUnit Platform 기반 테스트 실행기
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	// 테스트 소스의 Lombok 애너테이션 처리
