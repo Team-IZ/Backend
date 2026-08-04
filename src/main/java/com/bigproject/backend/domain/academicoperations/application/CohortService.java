@@ -60,10 +60,16 @@ public class CohortService {
     }
 
     // 기수 종료: 기수 상태 변경 + 소속 반 배정·매니저 배정 일괄 해제
+    // retention_policy_id/retention_until은 종료 시점의 활성 기관 정책을 스냅샷으로 고정한다 (createCohort의
+    // disclosure 스냅샷과 동일한 패턴). DB CHECK(ck_cohort_closed)가 CLOSED 전이 시 이 두 값을 필수로 요구한다.
     @Transactional
     public Cohort closeCohort(UUID cohortId, UUID orgId, UUID actorUserId) {
         Cohort cohort = findCohort(cohortId, orgId);
-        cohort.close(actorUserId);
+        OrganizationPolicy policy = organizationPolicyRepository
+                .findByOrgIdAndStatus(orgId, OrganizationPolicy.Status.ACTIVE)
+                .orElseThrow(() -> new IllegalStateException("기관에 활성 운영 정책이 없습니다: " + orgId));
+
+        cohort.close(actorUserId, policy.getPolicyId(), policy.getRetentionDays());
         classroomService.releaseAllAssignmentsForCohort(cohortId, orgId, actorUserId);
         return cohort;
     }
