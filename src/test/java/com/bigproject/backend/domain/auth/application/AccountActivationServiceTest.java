@@ -47,7 +47,7 @@ class AccountActivationServiceTest {
 	@Test
 	void activatesManagerAndStoresRequiredConsents() {
 		AccountActivationTarget target = target(Role.MANAGER);
-		stubResolvable(target, InvitationPurpose.INVITE_MANAGER);
+		stubResolvable(target, InvitationPurpose.INVITE_OPERATOR_MANAGER);
 		when(repository.activateUser(eq(target.userId()), eq(target.rowVersion()), eq("매니저"), any(), any()))
 				.thenReturn(true);
 		when(repository.markInvitationUsed(eq(target.tokenId()), eq("request-1"), any())).thenReturn(true);
@@ -220,6 +220,7 @@ class AccountActivationServiceTest {
 
 	private AccountActivationTarget target(Role role) {
 		return new AccountActivationTarget(
+				UUID.randomUUID(),
 				UUID.randomUUID(),
 				UUID.randomUUID(),
 				"invitee@example.com",

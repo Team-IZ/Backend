@@ -58,7 +58,7 @@ class JdbcMemberQueryRepositoryTest {
 		assertThat(result.content()).extracting(MemberQueryRepository.ManagerRow::memberId)
 				.containsExactly(pendingManagerId, deletedManagerId);
 		assertThat(repository.findManagerAssignments(List.of(pendingManagerId)))
-				.hasSize(2)
+				.hasSize(1)
 				.allSatisfy(assignment -> assertThat(assignment.managerId()).isEqualTo(pendingManagerId));
 	}
 
@@ -155,12 +155,15 @@ class JdbcMemberQueryRepositoryTest {
 				CREATE TABLE manager_assignment (
 					assignment_id UUID PRIMARY KEY,
 					manager_user_id UUID NOT NULL,
-					role_scope VARCHAR(100) NOT NULL,
-					cohort_id UUID NOT NULL,
-					class_id UUID,
+					org_id UUID NOT NULL,
+					class_id UUID NOT NULL,
 					assigned_at TIMESTAMP WITH TIME ZONE NOT NULL,
 					unassigned_at TIMESTAMP WITH TIME ZONE,
-					status VARCHAR(100) NOT NULL
+					status VARCHAR(30) NOT NULL,
+					assigned_by UUID NOT NULL,
+					unassigned_by UUID,
+					unassigned_reason VARCHAR(50),
+					created_at TIMESTAMP WITH TIME ZONE NOT NULL
 				)
 				""");
 		jdbcTemplate.execute("""
@@ -221,12 +224,9 @@ class JdbcMemberQueryRepositoryTest {
 		jdbcTemplate.update("INSERT INTO cohort VALUES (?, ?, '7기', NULL)", cohortId, organizationId);
 		jdbcTemplate.update("INSERT INTO \"class\" VALUES (?, ?, ?, 'A반', NULL)", classroomId, organizationId, cohortId);
 		jdbcTemplate.update(
-				"INSERT INTO manager_assignment VALUES (?, ?, 'COHORT', ?, NULL, ?, NULL, 'ACTIVE')",
-				UUID.randomUUID(), pendingManagerId, cohortId, Timestamp.from(now.minusSeconds(7200))
-		);
-		jdbcTemplate.update(
-				"INSERT INTO manager_assignment VALUES (?, ?, 'CLASS', ?, ?, ?, NULL, 'ACTIVE')",
-				UUID.randomUUID(), pendingManagerId, cohortId, classroomId, Timestamp.from(now.minusSeconds(3600))
+				"INSERT INTO manager_assignment VALUES (?, ?, ?, ?, ?, NULL, 'ACTIVE', ?, NULL, NULL, ?)",
+				UUID.randomUUID(), pendingManagerId, organizationId, classroomId,
+				Timestamp.from(now.minusSeconds(3600)), pendingManagerId, Timestamp.from(now)
 		);
 		jdbcTemplate.update(
 				"INSERT INTO cohort_member VALUES (?, ?, ?, ?, 'ACTIVE', NULL)",

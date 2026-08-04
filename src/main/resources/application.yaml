@@ -59,8 +59,6 @@ jwt:
 auth:
   login:
     allowed-origins: ${AUTH_LOGIN_ALLOWED_ORIGINS}
-    super-admin-path: ${SUPER_ADMIN_LOGIN_PATH}
-    manager-path: ${MANAGER_LOGIN_PATH}
     swagger-origin-override-enabled: ${AUTH_SWAGGER_ORIGIN_OVERRIDE_ENABLED}
     swagger-ui-origin: ${AUTH_SWAGGER_UI_ORIGIN}
   refresh-cookie:
@@ -71,8 +69,6 @@ auth:
 
 invitation:
   base-url: ${INVITATION_BASE_URL}
-  manager-path: ${MANAGER_INVITATION_PATH}
-  trainee-path: ${TRAINEE_INVITATION_PATH}
   expiration: ${INVITATION_EXPIRATION}
   mail:
     host: ${INVITATION_MAIL_HOST:}
@@ -82,3 +78,8 @@ invitation:
     from: ${INVITATION_MAIL_FROM:}
     starttls-enabled: ${INVITATION_MAIL_STARTTLS_ENABLED:true}
     time-zone: ${INVITATION_MAIL_TIME_ZONE:Asia/Seoul}
+
+password-reset:
+  base-url: ${PASSWORD_RESET_BASE_URL:http://localhost:5173}
+  expiration: ${PASSWORD_RESET_EXPIRATION:PT30M}
+  request-cooldown: ${PASSWORD_RESET_REQUEST_COOLDOWN:PT1M}

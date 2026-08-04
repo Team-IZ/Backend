@@ -1,6 +1,7 @@
 package com.bigproject.backend.global.exception;
 
 import com.bigproject.backend.domain.member.application.InvitationConflictException;
+import com.bigproject.backend.domain.auth.application.PasswordResetException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
@@ -14,6 +15,15 @@ import java.time.Instant;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+	@ExceptionHandler(PasswordResetException.class)
+	public ResponseEntity<ErrorResponse> handlePasswordReset(PasswordResetException exception) {
+		return ResponseEntity.status(exception.status()).body(ErrorResponse.of(
+				exception.status().value(),
+				exception.code(),
+				exception.getMessage()
+		));
+	}
+
 	@ExceptionHandler(InvitationConflictException.class)
 	public ResponseEntity<ErrorResponse> handleInvitationConflict(InvitationConflictException exception) {
 		return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.of(

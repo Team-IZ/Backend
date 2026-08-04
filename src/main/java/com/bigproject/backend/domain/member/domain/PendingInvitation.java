@@ -5,6 +5,7 @@ import java.util.UUID;
 
 public record PendingInvitation(
 		UUID memberId,
+		UUID invitationId,
 		UUID tokenId,
 		String email,
 		String rawToken,
