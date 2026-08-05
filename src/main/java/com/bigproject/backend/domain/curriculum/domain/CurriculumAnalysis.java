@@ -81,6 +81,9 @@ public class CurriculumAnalysis {
     @Column(name = "recovery_action", length = 50)
     private String recoveryAction;
 
+    @Column(name = "external_job_id")
+    private UUID externalJobId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
