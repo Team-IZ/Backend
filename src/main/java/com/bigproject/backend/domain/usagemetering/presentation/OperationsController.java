@@ -73,9 +73,12 @@ public class OperationsController {
 					**단가 미설정 처리** — 단가가 없는 호출은 비용을 0으로 더하지 않고 합계에서 제외하며, \
 					제외된 건수를 aiCost.unpricedCallCount로, 합계가 완전한지를 aiCost.costComplete로 알려준다.
 
-					**아직 채워지지 않는 값**
-					- activity의 완료 세션·채점 회차·발행 리포트 → 06_MEAS·10_RPT 테이블이 범위 밖이라 0
-					- classCosts의 sessionCount → 같은 이유로 0
+					**활동량 집계 기준** — v07에서 06_MEAS·10_RPT 테이블이 생겨 LIVE 경로에서도 실제 값을 센다.
+					- 완료 세션: assessment_session.ended_at이 기간에 들어온 COMPLETED 세션
+					- 채점 회차: project_assessment_round.submission_due_at이 기간에 들어온 회차 \
+					(채점 실행 시각 컬럼이 없어 마감을 실행 시점으로 본다)
+					- 발행 리포트: report.published_at이 기간에 들어온 리포트
+					- classCosts의 sessionCount: 교육생 반 배정을 타고 집계하며, 배정이 해제된 교육생은 제외
 					"""
 	)
 	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'OPERATOR')")

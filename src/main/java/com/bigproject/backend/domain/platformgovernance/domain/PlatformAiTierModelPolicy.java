@@ -120,8 +120,15 @@ public class PlatformAiTierModelPolicy {
 		this.effectiveTo = Instant.now();
 	}
 
-	/** 티어 선택이 적용되는 AI 기능. */
+	/**
+	 * 티어 선택이 적용되는 AI 기능.
+	 *
+	 * <p>v07에서 {@code ck_platform_ai_tier_model_policy_feature_code}가 <b>CODE_SESSION 단일값</b>이 됐다.
+	 * v06의 QUESTION_GENERATION이 CODE_SESSION으로 이름이 바뀌었고, SUMMARY_DRAFT는 티어 선택 대상에서
+	 * 빠졌다 — 요약 계열(INTERVIEW_BRIEF_GENERATION·REPORT_GENERATION)은 {@code ai_usage} CHECK가
+	 * {@code tier_code}를 NULL로 강제하므로 매핑할 티어 자체가 없다.
+	 */
 	public enum FeatureCode {
-		QUESTION_GENERATION, SUMMARY_DRAFT
+		CODE_SESSION
 	}
 }

@@ -47,11 +47,11 @@ public record OperationSettingResponse(
 		DisclosureScope defaultDisclosureScope,
 
 		@Schema(description = """
-				질문 생성 기능의 모델 티어. 기관은 <b>티어 이름만</b> 고르고 실제 모델은 플랫폼이 정한다(SA-03).""")
-		AiTier questionGenerationTierCode,
+				코드 세션(질문 생성) 기능의 모델 티어. 기관은 <b>티어 이름만</b> 고르고 실제 모델은 플랫폼이 정한다(SA-03).
 
-		@Schema(description = "요약 초안 기능의 모델 티어.")
-		AiTier summaryTierCode,
+				⚠️ v07에서 questionGenerationTierCode·summaryTierCode 2개가 이 필드 하나로 통합됐다. \
+				요약 계열은 티어 선택 대상에서 빠져(CHECK가 tier_code를 NULL로 강제) 필드가 사라졌다.""")
+		AiTier codeSessionTierCode,
 
 		@Schema(description = "신규 매니저 초대·재발송 허용 여부.")
 		Boolean allowManagerInvite,

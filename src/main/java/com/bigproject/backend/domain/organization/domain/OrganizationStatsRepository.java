@@ -28,6 +28,15 @@ public interface OrganizationStatsRepository {
 
 	Map<UUID, Integer> countActiveTraineesByOrgId(Collection<UUID> organizationIds);
 
+	/**
+	 * 기관별 진행 중 세션 수. 목업 SA-01 목록 · SA-02 개요의 `활성 세션` 값이다.
+	 *
+	 * <p>v07에서 {@code assessment_session}이 생겨 실제 집계로 대체됐다(이전에는 테이블이 없어 0 고정이었다).
+	 * "진행 중"은 <b>시작됐고 아직 끝나지 않은</b> 세션 — {@code IN_PROGRESS}·{@code PAUSED} — 만 센다.
+	 * {@code READY}는 아직 응시가 시작되지 않아 "지금 몇 명이 보고 있나"라는 이 지표의 물음에 답하지 않는다.
+	 */
+	Map<UUID, Integer> countActiveSessionsByOrgId(Collection<UUID> organizationIds);
+
 	/** 기관 상세 개요 하단의 읽기전용 기수 목록(기수/상태/반 수/교육생 수/기간). */
 	List<OrganizationCohortSummary> findCohortSummaries(UUID organizationId);
 
@@ -36,6 +45,12 @@ public interface OrganizationStatsRepository {
 
 	/** 플랫폼 전체 활성 교육생 수. 목업 SA-01 상단 `총 교육생 1,284` 카드용. */
 	int countAllActiveTrainees();
+
+	/**
+	 * 플랫폼 전체 진행 중 세션 수. 목업 SA-01 상단 `활성 세션` 카드용.
+	 * "진행 중"의 정의는 {@link #countActiveSessionsByOrgId(Collection)}과 같아야 한다.
+	 */
+	int countAllActiveSessions();
 
 	/**
 	 * 기관별 저장량(바이트). storage_usage_snapshot은 주기 스냅샷이라 기간 내 값을 단순 합산하면 중복 집계가 된다.

@@ -73,16 +73,19 @@ public class OrganizationPolicy {
 	private DisclosureScope defaultDisclosureScope;
 
 	/*
-	 * v06 신규 — 기관이 고르는 AI 모델 티어. 실제 모델 ID는 플랫폼 정책(platform_ai_tier_model_policy)이 정하고,
+	 * 기관이 고르는 AI 모델 티어. 실제 모델 ID는 플랫폼 정책(platform_ai_tier_model_policy)이 정하고,
 	 * 기관은 티어 이름만 선택한다(목업 OP-06 §7: "모델별 단가는 SA-03 — 플랫폼이 정하고 기관은 티어 이름만 본다").
+	 *
+	 * v07에서 티어 컬럼 2개(question_generation_tier_code·summary_tier_code)가 code_session_tier_code
+	 * 하나로 통합됐다. 통합이지 이름 변경만은 아니다 — 요약 계열은 티어 선택 대상에서 빠졌다.
+	 *  · platform_ai_tier_model_policy.feature_code CHECK가 'CODE_SESSION' 단일값이 됐다.
+	 *  · ai_usage CHECK가 INTERVIEW_BRIEF_GENERATION·REPORT_GENERATION의 tier_code를 NULL로 강제한다.
+	 * 즉 요약 티어는 저장할 자리가 사라졌으므로 필드도 함께 제거한다.
+	 * DDL 주석: "질문 생성 기능에서 기관이 선택한 플랫폼 모델 티어다."
 	 */
 	@Enumerated(EnumType.STRING)
-	@Column(name = "question_generation_tier_code", nullable = false, updatable = false, length = 30)
-	private AiTier questionGenerationTierCode;
-
-	@Enumerated(EnumType.STRING)
-	@Column(name = "summary_tier_code", nullable = false, updatable = false, length = 30)
-	private AiTier summaryTierCode;
+	@Column(name = "code_session_tier_code", nullable = false, updatable = false, length = 30)
+	private AiTier codeSessionTierCode;
 
 	/*
 	 * v06 신규 기능 토글 5종. 목업 SA-02 ④ 설정 탭의 스위치들이며, 이전에는 컬럼이 없어
@@ -148,8 +151,7 @@ public class OrganizationPolicy {
 		this.storageLimitBytes = settings.storageLimitBytes();
 		this.retentionDays = settings.retentionDays();
 		this.defaultDisclosureScope = settings.defaultDisclosureScope();
-		this.questionGenerationTierCode = settings.questionGenerationTierCode();
-		this.summaryTierCode = settings.summaryTierCode();
+		this.codeSessionTierCode = settings.codeSessionTierCode();
 		this.allowManagerInvite = settings.allowManagerInvite();
 		this.allowDataExport = settings.allowDataExport();
 		this.allowZipSubmission = settings.allowZipSubmission();
@@ -178,8 +180,7 @@ public class OrganizationPolicy {
 				storageLimitBytes,
 				retentionDays,
 				defaultDisclosureScope,
-				questionGenerationTierCode,
-				summaryTierCode,
+				codeSessionTierCode,
 				allowManagerInvite,
 				allowDataExport,
 				allowZipSubmission,
@@ -197,7 +198,7 @@ public class OrganizationPolicy {
 
 	/**
 	 * 정책 버전이 담는 "변경 가능한 값"의 묶음. 버전형 테이블이라 부분 수정이 없고 항상 전체를 실어 새 버전을 만든다.
-	 * 파라미터가 12개라 메서드 인자로 늘어놓지 않고 한 덩어리로 받는다.
+	 * 파라미터가 11개라 메서드 인자로 늘어놓지 않고 한 덩어리로 받는다.
 	 */
 	public record Settings(
 			BigDecimal monthlyAiBudget,
@@ -205,8 +206,7 @@ public class OrganizationPolicy {
 			Long storageLimitBytes,
 			Integer retentionDays,
 			DisclosureScope defaultDisclosureScope,
-			AiTier questionGenerationTierCode,
-			AiTier summaryTierCode,
+			AiTier codeSessionTierCode,
 			Boolean allowManagerInvite,
 			Boolean allowDataExport,
 			Boolean allowZipSubmission,

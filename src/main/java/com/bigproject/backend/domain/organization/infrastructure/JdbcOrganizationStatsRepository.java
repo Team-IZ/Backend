@@ -28,6 +28,15 @@ public class JdbcOrganizationStatsRepository implements OrganizationStatsReposit
 	 */
 	private static final String OPERATOR_ROLE_CODE = "OPERATOR";
 
+	/**
+	 * "진행 중 세션"으로 세는 {@code assessment_session.status} 값.
+	 *
+	 * <p>status CHECK 전체는 READY·IN_PROGRESS·PAUSED·COMPLETED·INTERRUPTED·INVALID·FAILED·SUPERSEDED다.
+	 * 이 중 <b>시작됐고 아직 끝나지 않은</b> 두 값만 센다 — READY는 아직 응시 전이라 "지금 진행 중"이 아니고,
+	 * 나머지는 모두 종료 상태다. 플랫폼 합계와 기관별 집계가 같은 정의를 쓰도록 상수 하나로 묶어 둔다.
+	 */
+	private static final String ACTIVE_SESSION_STATUSES = "'IN_PROGRESS', 'PAUSED'";
+
 	private final JdbcTemplate jdbcTemplate;
 
 	@Override
@@ -120,6 +129,22 @@ public class JdbcOrganizationStatsRepository implements OrganizationStatsReposit
 	}
 
 	@Override
+	public Map<UUID, Integer> countActiveSessionsByOrgId(Collection<UUID> organizationIds) {
+		if (organizationIds.isEmpty()) {
+			return Map.of();
+		}
+		// assessment_session은 org_id를 직접 들고 있어 measurement_attempt까지 조인하지 않아도 기관별로 셀 수 있다.
+		String sql = """
+				SELECT org_id, COUNT(*) AS cnt
+				FROM assessment_session
+				WHERE status IN (%s)
+					AND org_id IN (%s)
+				GROUP BY org_id
+				""".formatted(ACTIVE_SESSION_STATUSES, placeholders(organizationIds));
+		return countsByOrgId(sql, organizationIds);
+	}
+
+	@Override
 	public List<OrganizationCohortSummary> findCohortSummaries(UUID organizationId) {
 		// 반 수와 교육생 수는 각각 class / cohort_member를 세는데, 한 쿼리에서 조인하면 카티션 곱으로 부풀기 때문에
 		// 상관 서브쿼리로 분리해 센다(기관 상세 1건 조회라 기수 수만큼의 서브쿼리 비용은 감당 가능).
@@ -180,6 +205,17 @@ public class JdbcOrganizationStatsRepository implements OrganizationStatsReposit
 					AND r.code = 'TRAINEE'
 					AND cm.left_at IS NULL
 				""";
+		Integer count = jdbcTemplate.queryForObject(sql, Integer.class);
+		return count == null ? 0 : count;
+	}
+
+	@Override
+	public int countAllActiveSessions() {
+		String sql = """
+				SELECT COUNT(*) AS cnt
+				FROM assessment_session
+				WHERE status IN (%s)
+				""".formatted(ACTIVE_SESSION_STATUSES);
 		Integer count = jdbcTemplate.queryForObject(sql, Integer.class);
 		return count == null ? 0 : count;
 	}

@@ -75,8 +75,7 @@ public class OrganizationController {
 					비용이 예산을 넘으면 budgetExceeded=true(`예산 초과` 배지)
 					- page/size/totalElements/totalPages 페이지 메타데이터
 
-					**아직 채워지지 않는 값** — slug, displayCode, emailDomain(컬럼 없음 → null), \
-					activeSessionCount(세션 테이블 없음 → 0)
+					- activeSessionCount: 진행 중 세션 수(IN_PROGRESS·PAUSED). v07에서 assessment_session이 생겨 실제 집계로 대체됐다
 					"""
 	)
 	@GetMapping
@@ -101,9 +100,9 @@ public class OrganizationController {
 					- aiCost: 이번 달 총 비용, 전 기관 예산 합계, 소진율, 전월 대비 증감률
 					- storage: 총 저장 바이트, 전월 대비 증감률, 기관 평균
 
-					증감률은 전월 값이 0이면 계산할 수 없어 null을 반환한다(화면에서는 `—`).
+					- activeSessionCount: 플랫폼 전체 진행 중 세션 수(IN_PROGRESS·PAUSED)
 
-					**아직 채워지지 않는 값** — activeSessionCount(세션 테이블 없음 → 0)
+					증감률은 전월 값이 0이면 계산할 수 없어 null을 반환한다(화면에서는 `—`).
 					"""
 	)
 	@GetMapping("/summary")

@@ -74,13 +74,15 @@ public record OrganizationUsageResponse(
 	public record ActivityUsage(
 			int activeTrainees,
 
-			@Schema(description = "⚠ 세션 테이블(06_MEAS)이 아직 없어 스냅샷에 값이 없으면 0입니다.")
+			@Schema(description = "기간 내 완료된 세션 수. LIVE 경로에서는 세션이 끝난 시각(ended_at) 기준으로 센다.")
 			long completedSessions,
 
-			@Schema(description = "⚠ 채점 테이블(06_MEAS)이 아직 없어 스냅샷에 값이 없으면 0입니다.")
+			@Schema(description = """
+					기간 내 채점 회차 수. LIVE 경로에서는 채점 실행 시각 컬럼이 없어 \
+					제출 마감(submission_due_at)이 기간에 들어온 회차를 센다.""")
 			long gradingRounds,
 
-			@Schema(description = "⚠ 리포트 테이블(10_RPT)이 아직 없어 스냅샷에 값이 없으면 0입니다.")
+			@Schema(description = "기간 내 발행된 리포트 수. 발행 시각(published_at) 기준이며, 이후 대체(SUPERSEDED)된 리포트도 포함한다.")
 			long generatedReports
 	) {
 	}
@@ -187,7 +189,7 @@ public record OrganizationUsageResponse(
 
 			int traineeCount,
 
-			@Schema(description = "⚠ 세션 테이블(06_MEAS)이 아직 없어 항상 0입니다.")
+			@Schema(description = "이 반 교육생의 기간 내 완료 세션 수. 반 배정이 해제된 교육생의 세션은 제외한다.")
 			long sessionCount,
 
 			BigDecimal cost,
