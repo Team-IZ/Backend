@@ -75,10 +75,8 @@ public class OrganizationPolicy {
 	/*
 	 * 기관이 고르는 AI 모델 티어. 실제 모델 ID는 플랫폼 정책(platform_ai_tier_model_policy)이 정하고,
 	 * 기관은 티어 이름만 선택한다(목업 OP-06 §7: "모델별 단가는 SA-03 — 플랫폼이 정하고 기관은 티어 이름만 본다").
-	 *
-	 * v07에서 질문 생성·요약이 CODE_SESSION 기능 하나로 통합되면서 티어도 한 값으로 합쳐졌다
-	 * (platform_ai_tier_model_policy.feature_code CHECK가 'CODE_SESSION'만 허용한다).
-	 * 두 기능에 서로 다른 티어를 줄 수 있던 v06 모델은 더 이상 성립하지 않는다.
+	 * v07에서 질문 생성·요약 티어가 코드 세션 티어 하나로 통합됐다 —
+	 * 티어 선택 대상 기능이 CODE_SESSION 하나뿐이기 때문이다(platform_ai_tier_model_policy CHECK).
 	 */
 	@Enumerated(EnumType.STRING)
 	@Column(name = "code_session_tier_code", nullable = false, updatable = false, length = 30)

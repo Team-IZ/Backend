@@ -55,10 +55,9 @@ public record UpdateOperationSettingRequest(
 		@NotNull
 		DisclosureScope defaultDisclosureScope,
 
-		@Schema(
-				description = """
-						코드 세션 기능의 모델 티어.
-						질문 생성과 요약 초안이 CODE_SESSION 기능 하나로 통합돼 티어도 하나만 받는다.""",
+		@Schema(description = """
+				코드 세션 기능의 모델 티어. v07에서 질문 생성·요약 티어가 이 값 하나로 통합됐다
+				(questionGenerationTierCode·summaryTierCode 대체).""",
 				example = "BALANCED")
 		@NotNull
 		AiTier codeSessionTierCode,
