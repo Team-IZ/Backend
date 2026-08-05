@@ -35,10 +35,15 @@ public class CohortService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 존재하는 기수명입니다: " + name);
         }
 
-        // 규칙 2: 기간 검증은 엔티티 생성자가 수행
+        // 규칙 2: 엔티티 생성자가 던지기 전에 먼저 걸러서 400으로 응답 (IllegalArgumentException은 전역에서 안 잡힘)
+        if (startDate.isAfter(endDate)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "시작일은 종료일보다 늦을 수 없습니다.");
+        }
+
         OrganizationPolicy policy = organizationPolicyRepository
                 .findByOrgIdAndStatus(orgId, OrganizationPolicy.Status.ACTIVE)
-                .orElseThrow(() -> new IllegalStateException("기관에 활성 운영 정책이 없습니다: " + orgId));
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT, "기관에 활성 운영 정책이 없어 기수를 만들 수 없습니다."));
 
         Cohort cohort = Cohort.builder()
                 .orgId(orgId)
@@ -67,7 +72,8 @@ public class CohortService {
         Cohort cohort = findCohort(cohortId, orgId);
         OrganizationPolicy policy = organizationPolicyRepository
                 .findByOrgIdAndStatus(orgId, OrganizationPolicy.Status.ACTIVE)
-                .orElseThrow(() -> new IllegalStateException("기관에 활성 운영 정책이 없습니다: " + orgId));
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT, "기관에 활성 운영 정책이 없어 기수를 종료할 수 없습니다."));
 
         cohort.close(actorUserId, policy.getPolicyId(), policy.getRetentionDays());
         classroomService.releaseAllAssignmentsForCohort(cohortId, orgId, actorUserId);

@@ -100,6 +100,9 @@ public class Cohort {
     /** 기수 종료. retentionPolicyId·retentionUntil은 DB CHECK(ck_cohort_closed)가 CLOSED 전이 시 필수로 요구한다.
      *  종료 시점의 기관 정책 버전을 스냅샷으로 고정하며, 이후 정책이 바뀌어도 이 값은 갱신하지 않는다. */
     public void close(UUID actorUserId, UUID retentionPolicyId, int retentionDays) {
+        if (this.status == CohortStatus.CLOSED) {
+            return; // 이미 종료된 기수 — 조용히 넘어간다(멱등)
+        }
         OffsetDateTime now = OffsetDateTime.now();
         this.status = CohortStatus.CLOSED;
         this.closedAt = now;
