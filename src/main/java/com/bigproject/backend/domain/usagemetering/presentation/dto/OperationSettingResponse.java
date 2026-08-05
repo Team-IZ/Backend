@@ -47,11 +47,9 @@ public record OperationSettingResponse(
 		DisclosureScope defaultDisclosureScope,
 
 		@Schema(description = """
-				질문 생성 기능의 모델 티어. 기관은 <b>티어 이름만</b> 고르고 실제 모델은 플랫폼이 정한다(SA-03).""")
-		AiTier questionGenerationTierCode,
-
-		@Schema(description = "요약 초안 기능의 모델 티어.")
-		AiTier summaryTierCode,
+				코드 세션 기능의 모델 티어. 기관은 <b>티어 이름만</b> 고르고 실제 모델은 플랫폼이 정한다(SA-03).
+				질문 생성과 요약 초안이 CODE_SESSION 기능 하나로 통합돼 티어도 하나만 내려간다.""")
+		AiTier codeSessionTierCode,
 
 		@Schema(description = "신규 매니저 초대·재발송 허용 여부.")
 		Boolean allowManagerInvite,
