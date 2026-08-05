@@ -8,7 +8,6 @@ import com.bigproject.backend.domain.member.domain.MemberInvitationRepository;
 import com.bigproject.backend.domain.member.domain.PendingInvitation;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
-import com.bigproject.backend.domain.member.presentation.dto.ManagerAssignmentRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -40,19 +39,16 @@ public class InvitationPersistenceService {
 	public PendingInvitation createManagerInvitation(
 			InvitationContext context,
 			InviteManagerRequest request,
+			Role invitedRole,
 			AuthUser actor,
 			String requestId
 	) {
 		String email = request.email().trim();
 		String normalizedEmail = EmailNormalizer.normalize(email);
-		Role invitedRole = switch (actor.role()) {
-			case SUPER_ADMIN -> Role.OPERATOR;
-			case OPERATOR -> Role.MANAGER;
-			default -> throw new IllegalArgumentException("운영자 초대를 발송할 수 없는 역할입니다: " + actor.role());
-		};
 		ensureNewEmail(normalizedEmail);
-		List<ManagerAssignmentRequest> assignments = managerAssignments(request);
-		invitationRepository.validateManagerAssignments(context.organizationId(), assignments);
+		if (request.cohortId() != null) {
+			invitationRepository.validateCohort(context.organizationId(), request.cohortId());
+		}
 
 		Instant now = Instant.now();
 		UUID memberId = invitationRepository.createPendingUser(
@@ -70,7 +66,6 @@ public class InvitationPersistenceService {
 				normalizedEmail,
 				invitedRole,
 				request.cohortId(),
-				request.targetClassId(),
 				actor.userId(),
 				now
 		);
@@ -87,13 +82,11 @@ public class InvitationPersistenceService {
 				requestId,
 				now
 		);
-		invitationRepository.saveManagerAssignments(
-				memberId,
-				context.organizationId(),
-				actor.userId(),
-				assignments,
-				now
-		);
+		/*
+		 * 반 배정은 초대 시점에 하지 않는다. manager_assignment.class_id가 NOT NULL이라 반이 정해지기 전에는
+		 * 배정 행 자체를 만들 수 없고, 담당 반은 가입 이후 반 편성 화면에서 정한다.
+		 * 초대 원장에는 담당 기수(target_cohort_id)만 남는다.
+		 */
 		return invitation;
 	}
 
@@ -124,7 +117,6 @@ public class InvitationPersistenceService {
 				normalizedEmail,
 				Role.TRAINEE,
 				context.cohortId(),
-				null,
 				actor.userId(),
 				now
 		);
@@ -210,18 +202,7 @@ public class InvitationPersistenceService {
 		Map<String, Object> payload = basePayload();
 		payload.put("role", invitedRole.name());
 		payload.put("cohortId", request.cohortId());
-		payload.put("targetClassId", request.targetClassId());
 		return payload;
-	}
-
-	private List<ManagerAssignmentRequest> managerAssignments(InviteManagerRequest request) {
-		if (request.cohortId() == null) {
-			return List.of();
-		}
-		List<UUID> classroomIds = request.targetClassId() == null
-				? List.of()
-				: List.of(request.targetClassId());
-		return List.of(new ManagerAssignmentRequest(request.cohortId(), classroomIds));
 	}
 
 	private Map<String, Object> traineePayload(RegisterTraineesRequest.Trainee trainee) {
