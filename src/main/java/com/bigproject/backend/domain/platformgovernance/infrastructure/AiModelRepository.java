@@ -14,4 +14,10 @@ public interface AiModelRepository extends JpaRepository<AiModel, UUID> {
 	List<AiModel> findAllByOrderByProviderAscModelCodeAsc();
 
 	List<AiModel> findByModelIdIn(Collection<UUID> modelIds);
+
+	/**
+	 * 모델 코드로 조회한다. v07에서 ai_usage가 model_id FK 대신 model_code를 복사해 두므로,
+	 * 사용량 화면이 코드 목록으로 표시명을 한 번에 해석할 때 쓴다.
+	 */
+	List<AiModel> findByModelCodeIn(Collection<String> modelCodes);
 }

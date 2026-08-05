@@ -55,13 +55,12 @@ public record UpdateOperationSettingRequest(
 		@NotNull
 		DisclosureScope defaultDisclosureScope,
 
-		@Schema(description = "질문 생성 기능의 모델 티어", example = "BALANCED")
+		@Schema(description = """
+				코드 세션 기능의 모델 티어. v07에서 질문 생성·요약 티어가 이 값 하나로 통합됐다
+				(questionGenerationTierCode·summaryTierCode 대체).""",
+				example = "BALANCED")
 		@NotNull
-		AiTier questionGenerationTierCode,
-
-		@Schema(description = "요약 초안 기능의 모델 티어", example = "BALANCED")
-		@NotNull
-		AiTier summaryTierCode,
+		AiTier codeSessionTierCode,
 
 		@Schema(description = "신규 매니저 초대·재발송 허용 여부")
 		@NotNull

@@ -46,11 +46,13 @@ public class PlatformOperationsController {
 	@Operation(
 			summary = "플랫폼 모델·단가 설정 조회",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					목업 SA-03 ① `모델 · 단가` 탭 전체를 채운다.
 
 					**응답**
 					- gradingPolicy: 채점 모델 정책(전 기관 공통). 활성 캘리브레이션 버전과 진행 중 버전을 함께 준다.
-					- tierMappings: 기능(질문 생성·요약) × 티어3 → 실제 모델 매핑. \
+					- tierMappings: 기능(코드 세션) × 티어3 → 실제 모델 매핑. \
 					기관은 티어 이름만 고르고 실제 모델은 이 매핑이 정한다.
 					- modelPricings: 모델별 100만 토큰당 단가. **단가 미설정 모델도 포함**되며 `pricingMissing=true`다.
 
@@ -65,6 +67,8 @@ public class PlatformOperationsController {
 	@Operation(
 			summary = "채점 모델 변경 (전 기관 재캘리브레이션 유발)",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					목업 SA-03 ① `채점 · 고정 · claude-x` 행의 변경 액션이다.
 
 					⚠️ **되돌릴 수 없다.** 목업: "채점 모델을 바꾸면 전 기관 재캘리브레이션이 필요하고, \
@@ -105,9 +109,20 @@ public class PlatformOperationsController {
 	@Operation(
 			summary = "티어 ↔ 모델 매핑 변경",
 			description = """
-					목업 SA-03 ① `질문 생성 · 정확도 우선 / 균형 / 비용 우선` 3티어 매핑을 바꾼다.
+					**상태**: ✅ 사용 가능
 
-					채점 모델과 달리 **재캘리브레이션이 발생하지 않는다** — 질문 생성·요약은 점수가 아니라 \
+					목업 SA-03 ① `코드 세션 · 정확도 우선 / 균형 / 비용 우선` 3티어 매핑을 바꾼다.
+
+					**요청**
+					- featureCode (필수): v07 기준 티어 선택 대상은 `CODE_SESSION` 하나뿐이다
+					- tierCode (필수): ACCURACY_FIRST / BALANCED / COST_FIRST
+					- modelId (필수): 그 (기능, 티어)가 실제로 호출할 모델. INACTIVE 모델이면 400
+					- changeReason (선택): 변경 사유
+
+					**응답**
+					- 변경 후의 플랫폼 모델·단가 설정 전체(조회 API와 같은 형태라 화면을 그대로 다시 그릴 수 있다)
+
+					채점 모델과 달리 **재캘리브레이션이 발생하지 않는다** — 코드 세션은 점수가 아니라 \
 					산출물이라 버전 간 비교 문제가 없다.
 
 					(기능, 티어) 조합별로 버전이 올라가며, 이전 활성 버전은 SUPERSEDED로 닫힌다.
@@ -129,6 +144,8 @@ public class PlatformOperationsController {
 	@Operation(
 			summary = "모델 단가 수정",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					목업 SA-03 ① `단가 · 모델별 입력·출력 토큰 단가`.
 
 					단가는 **100만 토큰당** 값으로 주고받는다. DB는 기준 토큰 수(`price_unit_token_count`)당 \
@@ -157,6 +174,8 @@ public class PlatformOperationsController {
 	@Operation(
 			summary = "슈퍼어드민 계정 목록",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					목업 SA-03 ② `슈퍼어드민 계정` 탭의 목록이다.
 
 					**응답**
@@ -177,6 +196,8 @@ public class PlatformOperationsController {
 	@Operation(
 			summary = "슈퍼어드민 정지 · 재활성",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					목업 SA-03 ② 행별 액션. ACTIVE(재활성) 또는 INACTIVE(정지)만 지정할 수 있다.
 
 					**마지막 활성 슈퍼어드민은 정지할 수 없다**(409 `LAST_SUPER_ADMIN`). \
