@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.platformgovernance.application;
 
+import com.bigproject.backend.domain.platformgovernance.presentation.dto.InviteSuperAdminRequest;
+import com.bigproject.backend.domain.platformgovernance.presentation.dto.InviteSuperAdminResponse;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.PlatformModelSettingResponse;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.SuperAdminListResponse;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.UpdateGradingModelRequest;
@@ -34,6 +36,15 @@ public interface PlatformOperationsService {
 
 	/** 슈퍼어드민 계정 목록. */
 	SuperAdminListResponse findSuperAdmins();
+
+	/**
+	 * 슈퍼어드민 초대(목업 SA-03 ② `+ 계정 초대`).
+	 *
+	 * <p>초대 자체는 member 도메인의 초대 엔진(토큰 발급·메일 발송·원장 기록)에 위임하고,
+	 * 이 도메인은 SA-03 화면 계약(이메일만 받는 요청, 목록을 함께 돌려주는 응답, 목업 오류 코드)만
+	 * 담당한다. organization 도메인이 오퍼레이터 초대를 다루는 방식과 같다.
+	 */
+	InviteSuperAdminResponse inviteSuperAdmin(InviteSuperAdminRequest request, String actorEmail, String requestId);
 
 	/** 슈퍼어드민 정지·재활성. 마지막 활성 1인은 정지할 수 없다. */
 	SuperAdminListResponse updateSuperAdminStatus(UUID memberId, OperatorAccountStatus status);

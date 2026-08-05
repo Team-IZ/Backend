@@ -19,6 +19,28 @@ public class TransactionalInvitationDispatcher {
 	private final InvitationMailSender mailSender;
 
 	@Transactional
+	public PendingInvitation inviteSuperAdmin(
+			String email,
+			AuthUser actor,
+			String requestId
+	) {
+		PendingInvitation invitation = persistenceService.createSuperAdminInvitation(email, actor, requestId);
+		try {
+			log.info("슈퍼어드민 초대 메일 발송 시작: tokenId={}", invitation.tokenId());
+			mailSender.sendSuperAdminInvitation(invitation);
+			persistenceService.markInvitationSent(invitation);
+			log.info("슈퍼어드민 초대 메일 발송 성공: tokenId={}", invitation.tokenId());
+		} catch (RuntimeException exception) {
+			logDeliveryFailure("슈퍼어드민", invitation, exception);
+			throw new InvitationDeliveryException(
+					"초대 메일 발송에 실패하여 계정 정보를 저장하지 않았습니다.",
+					exception
+			);
+		}
+		return invitation;
+	}
+
+	@Transactional
 	public PendingInvitation inviteManager(
 			InvitationContext context,
 			InviteManagerRequest request,

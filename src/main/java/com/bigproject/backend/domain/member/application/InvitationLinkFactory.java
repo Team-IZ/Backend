@@ -15,6 +15,10 @@ public class InvitationLinkFactory {
 		this.baseUrl = baseUrl;
 	}
 
+	public String superAdminLink(PendingInvitation invitation) {
+		return create("sa-", invitation.rawToken());
+	}
+
 	public String managerLink(PendingInvitation invitation) {
 		return create("op-", invitation.rawToken());
 	}
