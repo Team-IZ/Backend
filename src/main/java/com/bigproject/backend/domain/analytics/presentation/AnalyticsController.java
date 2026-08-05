@@ -1,0 +1,82 @@
+package com.bigproject.backend.domain.analytics.presentation;
+
+import com.bigproject.backend.domain.analytics.application.RiskTraineeAnalyticsService;
+import com.bigproject.backend.domain.analytics.presentation.dto.RiskTraineeRateResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.constraints.Min;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+import java.util.UUID;
+
+@Tag(name = "Analytics", description = "기수 분석 격자 조회")
+@SecurityRequirement(name = "bearerAuth")
+@Validated
+@RestController
+@RequestMapping("/cohorts/{cohortId}/analytics")
+@RequiredArgsConstructor
+public class AnalyticsController {
+
+	private final RiskTraineeAnalyticsService riskTraineeAnalyticsService;
+
+	@Operation(
+			summary = "회차별 기수 전체·반별 위험 교육생 비율 조회",
+			description = """
+					선택 기수의 미니프로젝트 회차별로 기수 전체와 반별 위험 교육생 비율을 계산합니다.
+
+					분모는 회차의 INITIAL 수행 대상 교육생에서 미집계 3종을 뺀 인원입니다.
+					미집계는 미응시(NOT_ATTENDED), 중단(SESSION_INCOMPLETE), 무효 응시(CONFIRMED_INVALID)이며
+					무효 확인 중(PENDING)은 아직 확정되지 않아 분모에 남습니다.
+
+					분자는 위험 유형(단계 하락·지속 저점) 중 하나 이상이 활성으로 일치한 고유 교육생 수이며,
+					한 교육생이 여러 유형에 해당해도 1명으로 셉니다.
+					위험 유형 INVALID_ATTEMPT는 해당 교육생이 무효 응시로 분모에서 이미 빠지므로 분자에 넣지 않습니다.
+
+					회차가 아직 확정되지 않았으면 riskRate는 0이 아니라 null이고 aggregationStatus로 원인을 구분합니다.
+					빅프로젝트는 위험 판정식이 달라 이 격자에 포함하지 않습니다.
+					"""
+	)
+	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "위험 교육생 비율 조회 성공"),
+			@ApiResponse(responseCode = "400", description = "반 또는 회차 범위 값이 올바르지 않음"),
+			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "역할·계정·기관 상태 또는 기수 접근 범위가 허용되지 않음"),
+			@ApiResponse(responseCode = "404", description = "조회할 기수를 찾을 수 없음")
+	})
+	@GetMapping("/risk-trainees")
+	public ResponseEntity<RiskTraineeRateResponse> findRiskTraineeRates(
+			@Parameter(description = "분석할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID cohortId,
+			@Parameter(description = "조회할 반 ID 목록이며 생략 시 기수의 모든 반을 조회합니다.")
+			@RequestParam(required = false) List<UUID> classroomId,
+			@Parameter(description = "조회 시작 회차 번호이며 생략 시 1차부터 조회합니다.", example = "1")
+			@RequestParam(required = false) @Min(1) Integer fromRoundNo,
+			@Parameter(description = "조회 종료 회차 번호이며 생략 시 마지막 회차까지 조회합니다.", example = "4")
+			@RequestParam(required = false) @Min(1) Integer toRoundNo,
+			@Parameter(hidden = true)
+			Authentication authentication
+	) {
+		return ResponseEntity.ok(riskTraineeAnalyticsService.findRiskTraineeRates(
+				cohortId,
+				classroomId,
+				fromRoundNo,
+				toRoundNo,
+				authentication.getName()
+		));
+	}
+}
