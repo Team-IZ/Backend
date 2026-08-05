@@ -35,6 +35,57 @@ public class InvitationPersistenceService {
 	@Value("${invitation.expiration:PT24H}")
 	private Duration invitationExpiration;
 
+	/**
+	 * 슈퍼어드민 초대(목업 SA-03 ②). 기관에 속하지 않으므로 org_id를 전부 NULL로 넣는다 —
+	 * v07 {@code ck_user_invitation_org_id}가 SUPER_ADMIN에 대해 NULL을 강제한다.
+	 *
+	 * <p>매니저 초대와 달리 기수 검증도 담당 배정도 없다. 슈퍼어드민은 플랫폼 전역이라 배정할 대상이 없다.
+	 */
+	@Transactional
+	public PendingInvitation createSuperAdminInvitation(
+			String rawEmail,
+			AuthUser actor,
+			String requestId
+	) {
+		String email = rawEmail.trim();
+		String normalizedEmail = EmailNormalizer.normalize(email);
+		ensureNewEmail(normalizedEmail);
+
+		InvitationContext context = InvitationContext.platform();
+		Instant now = Instant.now();
+		UUID memberId = invitationRepository.createPendingUser(
+				null,
+				email,
+				normalizedEmail,
+				email,
+				Role.SUPER_ADMIN,
+				pendingPasswordHash(),
+				now
+		);
+		UUID invitationId = invitationRepository.createInvitation(
+				null,
+				email,
+				normalizedEmail,
+				Role.SUPER_ADMIN,
+				null,
+				actor.userId(),
+				now
+		);
+		return createToken(
+				context,
+				memberId,
+				invitationId,
+				email,
+				normalizedEmail,
+				Role.SUPER_ADMIN,
+				InvitationPurpose.INVITE_SUPER_ADMIN,
+				superAdminPayload(),
+				actor.userId(),
+				requestId,
+				now
+		);
+	}
+
 	@Transactional
 	public PendingInvitation createManagerInvitation(
 			InvitationContext context,
@@ -202,6 +253,12 @@ public class InvitationPersistenceService {
 		Map<String, Object> payload = basePayload();
 		payload.put("role", invitedRole.name());
 		payload.put("cohortId", request.cohortId());
+		return payload;
+	}
+
+	private Map<String, Object> superAdminPayload() {
+		Map<String, Object> payload = basePayload();
+		payload.put("role", Role.SUPER_ADMIN.name());
 		return payload;
 	}
 

@@ -1,6 +1,8 @@
 package com.bigproject.backend.domain.platformgovernance.presentation;
 
 import com.bigproject.backend.domain.platformgovernance.application.PlatformOperationsService;
+import com.bigproject.backend.domain.platformgovernance.presentation.dto.InviteSuperAdminRequest;
+import com.bigproject.backend.domain.platformgovernance.presentation.dto.InviteSuperAdminResponse;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.PlatformModelSettingResponse;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.SuperAdminListResponse;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.UpdateGradingModelRequest;
@@ -9,20 +11,25 @@ import com.bigproject.backend.domain.platformgovernance.presentation.dto.UpdateT
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.UpdateOperatorStatusForPlatformRequest;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -39,6 +46,8 @@ import java.util.UUID;
 @RequestMapping("/platform/operations")
 @RequiredArgsConstructor
 public class PlatformOperationsController {
+
+	private static final String REQUEST_ID_HEADER = "X-Request-Id";
 
 	private final PlatformOperationsService platformOperationsService;
 	private final CurrentUserResolver currentUserResolver;
@@ -183,14 +192,57 @@ public class PlatformOperationsController {
 					- 각 계정의 `deactivatable`: 정지 가능 여부. 활성 1명뿐이면 그 계정은 `false`다 \
 					(목업: "마지막 한 명은 정지할 수 없다").
 
-					⚠️ **초대 API는 아직 없습니다.** v06 스키마가 슈퍼어드민 초대를 표현하지 못합니다 — \
-					`user_invitation.org_id`가 NOT NULL이고 `target_role_code` CHECK에 SUPER_ADMIN이 없습니다. \
-					정의서·DDL 변경이 필요한 사항으로 별도 분리했습니다.
+					초대만 되고 아직 활성화 전인 계정은 `status=PENDING`(목업 `초대됨`)이고 `name`이 null이다.
 					"""
 	)
 	@GetMapping("/super-admins")
 	public ResponseEntity<SuperAdminListResponse> findSuperAdmins() {
 		return ResponseEntity.ok(platformOperationsService.findSuperAdmins());
+	}
+
+	@Operation(
+			summary = "슈퍼어드민 초대",
+			description = """
+					**상태**: ✅ 사용 가능
+
+					목업 SA-03 ② `+ 계정 초대`. 계정 자리를 만들고 초대 메일을 보낸다.
+
+					**요청은 이메일 하나뿐이다.** 역할을 고르는 칸이 없다 — 이 화면에서 보내는 초대는 \
+					슈퍼어드민 하나뿐이라 초대하는 화면이 곧 역할이다. 기관·기수·반도 없다 — \
+					슈퍼어드민은 어느 기관에도 속하지 않는다(`app_user.org_id IS NULL`).
+
+					**이메일 도메인 제한이 없다.** 플랫폼 도메인을 저장하는 곳이 없고, 오퍼레이터 초대와 \
+					같은 이유(초대 시점에는 그 도메인 메일함을 아직 가질 수 없다)가 적용된다.
+
+					**응답**
+					- 생성된 계정 자리(memberId)와 PENDING 상태. 받는 사람은 초대 메일 링크에서 \
+					이름·비밀번호만 정하면 활성화된다(`POST /auth/manager-signup`).
+					- accounts: 초대 반영 후의 슈퍼어드민 목록 전체. 표를 그대로 다시 그릴 수 있다.
+
+					**오류**
+					- 403: 슈퍼어드민이 아닌 호출자
+					- 409: 이미 등록되었거나 초대된 이메일
+					- 502: 초대 메일 발송 실패. ⚠ 현재는 이때 **계정 자리도 롤백된다** — \
+					목업이 요구하는 "자리는 남기고 링크만 실패" 동작은 오퍼레이터 초대와 함께 별도 작업으로 분리했다.
+					"""
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "201", description = "슈퍼어드민 계정 자리 생성 및 초대 발송 성공"),
+			@ApiResponse(responseCode = "400", description = "이메일 형식이 올바르지 않음"),
+			@ApiResponse(responseCode = "403", description = "슈퍼어드민만 슈퍼어드민을 초대할 수 있음"),
+			@ApiResponse(responseCode = "409", description = "ALREADY_INVITED · 이미 등록되었거나 초대된 이메일"),
+			@ApiResponse(responseCode = "502", description = "INVITE_MAIL_FAILED · 초대 메일 발송 실패")
+	})
+	@PostMapping("/super-admins/invitations")
+	public ResponseEntity<InviteSuperAdminResponse> inviteSuperAdmin(
+			@Valid @RequestBody InviteSuperAdminRequest request,
+			@Parameter(description = "초대 요청 추적용 식별자이며 생략 시 서버가 생성합니다.", example = "invite-sa-001")
+			@RequestHeader(value = REQUEST_ID_HEADER, required = false) String requestId,
+			@Parameter(hidden = true) Authentication authentication
+	) {
+		return ResponseEntity.status(HttpStatus.CREATED).body(
+				platformOperationsService.inviteSuperAdmin(request, authentication.getName(), requestId)
+		);
 	}
 
 	@Operation(

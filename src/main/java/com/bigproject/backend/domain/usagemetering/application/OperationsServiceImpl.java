@@ -6,8 +6,8 @@ import com.bigproject.backend.domain.platformgovernance.domain.AiModel;
 import com.bigproject.backend.domain.platformgovernance.domain.AiTier;
 import com.bigproject.backend.domain.platformgovernance.infrastructure.AiModelRepository;
 import com.bigproject.backend.domain.usagemetering.domain.AiUsage;
+import com.bigproject.backend.domain.usagemetering.domain.OperationsActivityRepository;
 import com.bigproject.backend.domain.usagemetering.domain.OperationsCostRepository;
-import com.bigproject.backend.domain.usagemetering.domain.OperationsSchemaPending;
 import com.bigproject.backend.domain.usagemetering.domain.OrganizationUsageSnapshot;
 import com.bigproject.backend.domain.usagemetering.domain.StorageUsageSnapshot;
 import com.bigproject.backend.domain.usagemetering.infrastructure.AiUsageRepository;
@@ -62,6 +62,7 @@ public class OperationsServiceImpl implements OperationsService {
 	private final AiUsageRepository aiUsageRepository;
 	private final AiModelRepository aiModelRepository;
 	private final OperationsCostRepository operationsCostRepository;
+	private final OperationsActivityRepository operationsActivityRepository;
 	private final CurrentUserResolver currentUserResolver;
 
 	@Override
@@ -100,7 +101,7 @@ public class OperationsServiceImpl implements OperationsService {
 						? OrganizationUsageResponse.AggregationSource.SNAPSHOT
 						: OrganizationUsageResponse.AggregationSource.LIVE,
 				resolveStorageUsage(organizationId, from, to, previousFrom),
-				resolveActivityUsage(organizationId, snapshot),
+				resolveActivityUsage(organizationId, from, to, snapshot),
 				resolveAiCostUsage(organizationId, from, to, previousFrom, policy, snapshot),
 				resolveCohortCosts(organizationId, cohortId, from, to),
 				resolveClassCosts(organizationId, cohortId, from, to)
@@ -245,11 +246,13 @@ public class OperationsServiceImpl implements OperationsService {
 	}
 
 	/**
-	 * 목업 `사용 규모` 4지표. 스냅샷이 있으면 그 값을 쓰고, 없으면 activeTrainees만 실시간으로 센다.
-	 * 세션·채점·리포트 3지표는 06_MEAS·10_RPT 테이블이 아직 없어 스냅샷에 값이 없으면 0이다.
+	 * 목업 `사용 규모` 4지표. 스냅샷이 있으면 그 값을 쓰고, 없으면 네 지표를 모두 실시간으로 센다.
+	 *
+	 * <p>v07에서 06_MEAS·10_RPT 테이블이 생겨 세션·채점·리포트도 LIVE 집계가 가능해졌다
+	 * (이전에는 테이블이 없어 0 고정이었다).
 	 */
 	private OrganizationUsageResponse.ActivityUsage resolveActivityUsage(
-			UUID organizationId, Optional<OrganizationUsageSnapshot> snapshot
+			UUID organizationId, Instant from, Instant to, Optional<OrganizationUsageSnapshot> snapshot
 	) {
 		if (snapshot.isPresent()) {
 			OrganizationUsageSnapshot found = snapshot.get();
@@ -267,9 +270,9 @@ public class OperationsServiceImpl implements OperationsService {
 
 		return new OrganizationUsageResponse.ActivityUsage(
 				activeTrainees,
-				OperationsSchemaPending.COMPLETED_SESSIONS,
-				OperationsSchemaPending.GRADING_ROUNDS,
-				OperationsSchemaPending.GENERATED_REPORTS
+				operationsActivityRepository.countCompletedSessions(organizationId, from, to),
+				operationsActivityRepository.countGradingRounds(organizationId, from, to),
+				operationsActivityRepository.countPublishedReports(organizationId, from, to)
 		);
 	}
 
@@ -356,14 +359,19 @@ public class OperationsServiceImpl implements OperationsService {
 		if (cohortId == null) {
 			return List.of();
 		}
+		// 세션 수는 비용과 조인 경로가 완전히 달라(교육생 반 배정을 타고 내려간다) 한 쿼리에 합치면
+		// 카티션 곱으로 비용이 부풀어 오른다. 반별로 따로 세어 여기서 합친다.
+		Map<UUID, Long> sessionsByClass =
+				operationsActivityRepository.countCompletedSessionsByClass(organizationId, cohortId, from, to);
+
 		return operationsCostRepository.findClassCosts(organizationId, cohortId, from, to).stream()
 				.map(cost -> new OrganizationUsageResponse.ClassCostUsage(
 						cost.classId(),
 						cost.name(),
 						cost.managerName(),
 						cost.traineeCount(),
-						// TODO(schema-align): 세션 테이블(06_MEAS)이 생기면 반별 세션 수를 집계한다.
-						OperationsSchemaPending.COMPLETED_SESSIONS,
+						// 세션이 한 건도 없는 반은 맵에 키가 없다 — 그 반은 실제로 0이다.
+						sessionsByClass.getOrDefault(cost.classId(), 0L),
 						cost.cost(),
 						cost.unpricedCallCount()
 				))

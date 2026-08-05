@@ -104,12 +104,18 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 			WHERE invitation_id = ?
 				AND status = 'PENDING'
 			""";
+	/*
+	 * org_id 비교에 `IS NOT DISTINCT FROM`을 쓴다. 슈퍼어드민 초대는 org_id가 NULL인데
+	 * `org_id = ?`로 비교하면 NULL = NULL이 UNKNOWN이라 WHERE가 한 행도 잡지 못한다.
+	 * 그러면 같은 주소로 재초대할 때 이전 토큰이 살아남아 유효한 링크가 둘이 된다.
+	 * 기관 초대(org_id NOT NULL)에서는 `=`와 동작이 같다.
+	 */
 	private static final String INVALIDATE_PREVIOUS_TOKENS = """
 			UPDATE one_time_token
 			SET invalidated_at = ?,
 				invalidated_reason = 'REPLACED',
 				replaced_by_token_id = ?
-			WHERE org_id = ?
+			WHERE org_id IS NOT DISTINCT FROM ?
 				AND target_email_normalized = ?
 				AND purpose = ?
 				AND token_id <> ?
