@@ -1,6 +1,9 @@
 package com.bigproject.backend.domain.analytics.presentation;
 
+import com.bigproject.backend.domain.analytics.application.CohortComparisonAnalyticsService;
 import com.bigproject.backend.domain.analytics.application.RiskTraineeAnalyticsService;
+import com.bigproject.backend.domain.analytics.domain.ComparisonSort;
+import com.bigproject.backend.domain.analytics.presentation.dto.CohortComparisonResponse;
 import com.bigproject.backend.domain.analytics.presentation.dto.RiskTraineeRateResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -32,6 +35,7 @@ import java.util.UUID;
 public class AnalyticsController {
 
 	private final RiskTraineeAnalyticsService riskTraineeAnalyticsService;
+	private final CohortComparisonAnalyticsService cohortComparisonAnalyticsService;
 
 	@Operation(
 			summary = "회차별 기수 전체·반별 위험 교육생 비율 조회",
@@ -76,6 +80,54 @@ public class AnalyticsController {
 				classroomId,
 				fromRoundNo,
 				toRoundNo,
+				authentication.getName()
+		));
+	}
+
+	@Operation(
+			summary = "두 기수의 검증 개념별 평균 도달 단계 비교",
+			description = """
+					같은 기관의 두 기수를 검증 개념(teaches_id) 단위로 맞대어 평균 도달 단계를 비교합니다.
+
+					평균은 발행된 수업 진단 리포트의 활성 스냅샷에서 개념별 도달 단계 분포를 읽어
+					Σ(도달 단계 × 인원) / Σ인원으로 계산합니다. 1단도 통과하지 못한 응시가 있으므로 척도는 0~4단입니다.
+					응시 인원이 없으면 0단이 아니라 null이며, 0단은 측정 결과이고 null은 측정 자체가 없다는 뜻입니다.
+
+					색 눈금은 회차별 위험 비율과 달리 절대 눈금이며 MG-02 히트맵과 같은 값입니다.
+					0~4 정수 다섯 단계에 다섯 색을 대응시키되 평균은 연속값이므로 반올림으로 밴드를 배정하고,
+					서버가 levelBand와 밴드 경계를 함께 내려주므로 클라이언트가 다시 계산할 필요는 없습니다.
+
+					변화는 이번 기수 평균에서 지난 기수 평균을 뺀 값이며 -0.3단 이하가 나빠짐, +0.3단 이상이 좋아짐입니다.
+					한쪽 기수에 없는 개념, 다른 개념으로 병합된 개념(teaches.status=MERGED),
+					반복 개념 집계 산식이 확정되지 않은 개념은 뺄셈이 성립하지 않아 NOT_COMPARABLE로 내려갑니다.
+
+					검증 개념이 기수마다 다르면 같은 프로젝트라도 비교할 수 없으므로 개념 단위로만 맞춥니다.
+					비교 대상 기수를 지정하지 않으면 드롭다운 후보 목록만 채워 돌려줍니다.
+					"""
+	)
+	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "기수 간 비교 조회 성공"),
+			@ApiResponse(responseCode = "400", description = "비교 대상 기수가 같은 기관의 다른 기수가 아님"),
+			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "역할·계정·기관 상태 또는 기수 접근 범위가 허용되지 않음"),
+			@ApiResponse(responseCode = "404", description = "조회할 기수를 찾을 수 없음")
+	})
+	@GetMapping("/cohort-comparison")
+	public ResponseEntity<CohortComparisonResponse> findCohortComparison(
+			@Parameter(description = "이번 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID cohortId,
+			@Parameter(description = "비교할 지난 기수 ID이며 생략 시 비교 후보 목록만 반환합니다.")
+			@RequestParam(required = false) UUID baselineCohortId,
+			@Parameter(description = "정렬 기준이며 나빠진 순·좋아진 순·검증 개념 순을 지원합니다.", example = "WORSENED")
+			@RequestParam(required = false, defaultValue = "WORSENED") ComparisonSort sort,
+			@Parameter(hidden = true)
+			Authentication authentication
+	) {
+		return ResponseEntity.ok(cohortComparisonAnalyticsService.findCohortComparison(
+				cohortId,
+				baselineCohortId,
+				sort,
 				authentication.getName()
 		));
 	}
