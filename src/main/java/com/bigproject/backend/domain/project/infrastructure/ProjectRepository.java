@@ -18,4 +18,7 @@ public interface ProjectRepository extends JpaRepository<Project, UUID> {
 
     // 반 추가 모달처럼 프로젝트 생성 시 이름 중복 체크용
     boolean existsByCohortIdAndOrgIdAndNameAndDeletedAtIsNull(UUID cohortId, UUID orgId, String name);
+
+    // 자식 엔티티(요구사항 등) 오케스트레이션 전, 소유권만 가볍게 확인할 때
+    boolean existsByProjectIdAndOrgId(UUID projectId, UUID orgId);
 }
