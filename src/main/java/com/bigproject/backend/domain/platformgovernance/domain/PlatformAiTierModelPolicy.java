@@ -19,10 +19,10 @@ import java.util.UUID;
 /**
  * platform_ai_tier_model_policy 테이블 매핑 엔티티. v06 신규.
  *
- * <p>질문 생성·요약 기능의 <b>티어 ↔ 실제 모델 매핑</b>을 보존하는 버전형 플랫폼 정책이다.
+ * <p>코드 세션 기능의 <b>티어 ↔ 실제 모델 매핑</b>을 보존하는 버전형 플랫폼 정책이다.
  *
  * <p>목업 SA-03의 핵심 설계: "<b>3티어 추상화</b>라 모델이 단종돼도 기관은 아무것도 하지 않는다."
- * 기관은 {@code organization_policy.question_generation_tier_code} 등으로 <b>티어 이름만</b> 고르고,
+ * 기관은 {@code organization_policy.code_session_tier_code}로 <b>티어 이름만</b> 고르고,
  * 그 티어가 어떤 모델을 쓰는지는 이 테이블이 정한다. 모델이 단종되면 플랫폼이 이 매핑만 바꾸면 된다.
  *
  * <p>키는 (기능, 티어)이며 그 조합마다 버전이 따로 올라간다 — DB UNIQUE (feature_code, tier_code, policy_version).
@@ -38,8 +38,8 @@ public class PlatformAiTierModelPolicy {
 	@Column(name = "tier_policy_id", updatable = false, nullable = false)
 	private UUID tierPolicyId;
 
-	// DB CHECK: feature_code IN ('QUESTION_GENERATION','SUMMARY_DRAFT')
-	// 채점(ANSWER_GRADING)은 티어 대상이 아니라 PlatformGradingModelPolicy가 고정한다.
+	// DB CHECK: feature_code IN ('CODE_SESSION')
+	// 채점(ANSWER_EVALUATION)은 티어 대상이 아니라 PlatformGradingModelPolicy가 고정한다.
 	@Enumerated(EnumType.STRING)
 	@Column(name = "feature_code", nullable = false, updatable = false, length = 100)
 	private FeatureCode featureCode;
@@ -122,11 +122,8 @@ public class PlatformAiTierModelPolicy {
 
 	/**
 	 * 티어 선택이 적용되는 AI 기능.
-	 *
-	 * <p>v07에서 {@code ck_platform_ai_tier_model_policy_feature_code}가 <b>CODE_SESSION 단일값</b>이 됐다.
-	 * v06의 QUESTION_GENERATION이 CODE_SESSION으로 이름이 바뀌었고, SUMMARY_DRAFT는 티어 선택 대상에서
-	 * 빠졌다 — 요약 계열(INTERVIEW_BRIEF_GENERATION·REPORT_GENERATION)은 {@code ai_usage} CHECK가
-	 * {@code tier_code}를 NULL로 강제하므로 매핑할 티어 자체가 없다.
+	 * v07에서 질문 생성·요약이 코드 세션 하나로 통합되어 값이 CODE_SESSION 하나만 남았다
+	 * (DB CHECK: feature_code IN ('CODE_SESSION')).
 	 */
 	public enum FeatureCode {
 		CODE_SESSION

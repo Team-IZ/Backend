@@ -122,9 +122,10 @@ public record OrganizationUsageResponse(
 	@Schema(description = "모델별 사용 내역 한 줄")
 	public record ModelUsage(
 			@Schema(description = """
-					용도. ANSWER_GRADING(답변 채점) / QUESTION_GENERATION(질문 생성) / SUMMARY_DRAFT(요약) /
+					용도. ANSWER_EVALUATION(답변 채점) / CODE_SESSION(코드 세션) /
+					INTERVIEW_BRIEF_GENERATION(인터뷰 브리프 생성) / REPORT_GENERATION(리포트 생성) /
 					CURRICULUM_ANALYSIS(교안 분석) / CODE_ANALYSIS(코드 분석)""",
-					example = "ANSWER_GRADING")
+					example = "ANSWER_EVALUATION")
 			String usageType,
 
 			@Schema(description = """

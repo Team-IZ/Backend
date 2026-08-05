@@ -1,9 +1,6 @@
 package com.bigproject.backend.domain.member.domain;
 
-import com.bigproject.backend.domain.member.presentation.dto.ManagerAssignmentRequest;
-
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -18,9 +15,8 @@ public interface MemberInvitationRepository {
 
 	boolean existsOrganizationTraineeByNormalizedEmail(UUID organizationId, String normalizedEmail);
 
-	void validateManagerAssignments(UUID organizationId, List<ManagerAssignmentRequest> assignments);
-
-	void validateClassroom(UUID organizationId, UUID cohortId, UUID classroomId);
+	/** 초대 대상 기수가 그 기관에 살아 있는지 확인한다. 매니저 초대의 담당 기수 검증용이다. */
+	void validateCohort(UUID organizationId, UUID cohortId);
 
 	UUID createPendingUser(UUID organizationId, String email, String normalizedEmail, String name, Role role, String passwordHash, Instant now);
 
@@ -30,7 +26,6 @@ public interface MemberInvitationRepository {
 			String normalizedEmail,
 			Role targetRole,
 			UUID targetCohortId,
-			UUID targetClassId,
 			UUID invitedBy,
 			Instant invitedAt
 	);
@@ -40,8 +35,6 @@ public interface MemberInvitationRepository {
 	void markInvitationSent(UUID invitationId, UUID tokenId, Instant sentAt);
 
 	void invalidatePreviousTokens(InvitationToken replacement, Instant invalidatedAt);
-
-	void saveManagerAssignments(UUID memberId, UUID organizationId, UUID assignedBy, List<ManagerAssignmentRequest> assignments, Instant assignedAt);
 
 	void saveTraineeMembership(UUID memberId, UUID tokenId, UUID organizationId, UUID cohortId, UUID classroomId, UUID assignedBy, Instant joinedAt);
 }

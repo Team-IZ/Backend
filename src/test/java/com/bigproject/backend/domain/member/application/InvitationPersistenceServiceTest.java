@@ -7,7 +7,6 @@ import com.bigproject.backend.domain.member.domain.InvitationToken;
 import com.bigproject.backend.domain.member.domain.MemberInvitationRepository;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
-import com.bigproject.backend.domain.member.presentation.dto.ManagerAssignmentRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -47,7 +46,8 @@ class InvitationPersistenceServiceTest {
 
 		assertThatThrownBy(() -> service.createManagerInvitation(
 				InvitationContext.organization(UUID.randomUUID(), "AIVLE"),
-				new InviteManagerRequest("Operator@Example.com", null, null),
+				new InviteManagerRequest("Operator@Example.com", null),
+				Role.OPERATOR,
 				actor,
 				"request-duplicate"
 		)).isInstanceOf(InvitationConflictException.class)
@@ -86,7 +86,8 @@ class InvitationPersistenceServiceTest {
 
 		var invitation = service.createManagerInvitation(
 				InvitationContext.organization(organizationId, "AIVLE"),
-				new InviteManagerRequest("Operator@Example.com", null, null),
+				new InviteManagerRequest("Operator@Example.com", null),
+				Role.OPERATOR,
 				actor,
 				"request-1"
 		);
@@ -126,15 +127,13 @@ class InvitationPersistenceServiceTest {
 
 		service.createManagerInvitation(
 				InvitationContext.organization(organizationId, "AIVLE"),
-				new InviteManagerRequest("manager@example.com", cohortId, null),
+				new InviteManagerRequest("manager@example.com", cohortId),
+				Role.MANAGER,
 				actor,
 				"request-manager"
 		);
 
-		List<ManagerAssignmentRequest> expectedAssignments = List.of(
-				new ManagerAssignmentRequest(cohortId, List.of())
-		);
-		verify(repository).validateManagerAssignments(organizationId, expectedAssignments);
+		verify(repository).validateCohort(organizationId, cohortId);
 		verify(repository).createPendingUser(
 				eq(organizationId),
 				eq("manager@example.com"),

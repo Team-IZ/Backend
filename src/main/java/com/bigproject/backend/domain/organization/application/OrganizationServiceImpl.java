@@ -445,7 +445,7 @@ public class OrganizationServiceImpl implements OrganizationService {
 				null,   // storageLimitBytes: 무제한
 				dataRetentionDays,
 				DEFAULT_DISCLOSURE_SCOPE,
-				DEFAULT_AI_TIER,   // codeSessionTierCode — v07에서 티어 컬럼 2개가 하나로 통합됐다
+				DEFAULT_AI_TIER,
 				DEFAULT_ALLOW_MANAGER_INVITE,
 				DEFAULT_ALLOW_DATA_EXPORT,
 				DEFAULT_ALLOW_ZIP_SUBMISSION,

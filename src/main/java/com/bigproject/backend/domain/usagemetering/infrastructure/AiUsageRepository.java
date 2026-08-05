@@ -12,10 +12,10 @@ import java.util.UUID;
 
 public interface AiUsageRepository extends JpaRepository<AiUsage, UUID> {
 
-	// 기간 내 AI 사용 내역을 모델 정보와 함께 한 번에 조회한다(N+1 방지를 위한 JOIN FETCH).
+	// 기간 내 AI 사용 내역을 조회한다. v07에서 모델이 FK가 아니라 model_code 문자열이 되어 조인이 필요 없다
+	// (표시명이 필요하면 호출부가 코드 목록으로 ai_model을 한 번에 조회한다).
 	@Query("""
 			SELECT u FROM AiUsage u
-			JOIN FETCH u.model
 			WHERE u.orgId = :orgId
 			  AND u.occurredAt >= :from
 			  AND u.occurredAt < :to

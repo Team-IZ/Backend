@@ -4,6 +4,7 @@ import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.platformgovernance.domain.AiModel;
 import com.bigproject.backend.domain.platformgovernance.domain.AiTier;
+import com.bigproject.backend.domain.platformgovernance.infrastructure.AiModelRepository;
 import com.bigproject.backend.domain.usagemetering.domain.AiUsage;
 import com.bigproject.backend.domain.usagemetering.domain.OperationsActivityRepository;
 import com.bigproject.backend.domain.usagemetering.domain.OperationsCostRepository;
@@ -37,6 +38,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -58,6 +60,7 @@ public class OperationsServiceImpl implements OperationsService {
 	private final StorageUsageSnapshotRepository storageUsageSnapshotRepository;
 	private final OrganizationUsageSnapshotRepository organizationUsageSnapshotRepository;
 	private final AiUsageRepository aiUsageRepository;
+	private final AiModelRepository aiModelRepository;
 	private final OperationsCostRepository operationsCostRepository;
 	private final OperationsActivityRepository operationsActivityRepository;
 	private final CurrentUserResolver currentUserResolver;
@@ -287,8 +290,9 @@ public class OperationsServiceImpl implements OperationsService {
 	) {
 		List<AiUsage> usages = aiUsageRepository.findByOrgIdAndOccurredAtBetween(organizationId, from, to);
 
+		Map<String, String> modelDisplayNames = resolveModelDisplayNames(usages);
 		List<OrganizationUsageResponse.ModelUsage> models = groupByFeatureAndModel(usages).entrySet().stream()
-				.map(entry -> toModelUsage(entry.getKey(), entry.getValue()))
+				.map(entry -> toModelUsage(entry.getKey(), entry.getValue(), modelDisplayNames))
 				.toList();
 
 		long unpricedCallCount = snapshot
@@ -382,14 +386,34 @@ public class OperationsServiceImpl implements OperationsService {
 		return cost.divide(BigDecimal.valueOf(traineeCount), COST_SCALE, RoundingMode.HALF_UP);
 	}
 
-	// (기능 코드, 모델) 조합별로 묶어 모델별 사용량 내역(ModelUsage)을 만든다.
+	/**
+	 * 사용 원장에 남은 모델 코드를 모델 마스터의 표시명으로 해석한다.
+	 * v07에서 ai_usage가 model_code만 복사해 두므로 표시명은 여기서 한 번에 조회한다(코드당 N+1 방지).
+	 * 마스터에서 사라진 모델은 표시명이 없으므로 호출부가 코드를 그대로 노출한다.
+	 */
+	private Map<String, String> resolveModelDisplayNames(List<AiUsage> usages) {
+		Set<String> codes = usages.stream()
+				.map(AiUsage::getModelCode)
+				.collect(Collectors.toSet());
+		if (codes.isEmpty()) {
+			return Map.of();
+		}
+		return aiModelRepository.findByModelCodeIn(codes).stream()
+				.collect(Collectors.toMap(AiModel::getModelCode, AiModel::getDisplayName, (first, ignored) -> first));
+	}
+
+	// (기능 코드, 티어, 모델 코드) 조합별로 묶어 모델별 사용량 내역(ModelUsage)을 만든다.
 	private Map<UsageGroupKey, List<AiUsage>> groupByFeatureAndModel(List<AiUsage> usages) {
 		return usages.stream()
 				.collect(Collectors.groupingBy(usage ->
-						new UsageGroupKey(usage.getFeatureCode(), usage.getTierCode(), usage.getModel())));
+						new UsageGroupKey(usage.getFeatureCode(), usage.getTierCode(), usage.getModelCode())));
 	}
 
-	private OrganizationUsageResponse.ModelUsage toModelUsage(UsageGroupKey key, List<AiUsage> group) {
+	private OrganizationUsageResponse.ModelUsage toModelUsage(
+			UsageGroupKey key,
+			List<AiUsage> group,
+			Map<String, String> modelDisplayNames
+	) {
 		long calls = group.size();
 		long inputTokens = group.stream().mapToLong(AiUsage::getInputTokenCount).sum();
 		long outputTokens = group.stream().mapToLong(AiUsage::getOutputTokenCount).sum();
@@ -413,7 +437,7 @@ public class OperationsServiceImpl implements OperationsService {
 		return new OrganizationUsageResponse.ModelUsage(
 				key.featureCode().name(),
 				key.tierCode(),
-				key.model().getDisplayName(),
+				modelDisplayNames.getOrDefault(key.modelCode(), key.modelCode()),
 				calls,
 				inputTokens,
 				outputTokens,
@@ -507,7 +531,7 @@ public class OperationsServiceImpl implements OperationsService {
 		);
 	}
 
-	/** (기능, 티어, 모델) 조합. v06에서 티어가 호출 스냅샷으로 남아 같은 모델이라도 티어가 다르면 별도 행으로 보여준다. */
-	private record UsageGroupKey(AiUsage.FeatureCode featureCode, AiTier tierCode, AiModel model) {
+	/** (기능, 티어, 모델 코드) 조합. 티어가 호출 스냅샷으로 남아 같은 모델이라도 티어가 다르면 별도 행으로 보여준다. */
+	private record UsageGroupKey(AiUsage.FeatureCode featureCode, AiTier tierCode, String modelCode) {
 	}
 }

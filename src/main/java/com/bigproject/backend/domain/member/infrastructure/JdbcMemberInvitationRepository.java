@@ -4,7 +4,6 @@ import com.bigproject.backend.domain.member.domain.InvitationContext;
 import com.bigproject.backend.domain.member.domain.InvitationToken;
 import com.bigproject.backend.domain.member.domain.MemberInvitationRepository;
 import com.bigproject.backend.domain.member.domain.Role;
-import com.bigproject.backend.domain.member.presentation.dto.ManagerAssignmentRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -88,9 +87,9 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 	private static final String INSERT_INVITATION = """
 			INSERT INTO user_invitation (
 				invitation_id, org_id, target_email, target_email_normalized,
-				target_role_code, target_cohort_id, target_class_id, status,
+				target_role_code, target_cohort_id, status,
 				invited_by, invited_at, resend_count, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?)
 			""";
 	private static final String MARK_INVITATION_SENT = """
 			UPDATE user_invitation
@@ -116,12 +115,6 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				AND token_id <> ?
 				AND used_at IS NULL
 				AND invalidated_at IS NULL
-			""";
-	private static final String INSERT_MANAGER_ASSIGNMENT = """
-			INSERT INTO manager_assignment (
-				assignment_id, manager_user_id, org_id, class_id,
-				assigned_at, unassigned_at, status, assigned_by, created_at
-			) VALUES (?, ?, ?, ?, ?, NULL, 'ACTIVE', ?, ?)
 			""";
 	private static final String INSERT_COHORT_MEMBER = """
 			INSERT INTO cohort_member (
@@ -189,35 +182,15 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 	}
 
 	@Override
-	public void validateManagerAssignments(UUID organizationId, List<ManagerAssignmentRequest> assignments) {
-		for (ManagerAssignmentRequest assignment : assignments) {
-			Integer cohortCount = jdbcTemplate.queryForObject(
-					"SELECT COUNT(*) FROM cohort WHERE cohort_id = ? AND org_id = ? AND deleted_at IS NULL",
-					Integer.class,
-					assignment.cohortId(),
-					organizationId
-			);
-			if (cohortCount == null || cohortCount != 1) {
-				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "기관에 속하지 않은 기수가 포함되어 있습니다.");
-			}
-			Set<UUID> classroomIds = new HashSet<>(assignment.classroomIds());
-			for (UUID classroomId : classroomIds) {
-				validateClassroom(organizationId, assignment.cohortId(), classroomId);
-			}
-		}
-	}
-
-	@Override
-	public void validateClassroom(UUID organizationId, UUID cohortId, UUID classroomId) {
-		Integer classCount = jdbcTemplate.queryForObject(
-				"SELECT COUNT(*) FROM \"class\" WHERE class_id = ? AND cohort_id = ? AND org_id = ? AND deleted_at IS NULL",
+	public void validateCohort(UUID organizationId, UUID cohortId) {
+		Integer cohortCount = jdbcTemplate.queryForObject(
+				"SELECT COUNT(*) FROM cohort WHERE cohort_id = ? AND org_id = ? AND deleted_at IS NULL",
 				Integer.class,
-				classroomId,
 				cohortId,
 				organizationId
 		);
-		if (classCount == null || classCount != 1) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "기수에 속하지 않은 반이 포함되어 있습니다.");
+		if (cohortCount == null || cohortCount != 1) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "기관에 속하지 않은 기수입니다.");
 		}
 	}
 
@@ -259,7 +232,6 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 			String normalizedEmail,
 			Role targetRole,
 			UUID targetCohortId,
-			UUID targetClassId,
 			UUID invitedBy,
 			Instant invitedAt
 	) {
@@ -273,7 +245,6 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				normalizedEmail,
 				targetRole.name(),
 				targetCohortId,
-				targetClassId,
 				invitedBy,
 				timestamp,
 				timestamp,
@@ -335,23 +306,6 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 	}
 
 	@Override
-	public void saveManagerAssignments(
-			UUID memberId,
-			UUID organizationId,
-			UUID assignedBy,
-			List<ManagerAssignmentRequest> assignments,
-			Instant assignedAt
-	) {
-		Timestamp timestamp = Timestamp.from(assignedAt);
-		for (ManagerAssignmentRequest assignment : assignments) {
-			Set<UUID> classroomIds = new HashSet<>(assignment.classroomIds());
-			for (UUID classroomId : classroomIds) {
-				insertManagerAssignment(memberId, organizationId, assignedBy, classroomId, timestamp);
-			}
-		}
-	}
-
-	@Override
 	public void saveTraineeMembership(
 			UUID memberId,
 			UUID tokenId,
@@ -386,22 +340,4 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 		}
 	}
 
-	private void insertManagerAssignment(
-			UUID memberId,
-			UUID organizationId,
-			UUID assignedBy,
-			UUID classroomId,
-			Timestamp assignedAt
-	) {
-		jdbcTemplate.update(
-				INSERT_MANAGER_ASSIGNMENT,
-				UUID.randomUUID(),
-				memberId,
-				organizationId,
-				classroomId,
-				assignedAt,
-				assignedBy,
-				assignedAt
-		);
-	}
 }
