@@ -39,7 +39,8 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 		return jdbcTemplate.query(
 				selectOperators() + " ORDER BY u.created_at",
 				(ResultSet rs, int rowNum) -> mapOperator(rs),
-				OPERATOR_INVITE_PURPOSE, OPERATOR_INVITE_PURPOSE, organizationId, OPERATOR_ROLE_CODE
+				OPERATOR_INVITE_PURPOSE, OPERATOR_INVITE_PURPOSE, OPERATOR_INVITE_PURPOSE,
+				organizationId, OPERATOR_ROLE_CODE
 		);
 	}
 
@@ -48,7 +49,8 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 		List<OperatorAccount> found = jdbcTemplate.query(
 				selectOperators() + " AND u.user_id = ?",
 				(ResultSet rs, int rowNum) -> mapOperator(rs),
-				OPERATOR_INVITE_PURPOSE, OPERATOR_INVITE_PURPOSE, organizationId, OPERATOR_ROLE_CODE, memberId
+				OPERATOR_INVITE_PURPOSE, OPERATOR_INVITE_PURPOSE, OPERATOR_INVITE_PURPOSE,
+				organizationId, OPERATOR_ROLE_CODE, memberId
 		);
 		return found.stream().findFirst();
 	}
@@ -85,7 +87,7 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 	@Override
 	public Optional<PendingOperatorInvitation> findPendingInvitation(UUID organizationId, UUID tokenId) {
 		String sql = """
-				SELECT t.token_id, t.user_id, t.target_email
+				SELECT t.token_id, t.user_id, t.invitation_id, t.target_email
 				FROM one_time_token t
 				WHERE t.token_id = ?
 					AND t.org_id = ?
@@ -98,6 +100,7 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 				(ResultSet rs, int rowNum) -> new PendingOperatorInvitation(
 						rs.getObject("token_id", UUID.class),
 						rs.getObject("user_id", UUID.class),
+						rs.getObject("invitation_id", UUID.class),
 						rs.getString("target_email")
 				),
 				tokenId, organizationId, OPERATOR_INVITE_PURPOSE
@@ -116,6 +119,22 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 					AND invalidated_at IS NULL
 				""";
 		return jdbcTemplate.update(sql, reason, tokenId);
+	}
+
+	@Override
+	public int cancelInvitationLedger(UUID invitationId, UUID cancelledBy) {
+		// ck_user_invitation_updated_at_4: status='CANCELLED'이면 cancelled_at·cancelled_by가 NOT NULL이어야 한다.
+		// 이미 수락(ACCEPTED)·만료(EXPIRED)된 초대는 되돌리지 않는다.
+		String sql = """
+				UPDATE user_invitation
+				SET status = 'CANCELLED',
+				    cancelled_at = CURRENT_TIMESTAMP,
+				    cancelled_by = ?,
+				    updated_at = CURRENT_TIMESTAMP
+				WHERE invitation_id = ?
+					AND status IN ('PENDING', 'SENT', 'DELIVERY_FAILED')
+				""";
+		return jdbcTemplate.update(sql, cancelledBy, invitationId);
 	}
 
 	/**
@@ -140,7 +159,19 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 				         WHERE t.user_id = u.user_id AND t.purpose = ?
 				           AND t.used_at IS NULL AND t.invalidated_at IS NULL
 				         ORDER BY t.issued_at DESC
-				         LIMIT 1) AS pending_token_id
+				         LIMIT 1) AS pending_token_id,
+				       /*
+				        * 가장 최근 초대가 메일 발송에 실패했는지. 목업 case 4·5의 [재발송] 배지 근거다.
+				        *
+				        * 지난 초대 중 하나라도 실패했는지가 아니라 <b>가장 최근 것</b>을 본다 —
+				        * 실패 후 다시 초대해 성공했는데도 실패 배지가 영원히 남으면 안 된다.
+				        * user_invitation은 계정을 직접 참조하지 않아 one_time_token으로 이어 붙인다.
+				        */
+				       COALESCE((SELECT ui.status FROM user_invitation ui
+				                  JOIN one_time_token it ON it.invitation_id = ui.invitation_id
+				                 WHERE it.user_id = u.user_id AND it.purpose = ?
+				                 ORDER BY ui.invited_at DESC
+				                 LIMIT 1) = 'DELIVERY_FAILED', FALSE) AS invitation_delivery_failed
 				FROM app_user u
 				JOIN "role" r ON r.role_id = u.role_id
 				WHERE u.deleted_at IS NULL
@@ -157,7 +188,8 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 				OperatorAccountStatus.valueOf(rs.getString("status")),
 				toInstant(rs.getTimestamp("invited_at")),
 				toInstant(rs.getTimestamp("last_login_at")),
-				rs.getObject("pending_token_id", UUID.class)
+				rs.getObject("pending_token_id", UUID.class),
+				rs.getBoolean("invitation_delivery_failed")
 		);
 	}
 
