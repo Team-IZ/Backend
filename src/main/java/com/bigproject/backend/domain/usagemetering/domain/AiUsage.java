@@ -40,9 +40,20 @@ public class AiUsage {
 	@Column(name = "org_id", nullable = false, updatable = false)
 	private UUID orgId;
 
-	// 같은 operations 도메인 소속이라 AiModel과는 실제 연관관계로 매핑해, 사용량 집계 시 모델 표시명 등을 조인해 가져온다.
+	/*
+	 * 같은 operations 도메인 소속이라 AiModel과는 실제 연관관계로 매핑해, 사용량 집계 시 모델 표시명 등을 조인해 가져온다.
+	 *
+	 * v07에서 참조 키가 model_id(UUID FK)에서 model_code(자연키)로 바뀌었다
+	 * (fk_ai_usage_model_code → ai_model.model_code, uq_ai_model_model_code로 유일성 보장).
+	 * 호출 당시 논리 모델 코드를 그대로 원장에 남기려는 변경이라 PK가 아닌 model_code를 참조한다.
+	 */
 	@ManyToOne(fetch = FetchType.LAZY)
-	@JoinColumn(name = "model_id", nullable = false, updatable = false)
+	@JoinColumn(
+			name = "model_code",
+			referencedColumnName = "model_code",
+			nullable = false,
+			updatable = false
+	)
 	private AiModel model;
 
   
