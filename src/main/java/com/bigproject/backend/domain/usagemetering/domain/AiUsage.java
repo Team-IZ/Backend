@@ -1,15 +1,11 @@
 package com.bigproject.backend.domain.usagemetering.domain;
 
-import com.bigproject.backend.domain.platformgovernance.domain.AiModel;
 import com.bigproject.backend.domain.platformgovernance.domain.AiTier;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -41,29 +37,14 @@ public class AiUsage {
 	private UUID orgId;
 
 	/*
-	 * 같은 operations 도메인 소속이라 AiModel과는 실제 연관관계로 매핑해, 사용량 집계 시 모델 표시명 등을 조인해 가져온다.
-	 *
 	 * v07에서 참조 키가 model_id(UUID FK)에서 model_code(자연키)로 바뀌었다
 	 * (fk_ai_usage_model_code → ai_model.model_code, uq_ai_model_model_code로 유일성 보장).
-	 * 호출 당시 논리 모델 코드를 그대로 원장에 남기려는 변경이라 PK가 아닌 model_code를 참조한다.
+	 * 호출 당시 논리 모델 코드를 그대로 원장에 남기려는 변경이라 PK가 아닌 model_code를 참조하며,
+	 * 연관관계로 매핑하지 않고 문자열로 복사해 둔다 — 조회 시 조인이 필요 없고(N+1 방지),
+	 * 표시명이 필요하면 호출부가 코드 목록으로 ai_model을 한 번에 조회한다.
 	 */
-	@ManyToOne(fetch = FetchType.LAZY)
-	@JoinColumn(
-			name = "model_code",
-			referencedColumnName = "model_code",
-			nullable = false,
-			updatable = false
-	)
-	private AiModel model;
-
-  
-//	/**
-//	 * 실제 호출에 사용된 모델 인스턴스(ai_model_instance). v06 신규 NOT NULL FK다.
-//	 * 이 도메인은 조회 전용이라 인스턴스 엔티티까지 만들지 않고 원시 UUID만 보관한다.
-//	 */
-//	@Column(name = "model_instance_id", nullable = false, updatable = false)
-//	private UUID modelInstanceId;
-
+	@Column(name = "model_code", nullable = false, updatable = false, length = 100)
+	private String modelCode;
 
 	@Column(name = "actor_user_id", updatable = false)
 	private UUID actorUserId;
@@ -222,15 +203,17 @@ public class AiUsage {
 
 	/**
 	 * AI가 무슨 기능을 수행했는지.
-	 * v07에서 QUESTION_GENERATION·SUMMARY_DRAFT가 CODE_SESSION 하나로 통합되고
-	 * ANSWER_GRADING이 ANSWER_EVALUATION으로, 리포트·면담 브리프 생성이 별도 기능으로 분리됐다.
+	 * v07에서 QUESTION_GENERATION→CODE_SESSION, ANSWER_GRADING→ANSWER_EVALUATION으로 바뀌고
+	 * SUMMARY_DRAFT가 INTERVIEW_BRIEF_GENERATION·REPORT_GENERATION으로 분리됐다.
+	 * 티어 선택 대상은 CODE_SESSION 하나뿐이다(DB CHECK: CODE_SESSION은 tier_code·tier_policy_id 필수,
+	 * INTERVIEW_BRIEF_GENERATION·REPORT_GENERATION은 둘 다 NULL이어야 한다).
 	 */
 	public enum FeatureCode {
-		CODE_ANALYSIS, CURRICULUM_ANALYSIS, CODE_SESSION, ANSWER_EVALUATION,
-		INTERVIEW_BRIEF_GENERATION, REPORT_GENERATION
+		CODE_ANALYSIS, CURRICULUM_ANALYSIS, CODE_SESSION,
+		ANSWER_EVALUATION, INTERVIEW_BRIEF_GENERATION, REPORT_GENERATION
 	}
 
-	/** 호출의 처리 대상 업무 엔터티 유형. */
+	/** 호출의 처리 대상 업무 엔터티 유형. v07에서 값이 전면 개편됐다. */
 	public enum ContextType {
 		SUBMISSION, CURRICULUM_VERSION, CURRICULUM_ANALYSIS, ANALYSIS_JOB, CODE_ANALYSIS,
 		ASSESSMENT_SESSION, ASSESSMENT_PROBLEM, PROBLEM_STAGE, INTERVIEW_BRIEF,
