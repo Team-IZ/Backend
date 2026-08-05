@@ -53,6 +53,8 @@ public class OperatorController {
 	@Operation(
 			summary = "기관 오퍼레이터 계정 목록 조회",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					기관에 소속된 오퍼레이터 계정을 조회한다. 목업 SA-02 ② `이 기관의 오퍼레이터 계정` 표에 대응한다.
 
 					**응답**
@@ -77,6 +79,8 @@ public class OperatorController {
 	@Operation(
 			summary = "오퍼레이터 초대",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					기관에 오퍼레이터를 초대한다. 목업 SA-02 ② `오퍼레이터 초대` 모달에 대응한다.
 
 					**요청**
@@ -124,6 +128,8 @@ public class OperatorController {
 	@Operation(
 			summary = "오퍼레이터 계정 정지 / 재활성",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					오퍼레이터 계정 상태를 변경한다. 목업 SA-02 ② 표의 행별 액션 `정지` / `재활성`에 대응한다.
 
 					**요청**
@@ -157,6 +163,13 @@ public class OperatorController {
 	@Operation(
 			summary = "오퍼레이터 초대 취소",
 			description = """
+					**상태**: ⚠️ 사용 불가
+
+					아래 재초대 제약(같은 이메일로 다시 초대하면 409)이 해소되기 전까지는 호출하지 않는다.
+					취소한 계정 자리를 되살릴 방법이 없어 운영상 막다른 길이 된다.
+
+					---
+
 					아직 수락되지 않은 초대를 취소한다. 목업 SA-02 ② 표의 `취소` 액션에 대응한다.
 
 					**요청**
