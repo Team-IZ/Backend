@@ -446,7 +446,6 @@ public class OrganizationServiceImpl implements OrganizationService {
 				dataRetentionDays,
 				DEFAULT_DISCLOSURE_SCOPE,
 				DEFAULT_AI_TIER,
-				DEFAULT_AI_TIER,
 				DEFAULT_ALLOW_MANAGER_INVITE,
 				DEFAULT_ALLOW_DATA_EXPORT,
 				DEFAULT_ALLOW_ZIP_SUBMISSION,

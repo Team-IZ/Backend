@@ -41,16 +41,24 @@ public class MemberInvitationService {
 	private final MemberInvitationRepository invitationRepository;
 	private final TransactionalInvitationDispatcher invitationDispatcher;
 
+	/**
+	 * 오퍼레이터 또는 매니저를 초대한다.
+	 *
+	 * <p>대상 역할은 <b>호출부가 명시</b>한다. 예전에는 액터 역할로 대상을 추측했지만,
+	 * 그러면 같은 진입점이 호출자에 따라 다른 역할을 만들어 초대 경로가 뒤섞였다.
+	 * 지금은 경로마다 역할이 고정된다 — 오퍼레이터 초대(SA-02 ②)는 {@link Role#OPERATOR},
+	 * 매니저 초대(OP-06)는 {@link Role#MANAGER}다.
+	 */
 	public InviteManagerResponse inviteManager(
 			UUID organizationId,
 			InviteManagerRequest request,
+			Role targetRole,
 			String actorEmail,
 			String requestId
 	) {
 		AuthUser actor = activeActor(actorEmail);
-		Role invitedRole = invitedRole(actor);
-		validateManagerInvitationRequest(request, invitedRole);
-		validateManagerInvitationAuthority(actor, organizationId);
+		validateManagerInvitationRequest(request, targetRole);
+		validateManagerInvitationAuthority(actor, targetRole, organizationId);
 		InvitationContext context = invitationRepository.findActiveOrganization(organizationId)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "활성 기관을 찾을 수 없습니다."));
 
@@ -59,6 +67,7 @@ public class MemberInvitationService {
 			invitation = invitationDispatcher.inviteManager(
 					context,
 					request,
+					targetRole,
 					actor,
 					requestId(requestId)
 			);
@@ -262,39 +271,40 @@ public class MemberInvitationService {
 		return actor;
 	}
 
-	private Role invitedRole(AuthUser actor) {
-		return switch (actor.role()) {
-			case SUPER_ADMIN -> Role.OPERATOR;
-			case OPERATOR -> Role.MANAGER;
-			default -> throw new ResponseStatusException(
-					HttpStatus.FORBIDDEN,
-					"슈퍼어드민과 오퍼레이터만 운영자 초대를 발송할 수 있습니다."
-			);
-		};
-	}
-
-	private void validateManagerInvitationAuthority(AuthUser actor, UUID organizationId) {
-		if (actor.role() == Role.SUPER_ADMIN) {
-			return;
-		}
-		if (actor.role() == Role.OPERATOR) {
-			if (!organizationId.equals(actor.organizationId())) {
-				throw new ResponseStatusException(HttpStatus.FORBIDDEN, "다른 기관의 매니저를 초대할 수 없습니다.");
+	/**
+	 * 액터가 <b>그 역할을</b> 초대할 수 있는지 본다. 역할별로 초대 주체가 하나씩 정해져 있다 —
+	 * 오퍼레이터는 슈퍼어드민만(기관 부트스트랩), 매니저는 그 기관 오퍼레이터만 만든다.
+	 */
+	private void validateManagerInvitationAuthority(AuthUser actor, Role targetRole, UUID organizationId) {
+		switch (targetRole) {
+			case OPERATOR -> {
+				if (actor.role() != Role.SUPER_ADMIN) {
+					throw new ResponseStatusException(HttpStatus.FORBIDDEN, "슈퍼어드민만 오퍼레이터를 초대할 수 있습니다.");
+				}
 			}
-			return;
+			case MANAGER -> {
+				if (actor.role() != Role.OPERATOR) {
+					throw new ResponseStatusException(HttpStatus.FORBIDDEN, "오퍼레이터만 매니저를 초대할 수 있습니다.");
+				}
+				if (!organizationId.equals(actor.organizationId())) {
+					throw new ResponseStatusException(HttpStatus.FORBIDDEN, "다른 기관의 매니저를 초대할 수 없습니다.");
+				}
+			}
+			default -> throw new ResponseStatusException(
+					HttpStatus.BAD_REQUEST,
+					"이 경로로 초대할 수 없는 역할입니다: " + targetRole
+			);
 		}
-		throw new ResponseStatusException(HttpStatus.FORBIDDEN, "해당 역할의 매니저를 초대할 권한이 없습니다.");
 	}
 
-	private void validateManagerInvitationRequest(InviteManagerRequest request, Role invitedRole) {
-		if (invitedRole == Role.OPERATOR
-				&& (request.cohortId() != null || request.targetClassId() != null)) {
+	private void validateManagerInvitationRequest(InviteManagerRequest request, Role targetRole) {
+		if (targetRole == Role.OPERATOR && request.cohortId() != null) {
 			throw new ResponseStatusException(
 					HttpStatus.BAD_REQUEST,
-					"오퍼레이터는 기관 전체를 담당하므로 기수·반을 배정하지 않습니다."
+					"오퍼레이터는 기관 전체를 담당하므로 기수를 배정하지 않습니다."
 			);
 		}
-		if (invitedRole == Role.MANAGER && request.cohortId() == null) {
+		if (targetRole == Role.MANAGER && request.cohortId() == null) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "일반 매니저는 하나의 기수를 반드시 지정해야 합니다.");
 		}
 	}

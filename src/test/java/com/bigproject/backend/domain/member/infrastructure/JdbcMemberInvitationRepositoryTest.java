@@ -102,7 +102,6 @@ class JdbcMemberInvitationRepositoryTest {
 				"manager@example.com",
 				Role.MANAGER,
 				cohortId,
-				null,
 				invitedBy,
 				Instant.parse("2026-08-02T00:00:00Z")
 		);
@@ -111,11 +110,12 @@ class JdbcMemberInvitationRepositoryTest {
 		ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
 		ArgumentCaptor<Object[]> parameters = ArgumentCaptor.forClass(Object[].class);
 		verify(jdbcTemplate).update(sql.capture(), parameters.capture());
+		// 반 배정은 초대 시점에 하지 않으므로 원장에 target_class_id를 쓰지 않는다.
 		assertThat(sql.getValue())
 				.contains("INSERT INTO user_invitation")
 				.contains("target_role_code")
 				.contains("target_cohort_id")
-				.contains("target_class_id");
+				.doesNotContain("target_class_id");
 		assertThat(parameters.getValue()).contains(Role.MANAGER.name(), cohortId, invitedBy);
 	}
 

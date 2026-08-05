@@ -36,27 +36,28 @@ class MemberInvitationServiceTest {
 	);
 
 	@Test
-	void superAdminInvitesOperatorWithoutClientSuppliedRole() {
+	void superAdminInvitesOperatorWithExplicitTargetRole() {
 		UUID organizationId = UUID.randomUUID();
 		AuthUser actor = actor(Role.SUPER_ADMIN, null);
 		InvitationContext context = InvitationContext.organization(organizationId, "AIVLE");
-		InviteManagerRequest request = new InviteManagerRequest("operator@example.com", null, null);
+		InviteManagerRequest request = new InviteManagerRequest("operator@example.com", null);
 		PendingInvitation invitation = pendingInvitation(context, request.email(), Role.OPERATOR);
 		when(authUserRepository.findByNormalizedEmail("admin@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findActiveOrganization(organizationId)).thenReturn(Optional.of(context));
-		when(invitationDispatcher.inviteManager(context, request, actor, "request-1"))
+		when(invitationDispatcher.inviteManager(context, request, Role.OPERATOR, actor, "request-1"))
 				.thenReturn(invitation);
 
 		var response = service.inviteManager(
 				organizationId,
 				request,
+				Role.OPERATOR,
 				"ADMIN@example.com",
 				"request-1"
 		);
 
 		assertThat(response.memberId()).isEqualTo(invitation.memberId());
 		assertThat(response.role()).isEqualTo(Role.OPERATOR);
-		verify(invitationDispatcher).inviteManager(context, request, actor, "request-1");
+		verify(invitationDispatcher).inviteManager(context, request, Role.OPERATOR, actor, "request-1");
 	}
 
 	@Test
@@ -64,20 +65,17 @@ class MemberInvitationServiceTest {
 		UUID organizationId = UUID.randomUUID();
 		AuthUser actor = actor(Role.SUPER_ADMIN, null);
 		InvitationContext context = InvitationContext.organization(organizationId, "AIVLE");
-		InviteManagerRequest request = new InviteManagerRequest(
-				"operator@example.com",
-				null,
-				null
-		);
+		InviteManagerRequest request = new InviteManagerRequest("operator@example.com", null);
 		DataIntegrityViolationException databaseException = new DataIntegrityViolationException("purpose check");
 		when(authUserRepository.findByNormalizedEmail("admin@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findActiveOrganization(organizationId)).thenReturn(Optional.of(context));
-		when(invitationDispatcher.inviteManager(context, request, actor, "request-constraint"))
+		when(invitationDispatcher.inviteManager(context, request, Role.OPERATOR, actor, "request-constraint"))
 				.thenThrow(databaseException);
 
 		assertThatThrownBy(() -> service.inviteManager(
 				organizationId,
 				request,
+				Role.OPERATOR,
 				"admin@example.com",
 				"request-constraint"
 		)).isInstanceOf(ResponseStatusException.class)
@@ -91,11 +89,11 @@ class MemberInvitationServiceTest {
 		UUID organizationId = UUID.randomUUID();
 		AuthUser actor = actor(Role.SUPER_ADMIN, null);
 		InvitationContext context = InvitationContext.organization(organizationId, "AIVLE");
-		InviteManagerRequest request = new InviteManagerRequest("operator@example.com", null, null);
+		InviteManagerRequest request = new InviteManagerRequest("operator@example.com", null);
 		DataIntegrityViolationException databaseException = new DataIntegrityViolationException("unique violation");
 		when(authUserRepository.findByNormalizedEmail("admin@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findActiveOrganization(organizationId)).thenReturn(Optional.of(context));
-		when(invitationDispatcher.inviteManager(context, request, actor, "request-race"))
+		when(invitationDispatcher.inviteManager(context, request, Role.OPERATOR, actor, "request-race"))
 				.thenThrow(databaseException);
 		when(invitationRepository.existsIncompleteInvitationByNormalizedEmail("operator@example.com"))
 				.thenReturn(true);
@@ -103,6 +101,7 @@ class MemberInvitationServiceTest {
 		assertThatThrownBy(() -> service.inviteManager(
 				organizationId,
 				request,
+				Role.OPERATOR,
 				"admin@example.com",
 				"request-race"
 		)).isInstanceOf(InvitationConflictException.class)
@@ -115,42 +114,52 @@ class MemberInvitationServiceTest {
 		UUID organizationId = UUID.randomUUID();
 		AuthUser actor = actor(Role.OPERATOR, organizationId);
 		InvitationContext context = InvitationContext.organization(organizationId, "AIVLE");
-		InviteManagerRequest request = new InviteManagerRequest(
-				"manager@example.com",
-				UUID.randomUUID(),
-				UUID.randomUUID()
-		);
+		InviteManagerRequest request = new InviteManagerRequest("manager@example.com", UUID.randomUUID());
 		PendingInvitation invitation = pendingInvitation(context, request.email(), Role.MANAGER);
 		when(authUserRepository.findByNormalizedEmail("lead@example.com")).thenReturn(Optional.of(actor));
 		when(invitationRepository.findActiveOrganization(organizationId)).thenReturn(Optional.of(context));
-		when(invitationDispatcher.inviteManager(context, request, actor, "request-2"))
+		when(invitationDispatcher.inviteManager(context, request, Role.MANAGER, actor, "request-2"))
 				.thenReturn(invitation);
 
-		var response = service.inviteManager(organizationId, request, "lead@example.com", "request-2");
+		var response = service.inviteManager(organizationId, request, Role.MANAGER, "lead@example.com", "request-2");
 
 		assertThat(response.role()).isEqualTo(Role.MANAGER);
-		verify(invitationDispatcher).inviteManager(context, request, actor, "request-2");
+		verify(invitationDispatcher).inviteManager(context, request, Role.MANAGER, actor, "request-2");
 	}
 
+	/** 매니저 초대 경로가 슈퍼어드민에게 열려 있으면 오퍼레이터 초대와 중복된다. 역할별로 초대 주체가 하나여야 한다. */
 	@Test
-	void rejectsOperatorInvitationWithManagerScopeFromSuperAdmin() {
+	void rejectsSuperAdminFromInvitingManager() {
 		UUID organizationId = UUID.randomUUID();
 		when(authUserRepository.findByNormalizedEmail("admin@example.com"))
 				.thenReturn(Optional.of(actor(Role.SUPER_ADMIN, null)));
 
 		assertThatThrownBy(() -> service.inviteManager(
 				organizationId,
-				new InviteManagerRequest("operator@example.com", UUID.randomUUID(), null),
+				new InviteManagerRequest("manager@example.com", UUID.randomUUID()),
+				Role.MANAGER,
 				"admin@example.com",
 				null
 		)).isInstanceOf(ResponseStatusException.class)
-				.hasMessageContaining("기수·반을 배정하지 않습니다");
-		verify(invitationDispatcher, never()).inviteManager(
-				org.mockito.ArgumentMatchers.any(),
-				org.mockito.ArgumentMatchers.any(),
-				org.mockito.ArgumentMatchers.any(),
-				org.mockito.ArgumentMatchers.any()
-		);
+				.hasMessageContaining("오퍼레이터만 매니저를 초대할 수 있습니다");
+		verifyNoInvitationDispatched();
+	}
+
+	@Test
+	void rejectsOperatorFromInvitingAnotherOperator() {
+		UUID organizationId = UUID.randomUUID();
+		when(authUserRepository.findByNormalizedEmail("lead@example.com"))
+				.thenReturn(Optional.of(actor(Role.OPERATOR, organizationId)));
+
+		assertThatThrownBy(() -> service.inviteManager(
+				organizationId,
+				new InviteManagerRequest("operator@example.com", null),
+				Role.OPERATOR,
+				"lead@example.com",
+				null
+		)).isInstanceOf(ResponseStatusException.class)
+				.hasMessageContaining("슈퍼어드민만 오퍼레이터를 초대할 수 있습니다");
+		verifyNoInvitationDispatched();
 	}
 
 	@Test
@@ -161,17 +170,13 @@ class MemberInvitationServiceTest {
 
 		assertThatThrownBy(() -> service.inviteManager(
 				organizationId,
-				new InviteManagerRequest("manager@example.com", null, null),
+				new InviteManagerRequest("manager@example.com", null),
+				Role.MANAGER,
 				"lead@example.com",
 				null
 		)).isInstanceOf(ResponseStatusException.class)
 				.hasMessageContaining("하나의 기수");
-		verify(invitationDispatcher, never()).inviteManager(
-				org.mockito.ArgumentMatchers.any(),
-				org.mockito.ArgumentMatchers.any(),
-				org.mockito.ArgumentMatchers.any(),
-				org.mockito.ArgumentMatchers.any()
-		);
+		verifyNoInvitationDispatched();
 	}
 
 	@Test
@@ -182,21 +187,13 @@ class MemberInvitationServiceTest {
 
 		assertThatThrownBy(() -> service.inviteManager(
 				organizationId,
-				new InviteManagerRequest(
-						"operator@example.com",
-						UUID.randomUUID(),
-						null
-				),
+				new InviteManagerRequest("operator@example.com", UUID.randomUUID()),
+				Role.OPERATOR,
 				"admin@example.com",
 				null
 		)).isInstanceOf(ResponseStatusException.class)
-				.hasMessageContaining("기수·반을 배정하지 않습니다");
-		verify(invitationDispatcher, never()).inviteManager(
-				org.mockito.ArgumentMatchers.any(),
-				org.mockito.ArgumentMatchers.any(),
-				org.mockito.ArgumentMatchers.any(),
-				org.mockito.ArgumentMatchers.any()
-		);
+				.hasMessageContaining("기수를 배정하지 않습니다");
+		verifyNoInvitationDispatched();
 	}
 
 	@Test
@@ -207,12 +204,18 @@ class MemberInvitationServiceTest {
 
 		assertThatThrownBy(() -> service.inviteManager(
 				organizationId,
-				new InviteManagerRequest("target@example.com", UUID.randomUUID(), null),
+				new InviteManagerRequest("target@example.com", UUID.randomUUID()),
+				Role.MANAGER,
 				"lead@example.com",
 				null
 		)).isInstanceOf(ResponseStatusException.class)
-				.hasMessageContaining("슈퍼어드민과 오퍼레이터만");
+				.hasMessageContaining("오퍼레이터만 매니저를 초대할 수 있습니다");
+		verifyNoInvitationDispatched();
+	}
+
+	private void verifyNoInvitationDispatched() {
 		verify(invitationDispatcher, never()).inviteManager(
+				org.mockito.ArgumentMatchers.any(),
 				org.mockito.ArgumentMatchers.any(),
 				org.mockito.ArgumentMatchers.any(),
 				org.mockito.ArgumentMatchers.any(),

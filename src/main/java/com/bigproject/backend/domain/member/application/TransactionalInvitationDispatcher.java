@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.member.application;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.member.domain.InvitationContext;
 import com.bigproject.backend.domain.member.domain.PendingInvitation;
+import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import lombok.RequiredArgsConstructor;
@@ -21,12 +22,14 @@ public class TransactionalInvitationDispatcher {
 	public PendingInvitation inviteManager(
 			InvitationContext context,
 			InviteManagerRequest request,
+			Role targetRole,
 			AuthUser actor,
 			String requestId
 	) {
 		PendingInvitation invitation = persistenceService.createManagerInvitation(
 				context,
 				request,
+				targetRole,
 				actor,
 				requestId
 		);

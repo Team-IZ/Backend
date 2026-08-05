@@ -38,6 +38,8 @@ public class OperationsController {
 	@Operation(
 			summary = "기관 월별 저장량·활동·AI 비용 조회",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					지정한 기관의 특정 월(period) 사용량을 조회한다. \
 					슈퍼어드민의 SA-02 ③ `사용량 · AI 비용` 탭과 오퍼레이터의 OP-06 ⑤ `비용` 탭이 함께 쓴다.
 
@@ -92,6 +94,8 @@ public class OperationsController {
 	@Operation(
 			summary = "기관 운영 설정 조회",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					지정한 기관의 현재 활성(ACTIVE) 운영 정책을 조회한다. 목업 SA-02 ④ 설정 탭.
 
 					**요청**
@@ -118,6 +122,8 @@ public class OperationsController {
 	@Operation(
 			summary = "기관 운영 설정 변경",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					지정한 기관의 운영 설정을 변경한다. organization_policy는 append-only 이력 테이블이라 \
 					기존 설정을 수정하는 게 아니라 기존 활성 버전을 SUPERSEDED로 닫고 새 버전을 발급하는 방식으로 동작한다.
 
