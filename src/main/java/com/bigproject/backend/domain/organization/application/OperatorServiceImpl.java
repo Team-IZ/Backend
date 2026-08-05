@@ -14,6 +14,7 @@ import com.bigproject.backend.domain.organization.presentation.dto.InviteOperato
 import com.bigproject.backend.domain.organization.presentation.dto.InviteOperatorResponse;
 import com.bigproject.backend.domain.organization.presentation.dto.OperatorListResponse;
 import com.bigproject.backend.domain.organization.presentation.dto.UpdateOperatorStatusRequest;
+import com.bigproject.backend.global.security.CurrentUserResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -40,6 +41,7 @@ public class OperatorServiceImpl implements OperatorService {
 	 * 이 클래스는 목업의 오퍼레이터 탭 계약(이메일만 받는 요청)으로 감싸는 역할만 한다.
 	 */
 	private final MemberInvitationService memberInvitationService;
+	private final CurrentUserResolver currentUserResolver;
 
 	@Override
 	public OperatorListResponse findOperators(UUID organizationId) {
@@ -150,10 +152,59 @@ public class OperatorServiceImpl implements OperatorService {
 
 		operatorRepository.invalidateInvitation(tokenId, CANCEL_REASON);
 
+		/*
+		 * 토큰만 무효화하면 초대 원장이 SENT로 남는다. 그러면 감사·통계가 발송된 초대로 계속 세고,
+		 * uq_user_invitation_incomplete가 (기관, 이메일, 역할) 조합을 계속 점유해 같은 주소로
+		 * 재초대할 수 없다. 원장도 함께 CANCELLED로 닫는다.
+		 */
+		if (invitation.invitationId() != null) {
+			operatorRepository.cancelInvitationLedger(
+					invitation.invitationId(), currentUserResolver.resolveCurrentMemberId()
+			);
+		}
+
 		// 토큰만 무효화하면 계정 자리가 PENDING으로 남아 로그인 경로가 애매해진다. 자리는 남기되(이력 보존)
 		// 로그인은 막도록 INACTIVE로 내린다 — 목업의 "퇴사한 계정도 지우지 않고 정지로 남긴다"와 같은 처리다.
 		if (invitation.memberId() != null) {
 			operatorRepository.updateOperatorStatus(invitation.memberId(), OperatorAccountStatus.INACTIVE);
+		}
+
+		return buildListResponse(organizationId);
+	}
+
+	@Override
+	@Transactional
+	public OperatorListResponse resendInvitation(
+			UUID organizationId,
+			UUID tokenId,
+			String actorEmail,
+			String requestId
+	) {
+		assertOrganizationExists(organizationId);
+
+		/*
+		 * 이 토큰이 정말 이 기관의 오퍼레이터 초대인지 먼저 본다. member 도메인은 역할 축(누가 재발송할 수
+		 * 있는가)만 검증하므로, 기관 경계는 여기서 세운다 — 다른 기관 토큰 ID를 넣어 남의 초대를 건드리는
+		 * 경로를 막는다.
+		 */
+		operatorRepository.findPendingInvitation(organizationId, tokenId)
+				.orElseThrow(() -> new OrganizationException(
+						OrganizationErrorCode.OPERATOR_INVITATION_NOT_FOUND,
+						"재발송할 수 있는 오퍼레이터 초대를 찾을 수 없습니다: " + tokenId
+				));
+
+		try {
+			memberInvitationService.resendInvitation(tokenId, actorEmail, requestId);
+		} catch (ResponseStatusException exception) {
+			// 목업 case 4·5는 메일 실패와 토큰 실패를 한 코드로 합쳤다 — 사용자가 할 일은 [재발송] 하나다.
+			if (exception.getStatusCode() == HttpStatus.BAD_GATEWAY) {
+				throw new OrganizationException(
+						OrganizationErrorCode.INVITE_MAIL_FAILED,
+						OrganizationErrorCode.INVITE_MAIL_FAILED.defaultMessage(),
+						exception
+				);
+			}
+			throw exception;
 		}
 
 		return buildListResponse(organizationId);
@@ -197,7 +248,8 @@ public class OperatorServiceImpl implements OperatorService {
 						operator.lastLoginAt(),
 						operator.pendingInvitationTokenId(),
 						// 활성 계정이면서 마지막 1인이 아닐 때만 정지 버튼이 살아 있다.
-						operator.status() == OperatorAccountStatus.ACTIVE && activeCount > 1
+						operator.status() == OperatorAccountStatus.ACTIVE && activeCount > 1,
+						operator.invitationDeliveryFailed()
 				))
 				.toList();
 
