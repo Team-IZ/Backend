@@ -13,7 +13,7 @@ import java.util.UUID;
  *
  * <pre>
  * 채점        고정 · claude-x         ← 전 기관 공통. 바꾸면 재캘리브레이션
- * 질문 생성   정확도 우선 / 균형 / 비용 우선   3티어 ↔ 모델 매핑
+ * 코드 세션   정확도 우선 / 균형 / 비용 우선   3티어 ↔ 모델 매핑
  * 단가        모델별 입력·출력 토큰 단가
  * </pre>
  */
@@ -63,8 +63,8 @@ public record PlatformModelSettingResponse(
 	public record TierMapping(
 			UUID tierPolicyId,
 
-			@Schema(description = "적용 기능. QUESTION_GENERATION(질문 생성) / SUMMARY_DRAFT(요약)",
-					example = "QUESTION_GENERATION")
+			@Schema(description = "적용 기능. v07 기준 티어 선택 대상은 CODE_SESSION(코드 세션) 하나뿐이다.",
+					example = "CODE_SESSION")
 			String featureCode,
 
 			@Schema(description = "티어. ACCURACY_FIRST(정확도 우선) / BALANCED(균형) / COST_FIRST(비용 우선)")

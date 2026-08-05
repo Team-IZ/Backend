@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.organization.application;
 
 import com.bigproject.backend.domain.member.application.InvitationConflictException;
 import com.bigproject.backend.domain.member.application.MemberInvitationService;
+import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerResponse;
 import com.bigproject.backend.domain.organization.domain.OperatorAccountStatus;
@@ -59,12 +60,12 @@ public class OperatorServiceImpl implements OperatorService {
 		/*
 		 * 목업 모달에는 이메일 입력 하나뿐이다.
 		 *
-		 * v06 이후 member 도메인이 대상 역할을 <b>호출자 역할로 서버가 결정</b>하도록 바뀌었다 —
-		 * 슈퍼어드민이 호출하면 OPERATOR, 오퍼레이터가 호출하면 MANAGER다. 이 API는 슈퍼어드민 전용
-		 * (컨트롤러 @PreAuthorize)이라 역할을 따로 넘기지 않아도 오퍼레이터 초대가 된다.
+		 * 대상 역할({@code Role.OPERATOR})을 <b>명시해서</b> 넘긴다. 예전에는 member 도메인이 호출자 역할로
+		 * 대상을 추측했지만(슈퍼어드민이면 OPERATOR), 그러면 이 경로가 만드는 역할이 컨트롤러의 @PreAuthorize에
+		 * 간접적으로 매달려 있어 권한 설정을 건드리면 조용히 다른 역할이 만들어질 수 있었다.
 		 * 목업 SA-02: "슈퍼어드민은 첫 오퍼레이터 하나만 넣는다(부트스트랩)".
 		 *
-		 * 기수·반은 오퍼레이터가 기관 전체를 담당하므로 반드시 비워서 보낸다(member 도메인이 검증한다).
+		 * 기수는 오퍼레이터가 기관 전체를 담당하므로 반드시 비워서 보낸다(member 도메인이 검증한다).
 		 *
 		 * <b>organization.email_domain 검증을 여기서 하지 않는다(의도적).</b> 목업 case 2·N1은
 		 * DOMAIN_NOT_ALLOWED로 기관 도메인 밖 주소를 막게 돼 있었지만, 오퍼레이터 초대에 적용하면 모순이 생긴다 —
@@ -78,7 +79,8 @@ public class OperatorServiceImpl implements OperatorService {
 		try {
 			invited = memberInvitationService.inviteManager(
 					organizationId,
-					new InviteManagerRequest(request.email(), null, null),
+					new InviteManagerRequest(request.email(), null),
+					Role.OPERATOR,
 					actorEmail,
 					requestId
 			);

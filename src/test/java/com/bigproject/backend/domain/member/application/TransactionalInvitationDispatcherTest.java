@@ -29,11 +29,7 @@ class TransactionalInvitationDispatcherTest {
 		);
 		UUID organizationId = UUID.randomUUID();
 		InvitationContext context = InvitationContext.organization(organizationId, "AIVLE");
-		InviteManagerRequest request = new InviteManagerRequest(
-				"operator@example.com",
-				null,
-				null
-		);
+		InviteManagerRequest request = new InviteManagerRequest("operator@example.com", null);
 		AuthUser actor = new AuthUser(
 				UUID.randomUUID(),
 				null,
@@ -58,17 +54,18 @@ class TransactionalInvitationDispatcherTest {
 				now.plusSeconds(3600),
 				context
 		);
-		when(persistenceService.createManagerInvitation(context, request, actor, "request-1"))
+		when(persistenceService.createManagerInvitation(context, request, Role.OPERATOR, actor, "request-1"))
 				.thenReturn(invitation);
 		doThrow(new MailSendException("SMTP failure"))
 				.when(mailSender).sendManagerInvitation(invitation);
 
-		assertThatThrownBy(() -> dispatcher.inviteManager(context, request, actor, "request-1"))
+		assertThatThrownBy(() -> dispatcher.inviteManager(context, request, Role.OPERATOR, actor, "request-1"))
 				.isInstanceOf(InvitationDeliveryException.class)
 				.hasMessageContaining("저장하지 않았습니다");
 
 		var ordered = inOrder(persistenceService, mailSender);
-		ordered.verify(persistenceService).createManagerInvitation(context, request, actor, "request-1");
+		ordered.verify(persistenceService)
+				.createManagerInvitation(context, request, Role.OPERATOR, actor, "request-1");
 		ordered.verify(mailSender).sendManagerInvitation(invitation);
 	}
 }
