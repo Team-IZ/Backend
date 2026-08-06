@@ -1,3 +1,4 @@
+
 package com.bigproject.backend.domain.curriculum.infrastructure;
 
 import com.bigproject.backend.domain.curriculum.domain.CurriculumSection;
