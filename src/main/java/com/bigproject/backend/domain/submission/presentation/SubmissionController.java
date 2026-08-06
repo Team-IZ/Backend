@@ -56,7 +56,10 @@ public class SubmissionController {
 					재제출은 기존 행 수정이 아니라 새 행 생성이며 직전 제출을 `supersedesSubmissionId`로 가리킨다.
 
 					동기 처리가 짧아도 네트워크 재시도로 중복 제출이 생길 수 있으므로 `X-Request-Id`를 보내면
-					같은 값의 재요청은 최초 결과를 그대로 돌려준다.""")
+					같은 값의 재요청은 최초 결과를 그대로 돌려준다.
+
+					ZIP 업로드는 같은 리소스를 만들지만 `POST /submissions/zip`으로 분리돼 있다 — 이유는 그쪽
+					설명 참조.""")
 	@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<SubmissionResponse> submitGithubUrl(
 			@Valid @RequestBody CreateGithubSubmissionRequest request,
@@ -72,15 +75,19 @@ public class SubmissionController {
 	@Operation(
 			summary = "ZIP 업로드 제출·재제출",
 			description = """
-					3번(GitHub URL)과 같은 리소스를 만드는 다른 표현이라 경로를 나누지 않고 `Content-Type`으로
-					분기한다. 경로를 나누면 "GitHub로 제출한 뒤 ZIP으로 재제출" 같은 교차 케이스에서 현재 제출
-					교체 로직을 두 곳에 중복 구현하게 된다.
+					GitHub URL 제출과 같은 리소스를 만드는 다른 표현이지만 **경로를 분리한다.** OpenAPI는
+					경로·메서드당 operation이 하나뿐이라, 한 경로에 `consumes`만 다른 핸들러를 둘 두면 springdoc이
+					둘을 한 operation으로 병합한다. 그러면 Swagger UI에서 `application/json`을 골라도 multipart
+					입력 폼이 뜨고, ZIP 전용 쿼리 파라미터가 JSON 쪽에도 필수로 붙는다.
+
+					현재 제출 교체(`is_current`) 로직은 컨트롤러가 아니라 서비스에 있으므로 경로를 나눠도
+					중복 구현이 생기지 않는다.
 
 					**접수는 `VALIDATING`으로 끝난다.** 이번 범위에서 판정하는 것은 크기와 압축 형식뿐이고,
 					`EMPTY_CODE`·`GIT_LOG_MISSING` 같은 내용 판정과 안전 추출은 아직 붙지 않았다. 접수를 먼저
 					확정해두는 이유는 마감 직전 후속 처리 장애로 제출이 거부되어 교육생이 마감을 놓치는 사고를
 					막기 위해서다.""")
-	@PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	@PostMapping(path = "/zip", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	public ResponseEntity<SubmissionResponse> submitZip(
 			@RequestParam @NotNull UUID assessmentRoundId,
 			@RequestPart("file") MultipartFile file

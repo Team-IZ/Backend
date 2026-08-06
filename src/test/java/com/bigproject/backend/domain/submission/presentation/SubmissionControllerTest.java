@@ -107,7 +107,7 @@ class SubmissionControllerTest {
 
 	@Test
 	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
-	void receivesZipUploadAsMultipartOnTheSamePath() throws Exception {
+	void receivesZipUploadOnItsOwnPath() throws Exception {
 		UUID userId = UUID.randomUUID();
 		UUID submissionId = UUID.randomUUID();
 		UUID artifactId = UUID.randomUUID();
@@ -125,7 +125,7 @@ class SubmissionControllerTest {
 						artifactId
 				));
 
-		mockMvc.perform(multipart("/api/v0/submissions")
+		mockMvc.perform(multipart("/api/v0/submissions/zip")
 						.file(new MockMultipartFile("file", "project.zip", "application/zip", new byte[] {1, 2, 3}))
 						.param("assessmentRoundId", roundId.toString())
 						.with(csrf()))
