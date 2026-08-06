@@ -34,4 +34,13 @@ public interface ProjectService {
      * ⚠ BIG_PROJECT는 이 라벨 체계 밖이다 — BIG_PROJECT의 projectId로 호출하면 400.
      */
     String resolveMiniProjectRoundLabel(UUID projectId, UUID orgId);
+
+    /**
+     * curriculum MG-09 "쓰인 회차" 탭용 — 이 teachesId(공용 개념 원장)가 검증 개념으로
+     * 확정된 프로젝트들의 "미프 N차" 라벨 목록을 반환한다. 활성(ACTIVE) 세트에 속한 것만 포함한다 —
+     * 교체돼서 SUPERSEDED된 과거 세트는 "현재 쓰인 회차"가 아니므로 뺀다.
+     *
+     * @return 라벨 목록. 하나도 안 쓰였으면 빈 리스트("—" 표시는 화면 책임).
+     */
+    List<String> findRoundLabelsUsingTeaches(UUID teachesId, UUID orgId);
 }
