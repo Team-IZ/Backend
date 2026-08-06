@@ -2,12 +2,15 @@ package com.bigproject.backend.domain.auth.presentation;
 
 import com.bigproject.backend.domain.auth.application.AccountActivationService;
 import com.bigproject.backend.domain.auth.application.AuthService;
+import com.bigproject.backend.domain.auth.application.InvitationResendService;
 import com.bigproject.backend.domain.auth.application.InvitationResolveService;
 import com.bigproject.backend.domain.auth.application.LoginResult;
 import com.bigproject.backend.domain.auth.application.LoginOriginResolver;
 import com.bigproject.backend.domain.auth.application.PasswordResetService;
 import com.bigproject.backend.domain.auth.domain.TokenRequestMetadata;
 import com.bigproject.backend.domain.auth.presentation.dto.ActivateAccountResponse;
+import com.bigproject.backend.domain.auth.presentation.dto.InvitationResendRequest;
+import com.bigproject.backend.domain.auth.presentation.dto.InvitationResendResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.InvitationResolveRequest;
 import com.bigproject.backend.domain.auth.presentation.dto.InvitationResolveResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.LoginRequest;
@@ -17,6 +20,8 @@ import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetConfirma
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetConfirmationResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetRequest;
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetRequestResponse;
+import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetValidationRequest;
+import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetValidationResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.RefreshTokenResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.TraineeActivationRequest;
 import io.swagger.v3.oas.annotations.Operation;
@@ -50,6 +55,7 @@ public class AuthController {
 	private final AuthService authService;
 	private final AccountActivationService accountActivationService;
 	private final InvitationResolveService invitationResolveService;
+	private final InvitationResendService invitationResendService;
 	private final RefreshTokenCookieManager refreshTokenCookieManager;
 	private final LoginOriginResolver loginOriginResolver;
 	private final PasswordResetService passwordResetService;
@@ -84,6 +90,45 @@ public class AuthController {
 	) {
 		return ResponseEntity.status(HttpStatus.ACCEPTED)
 				.body(passwordResetService.request(request.email(), requestId(requestId)));
+	}
+
+	@Operation(
+			summary = "재설정 토큰 사전 검증 | ✅ 사용 가능",
+			description = """
+					비밀번호 재설정 메일 링크로 들어온 화면이 **입력폼을 그리기 전에** 호출한다. 인증 없이 호출한다.
+
+					**요청**
+					- token (필수, 최대 512자): 메일 링크에 담긴 원문 토큰. 서버에는 해시만 저장된다
+
+					**응답**
+					- email: 재설정 대상 이메일. 읽기 전용으로 표시한다
+					- expiresAt: 이 토큰이 만료되는 시각
+
+					**토큰을 소비하지 않는다.** 확인만 하므로 이 호출 뒤에도 같은 토큰으로
+					`POST /auth/password-reset/confirmations`를 그대로 진행할 수 있고, 화면을 새로고침해도 된다.
+
+					조회성 동작이지만 **토큰을 경로가 아니라 본문으로 받는다.** 30분간 비밀번호를 바꿀 수 있는
+					자격증명이 URL에 실리면 접근 로그·프록시 로그·APM 트레이스에 평문으로 남기 때문이다.
+					초대 링크를 확인하는 `POST /auth/invitations/resolve`와 같은 이유·같은 모양이다.
+
+					**오류 구분은 확정 API와 같다.** 죽은 링크에 비밀번호 입력폼을 그려놓고 제출 시점에야
+					실패를 알리지 않기 위한 API이므로, 아래 상태를 받으면 폼 대신 안내 화면을 띄운다.
+					- 400: 토큰이 없거나 위변조됨, 계정이 활성 상태가 아님
+					- 409: 이미 사용된 토큰
+					- 410: 만료된 토큰 → 화면은 재발송 안내를 띄운다
+					"""
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "아직 사용할 수 있는 토큰"),
+			@ApiResponse(responseCode = "400", description = "유효하지 않은 토큰 또는 활성 상태가 아닌 계정"),
+			@ApiResponse(responseCode = "409", description = "이미 사용된 토큰"),
+			@ApiResponse(responseCode = "410", description = "만료된 토큰")
+	})
+	@PostMapping("/password-reset/validations")
+	public ResponseEntity<PasswordResetValidationResponse> validatePasswordResetToken(
+			@Valid @RequestBody PasswordResetValidationRequest request
+	) {
+		return ResponseEntity.ok(passwordResetService.validate(request));
 	}
 
 	@Operation(
@@ -280,16 +325,22 @@ public class AuthController {
 					- user_id: 후속 가입·활성화 요청(`/auth/manager-signup`, `/auth/trainee-activation`)에 그대로 넘긴다
 					- email: 초대 원장에서 확인한 이메일. **읽기 전용으로 표시하고 수정 입력을 열지 않는다** —
 					  초대받은 주소가 아닌 곳으로 계정이 만들어지면 안 되기 때문이다
+					- role: **초대 대상자**의 역할(`SUPER_ADMIN` · `OPERATOR` · `MANAGER` · `TRAINEE`)
 
-					오퍼레이터·매니저·교육생 초대를 **모두 이 한 API로** 해석한다. 다만 응답에 역할이 없으므로
-					어느 가입 화면으로 갈지는 링크(초대 메일)가 결정한다.
+					슈퍼어드민·오퍼레이터·매니저·교육생 초대를 **모두 이 한 API로** 해석한다.
+					role 을 링크나 화면에서 추측하지 말고 이 응답을 따라간다 — 활성화 단계에서 필수 동의를
+					강제하는 값과 같은 값이라, 화면이 보여준 동의 항목과 서버가 검증하는 항목이 어긋나지 않는다.
+
+					**후속 흐름**
+					1. `GET /consents?role={role}` 로 표시할 동의 항목을 받는다
+					2. TRAINEE 면 `POST /auth/trainee-activation`, 그 외에는 `POST /auth/manager-signup`
 
 					**400이면 링크가 죽은 것이다** — 만료, 이미 사용됨, 재발송으로 교체됨, 초대가 취소됨 중 하나다.
 					모두 400 하나로 합쳐 응답하므로 화면은 "링크가 유효하지 않습니다 · 재발송을 요청하세요"로 안내한다.
 					"""
 	)
 	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "현재 유효한 OPERATOR·MANAGER·TRAINEE 초대 대상 해석 성공"),
+			@ApiResponse(responseCode = "200", description = "현재 유효한 SUPER_ADMIN·OPERATOR·MANAGER·TRAINEE 초대 대상 해석 성공"),
 			@ApiResponse(responseCode = "400", description = "토큰 누락·위변조·만료·사용 완료·교체 또는 초대 상태가 SENT가 아님")
 	})
 	@PostMapping("/invitations/resolve")
@@ -297,6 +348,45 @@ public class AuthController {
 			@Valid @RequestBody InvitationResolveRequest request
 	) {
 		return ResponseEntity.ok(invitationResolveService.resolve(request));
+	}
+
+	@Operation(
+			summary = "초대 메일 재발송 | ✅ 사용 가능",
+			description = """
+					초대 링크가 만료됐거나 아직 활성화하지 않은 계정이 초대 메일을 다시 받는다. 인증 없이 호출한다.
+
+					**요청**
+					- email (필수, 최대 320자): 초대받았던 이메일
+
+					**응답 (202)**
+					- message: 계정 존재 여부와 무관하게 **항상 같은 문구**를 반환한다
+
+					`POST /auth/password-reset/requests`와 같은 이유로 응답을 하나로 합친다 — 응답이 갈리면
+					그 자체가 계정 존재 여부를 확인하는 수단이 된다. 화면도 "메일이 도착하지 않았다"를
+					오류로 처리하면 안 된다.
+
+					**재발송하면 이전 링크는 즉시 죽는다.** 새 토큰이 발급되고 기존 토큰은 교체 처리되므로,
+					사용자가 예전 메일의 링크를 누르면 400이 난다. 화면 안내에 "가장 최근 메일을 사용하세요"를 포함한다.
+
+					**이미 활성화된 계정에는 아무것도 보내지 않는다**(응답은 동일하다). 비밀번호를 잊은 경우이므로
+					`POST /auth/password-reset/requests`로 안내한다.
+
+					재설정 안내 요청과 **같은 쿨다운 창을 공유한다.** 짧은 간격으로 다시 호출하면 응답은 202지만
+					메일은 나가지 않는다.
+					"""
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "202", description = "계정 상태와 무관한 동일 안내 응답"),
+			@ApiResponse(responseCode = "400", description = "이메일 형식 오류")
+	})
+	@PostMapping("/invitations/resend")
+	public ResponseEntity<InvitationResendResponse> resendInvitation(
+			@Valid @RequestBody InvitationResendRequest request,
+			@Parameter(description = "요청 추적용 식별자이며 생략 시 서버가 생성합니다.")
+			@RequestHeader(value = REQUEST_ID_HEADER, required = false) String requestId
+	) {
+		return ResponseEntity.status(HttpStatus.ACCEPTED)
+				.body(invitationResendService.request(request.email(), requestId(requestId)));
 	}
 
 	@Operation(
