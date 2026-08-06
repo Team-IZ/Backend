@@ -73,8 +73,9 @@ public class SubmissionController {
 					동기 처리가 짧아도 네트워크 재시도로 중복 제출이 생길 수 있다. `uq_submission_current`는
 					이를 막지 못하므로(두 번째 제출이 첫 번째를 supersede할 뿐이다) `Idempotency-Key`가 필수다.
 
-					ZIP 업로드는 같은 리소스를 만들지만 `POST /submissions/zip`으로 분리돼 있다 — 이유는 그쪽
-					설명 참조.""")
+					ZIP 업로드는 같은 리소스를 만들지만 `POST /submissions/zip`으로 분리돼 있다. 다만 그쪽은
+					**AI 서버가 ZIP을 받지 못해 구현 보류 상태**이므로, 현재 실제로 쓸 수 있는 제출 수단은
+					이 GitHub URL 경로뿐이다.""")
 	@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<SubmissionResponse> submitGithubUrl(
 			@Valid @RequestBody CreateGithubSubmissionRequest request,
@@ -87,8 +88,27 @@ public class SubmissionController {
 	}
 
 	@Operation(
-			summary = "ZIP 업로드 제출·재제출",
+			summary = "[구현 보류] ZIP 업로드 제출·재제출",
+			deprecated = true,
 			description = """
+					## ⛔ 구현 보류 (2026-08-06) — 연동하지 마십시오
+
+					**AI 서버가 ZIP 분석을 받을 방법이 없다.** `POST /api/v0/analyses`의 `method` enum에는
+					`ZIP_WITH_GITLOG`가 있지만, 파일을 전달할 자리가 스키마에 없다 — `source`에는 `repoUrl`과
+					`branch` 두 필드뿐이고 `storageUri`도 presigned URL 필드도 multipart 경로도 없다.
+					v4에서 합의한 "백엔드가 S3에 올리고 만료형 읽기 URL만 전달"이 반영되지 않았다.
+
+					이 엔드포인트로 제출하면 접수는 되지만 **마감 후 분석 배치가 AI 서버에 보낼 수 없어
+					영원히 `VALIDATING`에 머문다.** 교육생 화면에는 제출한 것으로 보이는데 분석이 오지 않는
+					상태가 되므로, AI 계약이 확정될 때까지 프론트에서 이 경로를 노출하지 않는다.
+
+					기관 단위로 막으려면 `organization_policy.allow_zip_submission=FALSE`로 두면 되고,
+					그 경우 이 API는 `SUBMISSION_METHOD_NOT_ALLOWED`로 거절한다.
+
+					---
+
+					### 보류가 풀린 뒤의 동작 (참고)
+
 					GitHub URL 제출과 같은 리소스를 만드는 다른 표현이지만 **경로를 분리한다.** OpenAPI는
 					경로·메서드당 operation이 하나뿐이라, 한 경로에 `consumes`만 다른 핸들러를 둘 두면 springdoc이
 					둘을 한 operation으로 병합한다. 그러면 Swagger UI에서 `application/json`을 골라도 multipart
@@ -98,9 +118,7 @@ public class SubmissionController {
 					중복 구현이 생기지 않는다.
 
 					**접수는 `VALIDATING`으로 끝난다.** 이번 범위에서 판정하는 것은 크기와 압축 형식뿐이고,
-					`EMPTY_CODE`·`GIT_LOG_MISSING` 같은 내용 판정과 안전 추출은 아직 붙지 않았다. 접수를 먼저
-					확정해두는 이유는 마감 직전 후속 처리 장애로 제출이 거부되어 교육생이 마감을 놓치는 사고를
-					막기 위해서다.""")
+					`EMPTY_CODE`·`GIT_LOG_MISSING` 같은 내용 판정과 안전 추출은 아직 붙지 않았다.""")
 	@PostMapping(path = "/zip", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	public ResponseEntity<SubmissionResponse> submitZip(
 			@RequestParam @NotNull UUID assessmentRoundId,
