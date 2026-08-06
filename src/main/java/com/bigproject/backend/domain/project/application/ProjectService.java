@@ -25,4 +25,13 @@ public interface ProjectService {
     void markRunning(UUID projectId, UUID orgId, UUID actorUserId);
     List<ProjectRequirement> replaceRequirements(
             UUID projectId, UUID orgId, List<String> requirementTitles, UUID actorUserId);
+
+    /**
+     * 화면 표시용 "미프 N차" 라벨을 계산한다. 저장하지 않고 조회할 때마다 다시 계산한다 —
+     * project.sequence_no(기수 전체 프로젝트 순번)와는 다른 값이다.
+     * 그 기수의 MINI_PROJECT만(삭제 제외) sequence_no 순으로 다시 1부터 번호를 매긴 것이 이 값이다.
+     *
+     * ⚠ BIG_PROJECT는 이 라벨 체계 밖이다 — BIG_PROJECT의 projectId로 호출하면 400.
+     */
+    String resolveMiniProjectRoundLabel(UUID projectId, UUID orgId);
 }

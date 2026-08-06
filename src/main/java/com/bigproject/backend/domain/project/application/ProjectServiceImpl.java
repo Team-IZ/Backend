@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.project.application;
 
 import com.bigproject.backend.domain.project.domain.Project;
+import com.bigproject.backend.domain.project.domain.ProjectCategory;
 import com.bigproject.backend.domain.project.domain.ProjectRequirement;
 import com.bigproject.backend.domain.project.infrastructure.ProjectRepository;
 import com.bigproject.backend.domain.project.infrastructure.ProjectRequirementRepository;
@@ -83,4 +84,25 @@ public class ProjectServiceImpl implements ProjectService {
     private String deriveKey(String normalizedTitle) {
         return UUID.nameUUIDFromBytes(normalizedTitle.getBytes(StandardCharsets.UTF_8)).toString();
     }
-}
+
+    @Override
+    public String resolveMiniProjectRoundLabel(UUID projectId, UUID orgId) {
+        Project project = projectRepository.findByProjectIdAndOrgId(projectId, orgId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다."));
+
+        if (project.getProjectCategory() != ProjectCategory.MINI_PROJECT) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "빅프로젝트에는 회차 라벨이 없습니다.");
+        }
+
+        List<Project> miniProjectsInOrder = projectRepository
+                .findByCohortIdAndOrgIdAndProjectCategoryAndDeletedAtIsNullOrderBySequenceNoAsc(
+                        project.getCohortId(), orgId, ProjectCategory.MINI_PROJECT);
+
+        int roundNo = -1;
+        for (int i = 0; i < miniProjectsInOrder.size(); i++) {
+            if (miniProjectsInOrder.get(i).getProjectId().equals(projectId)) {
+                roundNo = i + 1;
+                break;
+            }
+        }
+        return "미프 " + roundNo + "차";
