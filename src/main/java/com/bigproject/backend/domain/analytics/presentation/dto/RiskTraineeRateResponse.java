@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.analytics.presentation.dto;
 
 import com.bigproject.backend.domain.analytics.domain.CohortRiskComparison;
+import com.bigproject.backend.domain.analytics.domain.RiskTraineeLevel;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeSort;
 import com.bigproject.backend.domain.analytics.domain.RoundAggregationStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -24,12 +25,16 @@ public record RiskTraineeRateResponse(
 		int totalRegisteredRoundCount,
 		@Schema(description = "실제로 적용된 정렬 기준")
 		RiskTraineeSort appliedSort,
+		@Schema(description = "행 계층이며 CLASS면 classes가, TEAM이면 teams가 채워집니다.")
+		RiskTraineeLevel level,
 		@Schema(description = "격자의 회차 열 정의이며 프로젝트 운영 순서·회차 번호 오름차순입니다.")
 		List<RoundColumn> rounds,
-		@Schema(description = "기수 전체 행")
+		@Schema(description = "기수 전체 행이며 팀 계층에서도 색 판정 기준으로 함께 내려갑니다.")
 		CohortRiskSummary cohortSummary,
-		@Schema(description = "반 행 목록")
-		List<ClassRiskSummary> classes
+		@Schema(description = "반 행 목록이며 level=TEAM이면 빈 배열입니다.")
+		List<ClassRiskSummary> classes,
+		@Schema(description = "팀 행 목록이며 level=CLASS이면 빈 배열입니다.")
+		List<TeamRiskSummary> teams
 ) {
 
 	@Schema(description = """
@@ -115,6 +120,27 @@ public record RiskTraineeRateResponse(
 			long traineeCount,
 			@Schema(description = "중도 이탈한 교육생 수", example = "1")
 			long withdrawnCount,
+			@Schema(description = "최근 발행 회차 기준 미집계 합계입니다.")
+			ExclusionBreakdown exclusionRollup,
+			List<RiskCell> cells
+	) {
+	}
+
+	@Schema(description = """
+			팀 행.
+
+			팀 번호는 반 안에서만 유일하고 team은 project_id에 종속이라 이 목록은 한 프로젝트·한 반으로
+			좁혔을 때만 나옵니다. 팀당 인원이 4~5명이라 비율이 0%·25%·50% 같은 거친 값이 됩니다.
+			""")
+	public record TeamRiskSummary(
+			UUID teamId,
+			@Schema(description = "반 안에서의 팀 번호", example = "3")
+			String teamNumber,
+			String teamName,
+			UUID classId,
+			String className,
+			@Schema(description = "현재 팀에 속한 인원", example = "5")
+			long memberCount,
 			@Schema(description = "최근 발행 회차 기준 미집계 합계입니다.")
 			ExclusionBreakdown exclusionRollup,
 			List<RiskCell> cells

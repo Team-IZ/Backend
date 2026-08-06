@@ -280,6 +280,140 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 		);
 	}
 
+	/**
+	 * 팀 격자. 분모·분자 조건은 반 격자와 같고 귀속 경로만 팀으로 바꾼다.
+	 *
+	 * 반 귀속은 cohort_member → class_membership을 쓰지만 팀은 프로젝트 참여를 거쳐야 한다.
+	 * 회차 시점(class_anchor_at)에 유효했던 팀 배정 한 건만 남겨 팀을 옮긴 교육생이 두 팀에
+	 * 중복 계상되지 않게 한다.
+	 */
+	@Override
+	public List<TeamRiskCellRow> aggregateTeamRiskCells(RoundCriteria criteria, UUID classroomId) {
+		String sql = """
+				WITH round_scope AS (
+					SELECT
+						r.assessment_round_id,
+						COALESCE(r.submission_due_at, r.scheduled_at, r.updated_at) AS class_anchor_at
+					FROM project_assessment_round r
+					JOIN project p ON p.project_id = r.project_id AND p.deleted_at IS NULL
+					WHERE r.cohort_id = ?
+						AND r.org_id = ?
+						AND r.deleted_at IS NULL
+						AND p.project_category = ?%s
+						AND r.round_no BETWEEN ? AND ?
+				),
+				attempt_scope AS (
+					SELECT
+						ma.assessment_round_id,
+						ma.user_id,
+						round_team.team_id,
+						ma.terminal_reason_code,
+						ma.validity_review_status
+					FROM measurement_attempt ma
+					JOIN round_scope rs ON rs.assessment_round_id = ma.assessment_round_id
+					JOIN LATERAL (
+						SELECT t.team_id
+						FROM project_membership pm
+						JOIN team_membership tm ON tm.project_membership_id = pm.project_membership_id
+						JOIN team t ON t.team_id = tm.team_id AND t.deleted_at IS NULL
+						WHERE pm.project_id = ma.project_id
+							AND pm.user_id = ma.user_id
+							AND pm.class_id = ?
+							AND tm.from_at <= rs.class_anchor_at
+							AND (tm.to_at IS NULL OR tm.to_at > rs.class_anchor_at)
+						ORDER BY tm.from_at DESC, t.team_id DESC
+						LIMIT 1
+					) round_team ON TRUE
+					WHERE ma.attempt_type = 'INITIAL'
+						AND ma.cohort_id = ?
+						AND ma.org_id = ?
+				),
+				risk_scope AS (
+					SELECT ic.assessment_round_id, ic.user_id
+					FROM interview_candidate ic
+					JOIN interview_candidate_reason icr ON icr.candidate_id = ic.candidate_id
+					JOIN round_scope rs ON rs.assessment_round_id = ic.assessment_round_id
+					WHERE ic.cohort_id = ?
+						AND ic.org_id = ?
+						AND icr.reason_code IN (%s)
+						AND icr.evaluation_status = 'MATCHED'
+						AND icr.reason_status = 'ACTIVE'
+					GROUP BY ic.assessment_round_id, ic.user_id
+				)
+				SELECT
+					a.assessment_round_id,
+					a.team_id,
+					COUNT(*) FILTER (WHERE %s) AS eligible_count,
+					COUNT(*) FILTER (WHERE r.user_id IS NOT NULL AND %s) AS risk_count,
+					COUNT(*) FILTER (WHERE a.terminal_reason_code = 'NOT_ATTENDED') AS not_attended_count,
+					COUNT(*) FILTER (WHERE a.terminal_reason_code = 'SESSION_INCOMPLETE') AS session_incomplete_count,
+					COUNT(*) FILTER (WHERE a.validity_review_status = 'CONFIRMED_INVALID') AS invalid_attempt_count
+				FROM attempt_scope a
+				LEFT JOIN risk_scope r
+					ON r.assessment_round_id = a.assessment_round_id
+					AND r.user_id = a.user_id
+				GROUP BY a.assessment_round_id, a.team_id
+				""".formatted(projectFilter(criteria), RISK_REASON_CODES, ELIGIBLE_CONDITION, ELIGIBLE_CONDITION);
+
+		List<Object> arguments = new ArrayList<>(List.of(appendRoundRange(scopeArguments(criteria), criteria)));
+		arguments.add(classroomId);
+		arguments.add(criteria.cohortId());
+		arguments.add(criteria.organizationId());
+		arguments.add(criteria.cohortId());
+		arguments.add(criteria.organizationId());
+
+		return jdbcTemplate.query(
+				sql,
+				(rs, rowNum) -> new TeamRiskCellRow(
+						rs.getObject("assessment_round_id", UUID.class),
+						rs.getObject("team_id", UUID.class),
+						rs.getLong("eligible_count"),
+						rs.getLong("risk_count"),
+						rs.getLong("not_attended_count"),
+						rs.getLong("session_incomplete_count"),
+						rs.getLong("invalid_attempt_count")
+				),
+				arguments.toArray()
+		);
+	}
+
+	@Override
+	public List<TeamRosterRow> findTeamRosters(UUID projectId, UUID classroomId, UUID organizationId) {
+		return jdbcTemplate.query(
+				"""
+				SELECT
+					t.team_id,
+					t.team_number,
+					t.name AS team_name,
+					t.class_id,
+					c.name AS class_name,
+					(
+						SELECT COUNT(*)
+						FROM team_membership tm
+						WHERE tm.team_id = t.team_id AND tm.to_at IS NULL
+					) AS member_count
+				FROM team t
+				JOIN "class" c ON c.class_id = t.class_id AND c.deleted_at IS NULL
+				WHERE t.project_id = ?
+					AND t.class_id = ?
+					AND t.org_id = ?
+					AND t.deleted_at IS NULL
+				ORDER BY t.team_number, t.team_id
+				""",
+				(rs, rowNum) -> new TeamRosterRow(
+						rs.getObject("team_id", UUID.class),
+						rs.getString("team_number"),
+						rs.getString("team_name"),
+						rs.getObject("class_id", UUID.class),
+						rs.getString("class_name"),
+						rs.getLong("member_count")
+				),
+				projectId,
+				classroomId,
+				organizationId
+		);
+	}
+
 	@Override
 	public List<ClassRosterRow> findClassRosters(UUID cohortId, UUID organizationId) {
 		// 반을 옮긴 교육생이 두 반에 중복 계상되지 않도록 최근 배정 한 건만 남긴다.

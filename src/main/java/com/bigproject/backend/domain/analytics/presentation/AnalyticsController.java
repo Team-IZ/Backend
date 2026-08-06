@@ -5,6 +5,7 @@ import com.bigproject.backend.domain.analytics.application.CohortComparisonAnaly
 import com.bigproject.backend.domain.analytics.application.GroupGapAnalyticsService;
 import com.bigproject.backend.domain.analytics.application.RiskTraineeAnalyticsService;
 import com.bigproject.backend.domain.analytics.domain.ComparisonSort;
+import com.bigproject.backend.domain.analytics.domain.RiskTraineeLevel;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeSort;
 import com.bigproject.backend.domain.analytics.presentation.dto.ActionRequiredResponse;
 import com.bigproject.backend.domain.analytics.presentation.dto.CohortComparisonResponse;
@@ -160,7 +161,12 @@ public class AnalyticsController {
 			@Parameter(description = "조회 종료 회차 번호이며 생략 시 마지막 회차까지 조회합니다.", example = "4")
 			@RequestParam(required = false) @Min(1) Integer toRoundNo,
 			@Parameter(description = """
-					반 행 정렬 기준입니다.
+					행 계층입니다. TEAM이면 projectId와 classroomId 한 건이 모두 필요합니다.
+					팀 번호는 반 안에서만 유일하고 팀은 프로젝트에 종속이라 둘 다 좁혀야 행이 성립합니다.
+					""", example = "CLASS")
+			@RequestParam(required = false, defaultValue = "CLASS") RiskTraineeLevel level,
+			@Parameter(description = """
+					반·팀 행 정렬 기준입니다.
 					RECENT_ROUND_WORST(최근 발행 회차 나쁜 순) / WORSE_ROUND_COUNT(기준보다 나쁜 회차가 많은 순)
 					/ EXCLUSION_COUNT(미집계 많은 순) / NAME(이름순)
 					""", example = "RECENT_ROUND_WORST")
@@ -174,6 +180,7 @@ public class AnalyticsController {
 				classroomId,
 				fromRoundNo,
 				toRoundNo,
+				level,
 				sort,
 				authentication.getName()
 		));

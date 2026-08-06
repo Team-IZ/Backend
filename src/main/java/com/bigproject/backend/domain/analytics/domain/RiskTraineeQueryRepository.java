@@ -32,7 +32,15 @@ public interface RiskTraineeQueryRepository {
 
 	List<RiskCellRow> aggregateRiskCells(RoundCriteria criteria);
 
+	/**
+	 * 회차 × 팀 격자. 반 귀속과 달리 project_membership → team_membership → team 경로를 쓴다.
+	 * 팀은 프로젝트에 종속이므로 criteria.projectId()와 classroomId가 모두 있어야 한다.
+	 */
+	List<TeamRiskCellRow> aggregateTeamRiskCells(RoundCriteria criteria, UUID classroomId);
+
 	List<ClassRosterRow> findClassRosters(UUID cohortId, UUID organizationId);
+
+	List<TeamRosterRow> findTeamRosters(UUID projectId, UUID classroomId, UUID organizationId);
 
 	RosterCount findCohortRoster(UUID cohortId, UUID organizationId);
 
@@ -80,11 +88,35 @@ public interface RiskTraineeQueryRepository {
 	) {
 	}
 
+	/**
+	 * teamId가 null인 행은 회차 시점에 팀 배정이 없던 교육생이며 팀 행에 넣지 않는다.
+	 */
+	record TeamRiskCellRow(
+			UUID assessmentRoundId,
+			UUID teamId,
+			long eligibleCount,
+			long riskCount,
+			long notAttendedCount,
+			long sessionIncompleteCount,
+			long invalidAttemptCount
+	) {
+	}
+
 	record ClassRosterRow(
 			UUID classId,
 			String className,
 			long traineeCount,
 			long withdrawnCount
+	) {
+	}
+
+	record TeamRosterRow(
+			UUID teamId,
+			String teamNumber,
+			String teamName,
+			UUID classId,
+			String className,
+			long memberCount
 	) {
 	}
 
