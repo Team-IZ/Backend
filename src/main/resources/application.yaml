@@ -23,6 +23,13 @@ spring:
       idle-timeout: 600000
       max-lifetime: 1800000
 
+  servlet:
+    multipart:
+      # 컨트롤러에 닿기 전에 톰캣이 먼저 거절하는 상한이다. app.submission.max-zip-bytes 보다 넉넉해야
+      # FILE_TOO_LARGE 에러 코드로 응답할 기회가 생긴다 — 여기서 걸리면 도메인 코드 없는 500이 나간다.
+      max-file-size: ${SUBMISSION_MULTIPART_MAX_FILE_SIZE:60MB}
+      max-request-size: ${SUBMISSION_MULTIPART_MAX_REQUEST_SIZE:60MB}
+
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     open-in-view: false
@@ -83,3 +90,14 @@ password-reset:
   base-url: ${PASSWORD_RESET_BASE_URL:http://localhost:5173}
   expiration: ${PASSWORD_RESET_EXPIRATION:PT30M}
   request-cooldown: ${PASSWORD_RESET_REQUEST_COOLDOWN:PT1M}
+
+app:
+  submission:
+    # ZIP 제출물 저장 위치. 지금은 로컬 파일시스템이며 경로는 <root>/<orgId>/<teamId>/<submissionId>.zip 이다.
+    # 인스턴스가 여러 대가 되거나 분석 배치가 별도 프로세스로 분리되면 이 경로로는 파일을 찾을 수 없으므로
+    # SubmissionArtifactStorage 의 S3 구현체로 교체해야 한다.
+    storage-root: ${SUBMISSION_STORAGE_ROOT:./var/submissions}
+    # 파일당 상한. 정의서에 원천 컬럼이 없어 애플리케이션 상수로 두고 적용값을
+    # submission_artifact.applied_max_file_bytes 에 그대로 기록한다. 정책화가 필요해지면
+    # organization_policy.max_submission_file_bytes 로 승격한다.
+    max-zip-bytes: ${SUBMISSION_MAX_ZIP_BYTES:52428800}
