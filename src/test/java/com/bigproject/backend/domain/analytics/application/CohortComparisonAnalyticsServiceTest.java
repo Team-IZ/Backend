@@ -37,7 +37,8 @@ class CohortComparisonAnalyticsServiceTest {
 	private final AuthUserRepository authUserRepository = mock(AuthUserRepository.class);
 	private final CohortComparisonQueryRepository queryRepository = mock(CohortComparisonQueryRepository.class);
 	private final CohortComparisonAnalyticsService service =
-			new CohortComparisonAnalyticsService(authUserRepository, queryRepository);
+			new CohortComparisonAnalyticsService(
+					new AnalyticsActorGuard(authUserRepository), queryRepository);
 
 	private final UUID organizationId = UUID.randomUUID();
 	private final UUID targetCohortId = UUID.randomUUID();

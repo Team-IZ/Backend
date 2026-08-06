@@ -31,7 +31,8 @@ class RiskTraineeAnalyticsServiceTest {
 	private final AuthUserRepository authUserRepository = mock(AuthUserRepository.class);
 	private final RiskTraineeQueryRepository riskTraineeQueryRepository = mock(RiskTraineeQueryRepository.class);
 	private final RiskTraineeAnalyticsService service =
-			new RiskTraineeAnalyticsService(authUserRepository, riskTraineeQueryRepository);
+			new RiskTraineeAnalyticsService(
+					new AnalyticsActorGuard(authUserRepository), riskTraineeQueryRepository);
 
 	private final UUID organizationId = UUID.randomUUID();
 	private final UUID cohortId = UUID.randomUUID();
