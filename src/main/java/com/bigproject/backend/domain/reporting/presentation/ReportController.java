@@ -27,7 +27,7 @@ public class ReportController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "내 리포트 전량 조회 | ✅ 사용 가능",
+			summary = "내 리포트 전량 조회 | ⚠️ 사용 불가",
 			description = """
 					TR-04 `내 리포트` 화면 전체를 이 응답 하나로 그린다.
 					좌측 회차 레일(`rounds`)과 우측 본문(`reportsById`)이 함께 온다.
@@ -107,7 +107,7 @@ public class ReportController {
 	}
 
 	@Operation(
-			summary = "리포트 단건 조회 | ✅ 사용 가능",
+			summary = "리포트 단건 조회 | ⚠️ 사용 불가",
 			description = """
 					리포트 1건의 본문. `GET /reports` 응답의 `reportsById[id]` 한 덩어리와 **같은 모양**이다.
 
