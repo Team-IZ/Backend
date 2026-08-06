@@ -22,7 +22,8 @@ public final class IdempotencyKey {
 	 * 헤더 원문을 UUID로 해석한다.
 	 *
 	 * <p>UUID만 허용하는 이유는 저장 위치가 UUID 컬럼이기 때문이다
-	 * ({@code repository_verification.request_id}, {@code submission_artifact.request_id}).
+	 * ({@code repository_verification.request_idempotency_key},
+	 * {@code submission_artifact.request_idempotency_key}).
 	 * 임의 문자열을 받으면 저장 단계에서 실패해 원인을 알기 어려운 500이 된다.
 	 */
 	public static UUID parse(String rawHeaderValue) {

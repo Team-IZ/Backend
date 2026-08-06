@@ -82,9 +82,15 @@ public class RepositoryVerification {
 	@Column(name = "expires_at")
 	private Instant expiresAt;
 
-	/** 멱등키. 같은 값으로 재요청이 오면 기존 결과를 그대로 돌려준다. */
-	@Column(name = "request_id", nullable = false, updatable = false)
-	private UUID requestId;
+	/**
+	 * 멱등키. 같은 값으로 재요청이 오면 기존 결과를 그대로 돌려준다.
+	 *
+	 * <p>이름이 {@code request_id}가 아닌 이유는 그 컬럼의 정의가 "요청 추적 ID"였기 때문이다.
+	 * 추적 ID는 재시도마다 새로 만들어야 하고 멱등키는 같아야 해서 한 컬럼이 둘을 겸할 수 없다.
+	 * {@code reminder_dispatch}가 이미 둘을 별도 컬럼으로 나눠 둔 관례를 따랐다.
+	 */
+	@Column(name = "request_idempotency_key", nullable = false, updatable = false)
+	private UUID requestIdempotencyKey;
 
 	private RepositoryVerification(
 			UUID orgId,
@@ -92,7 +98,7 @@ public class RepositoryVerification {
 			String normalizedRepoUrl,
 			String requestedBranch,
 			Instant requestedAt,
-			UUID requestId
+			UUID requestIdempotencyKey
 	) {
 		this.orgId = orgId;
 		this.teamId = teamId;
@@ -100,7 +106,7 @@ public class RepositoryVerification {
 		this.requestedBranch = requestedBranch;
 		this.status = RepositoryVerificationStatus.PENDING;
 		this.requestedAt = requestedAt;
-		this.requestId = requestId;
+		this.requestIdempotencyKey = requestIdempotencyKey;
 	}
 
 	/**
@@ -115,8 +121,9 @@ public class RepositoryVerification {
 			String normalizedRepoUrl,
 			String requestedBranch,
 			Instant requestedAt,
-			UUID requestId
+			UUID requestIdempotencyKey
 	) {
-		return new RepositoryVerification(orgId, teamId, normalizedRepoUrl, requestedBranch, requestedAt, requestId);
+		return new RepositoryVerification(
+				orgId, teamId, normalizedRepoUrl, requestedBranch, requestedAt, requestIdempotencyKey);
 	}
 }

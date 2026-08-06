@@ -62,7 +62,8 @@ public class SubmissionService {
 	 * 전까지 NULL이라 제출된 URL 원문이 남는 자리가 그 행뿐이기 때문이다.
 	 */
 	@Transactional
-	public SubmissionResponse submitGithubUrl(UUID userId, CreateGithubSubmissionRequest request, UUID requestId) {
+	public SubmissionResponse submitGithubUrl(
+			UUID userId, CreateGithubSubmissionRequest request, UUID idempotencyKey) {
 		SubmissionContext context = requireSubmittableRound(userId, request.assessmentRoundId());
 		if (!context.getAllowGithubIntegration()) {
 			throw new SubmissionException(SubmissionErrorCode.SUBMISSION_METHOD_NOT_ALLOWED);
@@ -70,7 +71,7 @@ public class SubmissionService {
 
 		// 멱등: 같은 키로 이미 접수했다면 그때 만든 제출을 그대로 돌려준다.
 		// uq_submission_current는 이를 막지 못한다 — 두 번째 제출이 첫 번째를 supersede할 뿐이다.
-		Submission replayed = repositoryVerificationRepository.findByRequestId(requestId)
+		Submission replayed = repositoryVerificationRepository.findByRequestIdempotencyKey(idempotencyKey)
 				.flatMap(verification -> submissionRepository
 						.findByRepositoryVerificationId(verification.getVerificationId()))
 				.orElse(null);
@@ -87,7 +88,7 @@ public class SubmissionService {
 				repositoryUrl.normalized(),
 				normalizeBranch(request.branch()),
 				requestedAt,
-				requestId
+				idempotencyKey
 		));
 
 		UUID supersededId = supersedeCurrentSubmission(context.getTeamId(), request.assessmentRoundId());
@@ -119,7 +120,8 @@ public class SubmissionService {
 	 * 아직 구현되지 않았고, 그 때문에 제출은 {@code VALIDATING}에 머문다.
 	 */
 	@Transactional
-	public SubmissionResponse submitZip(UUID userId, UUID assessmentRoundId, MultipartFile file, UUID requestId) {
+	public SubmissionResponse submitZip(
+			UUID userId, UUID assessmentRoundId, MultipartFile file, UUID idempotencyKey) {
 		SubmissionContext context = requireSubmittableRound(userId, assessmentRoundId);
 		if (!context.getAllowZipSubmission()) {
 			throw new SubmissionException(SubmissionErrorCode.SUBMISSION_METHOD_NOT_ALLOWED);
@@ -127,7 +129,8 @@ public class SubmissionService {
 
 		// 멱등 판정을 파일 검증보다 먼저 한다. 재시도된 업로드를 다시 읽고 저장하는 비용을 아낄 수 있고,
 		// 수십 MB 업로드에서는 그 차이가 크다.
-		SubmissionArtifact replayed = submissionArtifactRepository.findByRequestId(requestId).orElse(null);
+		SubmissionArtifact replayed = submissionArtifactRepository
+				.findByRequestIdempotencyKey(idempotencyKey).orElse(null);
 		if (replayed != null) {
 			Submission submission = submissionRepository.findById(replayed.getSubmissionId())
 					.orElseThrow(() -> new SubmissionException(SubmissionErrorCode.SUBMISSION_NOT_FOUND));
@@ -168,7 +171,7 @@ public class SubmissionService {
 				stored.contentHash(),
 				stored.sizeBytes(),
 				maxZipBytes,
-				requestId
+				idempotencyKey
 		));
 
 		return SubmissionResponse.of(submission, artifact.getArtifactId());

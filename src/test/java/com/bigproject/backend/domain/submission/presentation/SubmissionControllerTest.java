@@ -215,7 +215,7 @@ class SubmissionControllerTest {
 	@Test
 	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
 	void rejectsAnIdempotencyKeyThatIsNotAUuid() throws Exception {
-		// request_id 컬럼이 UUID라 임의 문자열은 저장 단계에서 원인을 알기 어려운 500이 된다.
+		// request_idempotency_key 컬럼이 UUID라 임의 문자열은 저장 단계에서 원인을 알기 어려운 500이 된다.
 		mockMvc.perform(post("/api/v0/submissions")
 						.with(csrf())
 						.header("Idempotency-Key", "retry-1")
