@@ -68,11 +68,14 @@ public class SubmissionService {
 			throw new SubmissionException(SubmissionErrorCode.SUBMISSION_METHOD_NOT_ALLOWED);
 		}
 
-		// 멱등: 같은 X-Request-Id로 이미 접수했다면 그때 만든 제출을 그대로 돌려준다.
+		// 멱등: 같은 키로 이미 접수했다면 그때 만든 제출을 그대로 돌려준다.
 		// uq_submission_current는 이를 막지 못한다 — 두 번째 제출이 첫 번째를 supersede할 뿐이다.
-		Submission replayed = findReplayedSubmission(requestId);
+		Submission replayed = repositoryVerificationRepository.findByRequestId(requestId)
+				.flatMap(verification -> submissionRepository
+						.findByRepositoryVerificationId(verification.getVerificationId()))
+				.orElse(null);
 		if (replayed != null) {
-			return SubmissionResponse.of(replayed, null);
+			return SubmissionResponse.of(requireSameTarget(replayed, request.assessmentRoundId()), null);
 		}
 
 		GithubRepositoryUrl repositoryUrl = GithubRepositoryUrl.parse(request.repositoryUrl());
@@ -116,11 +119,22 @@ public class SubmissionService {
 	 * 아직 구현되지 않았고, 그 때문에 제출은 {@code VALIDATING}에 머문다.
 	 */
 	@Transactional
-	public SubmissionResponse submitZip(UUID userId, UUID assessmentRoundId, MultipartFile file) {
+	public SubmissionResponse submitZip(UUID userId, UUID assessmentRoundId, MultipartFile file, UUID requestId) {
 		SubmissionContext context = requireSubmittableRound(userId, assessmentRoundId);
 		if (!context.getAllowZipSubmission()) {
 			throw new SubmissionException(SubmissionErrorCode.SUBMISSION_METHOD_NOT_ALLOWED);
 		}
+
+		// 멱등 판정을 파일 검증보다 먼저 한다. 재시도된 업로드를 다시 읽고 저장하는 비용을 아낄 수 있고,
+		// 수십 MB 업로드에서는 그 차이가 크다.
+		SubmissionArtifact replayed = submissionArtifactRepository.findByRequestId(requestId).orElse(null);
+		if (replayed != null) {
+			Submission submission = submissionRepository.findById(replayed.getSubmissionId())
+					.orElseThrow(() -> new SubmissionException(SubmissionErrorCode.SUBMISSION_NOT_FOUND));
+			return SubmissionResponse.of(
+					requireSameTarget(submission, assessmentRoundId), replayed.getArtifactId());
+		}
+
 		requireReadableZip(file);
 
 		UUID supersededId = supersedeCurrentSubmission(context.getTeamId(), assessmentRoundId);
@@ -153,7 +167,8 @@ public class SubmissionService {
 				stored.storageUri(),
 				stored.contentHash(),
 				stored.sizeBytes(),
-				maxZipBytes
+				maxZipBytes,
+				requestId
 		));
 
 		return SubmissionResponse.of(submission, artifact.getArtifactId());
@@ -219,11 +234,16 @@ public class SubmissionService {
 				.orElse(null);
 	}
 
-	private Submission findReplayedSubmission(UUID requestId) {
-		return repositoryVerificationRepository.findByRequestId(requestId)
-				.flatMap(verification -> submissionRepository
-						.findByRepositoryVerificationId(verification.getVerificationId()))
-				.orElse(null);
+	/**
+	 * 멱등 재생은 "같은 요청을 다시 보낸 것"일 때만 옳다. 같은 키가 다른 회차에 재사용됐다면 최초 결과를
+	 * 돌려주는 것이 오히려 위험하다 — 교육생은 방금 고른 회차에 제출했다고 믿지만 실제로는 이전 회차
+	 * 제출을 보게 되고, 새 회차는 미제출로 남는다.
+	 */
+	private Submission requireSameTarget(Submission replayed, UUID requestedRoundId) {
+		if (!replayed.getAssessmentRoundId().equals(requestedRoundId)) {
+			throw new SubmissionException(SubmissionErrorCode.IDEMPOTENCY_KEY_CONFLICT);
+		}
+		return replayed;
 	}
 
 	/** 크기와 압축 형식만 본다. 내용 판정(EMPTY_CODE·GIT_LOG_MISSING)은 안전 추출과 함께 별건이다. */

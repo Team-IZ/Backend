@@ -78,6 +78,7 @@ class SubmissionControllerTest {
 
 		mockMvc.perform(post("/api/v0/submissions")
 						.with(csrf())
+						.header("Idempotency-Key", UUID.randomUUID())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
@@ -98,6 +99,7 @@ class SubmissionControllerTest {
 	void rejectsBlankRepositoryUrl() throws Exception {
 		mockMvc.perform(post("/api/v0/submissions")
 						.with(csrf())
+						.header("Idempotency-Key", UUID.randomUUID())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{"assessmentRoundId": "%s", "repositoryUrl": "  "}
@@ -113,7 +115,7 @@ class SubmissionControllerTest {
 		UUID artifactId = UUID.randomUUID();
 		UUID roundId = UUID.randomUUID();
 		when(currentUserResolver.resolveCurrentMemberId()).thenReturn(userId);
-		when(submissionService.submitZip(eq(userId), eq(roundId), any()))
+		when(submissionService.submitZip(eq(userId), eq(roundId), any(), any(UUID.class)))
 				.thenReturn(new SubmissionResponse(
 						submissionId,
 						SubmissionMethod.ZIP_WITH_GITLOG,
@@ -128,6 +130,7 @@ class SubmissionControllerTest {
 		mockMvc.perform(multipart("/api/v0/submissions/zip")
 						.file(new MockMultipartFile("file", "project.zip", "application/zip", new byte[] {1, 2, 3}))
 						.param("assessmentRoundId", roundId.toString())
+						.header("Idempotency-Key", UUID.randomUUID())
 						.with(csrf()))
 				.andExpect(status().isAccepted())
 				// 내용 검증과 안전 추출이 남아 있어 접수는 VALIDATING에서 끝난다.
@@ -186,12 +189,54 @@ class SubmissionControllerTest {
 
 		mockMvc.perform(post("/api/v0/submissions")
 						.with(csrf())
+						.header("Idempotency-Key", UUID.randomUUID())
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{"assessmentRoundId": "%s", "repositoryUrl": "https://github.com/team-iz/p"}
 								""".formatted(UUID.randomUUID())))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("SUBMISSION_DEADLINE_PASSED"));
+	}
+
+	@Test
+	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
+	void rejectsSubmissionWithoutAnIdempotencyKey() throws Exception {
+		// 서버가 대신 만들어 주면 멱등 판정이 항상 실패하는데 클라이언트에게는 그 사실이 보이지 않는다.
+		mockMvc.perform(post("/api/v0/submissions")
+						.with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"assessmentRoundId": "%s", "repositoryUrl": "https://github.com/team-iz/p"}
+								""".formatted(UUID.randomUUID())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REQUIRED"));
+	}
+
+	@Test
+	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
+	void rejectsAnIdempotencyKeyThatIsNotAUuid() throws Exception {
+		// request_id 컬럼이 UUID라 임의 문자열은 저장 단계에서 원인을 알기 어려운 500이 된다.
+		mockMvc.perform(post("/api/v0/submissions")
+						.with(csrf())
+						.header("Idempotency-Key", "retry-1")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"assessmentRoundId": "%s", "repositoryUrl": "https://github.com/team-iz/p"}
+								""".formatted(UUID.randomUUID())))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_INVALID"));
+	}
+
+	@Test
+	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
+	void requiresAnIdempotencyKeyOnZipUploadsToo() throws Exception {
+		// 중복 위험은 오히려 ZIP 쪽이 크다 -- 업로드가 느려 재시도가 잦다.
+		mockMvc.perform(multipart("/api/v0/submissions/zip")
+						.file(new MockMultipartFile("file", "project.zip", "application/zip", new byte[] {1}))
+						.param("assessmentRoundId", UUID.randomUUID().toString())
+						.with(csrf()))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REQUIRED"));
 	}
 
 	@Test

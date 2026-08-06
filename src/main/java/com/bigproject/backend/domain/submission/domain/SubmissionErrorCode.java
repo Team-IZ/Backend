@@ -18,6 +18,20 @@ public enum SubmissionErrorCode {
 	SUBMISSION_ROUND_NOT_OPEN(HttpStatus.CONFLICT, "지금은 제출할 수 있는 회차가 아닙니다."),
 	SUBMISSION_DEADLINE_PASSED(HttpStatus.CONFLICT, "제출 마감이 지났습니다."),
 
+	// ── 멱등키 ──
+	/**
+	 * 서버가 대신 만들어 주지 않는다. 생략을 허용하면 멱등 판정이 항상 실패하는데 클라이언트에게는
+	 * 그 사실이 보이지 않아, 중복 제출이 생긴 뒤에야 발견된다.
+	 */
+	IDEMPOTENCY_KEY_REQUIRED(HttpStatus.BAD_REQUEST, "Idempotency-Key 헤더가 필요합니다."),
+	/** 저장 위치가 UUID 컬럼이라 임의 문자열은 받을 수 없다. */
+	IDEMPOTENCY_KEY_INVALID(HttpStatus.BAD_REQUEST, "Idempotency-Key는 UUID 형식이어야 합니다."),
+	/**
+	 * 같은 키가 다른 대상에 재사용됐다. 최초 요청의 결과를 그대로 돌려주면 교육생은 방금 고른 회차에
+	 * 제출했다고 믿지만 실제로는 이전 회차 제출을 보게 된다.
+	 */
+	IDEMPOTENCY_KEY_CONFLICT(HttpStatus.CONFLICT, "이미 다른 요청에 사용된 Idempotency-Key입니다."),
+
 	// ── 제출 수단 ──
 	SUBMISSION_METHOD_NOT_ALLOWED(HttpStatus.CONFLICT, "기관이 허용하지 않는 제출 수단입니다."),
 	/** 형식·호스트 검사 실패. repository_verification.failure_code의 같은 이름 값과 문자열을 맞춘다. */
@@ -26,7 +40,7 @@ public enum SubmissionErrorCode {
 
 	// ── ZIP ──
 	/** submission_artifact.validation_failure_code의 같은 이름 값과 문자열을 맞춘다. */
-	FILE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "허용 크기를 넘는 파일입니다."),
+	FILE_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE, "허용 크기를 넘는 파일입니다."),
 	ARCHIVE_INVALID(HttpStatus.BAD_REQUEST, "ZIP 파일을 열 수 없습니다."),
 	ARTIFACT_STORE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "제출 파일을 저장하지 못했습니다."),
 

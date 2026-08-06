@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.submission.presentation;
 
 import com.bigproject.backend.domain.submission.application.SubmissionService;
+import com.bigproject.backend.domain.submission.domain.IdempotencyKey;
 import com.bigproject.backend.domain.submission.presentation.dto.CreateGithubSubmissionRequest;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
@@ -39,7 +40,21 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SubmissionController {
 
-	private static final String REQUEST_ID_HEADER = "X-Request-Id";
+	/**
+	 * 멱등키 헤더. 다른 API가 쓰는 {@code X-Request-Id}와 <b>일부러 이름을 나눴다</b> —
+	 * 그쪽은 요청마다 새로 만드는 추적용 값이고, 멱등키는 재시도해도 같아야 하는 정반대 성격이라
+	 * 한 헤더로 겸하면 프록시가 {@code X-Request-Id}를 덮어쓸 때 멱등성이 조용히 깨진다.
+	 */
+	private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
+
+	private static final String IDEMPOTENCY_KEY_DESCRIPTION = """
+			멱등키(UUID, 필수). **제출 버튼을 누른 순간 하나 만들어** 그 제출이 끝날 때까지 보관한다.
+
+			- 타임아웃·5xx·네트워크 오류로 **재시도할 때는 같은 값**을 그대로 다시 보낸다 → 서버가 최초 결과를 반환한다
+			- 사용자가 입력을 고쳐 **다시 제출하면 새 값**을 만든다 (재제출은 별개의 제출이다)
+			- 같은 키를 **다른 회차**에 재사용하면 `409 IDEMPOTENCY_KEY_CONFLICT`로 거절한다
+			- 서버가 대신 만들어 주지 않는다. 생략하면 `400`이다 — 임의 값을 채우면 멱등 판정이
+			  항상 실패하는데 그 사실이 클라이언트에게 보이지 않기 때문이다""";
 
 	private final SubmissionService submissionService;
 	private final CurrentUserResolver currentUserResolver;
@@ -55,21 +70,20 @@ public class SubmissionController {
 					제출은 **팀 단위**다. 팀원 누구나 제출할 수 있고, 마감 전이라면 다른 팀원이 재제출할 수도 있다.
 					재제출은 기존 행 수정이 아니라 새 행 생성이며 직전 제출을 `supersedesSubmissionId`로 가리킨다.
 
-					동기 처리가 짧아도 네트워크 재시도로 중복 제출이 생길 수 있으므로 `X-Request-Id`를 보내면
-					같은 값의 재요청은 최초 결과를 그대로 돌려준다.
+					동기 처리가 짧아도 네트워크 재시도로 중복 제출이 생길 수 있다. `uq_submission_current`는
+					이를 막지 못하므로(두 번째 제출이 첫 번째를 supersede할 뿐이다) `Idempotency-Key`가 필수다.
 
 					ZIP 업로드는 같은 리소스를 만들지만 `POST /submissions/zip`으로 분리돼 있다 — 이유는 그쪽
 					설명 참조.""")
 	@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<SubmissionResponse> submitGithubUrl(
 			@Valid @RequestBody CreateGithubSubmissionRequest request,
-			@Parameter(description = "멱등키. 생략하면 서버가 생성하며 재시도 보호를 받지 못한다.")
-			@RequestHeader(value = REQUEST_ID_HEADER, required = false) UUID requestId
+			@Parameter(description = IDEMPOTENCY_KEY_DESCRIPTION, required = true)
+			@RequestHeader(value = IDEMPOTENCY_KEY_HEADER, required = false) String idempotencyKey
 	) {
 		UUID userId = currentUserResolver.resolveCurrentMemberId();
-		UUID idempotencyKey = requestId == null ? UUID.randomUUID() : requestId;
 		return ResponseEntity.status(HttpStatus.CREATED)
-				.body(submissionService.submitGithubUrl(userId, request, idempotencyKey));
+				.body(submissionService.submitGithubUrl(userId, request, IdempotencyKey.parse(idempotencyKey)));
 	}
 
 	@Operation(
@@ -90,11 +104,13 @@ public class SubmissionController {
 	@PostMapping(path = "/zip", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	public ResponseEntity<SubmissionResponse> submitZip(
 			@RequestParam @NotNull UUID assessmentRoundId,
-			@RequestPart("file") MultipartFile file
+			@RequestPart("file") MultipartFile file,
+			@Parameter(description = IDEMPOTENCY_KEY_DESCRIPTION, required = true)
+			@RequestHeader(value = IDEMPOTENCY_KEY_HEADER, required = false) String idempotencyKey
 	) {
 		UUID userId = currentUserResolver.resolveCurrentMemberId();
-		return ResponseEntity.status(HttpStatus.ACCEPTED)
-				.body(submissionService.submitZip(userId, assessmentRoundId, file));
+		return ResponseEntity.status(HttpStatus.ACCEPTED).body(submissionService.submitZip(
+				userId, assessmentRoundId, file, IdempotencyKey.parse(idempotencyKey)));
 	}
 
 	@Operation(

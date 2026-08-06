@@ -79,6 +79,18 @@ class SubmissionOpenApiTest {
 	}
 
 	@Test
+	void advertisesTheIdempotencyKeyAsRequiredOnBothSubmitPaths() throws Exception {
+		// 런타임은 @RequestHeader(required = false)로 받아 도메인 에러 코드로 거절한다. Swagger가 이를
+		// 선택 파라미터로 그리면 프론트가 헤더를 빠뜨린 채 구현하게 되므로 문서에서는 필수여야 한다.
+		mockMvc.perform(get("/v3/api-docs"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath(GITHUB_POST + ".parameters[?(@.name == 'Idempotency-Key')].required")
+						.value(true))
+				.andExpect(jsonPath(ZIP_POST + ".parameters[?(@.name == 'Idempotency-Key')].required")
+						.value(true));
+	}
+
+	@Test
 	void documentsTheZipEndpointAsMultipartOnItsOwnPath() throws Exception {
 		mockMvc.perform(get("/v3/api-docs"))
 				.andExpect(status().isOk())
