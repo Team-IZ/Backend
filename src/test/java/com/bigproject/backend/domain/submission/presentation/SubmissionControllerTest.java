@@ -1,0 +1,208 @@
+package com.bigproject.backend.domain.submission.presentation;
+
+import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
+import com.bigproject.backend.domain.submission.application.SubmissionService;
+import com.bigproject.backend.domain.submission.domain.SubmissionErrorCode;
+import com.bigproject.backend.domain.submission.domain.SubmissionException;
+import com.bigproject.backend.domain.submission.domain.SubmissionMethod;
+import com.bigproject.backend.domain.submission.domain.SubmissionStatus;
+import com.bigproject.backend.domain.submission.presentation.dto.CreateGithubSubmissionRequest;
+import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisPhase;
+import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
+import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
+import com.bigproject.backend.global.config.ApiPathConfig;
+import com.bigproject.backend.global.security.CurrentUserResolver;
+import com.bigproject.backend.global.security.JwtProvider;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.time.Instant;
+import java.util.UUID;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@WebMvcTest(controllers = SubmissionController.class)
+@Import({ApiPathConfig.class, SubmissionControllerTest.MethodSecurityConfiguration.class})
+class SubmissionControllerTest {
+
+	@Autowired
+	private MockMvc mockMvc;
+
+	@MockitoBean
+	private SubmissionService submissionService;
+
+	@MockitoBean
+	private CurrentUserResolver currentUserResolver;
+
+	@MockitoBean
+	private JwtProvider jwtProvider;
+
+	@MockitoBean
+	private AuthUserRepository authUserRepository;
+
+	@Test
+	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
+	void acceptsGithubUrlSubmissionAsJson() throws Exception {
+		UUID userId = UUID.randomUUID();
+		UUID submissionId = UUID.randomUUID();
+		UUID verificationId = UUID.randomUUID();
+		when(currentUserResolver.resolveCurrentMemberId()).thenReturn(userId);
+		when(submissionService.submitGithubUrl(eq(userId), any(CreateGithubSubmissionRequest.class), any(UUID.class)))
+				.thenReturn(new SubmissionResponse(
+						submissionId,
+						SubmissionMethod.GITHUB_URL,
+						SubmissionStatus.ACCEPTED,
+						Instant.parse("2026-08-06T09:00:00Z"),
+						true,
+						null,
+						verificationId,
+						null
+				));
+
+		mockMvc.perform(post("/api/v0/submissions")
+						.with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "assessmentRoundId": "%s",
+								  "repositoryUrl": "https://github.com/team-iz/mini-project-3",
+								  "branch": "main"
+								}
+								""".formatted(UUID.randomUUID())))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.submissionId").value(submissionId.toString()))
+				.andExpect(jsonPath("$.status").value("ACCEPTED"))
+				// 제출된 URL 원문은 submission이 아니라 이 확인 실행 행에만 남는다.
+				.andExpect(jsonPath("$.repositoryVerificationId").value(verificationId.toString()));
+	}
+
+	@Test
+	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
+	void rejectsBlankRepositoryUrl() throws Exception {
+		mockMvc.perform(post("/api/v0/submissions")
+						.with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"assessmentRoundId": "%s", "repositoryUrl": "  "}
+								""".formatted(UUID.randomUUID())))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
+	void receivesZipUploadAsMultipartOnTheSamePath() throws Exception {
+		UUID userId = UUID.randomUUID();
+		UUID submissionId = UUID.randomUUID();
+		UUID artifactId = UUID.randomUUID();
+		UUID roundId = UUID.randomUUID();
+		when(currentUserResolver.resolveCurrentMemberId()).thenReturn(userId);
+		when(submissionService.submitZip(eq(userId), eq(roundId), any()))
+				.thenReturn(new SubmissionResponse(
+						submissionId,
+						SubmissionMethod.ZIP_WITH_GITLOG,
+						SubmissionStatus.VALIDATING,
+						Instant.parse("2026-08-06T09:00:00Z"),
+						true,
+						null,
+						null,
+						artifactId
+				));
+
+		mockMvc.perform(multipart("/api/v0/submissions")
+						.file(new MockMultipartFile("file", "project.zip", "application/zip", new byte[] {1, 2, 3}))
+						.param("assessmentRoundId", roundId.toString())
+						.with(csrf()))
+				.andExpect(status().isAccepted())
+				// 내용 검증과 안전 추출이 남아 있어 접수는 VALIDATING에서 끝난다.
+				.andExpect(jsonPath("$.status").value("VALIDATING"))
+				.andExpect(jsonPath("$.artifactId").value(artifactId.toString()));
+	}
+
+	@Test
+	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
+	void reportsNotStartedBeforeTheAnalysisBatchRuns() throws Exception {
+		UUID userId = UUID.randomUUID();
+		UUID submissionId = UUID.randomUUID();
+		when(currentUserResolver.resolveCurrentMemberId()).thenReturn(userId);
+		when(submissionService.getAnalysis(userId, submissionId))
+				.thenReturn(SubmissionAnalysisResponse.notStarted(submissionId));
+
+		mockMvc.perform(get("/api/v0/submissions/{submissionId}/analysis", submissionId))
+				.andExpect(status().isOk())
+				// 분석은 마감 후 배치라 마감 전 조회는 정상적으로 NOT_STARTED다.
+				.andExpect(jsonPath("$.phase").value(SubmissionAnalysisPhase.NOT_STARTED.name()))
+				.andExpect(jsonPath("$.analysisJobId").doesNotExist());
+	}
+
+	@Test
+	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
+	void surfacesRepositoryFailureThroughTheAnalysisEndpoint() throws Exception {
+		UUID userId = UUID.randomUUID();
+		UUID submissionId = UUID.randomUUID();
+		UUID jobId = UUID.randomUUID();
+		when(currentUserResolver.resolveCurrentMemberId()).thenReturn(userId);
+		when(submissionService.getAnalysis(userId, submissionId))
+				.thenReturn(new SubmissionAnalysisResponse(
+						submissionId,
+						SubmissionAnalysisPhase.FAILED,
+						jobId,
+						1,
+						Instant.parse("2026-08-06T10:00:00Z"),
+						Instant.parse("2026-08-06T10:01:00Z"),
+						"REPO_NOT_FOUND",
+						"저장소를 찾을 수 없습니다.",
+						null
+				));
+
+		mockMvc.perform(get("/api/v0/submissions/{submissionId}/analysis", submissionId))
+				.andExpect(status().isOk())
+				// 저장소 주소 오류는 제출 응답이 아니라 분석 실패 코드로 드러난다.
+				.andExpect(jsonPath("$.failureCode").value("REPO_NOT_FOUND"));
+	}
+
+	@Test
+	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
+	void returnsDomainErrorCodeWhenDeadlineHasPassed() throws Exception {
+		when(currentUserResolver.resolveCurrentMemberId()).thenReturn(UUID.randomUUID());
+		when(submissionService.submitGithubUrl(any(), any(), any()))
+				.thenThrow(new SubmissionException(SubmissionErrorCode.SUBMISSION_DEADLINE_PASSED));
+
+		mockMvc.perform(post("/api/v0/submissions")
+						.with(csrf())
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"assessmentRoundId": "%s", "repositoryUrl": "https://github.com/team-iz/p"}
+								""".formatted(UUID.randomUUID())))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("SUBMISSION_DEADLINE_PASSED"));
+	}
+
+	@Test
+	@WithMockUser(username = "manager@example.com", roles = "MANAGER")
+	void deniesNonTraineeRoles() throws Exception {
+		mockMvc.perform(get("/api/v0/submissions/{submissionId}/analysis", UUID.randomUUID()))
+				.andExpect(status().isForbidden());
+	}
+
+	@TestConfiguration
+	@EnableMethodSecurity
+	static class MethodSecurityConfiguration {
+	}
+}
