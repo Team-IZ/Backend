@@ -54,10 +54,8 @@ public class CohortController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "기관 기수 목록 조회",
+			summary = "기관 기수 목록 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					로그인한 사용자의 소속 기관에 개설된 기수를 상태 필터·이름 검색으로 페이지네이션 조회한다.
 					조회 범위인 기관은 요청 파라미터가 아니라 **액세스 토큰에서 가져온다** — 다른 기관의 기수는 조회할 수 없다.
 
@@ -104,10 +102,8 @@ public class CohortController {
 	}
 
 	@Operation(
-			summary = "기수 상세 조회",
+			summary = "기수 상세 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					기수 하나의 상세 정보를 조회한다. 조회 범위인 기관은 액세스 토큰에서 가져오며,
 					**다른 기관의 기수를 요청하면 404**다(존재 여부 자체를 알려주지 않기 위해 403이 아니라 404로 응답한다).
 					삭제된 기수도 404다.
@@ -132,10 +128,8 @@ public class CohortController {
 	}
 
 	@Operation(
-			summary = "기수 생성",
+			summary = "기수 생성 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					오퍼레이터가 자기 기관에 새 기수를 개설한다. 개설 시 기관의 활성 운영 정책에서
 					기본 공개범위(defaultDisclosureScope)를 복사해 기수에 고정한다 — 이후 기관 정책이 바뀌어도
 					이미 만들어진 기수의 공개범위는 따라 바뀌지 않는다.
@@ -172,10 +166,8 @@ public class CohortController {
 	}
 
 	@Operation(
-			summary = "기수 종료",
+			summary = "기수 종료 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					진행 중인 기수를 CLOSED로 전환한다. 종료 대상 기관은 액세스 토큰에서 가져오므로
 					다른 기관의 기수를 종료할 수 없다(404).
 

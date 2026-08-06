@@ -36,10 +36,8 @@ public class OperationsController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "기관 월별 저장량·활동·AI 비용 조회",
+			summary = "기관 월별 저장량·활동·AI 비용 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-02 ③ `사용량 · AI 비용` 탭(슈퍼어드민)과 OP-06 ⑤ `비용` 탭(오퍼레이터)이 함께 쓴다.
 
 					**권한** — 슈퍼어드민은 모든 기관, 오퍼레이터는 **자기 기관만**(다른 기관이면 403).
@@ -147,10 +145,8 @@ public class OperationsController {
 	}
 
 	@Operation(
-			summary = "기관 운영 설정 조회",
+			summary = "기관 운영 설정 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-02 ④ 설정 탭을 채운다. 현재 **활성(ACTIVE) 정책 버전**의 값이다.
 
 					## 요청
@@ -199,10 +195,8 @@ public class OperationsController {
 	}
 
 	@Operation(
-			summary = "기관 운영 설정 변경",
+			summary = "기관 운영 설정 변경 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-02 ④ 설정 탭의 저장 액션. **슈퍼어드민 전용**이다(오퍼레이터는 사용량 조회만 가능).
 
 					## ⚠️ 부분 수정(PATCH)이 아니라 전체 치환(PUT)이다

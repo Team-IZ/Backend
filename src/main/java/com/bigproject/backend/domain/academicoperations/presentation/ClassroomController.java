@@ -51,10 +51,8 @@ public class ClassroomController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "기수 반 목록 조회",
+			summary = "기수 반 목록 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					기수에 편성된 반 전체를 조회한다. 조회 범위인 기관은 액세스 토큰에서 가져온다.
 
 					**아직 채워지지 않는 값** — managers[].name은 항상 빈 문자열이다.
@@ -84,10 +82,8 @@ public class ClassroomController {
 	// 이전에는 request.managerIds()를 서비스로 넘기지 않아, 반 추가 모델에서 매니저를 골라도
 	// 에러 없이 조용히 버려졌다.
 	@Operation(
-			summary = "반 생성",
+			summary = "반 생성 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					오퍼레이터가 기수 안에 반을 만든다.
 
 					⚠️ `managerIds`를 요청에 넣어도 **적용되지 않는다.** 스키마에는 남아 있지만 서버가 사용하지 않으며,
@@ -119,10 +115,8 @@ public class ClassroomController {
 	}
 
 	@Operation(
-			summary = "반 담당 매니저 변경",
+			summary = "반 담당 매니저 변경 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					반의 담당 매니저를 **전체 교체**한다. 부분 추가·삭제가 아니라 보낸 목록이 그대로 최종 상태가 된다 —
 					기존 활성 배정을 모두 해제(사유 `REASSIGNED`)한 뒤 요청받은 매니저로 새 배정을 만든다.
 					**빈 배열을 보내면 전체 해제**가 되어 담당자가 없는 반이 된다.
@@ -158,10 +152,8 @@ public class ClassroomController {
 	}
 
 	@Operation(
-			summary = "교육생 일괄 반 배정",
+			summary = "교육생 일괄 반 배정 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					교육생 여러 명을 한 반으로 **옮긴다**(이동 배정). 대상자가 이미 다른 반에 있으면 그 배정을
 					해제(사유 `REASSIGNED`)한 뒤 새 반에 넣으므로, 교육생은 항상 기수 안에서 반 하나에만 속한다.
 
@@ -195,10 +187,8 @@ public class ClassroomController {
 	}
 
 	@Operation(
-			summary = "교육생 반 배정 되돌리기",
+			summary = "교육생 반 배정 되돌리기 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					교육생의 현재 반 배정을 **해제만** 한다(사유 `IMMEDIATE_ROLLBACK`). `assignTrainees`(이동 배정)와
 					달리 새 배정을 만들지 않으므로, 처리 후 해당 교육생은 어느 반에도 속하지 않는 상태가 된다.
 

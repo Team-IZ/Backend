@@ -43,10 +43,8 @@ public class TraineeController {
 	private final TraineeCsvParser traineeCsvParser;
 
 	@Operation(
-			summary = "CSV 교육생 명단 등록 및 초대",
+			summary = "CSV 교육생 명단 등록 및 초대 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					오퍼레이터가 CSV 파일을 올려 기수 교육생을 한 번에 등록하고 초대 메일을 보낸다.
 
 					**요청** (multipart/form-data)
@@ -98,10 +96,8 @@ public class TraineeController {
 	}
 
 	@Operation(
-			summary = "직접 입력 교육생 등록 및 초대",
+			summary = "직접 입력 교육생 등록 및 초대 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					CSV 업로드 대신 화면에서 이름·이메일을 직접 입력해 교육생을 등록한다.
 					처리 규칙과 응답 형식은 CSV 등록(`POST /cohorts/{cohortId}/trainees`)과 완전히 같다.
 
