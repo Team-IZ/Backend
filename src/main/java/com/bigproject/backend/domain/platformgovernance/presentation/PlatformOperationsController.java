@@ -366,19 +366,8 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "슈퍼어드민 초대 | ⚠️ 사용 불가",
+			summary = "슈퍼어드민 초대 | ✅ 사용 가능",
 			description = """
-					초대 메일 발송까지는 동작하지만 **받은 사람이 가입할 수 없다.** 수락 경로가 막혀 있어
-					초대해도 활성 슈퍼어드민이 늘지 않으므로, 프론트는 아직 이 API를 연결하지 않는다.
-
-					막는 지점은 세 곳이며 전부 이 도메인 밖이다.
-					1. `OneTimeTokenJpaRepository.findActivationTargetForUpdate` — `JOIN organization`과
-					   `u.org_id = ott.org_id`가 `org_id IS NULL`인 슈퍼어드민을 걸러 낸다(auth 도메인)
-					2. `findResolvableInvitation` — 같은 조인 문제 + 목적 목록에 `INVITE_SUPER_ADMIN`이 없다(auth 도메인)
-					3. `consent_record.org_id`가 NOT NULL이라 동의 기록에서 실패한다(**DDL 변경 필요**)
-
-					---
-
 					SA-03 ② `+ 계정 초대`. 계정 자리를 만들고 초대 메일을 보낸다.
 
 					## 요청 (JSON 본문)
@@ -446,17 +435,8 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "슈퍼어드민 정지 · 재활성 | ⚠️ 사용 불가",
+			summary = "슈퍼어드민 정지 · 재활성 | ✅ 사용 가능",
 			description = """
-					API 자체는 정상 동작하지만 **현재 환경에서는 정지를 성공시킬 수 없다.**
-					활성 슈퍼어드민이 1명뿐이라 아래 `LAST_SUPER_ADMIN` 방어에 항상 걸린다.
-					2명 이상으로 만들려면 슈퍼어드민 초대의 수락 경로가 열려야 하는데 그쪽이 막혀 있다
-					(`POST /platform/operations/super-admins/invitations` 설명 참고).
-
-					→ 초대 수락 경로가 열리면 이 API 는 그대로 사용 가능하다. 재활성(ACTIVE)은 지금도 동작한다.
-
-					---
-
 					SA-03 ② 표의 행별 액션 `정지` / `재활성`.
 
 					## 요청
