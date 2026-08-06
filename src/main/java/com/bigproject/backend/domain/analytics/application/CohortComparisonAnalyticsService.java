@@ -9,9 +9,6 @@ import com.bigproject.backend.domain.analytics.domain.ConceptPresence;
 import com.bigproject.backend.domain.analytics.domain.NotComparableReason;
 import com.bigproject.backend.domain.analytics.presentation.dto.CohortComparisonResponse;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
-import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
-import com.bigproject.backend.domain.member.application.EmailNormalizer;
-import com.bigproject.backend.domain.member.domain.Role;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -35,10 +32,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class CohortComparisonAnalyticsService {
-	private static final String ACTIVE = "ACTIVE";
 	private static final String MERGED = "MERGED";
 
-	private final AuthUserRepository authUserRepository;
+	private final AnalyticsActorGuard analyticsActorGuard;
 	private final CohortComparisonQueryRepository cohortComparisonQueryRepository;
 
 	public CohortComparisonResponse findCohortComparison(
@@ -47,15 +43,10 @@ public class CohortComparisonAnalyticsService {
 			ComparisonSort sort,
 			String actorEmail
 	) {
-		AuthUser actor = activeActor(actorEmail);
-		if (actor.role() != Role.OPERATOR && actor.role() != Role.MANAGER) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "매니저만 기수 간 비교를 조회할 수 있습니다.");
-		}
+		AuthUser actor = analyticsActorGuard.operatorOrManager(actorEmail, "매니저만 기수 간 비교를 조회할 수 있습니다.");
 		CohortComparisonQueryRepository.CohortRow target = cohortComparisonQueryRepository.findCohort(cohortId)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "기수를 찾을 수 없습니다."));
-		if (!target.organizationId().equals(actor.organizationId())) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "다른 기관의 기수는 조회할 수 없습니다.");
-		}
+		analyticsActorGuard.requireSameOrganization(target.organizationId(), actor);
 
 		UUID organizationId = target.organizationId();
 		ComparisonSort appliedSort = sort == null ? ComparisonSort.WORSENED : sort;
@@ -373,15 +364,4 @@ public class CohortComparisonAnalyticsService {
 				));
 	}
 
-	private AuthUser activeActor(String email) {
-		AuthUser actor = authUserRepository.findByNormalizedEmail(EmailNormalizer.normalize(email))
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "인증 사용자를 찾을 수 없습니다."));
-		if (!ACTIVE.equals(actor.status()) || !actor.emailVerified()) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "활성 사용자만 분석 정보를 조회할 수 있습니다.");
-		}
-		if (actor.role() != Role.SUPER_ADMIN && !ACTIVE.equals(actor.organizationStatus())) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "활성 기관의 사용자만 분석 정보를 조회할 수 있습니다.");
-		}
-		return actor;
-	}
 }

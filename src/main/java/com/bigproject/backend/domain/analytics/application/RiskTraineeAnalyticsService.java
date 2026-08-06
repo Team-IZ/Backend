@@ -6,9 +6,6 @@ import com.bigproject.backend.domain.analytics.domain.RiskTraineeSort;
 import com.bigproject.backend.domain.analytics.domain.RoundAggregationStatus;
 import com.bigproject.backend.domain.analytics.presentation.dto.RiskTraineeRateResponse;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
-import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
-import com.bigproject.backend.domain.member.application.EmailNormalizer;
-import com.bigproject.backend.domain.member.domain.Role;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -29,12 +26,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class RiskTraineeAnalyticsService {
-	private static final String ACTIVE = "ACTIVE";
 	// 빅프로젝트는 위험 판정식이 미니프로젝트와 달라(코드 대비 이해 부족·참여 저조 기여도 축) 같은 격자에 올리지 않는다.
 	private static final String MINI_PROJECT = "MINI_PROJECT";
 	private static final int RISK_RATE_SCALE = 4;
 
-	private final AuthUserRepository authUserRepository;
+	private final AnalyticsActorGuard analyticsActorGuard;
 	private final RiskTraineeQueryRepository riskTraineeQueryRepository;
 
 	public RiskTraineeRateResponse findRiskTraineeRates(
@@ -46,15 +42,10 @@ public class RiskTraineeAnalyticsService {
 			RiskTraineeSort sort,
 			String actorEmail
 	) {
-		AuthUser actor = activeActor(actorEmail);
-		if (actor.role() != Role.OPERATOR && actor.role() != Role.MANAGER) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "매니저만 위험 교육생 비율을 조회할 수 있습니다.");
-		}
+		AuthUser actor = analyticsActorGuard.operatorOrManager(actorEmail, "매니저만 위험 교육생 비율을 조회할 수 있습니다.");
 		RiskTraineeQueryRepository.CohortScope cohort = riskTraineeQueryRepository.findCohortScope(cohortId)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "기수를 찾을 수 없습니다."));
-		if (!cohort.organizationId().equals(actor.organizationId())) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "다른 기관의 기수는 조회할 수 없습니다.");
-		}
+		analyticsActorGuard.requireSameOrganization(cohort.organizationId(), actor);
 
 		List<UUID> requestedClassroomIds = normalizeClassroomIds(classroomIds);
 		for (UUID classroomId : requestedClassroomIds) {
@@ -338,15 +329,4 @@ public class RiskTraineeAnalyticsService {
 		return classroomIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
 	}
 
-	private AuthUser activeActor(String email) {
-		AuthUser actor = authUserRepository.findByNormalizedEmail(EmailNormalizer.normalize(email))
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "인증 사용자를 찾을 수 없습니다."));
-		if (!ACTIVE.equals(actor.status()) || !actor.emailVerified()) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "활성 사용자만 분석 정보를 조회할 수 있습니다.");
-		}
-		if (actor.role() != Role.SUPER_ADMIN && !ACTIVE.equals(actor.organizationStatus())) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "활성 기관의 사용자만 분석 정보를 조회할 수 있습니다.");
-		}
-		return actor;
-	}
 }
