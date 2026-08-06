@@ -47,5 +47,10 @@ public interface PlatformOperationsService {
 	InviteSuperAdminResponse inviteSuperAdmin(InviteSuperAdminRequest request, String actorEmail, String requestId);
 
 	/** 슈퍼어드민 정지·재활성. 마지막 활성 1인은 정지할 수 없다. */
-	SuperAdminListResponse updateSuperAdminStatus(UUID memberId, OperatorAccountStatus status);
+	SuperAdminListResponse updateSuperAdminStatus(
+			UUID memberId,
+			OperatorAccountStatus status,
+			String reason,
+			UUID requesterId
+	);
 }

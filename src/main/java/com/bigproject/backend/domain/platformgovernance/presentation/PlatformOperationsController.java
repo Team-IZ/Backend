@@ -267,6 +267,8 @@ public class PlatformOperationsController {
 			@PathVariable UUID memberId,
 			@Valid @RequestBody UpdateOperatorStatusForPlatformRequest request
 	) {
-		return ResponseEntity.ok(platformOperationsService.updateSuperAdminStatus(memberId, request.status()));
+		return ResponseEntity.ok(platformOperationsService.updateSuperAdminStatus(
+				memberId, request.status(), request.reason(), currentUserResolver.resolveCurrentMemberId()
+		));
 	}
 }

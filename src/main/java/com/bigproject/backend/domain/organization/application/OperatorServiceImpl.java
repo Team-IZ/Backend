@@ -5,6 +5,7 @@ import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerResponse;
+import com.bigproject.backend.domain.organization.domain.AccountInactivationReason;
 import com.bigproject.backend.domain.organization.domain.OperatorAccountStatus;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationException;
@@ -29,7 +30,15 @@ import java.util.UUID;
 @Transactional(readOnly = true) // 기본은 조회 트랜잭션. 쓰기가 필요한 메서드에만 @Transactional을 개별로 얹는다.
 public class OperatorServiceImpl implements OperatorService {
 
-	private static final String CANCEL_REASON = "슈퍼어드민이 오퍼레이터 초대를 취소했습니다.";
+	/**
+	 * 토큰 무효화 사유. {@code one_time_token.invalidated_reason}은 자유 문장이 아니라
+	 * <b>코드값 컬럼</b>이다 — {@code ck_one_time_token_invalidated_reason}이 8개 값만 허용한다.
+	 * 설명 문장을 넣으면 CHECK 위반으로 INSERT 자체가 실패한다.
+	 */
+	private static final String CANCEL_REASON_CODE = "INVITATION_CANCELLED";
+
+	/** 계정 정지 이력에 남길 사람이 읽을 설명. 코드 컬럼이 아니라 자유 텍스트 컬럼에 들어간다. */
+	private static final String CANCEL_ACCOUNT_REASON = "슈퍼어드민이 오퍼레이터 초대를 취소했습니다.";
 
 	private final OrganizationRepository organizationRepository;
 	private final OrganizationOperatorRepository operatorRepository;
@@ -133,7 +142,15 @@ public class OperatorServiceImpl implements OperatorService {
 		}
 
 		if (target.status() != request.status()) {
-			operatorRepository.updateOperatorStatus(memberId, request.status());
+			operatorRepository.updateOperatorStatus(
+					memberId,
+					request.status(),
+					currentUserResolver.resolveCurrentMemberId(),
+					// 화면에서 오는 정지는 전부 관리자 조치다. 요청의 reason은 코드가 아니라 설명이므로
+					// 자유 텍스트 컬럼으로 따로 넘긴다.
+					AccountInactivationReason.ADMIN_SUSPENDED,
+					request.reason()
+			);
 		}
 
 		return buildListResponse(organizationId);
@@ -150,7 +167,7 @@ public class OperatorServiceImpl implements OperatorService {
 						OrganizationErrorCode.OPERATOR_INVITATION_NOT_FOUND, "취소할 수 있는 오퍼레이터 초대를 찾을 수 없습니다: " + tokenId
 				));
 
-		operatorRepository.invalidateInvitation(tokenId, CANCEL_REASON);
+		operatorRepository.invalidateInvitation(tokenId, CANCEL_REASON_CODE);
 
 		/*
 		 * 토큰만 무효화하면 초대 원장이 SENT로 남는다. 그러면 감사·통계가 발송된 초대로 계속 세고,
@@ -166,7 +183,13 @@ public class OperatorServiceImpl implements OperatorService {
 		// 토큰만 무효화하면 계정 자리가 PENDING으로 남아 로그인 경로가 애매해진다. 자리는 남기되(이력 보존)
 		// 로그인은 막도록 INACTIVE로 내린다 — 목업의 "퇴사한 계정도 지우지 않고 정지로 남긴다"와 같은 처리다.
 		if (invitation.memberId() != null) {
-			operatorRepository.updateOperatorStatus(invitation.memberId(), OperatorAccountStatus.INACTIVE);
+			operatorRepository.updateOperatorStatus(
+					invitation.memberId(),
+					OperatorAccountStatus.INACTIVE,
+					currentUserResolver.resolveCurrentMemberId(),
+					AccountInactivationReason.ADMIN_SUSPENDED,
+					CANCEL_ACCOUNT_REASON
+			);
 		}
 
 		return buildListResponse(organizationId);
