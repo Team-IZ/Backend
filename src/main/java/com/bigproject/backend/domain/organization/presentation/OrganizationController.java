@@ -57,6 +57,8 @@ public class OrganizationController {
 	@Operation(
 			summary = "기관 목록 조회",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					이름 검색과 상태 필터로 기관 목록을 페이지네이션 조회한다. 목업 SA-01 기관 목록 표에 대응한다.
 
 					**요청**
@@ -75,8 +77,7 @@ public class OrganizationController {
 					비용이 예산을 넘으면 budgetExceeded=true(`예산 초과` 배지)
 					- page/size/totalElements/totalPages 페이지 메타데이터
 
-					**아직 채워지지 않는 값** — slug, displayCode, emailDomain(컬럼 없음 → null), \
-					activeSessionCount(세션 테이블 없음 → 0)
+					- activeSessionCount: 진행 중 세션 수(IN_PROGRESS·PAUSED). v07에서 assessment_session이 생겨 실제 집계로 대체됐다
 					"""
 	)
 	@GetMapping
@@ -93,6 +94,8 @@ public class OrganizationController {
 	@Operation(
 			summary = "플랫폼 전체 집계 조회",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					전 기관을 합산한 지표를 조회한다. 목업 SA-01 상단 지표 카드 4개에 대응한다.
 
 					**응답**
@@ -101,9 +104,9 @@ public class OrganizationController {
 					- aiCost: 이번 달 총 비용, 전 기관 예산 합계, 소진율, 전월 대비 증감률
 					- storage: 총 저장 바이트, 전월 대비 증감률, 기관 평균
 
-					증감률은 전월 값이 0이면 계산할 수 없어 null을 반환한다(화면에서는 `—`).
+					- activeSessionCount: 플랫폼 전체 진행 중 세션 수(IN_PROGRESS·PAUSED)
 
-					**아직 채워지지 않는 값** — activeSessionCount(세션 테이블 없음 → 0)
+					증감률은 전월 값이 0이면 계산할 수 없어 null을 반환한다(화면에서는 `—`).
 					"""
 	)
 	@GetMapping("/summary")
@@ -114,6 +117,8 @@ public class OrganizationController {
 	@Operation(
 			summary = "기관명 중복 확인",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					기관명이 사용 가능한지 확인한다. 목업 SA-01 생성 모달의 "입력 중 실시간 중복 확인"(✓/✗)용이다.
 
 					**요청**
@@ -137,6 +142,8 @@ public class OrganizationController {
 	@Operation(
 			summary = "기관 생성 및 기본 운영 정책 초기화",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					새 기관(테넌트)을 생성하고, 동시에 기본값(월 예산 0, 통화 USD, 공개범위 SUMMARY)으로 \
 					최초 운영 정책(버전 1)을 함께 발급한다. 목업 SA-01 `기관 생성 (테넌트 프로비저닝)` 모달.
 
@@ -180,6 +187,8 @@ public class OrganizationController {
 	@Operation(
 			summary = "기관 상세 조회",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					organizationId로 기관 상세 정보를 조회한다. 목업 SA-02 ① 개요의 지표 카드와 정보 행을 채운다.
 
 					**요청**
@@ -201,6 +210,8 @@ public class OrganizationController {
 	@Operation(
 			summary = "기관 기수 목록 조회 (읽기전용)",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					기관에 개설된 기수를 조회한다. 목업 SA-02 ① 개요 하단의 `기수 · 읽기전용` 표에 대응한다.
 
 					**요청**
@@ -222,6 +233,14 @@ public class OrganizationController {
 	@Operation(
 			summary = "기관 이름 또는 운영 상태 변경",
 			description = """
+					**상태**: ⚠️ 사용 불가
+
+					프론트엔드에서 사용하지 않는다. 화면상 진입점이 SA-02 ④ 설정 탭 한 곳이고,
+					거기서는 `PUT /organizations/{organizationId}/operations/settings`가 기관 상태를 함께 바꾼다.
+					이 API는 그 경로와 기능이 겹치므로 호출하지 않는다.
+
+					---
+
 					기관의 이름과 운영 상태를 변경한다.
 
 					**요청**
@@ -252,6 +271,8 @@ public class OrganizationController {
 	@Operation(
 			summary = "기관 soft-delete",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					기관을 즉시 물리 삭제하지 않고 soft-delete 처리한다. 목업 SA-02 ④ 설정 탭의 `기관 삭제` \
 					+ 확인 모달(case 7).
 
@@ -293,6 +314,8 @@ public class OrganizationController {
 	@Operation(
 			summary = "기관 복구",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					soft-delete된 기관을 되살린다. 목업 case 7: "보존기간이 지난 뒤 파기됩니다. \
 					**그전까지는 복구할 수 있습니다.**"
 
@@ -324,6 +347,8 @@ public class OrganizationController {
 	@Operation(
 			summary = "기관 파기 요청",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					보존기간이 지난 기관의 데이터 파기를 요청한다. 목업 case 8 — 화면이 없고 \
 					운영자가 API로 직접 호출하는 경로다.
 

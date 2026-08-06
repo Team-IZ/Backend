@@ -53,6 +53,8 @@ public class OperatorController {
 	@Operation(
 			summary = "기관 오퍼레이터 계정 목록 조회",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					기관에 소속된 오퍼레이터 계정을 조회한다. 목업 SA-02 ② `이 기관의 오퍼레이터 계정` 표에 대응한다.
 
 					**응답**
@@ -77,6 +79,8 @@ public class OperatorController {
 	@Operation(
 			summary = "오퍼레이터 초대",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					기관에 오퍼레이터를 초대한다. 목업 SA-02 ② `오퍼레이터 초대` 모달에 대응한다.
 
 					**요청**
@@ -97,8 +101,11 @@ public class OperatorController {
 
 					**오류**
 					- 409: 이미 등록되었거나 초대된 이메일
-					- 502: 초대 메일 발송 실패. ⚠ 현재는 이때 **계정 자리도 롤백된다** — \
-					목업이 요구하는 "자리는 남기고 링크만 실패" 동작은 별도 작업으로 분리했다.
+					- 502: 초대 메일 발송 실패. **계정 자리와 초대 기록은 남는다**(목업 case 4·5 \
+					"자리는 남기고 링크만 실패"). 목록에 그 계정이 `invitationDeliveryFailed=true`로 나오므로 \
+					화면은 `초대 메일이 나가지 않았습니다` 안내와 [재발송]을 그 행에 붙이면 된다. \
+					자리를 지우지 않는 이유는, 지우면 같은 주소로 다시 초대했을 때 중복 초대인지 재시도인지 \
+					구분할 수 없어지기 때문이다.
 					"""
 	)
 	@ApiResponses({
@@ -124,6 +131,8 @@ public class OperatorController {
 	@Operation(
 			summary = "오퍼레이터 계정 정지 / 재활성",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					오퍼레이터 계정 상태를 변경한다. 목업 SA-02 ② 표의 행별 액션 `정지` / `재활성`에 대응한다.
 
 					**요청**
@@ -157,17 +166,22 @@ public class OperatorController {
 	@Operation(
 			summary = "오퍼레이터 초대 취소",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					아직 수락되지 않은 초대를 취소한다. 목업 SA-02 ② 표의 `취소` 액션에 대응한다.
 
 					**요청**
 					- tokenId (경로): 목록 응답의 pendingInvitationTokenId
 
-					초대 토큰을 무효화하고, 계정 자리는 남긴 채 INACTIVE로 내린다 \
-					(이력 보존 — 목업의 "퇴사한 계정도 지우지 않고 정지로 남긴다"와 같은 처리).
+					세 가지를 함께 처리한다.
+					1. 초대 토큰 무효화
+					2. 초대 원장을 CANCELLED로 닫기(cancelled_at·cancelled_by 기록)
+					3. 계정 자리는 남긴 채 INACTIVE로 내리기 \
+					(이력 보존 — 목업의 "퇴사한 계정도 지우지 않고 정지로 남긴다"와 같은 처리)
 
-					⚠ app_user의 이메일 유니크 제약(uq_app_user_email)이 부분 인덱스가 아니라서, \
-					취소한 뒤 **같은 이메일로 다시 초대하면 409가 발생한다.** 재초대를 허용하려면 이 제약을 \
-					`WHERE deleted_at IS NULL` 부분 유니크로 바꾸는 DDL 변경이 필요하다.
+					**같은 이메일로 다시 초대할 수 있다.** 취소된 자리는 활성화된 적이 없으므로 \
+					재초대 시 새 계정을 만들지 않고 그 자리를 되살린다. 이력이 한 줄로 이어지고 \
+					이메일 유니크 제약도 건드리지 않는다.
 
 					**응답**
 					- 취소 후의 오퍼레이터 목록 전체
@@ -183,5 +197,50 @@ public class OperatorController {
 			@PathVariable UUID tokenId
 	) {
 		return ResponseEntity.ok(operatorService.cancelInvitation(organizationId, tokenId));
+	}
+
+	@Operation(
+			summary = "오퍼레이터 초대 재발송",
+			description = """
+					**상태**: ✅ 사용 가능
+
+					초대 메일을 다시 보낸다. 목업 SA-02 ② case 4·5의 [재발송] 액션에 대응한다.
+
+					**언제 쓰나**
+					- 목록에서 `invitationDeliveryFailed=true`인 행 — 메일이 나가지 않은 초대
+					- 링크가 만료된 초대 — 만료야말로 재발송이 필요한 상황이라 함께 허용한다
+
+					**요청**
+					- tokenId (경로): 목록 응답의 pendingInvitationTokenId
+
+					**동작**
+					- 새 토큰을 발급하고 **이전 토큰은 무효화한다** — 재발송 뒤에도 옛 링크가 살아 있으면 안 된다.
+					- 초대 원장은 새로 만들지 않고 그대로 둔다. 재발송인지 새 초대인지 구분되고 \
+					`resend_count`가 정확히 쌓인다.
+					- 성공하면 원장이 SENT로 돌아오고 실패 정보가 지워져, 목록의 \
+					`invitationDeliveryFailed`가 false가 된다.
+
+					이미 수락·취소된 초대는 재발송할 수 없다(404).
+
+					**응답**
+					- 재발송 후의 오퍼레이터 목록 전체
+					"""
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "재발송 성공"),
+			@ApiResponse(responseCode = "404", description = "OPERATOR_INVITATION_NOT_FOUND · 이미 수락·취소된 초대"),
+			@ApiResponse(responseCode = "502", description = "INVITE_MAIL_FAILED · 재발송도 실패(자리와 기록은 남는다)")
+	})
+	@PostMapping("/invitations/{tokenId}/resend")
+	public ResponseEntity<OperatorListResponse> resendInvitation(
+			@PathVariable UUID organizationId,
+			@PathVariable UUID tokenId,
+			@Parameter(description = "재발송 요청 추적용 식별자이며 생략 시 서버가 생성합니다.", example = "resend-op-001")
+			@RequestHeader(value = REQUEST_ID_HEADER, required = false) String requestId,
+			@Parameter(hidden = true) Authentication authentication
+	) {
+		return ResponseEntity.ok(
+				operatorService.resendInvitation(organizationId, tokenId, authentication.getName(), requestId)
+		);
 	}
 }

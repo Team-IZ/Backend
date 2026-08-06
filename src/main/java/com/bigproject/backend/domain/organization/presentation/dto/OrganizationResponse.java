@@ -58,7 +58,7 @@ public record OrganizationResponse(
 
 		int traineeCount,
 
-		@Schema(description = "진행 중 세션 수. ⚠ 06_MEAS 세션 계열 테이블이 이번 DDL 범위 밖이라 항상 0입니다.")
+		@Schema(description = "진행 중 세션 수. 시작됐고 아직 끝나지 않은 세션(IN_PROGRESS·PAUSED)만 센다.")
 		int activeSessionCount,
 
 		BigDecimal currentMonthAiCost,

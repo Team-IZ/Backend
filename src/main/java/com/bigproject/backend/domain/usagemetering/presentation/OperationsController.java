@@ -38,6 +38,8 @@ public class OperationsController {
 	@Operation(
 			summary = "기관 월별 저장량·활동·AI 비용 조회",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					지정한 기관의 특정 월(period) 사용량을 조회한다. \
 					슈퍼어드민의 SA-02 ③ `사용량 · AI 비용` 탭과 오퍼레이터의 OP-06 ⑤ `비용` 탭이 함께 쓴다.
 
@@ -73,9 +75,12 @@ public class OperationsController {
 					**단가 미설정 처리** — 단가가 없는 호출은 비용을 0으로 더하지 않고 합계에서 제외하며, \
 					제외된 건수를 aiCost.unpricedCallCount로, 합계가 완전한지를 aiCost.costComplete로 알려준다.
 
-					**아직 채워지지 않는 값**
-					- activity의 완료 세션·채점 회차·발행 리포트 → 06_MEAS·10_RPT 테이블이 범위 밖이라 0
-					- classCosts의 sessionCount → 같은 이유로 0
+					**활동량 집계 기준** — v07에서 06_MEAS·10_RPT 테이블이 생겨 LIVE 경로에서도 실제 값을 센다.
+					- 완료 세션: assessment_session.ended_at이 기간에 들어온 COMPLETED 세션
+					- 채점 회차: project_assessment_round.submission_due_at이 기간에 들어온 회차 \
+					(채점 실행 시각 컬럼이 없어 마감을 실행 시점으로 본다)
+					- 발행 리포트: report.published_at이 기간에 들어온 리포트
+					- classCosts의 sessionCount: 교육생 반 배정을 타고 집계하며, 배정이 해제된 교육생은 제외
 					"""
 	)
 	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'OPERATOR')")
@@ -92,6 +97,8 @@ public class OperationsController {
 	@Operation(
 			summary = "기관 운영 설정 조회",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					지정한 기관의 현재 활성(ACTIVE) 운영 정책을 조회한다. 목업 SA-02 ④ 설정 탭.
 
 					**요청**
@@ -118,6 +125,8 @@ public class OperationsController {
 	@Operation(
 			summary = "기관 운영 설정 변경",
 			description = """
+					**상태**: ✅ 사용 가능
+
 					지정한 기관의 운영 설정을 변경한다. organization_policy는 append-only 이력 테이블이라 \
 					기존 설정을 수정하는 게 아니라 기존 활성 버전을 SUPERSEDED로 닫고 새 버전을 발급하는 방식으로 동작한다.
 

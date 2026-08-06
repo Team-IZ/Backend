@@ -4,9 +4,10 @@ import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.platformgovernance.domain.AiModel;
 import com.bigproject.backend.domain.platformgovernance.domain.AiTier;
+import com.bigproject.backend.domain.platformgovernance.infrastructure.AiModelRepository;
 import com.bigproject.backend.domain.usagemetering.domain.AiUsage;
+import com.bigproject.backend.domain.usagemetering.domain.OperationsActivityRepository;
 import com.bigproject.backend.domain.usagemetering.domain.OperationsCostRepository;
-import com.bigproject.backend.domain.usagemetering.domain.OperationsSchemaPending;
 import com.bigproject.backend.domain.usagemetering.domain.OrganizationUsageSnapshot;
 import com.bigproject.backend.domain.usagemetering.domain.StorageUsageSnapshot;
 import com.bigproject.backend.domain.usagemetering.infrastructure.AiUsageRepository;
@@ -37,6 +38,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -58,7 +60,9 @@ public class OperationsServiceImpl implements OperationsService {
 	private final StorageUsageSnapshotRepository storageUsageSnapshotRepository;
 	private final OrganizationUsageSnapshotRepository organizationUsageSnapshotRepository;
 	private final AiUsageRepository aiUsageRepository;
+	private final AiModelRepository aiModelRepository;
 	private final OperationsCostRepository operationsCostRepository;
+	private final OperationsActivityRepository operationsActivityRepository;
 	private final CurrentUserResolver currentUserResolver;
 
 	@Override
@@ -97,7 +101,7 @@ public class OperationsServiceImpl implements OperationsService {
 						? OrganizationUsageResponse.AggregationSource.SNAPSHOT
 						: OrganizationUsageResponse.AggregationSource.LIVE,
 				resolveStorageUsage(organizationId, from, to, previousFrom),
-				resolveActivityUsage(organizationId, snapshot),
+				resolveActivityUsage(organizationId, from, to, snapshot),
 				resolveAiCostUsage(organizationId, from, to, previousFrom, policy, snapshot),
 				resolveCohortCosts(organizationId, cohortId, from, to),
 				resolveClassCosts(organizationId, cohortId, from, to)
@@ -158,8 +162,7 @@ public class OperationsServiceImpl implements OperationsService {
 				request.storageLimitBytes(),
 				request.dataRetentionDays(),
 				request.defaultDisclosureScope(),
-				request.questionGenerationTierCode(),
-				request.summaryTierCode(),
+				request.codeSessionTierCode(),
 				request.allowManagerInvite(),
 				request.allowDataExport(),
 				request.allowZipSubmission(),
@@ -243,11 +246,13 @@ public class OperationsServiceImpl implements OperationsService {
 	}
 
 	/**
-	 * 목업 `사용 규모` 4지표. 스냅샷이 있으면 그 값을 쓰고, 없으면 activeTrainees만 실시간으로 센다.
-	 * 세션·채점·리포트 3지표는 06_MEAS·10_RPT 테이블이 아직 없어 스냅샷에 값이 없으면 0이다.
+	 * 목업 `사용 규모` 4지표. 스냅샷이 있으면 그 값을 쓰고, 없으면 네 지표를 모두 실시간으로 센다.
+	 *
+	 * <p>v07에서 06_MEAS·10_RPT 테이블이 생겨 세션·채점·리포트도 LIVE 집계가 가능해졌다
+	 * (이전에는 테이블이 없어 0 고정이었다).
 	 */
 	private OrganizationUsageResponse.ActivityUsage resolveActivityUsage(
-			UUID organizationId, Optional<OrganizationUsageSnapshot> snapshot
+			UUID organizationId, Instant from, Instant to, Optional<OrganizationUsageSnapshot> snapshot
 	) {
 		if (snapshot.isPresent()) {
 			OrganizationUsageSnapshot found = snapshot.get();
@@ -265,9 +270,9 @@ public class OperationsServiceImpl implements OperationsService {
 
 		return new OrganizationUsageResponse.ActivityUsage(
 				activeTrainees,
-				OperationsSchemaPending.COMPLETED_SESSIONS,
-				OperationsSchemaPending.GRADING_ROUNDS,
-				OperationsSchemaPending.GENERATED_REPORTS
+				operationsActivityRepository.countCompletedSessions(organizationId, from, to),
+				operationsActivityRepository.countGradingRounds(organizationId, from, to),
+				operationsActivityRepository.countPublishedReports(organizationId, from, to)
 		);
 	}
 
@@ -285,8 +290,9 @@ public class OperationsServiceImpl implements OperationsService {
 	) {
 		List<AiUsage> usages = aiUsageRepository.findByOrgIdAndOccurredAtBetween(organizationId, from, to);
 
+		Map<String, String> modelDisplayNames = resolveModelDisplayNames(usages);
 		List<OrganizationUsageResponse.ModelUsage> models = groupByFeatureAndModel(usages).entrySet().stream()
-				.map(entry -> toModelUsage(entry.getKey(), entry.getValue()))
+				.map(entry -> toModelUsage(entry.getKey(), entry.getValue(), modelDisplayNames))
 				.toList();
 
 		long unpricedCallCount = snapshot
@@ -353,14 +359,19 @@ public class OperationsServiceImpl implements OperationsService {
 		if (cohortId == null) {
 			return List.of();
 		}
+		// 세션 수는 비용과 조인 경로가 완전히 달라(교육생 반 배정을 타고 내려간다) 한 쿼리에 합치면
+		// 카티션 곱으로 비용이 부풀어 오른다. 반별로 따로 세어 여기서 합친다.
+		Map<UUID, Long> sessionsByClass =
+				operationsActivityRepository.countCompletedSessionsByClass(organizationId, cohortId, from, to);
+
 		return operationsCostRepository.findClassCosts(organizationId, cohortId, from, to).stream()
 				.map(cost -> new OrganizationUsageResponse.ClassCostUsage(
 						cost.classId(),
 						cost.name(),
 						cost.managerName(),
 						cost.traineeCount(),
-						// TODO(schema-align): 세션 테이블(06_MEAS)이 생기면 반별 세션 수를 집계한다.
-						OperationsSchemaPending.COMPLETED_SESSIONS,
+						// 세션이 한 건도 없는 반은 맵에 키가 없다 — 그 반은 실제로 0이다.
+						sessionsByClass.getOrDefault(cost.classId(), 0L),
 						cost.cost(),
 						cost.unpricedCallCount()
 				))
@@ -375,14 +386,34 @@ public class OperationsServiceImpl implements OperationsService {
 		return cost.divide(BigDecimal.valueOf(traineeCount), COST_SCALE, RoundingMode.HALF_UP);
 	}
 
-	// (기능 코드, 모델) 조합별로 묶어 모델별 사용량 내역(ModelUsage)을 만든다.
+	/**
+	 * 사용 원장에 남은 모델 코드를 모델 마스터의 표시명으로 해석한다.
+	 * v07에서 ai_usage가 model_code만 복사해 두므로 표시명은 여기서 한 번에 조회한다(코드당 N+1 방지).
+	 * 마스터에서 사라진 모델은 표시명이 없으므로 호출부가 코드를 그대로 노출한다.
+	 */
+	private Map<String, String> resolveModelDisplayNames(List<AiUsage> usages) {
+		Set<String> codes = usages.stream()
+				.map(AiUsage::getModelCode)
+				.collect(Collectors.toSet());
+		if (codes.isEmpty()) {
+			return Map.of();
+		}
+		return aiModelRepository.findByModelCodeIn(codes).stream()
+				.collect(Collectors.toMap(AiModel::getModelCode, AiModel::getDisplayName, (first, ignored) -> first));
+	}
+
+	// (기능 코드, 티어, 모델 코드) 조합별로 묶어 모델별 사용량 내역(ModelUsage)을 만든다.
 	private Map<UsageGroupKey, List<AiUsage>> groupByFeatureAndModel(List<AiUsage> usages) {
 		return usages.stream()
 				.collect(Collectors.groupingBy(usage ->
-						new UsageGroupKey(usage.getFeatureCode(), usage.getTierCode(), usage.getModel())));
+						new UsageGroupKey(usage.getFeatureCode(), usage.getTierCode(), usage.getModelCode())));
 	}
 
-	private OrganizationUsageResponse.ModelUsage toModelUsage(UsageGroupKey key, List<AiUsage> group) {
+	private OrganizationUsageResponse.ModelUsage toModelUsage(
+			UsageGroupKey key,
+			List<AiUsage> group,
+			Map<String, String> modelDisplayNames
+	) {
 		long calls = group.size();
 		long inputTokens = group.stream().mapToLong(AiUsage::getInputTokenCount).sum();
 		long outputTokens = group.stream().mapToLong(AiUsage::getOutputTokenCount).sum();
@@ -406,7 +437,7 @@ public class OperationsServiceImpl implements OperationsService {
 		return new OrganizationUsageResponse.ModelUsage(
 				key.featureCode().name(),
 				key.tierCode(),
-				key.model().getDisplayName(),
+				modelDisplayNames.getOrDefault(key.modelCode(), key.modelCode()),
 				calls,
 				inputTokens,
 				outputTokens,
@@ -490,8 +521,7 @@ public class OperationsServiceImpl implements OperationsService {
 				policy.getStorageLimitBytes(),
 				policy.getRetentionDays(),
 				policy.getDefaultDisclosureScope(),
-				policy.getQuestionGenerationTierCode(),
-				policy.getSummaryTierCode(),
+				policy.getCodeSessionTierCode(),
 				policy.getAllowManagerInvite(),
 				policy.getAllowDataExport(),
 				policy.getAllowZipSubmission(),
@@ -501,7 +531,7 @@ public class OperationsServiceImpl implements OperationsService {
 		);
 	}
 
-	/** (기능, 티어, 모델) 조합. v06에서 티어가 호출 스냅샷으로 남아 같은 모델이라도 티어가 다르면 별도 행으로 보여준다. */
-	private record UsageGroupKey(AiUsage.FeatureCode featureCode, AiTier tierCode, AiModel model) {
+	/** (기능, 티어, 모델 코드) 조합. 티어가 호출 스냅샷으로 남아 같은 모델이라도 티어가 다르면 별도 행으로 보여준다. */
+	private record UsageGroupKey(AiUsage.FeatureCode featureCode, AiTier tierCode, String modelCode) {
 	}
 }

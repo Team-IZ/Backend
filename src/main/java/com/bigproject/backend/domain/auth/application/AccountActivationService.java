@@ -21,6 +21,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -55,14 +56,7 @@ public class AccountActivationService {
 	) {
 		validatePassword(request.password(), request.passwordConfirmation());
 		validateRequiredConsents(request.serviceTermsAgreed(), request.privacyCollectionAgreed());
-		AccountActivationTarget target = findTarget(
-				request.invitationToken(),
-				request.userId(),
-				InvitationPurpose.INVITE_OPERATOR_MANAGER
-		);
-		if (target.role() != Role.OPERATOR && target.role() != Role.MANAGER) {
-			throw invalidInvitation();
-		}
+		AccountActivationTarget target = findInvitedStaff(request.invitationToken(), request.userId());
 		return activate(
 				target,
 				request.name().trim(),
@@ -118,13 +112,48 @@ public class AccountActivationService {
 		);
 	}
 
-	private AccountActivationTarget findTarget(
+	/**
+	 * 초대받은 운영 계정(슈퍼어드민·오퍼레이터·매니저)의 활성화 대상을 찾는다.
+	 *
+	 * <p><b>토큰 목적으로 허용 역할을 가른다.</b> INVITE_SUPER_ADMIN 토큰은 SUPER_ADMIN만,
+	 * INVITE_OPERATOR_MANAGER 토큰은 OPERATOR·MANAGER만 통과시킨다. 목적과 역할을 교차 허용하면
+	 * 오퍼레이터 초대 토큰으로 슈퍼어드민이 되는 권한 상승 경로가 열린다.
+	 */
+	private AccountActivationTarget findInvitedStaff(String invitationToken, UUID userId) {
+		AccountActivationTarget superAdmin = findTargetOrEmpty(
+				invitationToken, userId, InvitationPurpose.INVITE_SUPER_ADMIN
+		).orElse(null);
+		if (superAdmin != null) {
+			if (superAdmin.role() != Role.SUPER_ADMIN) {
+				throw invalidInvitation();
+			}
+			return superAdmin;
+		}
+
+		AccountActivationTarget target = findTarget(
+				invitationToken, userId, InvitationPurpose.INVITE_OPERATOR_MANAGER
+		);
+		if (target.role() != Role.OPERATOR && target.role() != Role.MANAGER) {
+			throw invalidInvitation();
+		}
+		return target;
+	}
+
+	private Optional<AccountActivationTarget> findTargetOrEmpty(
 			String invitationToken,
 			UUID userId,
 			InvitationPurpose purpose
 	) {
 		String tokenHash = tokenHasher.hash(invitationToken.trim());
-		return accountActivationRepository.findTargetForUpdate(tokenHash, userId, purpose, Instant.now())
+		return accountActivationRepository.findTargetForUpdate(tokenHash, userId, purpose, Instant.now());
+	}
+
+	private AccountActivationTarget findTarget(
+			String invitationToken,
+			UUID userId,
+			InvitationPurpose purpose
+	) {
+		return findTargetOrEmpty(invitationToken, userId, purpose)
 				.orElseThrow(this::invalidInvitation);
 	}
 
