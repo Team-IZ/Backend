@@ -1,10 +1,14 @@
 package com.bigproject.backend.domain.analytics.presentation;
 
+import com.bigproject.backend.domain.analytics.application.ActionRequiredAnalyticsService;
 import com.bigproject.backend.domain.analytics.application.CohortComparisonAnalyticsService;
+import com.bigproject.backend.domain.analytics.application.GroupGapAnalyticsService;
 import com.bigproject.backend.domain.analytics.application.RiskTraineeAnalyticsService;
 import com.bigproject.backend.domain.analytics.domain.ComparisonSort;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeSort;
+import com.bigproject.backend.domain.analytics.presentation.dto.ActionRequiredResponse;
 import com.bigproject.backend.domain.analytics.presentation.dto.CohortComparisonResponse;
+import com.bigproject.backend.domain.analytics.presentation.dto.GroupGapResponse;
 import com.bigproject.backend.domain.analytics.presentation.dto.RiskTraineeRateResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -37,6 +41,74 @@ public class AnalyticsController {
 
 	private final RiskTraineeAnalyticsService riskTraineeAnalyticsService;
 	private final CohortComparisonAnalyticsService cohortComparisonAnalyticsService;
+	private final ActionRequiredAnalyticsService actionRequiredAnalyticsService;
+	private final GroupGapAnalyticsService groupGapAnalyticsService;
+
+	@Operation(
+			summary = "조치 필요 경보 조회",
+			description = """
+					오퍼레이터 대시보드의 '조치 필요' 네 경보를 한 번에 조회합니다.
+
+					담당 매니저 미배정, 검증 개념 공백, 집단 미달, 면담 적체이며 유형별로 가장 나쁜 한 건씩
+					올립니다. 최댓값 한 건만 고르므로 별도 임계값 정책이 없습니다.
+					해당 경보가 없으면 그 필드는 null이고 actionCount는 null이 아닌 경보 수입니다.
+
+					경보는 파생 조회이며 해소·무시 상태를 저장하지 않습니다. 원인이 사라지면 경보도
+					사라지므로 조치 완료를 기록하는 쓰기 API가 없습니다.
+
+					회차 범위는 미니프로젝트로 좁히되 면담 적체만 빅프로젝트 회차도 포함합니다.
+					"""
+	)
+	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "조치 필요 경보 조회 성공"),
+			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "역할·계정·기관 상태 또는 기수 접근 범위가 허용되지 않음"),
+			@ApiResponse(responseCode = "404", description = "조회할 기수를 찾을 수 없음")
+	})
+	@GetMapping("/actions")
+	public ResponseEntity<ActionRequiredResponse> findActionsRequired(
+			@Parameter(description = "분석할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID cohortId,
+			@Parameter(hidden = true)
+			Authentication authentication
+	) {
+		return ResponseEntity.ok(
+				actionRequiredAnalyticsService.findActionsRequired(cohortId, authentication.getName()));
+	}
+
+	@Operation(
+			summary = "집단 미달 목록 조회",
+			description = """
+					기수 전체에서 반 인원의 절반을 넘는 인원이 한 검증 개념에서 2단 이하인 조합을 조회합니다.
+
+					개인 위험 사유가 아니라 반 문제로 분류하며, 시스템은 표시까지만 하고 이후 처리는
+					기관 판단입니다.
+
+					분자는 실제 응시를 마친 인원 중 2단 이하만 셉니다. 미응시·무효 확정은 0단으로
+					치환하지 않으므로 분자에서 빠지고 분모(반 인원 전체)에만 남습니다.
+
+					발행된 리포트에 의존하지 않고 원천에서 실시간 집계하므로 발행 전에도 값이 나옵니다.
+					목록이 비어 있으면 emptyReasonCode로 평가 자체가 없는 경우와 미달이 실제로 0건인
+					경우를 구분합니다.
+					"""
+	)
+	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "집단 미달 목록 조회 성공"),
+			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "역할·계정·기관 상태 또는 기수 접근 범위가 허용되지 않음"),
+			@ApiResponse(responseCode = "404", description = "조회할 기수를 찾을 수 없음")
+	})
+	@GetMapping("/group-gaps")
+	public ResponseEntity<GroupGapResponse> findGroupGaps(
+			@Parameter(description = "분석할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID cohortId,
+			@Parameter(hidden = true)
+			Authentication authentication
+	) {
+		return ResponseEntity.ok(groupGapAnalyticsService.findGroupGaps(cohortId, authentication.getName()));
+	}
 
 	@Operation(
 			summary = "회차별 기수 전체·반별 위험 교육생 비율 조회",
