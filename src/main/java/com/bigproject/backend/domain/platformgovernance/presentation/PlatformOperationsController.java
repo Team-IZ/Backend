@@ -53,10 +53,8 @@ public class PlatformOperationsController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "플랫폼 모델·단가 설정 조회",
+			summary = "플랫폼 모델·단가 설정 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-03 ① `모델 · 단가` 탭 **전체를 한 번에** 채운다. 이 화면에서 다른 조회 API 는 필요 없다.
 
 					## 요청
@@ -132,10 +130,8 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "채점 모델 변경 (전 기관 재캘리브레이션 유발)",
+			summary = "채점 모델 변경 (전 기관 재캘리브레이션 유발) | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-03 ① `채점 · 고정 · claude-x` 행의 변경 액션.
 
 					## ⚠️ 되돌릴 수 없다
@@ -204,10 +200,8 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "티어 ↔ 모델 매핑 변경",
+			summary = "티어 ↔ 모델 매핑 변경 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-03 ① `코드 세션 · 정확도 우선 / 균형 / 비용 우선` 3티어 매핑을 바꾼다.
 					**한 번에 한 티어씩** 바꾼다.
 
@@ -260,10 +254,8 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "모델 단가 수정",
+			summary = "모델 단가 수정 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-03 ① `단가 · 모델별 입력·출력 토큰 단가` 행의 `입력`/`수정` 액션.
 
 					## 요청
@@ -327,10 +319,8 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "슈퍼어드민 계정 목록",
+			summary = "슈퍼어드민 계정 목록 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-03 ② `슈퍼어드민 계정` 탭의 목록.
 
 					## 요청
@@ -376,10 +366,8 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "슈퍼어드민 초대",
+			summary = "슈퍼어드민 초대 | ⚠️ 사용 불가",
 			description = """
-					**상태**: ⚠️ 사용 불가
-
 					초대 메일 발송까지는 동작하지만 **받은 사람이 가입할 수 없다.** 수락 경로가 막혀 있어
 					초대해도 활성 슈퍼어드민이 늘지 않으므로, 프론트는 아직 이 API를 연결하지 않는다.
 
@@ -458,10 +446,8 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "슈퍼어드민 정지 · 재활성",
+			summary = "슈퍼어드민 정지 · 재활성 | ⚠️ 사용 불가",
 			description = """
-					**상태**: ⚠️ 사용 불가
-
 					API 자체는 정상 동작하지만 **현재 환경에서는 정지를 성공시킬 수 없다.**
 					활성 슈퍼어드민이 1명뿐이라 아래 `LAST_SUPER_ADMIN` 방어에 항상 걸린다.
 					2명 이상으로 만들려면 슈퍼어드민 초대의 수락 경로가 열려야 하는데 그쪽이 막혀 있다

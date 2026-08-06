@@ -55,10 +55,8 @@ public class AuthController {
 	private final PasswordResetService passwordResetService;
 
 	@Operation(
-			summary = "비밀번호 재설정 안내 요청",
+			summary = "비밀번호 재설정 안내 요청 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					비밀번호 재설정 안내 메일 발송을 요청한다. 인증 없이 호출한다.
 
 					**요청**
@@ -89,10 +87,8 @@ public class AuthController {
 	}
 
 	@Operation(
-			summary = "비밀번호 재설정 확정",
+			summary = "비밀번호 재설정 확정 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					메일 링크의 1회용 토큰으로 비밀번호를 실제로 바꾼다. 인증 없이 호출한다.
 
 					**요청**
@@ -133,10 +129,8 @@ public class AuthController {
 	}
 
 	@Operation(
-			summary = "통합 로그인",
+			summary = "통합 로그인 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					슈퍼어드민·오퍼레이터·매니저·교육생이 **같은 화면에서** 로그인한다. 역할별 로그인 URL이 따로 없다.
 
 					**요청**
@@ -187,10 +181,8 @@ public class AuthController {
 	}
 
 	@Operation(
-			summary = "액세스 토큰 재발급",
+			summary = "액세스 토큰 재발급 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					액세스 토큰이 만료됐을 때 새로 발급받는다. 만료된 액세스 토큰을 보낼 필요는 없다 —
 					인증은 **리프레시 토큰 쿠키로만** 한다.
 
@@ -233,10 +225,8 @@ public class AuthController {
 	}
 
 	@Operation(
-			summary = "로그아웃",
+			summary = "로그아웃 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					서버에서 리프레시 토큰을 폐기하고 인증 쿠키를 만료시킨다.
 
 					**요청**
@@ -278,10 +268,8 @@ public class AuthController {
 	}
 
 	@Operation(
-			summary = "초대 토큰 해석",
+			summary = "초대 토큰 해석 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					초대 메일 링크를 열었을 때 **가장 먼저** 호출한다. 토큰이 아직 쓸 수 있는지 확인하고,
 					가입 화면에 뿌릴 대상 사용자 ID와 이메일을 받아온다. 인증 없이 호출한다.
 
@@ -312,10 +300,8 @@ public class AuthController {
 	}
 
 	@Operation(
-			summary = "초대받은 오퍼레이터·매니저 가입",
+			summary = "초대받은 오퍼레이터·매니저 가입 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					초대받은 오퍼레이터 또는 매니저가 이름·비밀번호를 정해 계정을 활성화한다(AU-02).
 					인증 없이 호출하며, 신원은 초대 토큰이 증명한다. 앞서 `/auth/invitations/resolve`로 받은
 					user_id를 그대로 넘긴다.
@@ -363,10 +349,8 @@ public class AuthController {
 	}
 
 	@Operation(
-			summary = "초대받은 교육생 계정 활성화",
+			summary = "초대받은 교육생 계정 활성화 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					초대받은 교육생이 비밀번호를 정해 계정을 활성화한다. 인증 없이 호출하며,
 					신원은 초대 토큰이 증명한다.
 

@@ -37,10 +37,8 @@ public class MemberController {
 	private final MemberInvitationService memberInvitationService;
 
 	@Operation(
-			summary = "매니저 초대",
+			summary = "매니저 초대 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					오퍼레이터가 자기 기관의 **매니저**를 초대합니다(OP-06). \
 					이 경로가 만드는 계정은 항상 MANAGER이며, 다른 역할은 만들 수 없습니다.
 
