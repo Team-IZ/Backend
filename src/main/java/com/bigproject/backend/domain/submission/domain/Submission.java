@@ -51,8 +51,12 @@ public class Submission {
 	private SubmissionMethod method;
 
 	/**
-	 * 분석 성공 후에만 채워진다. GitHub 접근 주체가 AI 서버라서 제출 시점에는 알 수 없다(S-01).
-	 * 제출된 URL 원문은 {@link #repositoryVerificationId}가 가리키는 행에만 남는다.
+	 * GitHub 제출은 접수 시점에 채운다. 팀의 ACTIVE {@code repository} 행을 가리키며, 제출된 URL은
+	 * 그 행이 보관한다(S-12).
+	 *
+	 * <p>같은 팀이 재제출로 주소를 바꾸면 그 행의 URL이 갱신되므로, <b>과거 제출이 이 FK로 따라가면
+	 * 지금의 URL을 보게 된다.</b> 제출 시점의 URL이 필요하면 분석 때 만들어지는
+	 * {@code repository_verification}을 봐야 한다.
 	 */
 	@Column(name = "repository_id")
 	private UUID repositoryId;
@@ -83,8 +87,9 @@ public class Submission {
 	private SubmissionStatus status;
 
 	/**
-	 * GitHub 제출은 {@code repository_verification.requested_at}에서 가져온다.
-	 * 이 값을 나중 시각으로 잡으면 마감 직전 제출이 LATE/MISSED로 잘못 판정된다.
+	 * 교육생이 제출을 요청한 시각이다. 서버가 요청을 받은 시점으로 확정하며 이후 어떤 외부 처리에도
+	 * 영향받지 않는다(S-12). 마감 대비 ON_TIME/LATE/MISSED 판정의 기준이라, 저장소 확인이나 분석에
+	 * 걸린 시간이 이 값을 밀면 마감 직전 제출이 LATE로 잘못 판정된다.
 	 */
 	@Column(name = "submitted_at", nullable = false, updatable = false)
 	private Instant submittedAt;
@@ -96,32 +101,47 @@ public class Submission {
 	@Column(name = "failure_reason", columnDefinition = "text")
 	private String failureReason;
 
-	@Column(name = "repository_verification_id", updatable = false)
+	/**
+	 * 분석 배치가 저장소 확인을 시작할 때 채운다. 제출 시점에는 NULL이다.
+	 *
+	 * <p>{@code updatable = false}가 아니다. {@code repository_verification.requested_at}이 "확인 시작
+	 * 시각"으로 재정의되면서(S-12) 그 행이 제출이 아니라 분석 시점에 만들어지기 때문이다.
+	 */
+	@Column(name = "repository_verification_id")
 	private UUID repositoryVerificationId;
+
+	/**
+	 * 클라이언트가 보낸 제출 요청 멱등키. GitHub·ZIP이 같은 자리를 쓴다(S-13).
+	 * {@code uq_submission_request_idempotency_key}가 같은 키의 동시 재시도까지 막는다.
+	 */
+	@Column(name = "request_idempotency_key", updatable = false)
+	private UUID requestIdempotencyKey;
 
 	private Submission(
 			UUID orgId,
 			UUID teamId,
 			UUID assessmentRoundId,
 			SubmissionMethod method,
+			UUID repositoryId,
 			String requestedBranch,
 			UUID supersedesSubmissionId,
 			UUID submittedBy,
 			SubmissionStatus status,
 			Instant submittedAt,
-			UUID repositoryVerificationId
+			UUID requestIdempotencyKey
 	) {
 		this.orgId = orgId;
 		this.teamId = teamId;
 		this.assessmentRoundId = assessmentRoundId;
 		this.method = method;
+		this.repositoryId = repositoryId;
 		this.requestedBranch = requestedBranch;
 		this.supersedesSubmissionId = supersedesSubmissionId;
 		this.submittedBy = submittedBy;
 		this.status = status;
 		this.submittedAt = submittedAt;
 		this.current = true;
-		this.repositoryVerificationId = repositoryVerificationId;
+		this.requestIdempotencyKey = requestIdempotencyKey;
 	}
 
 	/**
@@ -132,23 +152,25 @@ public class Submission {
 			UUID orgId,
 			UUID teamId,
 			UUID assessmentRoundId,
+			UUID repositoryId,
 			String requestedBranch,
 			UUID supersedesSubmissionId,
 			UUID submittedBy,
 			Instant submittedAt,
-			UUID repositoryVerificationId
+			UUID requestIdempotencyKey
 	) {
 		return new Submission(
 				orgId,
 				teamId,
 				assessmentRoundId,
 				SubmissionMethod.GITHUB_URL,
+				repositoryId,
 				requestedBranch,
 				supersedesSubmissionId,
 				submittedBy,
 				SubmissionStatus.ACCEPTED,
 				submittedAt,
-				repositoryVerificationId
+				requestIdempotencyKey
 		);
 	}
 
@@ -162,7 +184,8 @@ public class Submission {
 			UUID assessmentRoundId,
 			UUID supersedesSubmissionId,
 			UUID submittedBy,
-			Instant submittedAt
+			Instant submittedAt,
+			UUID requestIdempotencyKey
 	) {
 		return new Submission(
 				orgId,
@@ -170,11 +193,12 @@ public class Submission {
 				assessmentRoundId,
 				SubmissionMethod.ZIP_WITH_GITLOG,
 				null,
+				null,
 				supersedesSubmissionId,
 				submittedBy,
 				SubmissionStatus.VALIDATING,
 				submittedAt,
-				null
+				requestIdempotencyKey
 		);
 	}
 

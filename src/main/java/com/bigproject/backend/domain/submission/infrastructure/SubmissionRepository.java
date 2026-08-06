@@ -14,9 +14,6 @@ public interface SubmissionRepository extends JpaRepository<Submission, UUID> {
 	 */
 	Optional<Submission> findByTeamIdAndAssessmentRoundIdAndCurrentIsTrue(UUID teamId, UUID assessmentRoundId);
 
-	/**
-	 * 멱등 재요청 판정용. 확인 실행 1건에 붙는 제출은 1건이므로, 같은 {@code X-Request-Id}로 만들어진
-	 * verification을 찾으면 그때 접수한 제출에 그대로 도달한다.
-	 */
-	Optional<Submission> findByRepositoryVerificationId(UUID repositoryVerificationId);
+	/** 멱등 재요청 판정용. uq_submission_request_idempotency_key 가 키당 1건을 보장한다. */
+	Optional<Submission> findByRequestIdempotencyKey(UUID requestIdempotencyKey);
 }

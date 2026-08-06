@@ -28,6 +28,7 @@ public interface SubmissionContextRepository extends Repository<Submission, UUID
 	 */
 	@Query(value = """
 			SELECT r.org_id            AS orgId,
+			       r.project_id        AS projectId,
 			       t.team_id           AS teamId,
 			       r.status            AS roundStatus,
 			       r.submission_due_at AS submissionDueAt,
@@ -58,6 +59,9 @@ public interface SubmissionContextRepository extends Repository<Submission, UUID
 
 	interface SubmissionContext {
 		UUID getOrgId();
+
+		/** repository 행을 만들 때 필요하다. repository.project_id 가 NOT NULL 이다. */
+		UUID getProjectId();
 
 		UUID getTeamId();
 

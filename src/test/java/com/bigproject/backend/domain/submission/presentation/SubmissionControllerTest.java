@@ -62,7 +62,6 @@ class SubmissionControllerTest {
 	void acceptsGithubUrlSubmissionAsJson() throws Exception {
 		UUID userId = UUID.randomUUID();
 		UUID submissionId = UUID.randomUUID();
-		UUID verificationId = UUID.randomUUID();
 		when(currentUserResolver.resolveCurrentMemberId()).thenReturn(userId);
 		when(submissionService.submitGithubUrl(eq(userId), any(CreateGithubSubmissionRequest.class), any(UUID.class)))
 				.thenReturn(new SubmissionResponse(
@@ -72,7 +71,7 @@ class SubmissionControllerTest {
 						Instant.parse("2026-08-06T09:00:00Z"),
 						true,
 						null,
-						verificationId,
+						null,
 						null
 				));
 
@@ -89,9 +88,11 @@ class SubmissionControllerTest {
 								""".formatted(UUID.randomUUID())))
 				.andExpect(status().isCreated())
 				.andExpect(jsonPath("$.submissionId").value(submissionId.toString()))
+				// 저장소 접근은 마감 후 분석 단계라 접수는 즉시 ACCEPTED다.
 				.andExpect(jsonPath("$.status").value("ACCEPTED"))
-				// 제출된 URL 원문은 submission이 아니라 이 확인 실행 행에만 남는다.
-				.andExpect(jsonPath("$.repositoryVerificationId").value(verificationId.toString()));
+				// 확인 실행 행은 분석 배치가 만든다(S-12). 제출 응답에는 아직 없다 — 여기에 값이 실리면
+				// 프론트가 "저장소 확인이 끝났다"로 읽는다.
+				.andExpect(jsonPath("$.repositoryVerificationId").doesNotExist());
 	}
 
 	@Test

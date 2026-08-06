@@ -2,12 +2,13 @@ package com.bigproject.backend.domain.submission.application;
 
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepository;
 import com.bigproject.backend.domain.submission.domain.GithubRepositoryUrl;
-import com.bigproject.backend.domain.submission.domain.RepositoryVerification;
+import com.bigproject.backend.domain.submission.domain.Repository;
+import com.bigproject.backend.domain.submission.domain.RepositoryStatus;
 import com.bigproject.backend.domain.submission.domain.Submission;
 import com.bigproject.backend.domain.submission.domain.SubmissionArtifact;
 import com.bigproject.backend.domain.submission.domain.SubmissionErrorCode;
 import com.bigproject.backend.domain.submission.domain.SubmissionException;
-import com.bigproject.backend.domain.submission.infrastructure.RepositoryVerificationRepository;
+import com.bigproject.backend.domain.submission.infrastructure.GithubRepositoryRepository;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionArtifactRepository;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionContextRepository;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionContextRepository.SubmissionContext;
@@ -42,7 +43,7 @@ public class SubmissionService {
 	private static final String ZIP_ARTIFACT_TYPE = "ZIP_WITH_GITLOG";
 
 	private final SubmissionRepository submissionRepository;
-	private final RepositoryVerificationRepository repositoryVerificationRepository;
+	private final GithubRepositoryRepository githubRepositoryRepository;
 	private final SubmissionArtifactRepository submissionArtifactRepository;
 	private final SubmissionContextRepository submissionContextRepository;
 	private final AnalysisJobRepository analysisJobRepository;
@@ -58,8 +59,12 @@ public class SubmissionService {
 	/**
 	 * GitHub 저장소 URL 제출·재제출.
 	 *
-	 * <p>{@code repository_verification}을 반드시 함께 만든다. {@code submission.repository_id}가 분석 성공
-	 * 전까지 NULL이라 제출된 URL 원문이 남는 자리가 그 행뿐이기 때문이다.
+	 * <p><b>{@code repository_verification}을 여기서 만들지 않는다.</b> 그 행의 {@code requested_at}이
+	 * "코드 분석이 저장소 확인을 시작한 시각"으로 재정의되면서(S-12) 제출 시점에는 채울 값이 없다.
+	 * 확인 실행 행은 마감 후 분석 배치가 만든다.
+	 *
+	 * <p>제출된 URL은 팀의 ACTIVE {@code repository} 행이 보관한다. 브랜치는 제출마다 다를 수 있어
+	 * {@code submission.requested_branch}가 따로 갖는다.
 	 */
 	@Transactional
 	public SubmissionResponse submitGithubUrl(
@@ -71,42 +76,55 @@ public class SubmissionService {
 
 		// 멱등: 같은 키로 이미 접수했다면 그때 만든 제출을 그대로 돌려준다.
 		// uq_submission_current는 이를 막지 못한다 — 두 번째 제출이 첫 번째를 supersede할 뿐이다.
-		Submission replayed = repositoryVerificationRepository.findByRequestIdempotencyKey(idempotencyKey)
-				.flatMap(verification -> submissionRepository
-						.findByRepositoryVerificationId(verification.getVerificationId()))
-				.orElse(null);
+		Submission replayed = submissionRepository.findByRequestIdempotencyKey(idempotencyKey).orElse(null);
 		if (replayed != null) {
 			return SubmissionResponse.of(requireSameTarget(replayed, request.assessmentRoundId()), null);
 		}
 
 		GithubRepositoryUrl repositoryUrl = GithubRepositoryUrl.parse(request.repositoryUrl());
-		Instant requestedAt = Instant.now();
-
-		RepositoryVerification verification = repositoryVerificationRepository.save(RepositoryVerification.pending(
-				context.getOrgId(),
-				context.getTeamId(),
-				repositoryUrl.normalized(),
-				normalizeBranch(request.branch()),
-				requestedAt,
-				idempotencyKey
-		));
+		Instant submittedAt = Instant.now();
+		Repository repository = upsertTeamRepository(context, repositoryUrl, submittedAt);
 
 		UUID supersededId = supersedeCurrentSubmission(context.getTeamId(), request.assessmentRoundId());
 
-		// submitted_at은 verification.requested_at을 그대로 쓴다. 나중 시각을 쓰면 마감 직전 제출이
-		// 확인에 걸린 시간만큼 밀려 LATE/MISSED로 잘못 판정된다.
 		Submission submission = submissionRepository.save(Submission.acceptGithubUrl(
 				context.getOrgId(),
 				context.getTeamId(),
 				request.assessmentRoundId(),
+				repository.getRepositoryId(),
 				normalizeBranch(request.branch()),
 				supersededId,
 				userId,
-				requestedAt,
-				verification.getVerificationId()
+				submittedAt,
+				idempotencyKey
 		));
 
 		return SubmissionResponse.of(submission, null);
+	}
+
+	/**
+	 * 팀의 현재 저장소를 확정한다. 없으면 만들고, 있으면 주소만 갱신한다.
+	 *
+	 * <p>새 행을 만들지 않는 이유는 {@code uq_repository_active_per_team}이 팀당 ACTIVE 1건을 강제하기
+	 * 때문이다. 재제출로 주소가 바뀌면 기존 행이 새 주소를 가리키게 되고, <b>덮어쓴 이전 주소는 남지
+	 * 않는다.</b> 마감 후 배치는 {@code is_current=TRUE} 제출만 분석하므로 기능상 문제는 없지만,
+	 * 과거 제출의 주소를 되돌아볼 수는 없다.
+	 */
+	private Repository upsertTeamRepository(
+			SubmissionContext context, GithubRepositoryUrl url, Instant now) {
+		return githubRepositoryRepository.findByTeamIdAndStatus(context.getTeamId(), RepositoryStatus.ACTIVE)
+				.map(existing -> {
+					existing.changeRepositoryUrl(url.original(), url.normalized(), now);
+					return existing;
+				})
+				.orElseGet(() -> githubRepositoryRepository.save(Repository.active(
+						context.getProjectId(),
+						context.getTeamId(),
+						context.getOrgId(),
+						url.original(),
+						url.normalized(),
+						now
+				)));
 	}
 
 	/**
@@ -129,13 +147,12 @@ public class SubmissionService {
 
 		// 멱등 판정을 파일 검증보다 먼저 한다. 재시도된 업로드를 다시 읽고 저장하는 비용을 아낄 수 있고,
 		// 수십 MB 업로드에서는 그 차이가 크다.
-		SubmissionArtifact replayed = submissionArtifactRepository
-				.findByRequestIdempotencyKey(idempotencyKey).orElse(null);
+		Submission replayed = submissionRepository.findByRequestIdempotencyKey(idempotencyKey).orElse(null);
 		if (replayed != null) {
-			Submission submission = submissionRepository.findById(replayed.getSubmissionId())
-					.orElseThrow(() -> new SubmissionException(SubmissionErrorCode.SUBMISSION_NOT_FOUND));
-			return SubmissionResponse.of(
-					requireSameTarget(submission, assessmentRoundId), replayed.getArtifactId());
+			UUID artifactId = submissionArtifactRepository.findBySubmissionId(replayed.getSubmissionId())
+					.map(SubmissionArtifact::getArtifactId)
+					.orElse(null);
+			return SubmissionResponse.of(requireSameTarget(replayed, assessmentRoundId), artifactId);
 		}
 
 		requireReadableZip(file);
@@ -148,7 +165,8 @@ public class SubmissionService {
 				assessmentRoundId,
 				supersededId,
 				userId,
-				Instant.now()
+				Instant.now(),
+				idempotencyKey
 		));
 
 		// 저장 키에 submissionId가 들어가야 해서 INSERT 이후에 저장한다. 트랜잭션이 뒤에서 롤백되면
@@ -170,8 +188,7 @@ public class SubmissionService {
 				stored.storageUri(),
 				stored.contentHash(),
 				stored.sizeBytes(),
-				maxZipBytes,
-				idempotencyKey
+				maxZipBytes
 		));
 
 		return SubmissionResponse.of(submission, artifact.getArtifactId());

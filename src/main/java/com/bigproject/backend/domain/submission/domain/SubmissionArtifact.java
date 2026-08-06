@@ -77,13 +77,6 @@ public class SubmissionArtifact {
 	@Column(name = "extraction_policy_version")
 	private Integer extractionPolicyVersion;
 
-	/**
-	 * 업로드 요청의 멱등키. 같은 값의 재요청은 새 제출을 만들지 않고 최초 결과를 돌려준다.
-	 * {@code uq_submission_artifact_request_idempotency_key}가 같은 키의 동시 요청까지 막는다.
-	 */
-	@Column(name = "request_idempotency_key", updatable = false)
-	private UUID requestIdempotencyKey;
-
 	private SubmissionArtifact(
 			UUID submissionId,
 			String artifactType,
@@ -92,8 +85,7 @@ public class SubmissionArtifact {
 			String storageUri,
 			String contentHash,
 			long fileSizeBytes,
-			long appliedMaxFileBytes,
-			UUID requestIdempotencyKey
+			long appliedMaxFileBytes
 	) {
 		this.submissionId = submissionId;
 		this.artifactType = artifactType;
@@ -104,7 +96,6 @@ public class SubmissionArtifact {
 		this.fileSizeBytes = fileSizeBytes;
 		this.appliedMaxFileBytes = appliedMaxFileBytes;
 		this.validationStatus = ArtifactValidationStatus.VALIDATING;
-		this.requestIdempotencyKey = requestIdempotencyKey;
 	}
 
 	/**
@@ -122,8 +113,7 @@ public class SubmissionArtifact {
 			String storageUri,
 			String contentHash,
 			long fileSizeBytes,
-			long appliedMaxFileBytes,
-			UUID requestIdempotencyKey
+			long appliedMaxFileBytes
 	) {
 		return new SubmissionArtifact(
 				submissionId,
@@ -133,8 +123,7 @@ public class SubmissionArtifact {
 				storageUri,
 				contentHash,
 				fileSizeBytes,
-				appliedMaxFileBytes,
-				requestIdempotencyKey
+				appliedMaxFileBytes
 		);
 	}
 }
