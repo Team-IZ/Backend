@@ -54,6 +54,22 @@ class JdbcRiskTraineeQueryRepositorySqlTest {
 	}
 
 	@Test
+	void teamLevelStatementsParseToo() {
+		JdbcRiskTraineeQueryRepository repository = repositoryOrSkip();
+		UUID classroomId = UUID.randomUUID();
+
+		// 팀 격자는 projectId가 있어야 호출되므로 좁힌 criteria로만 확인한다.
+		RiskTraineeQueryRepository.RoundCriteria criteria =
+				new RiskTraineeQueryRepository.RoundCriteria(
+						cohortId, organizationId, "MINI_PROJECT", projectId, 1, 3);
+
+		assertThatCode(() -> repository.aggregateTeamRiskCells(criteria, classroomId))
+				.doesNotThrowAnyException();
+		assertThatCode(() -> repository.findTeamRosters(projectId, classroomId, organizationId))
+				.doesNotThrowAnyException();
+	}
+
+	@Test
 	void narrowsRoundScopeToTheGivenProject() {
 		JdbcRiskTraineeQueryRepository repository = repositoryOrSkip();
 

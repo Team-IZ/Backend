@@ -299,7 +299,7 @@ class RiskTraineeAnalyticsServiceTest {
 		givenRoster(25, 0);
 
 		RiskTraineeRateResponse response =
-				service.findRiskTraineeRates(cohortId, null, null, 1, 3, null, ACTOR_EMAIL);
+				service.findRiskTraineeRates(cohortId, null, null, 1, 3, null, null, ACTOR_EMAIL);
 
 		assertThat(response.totalRegisteredRoundCount()).isEqualTo(6);
 		assertThat(response.rounds()).hasSize(1);
@@ -315,7 +315,7 @@ class RiskTraineeAnalyticsServiceTest {
 		givenRoster(25, 0);
 
 		RiskTraineeRateResponse response =
-				service.findRiskTraineeRates(cohortId, projectId, null, null, null, null, ACTOR_EMAIL);
+				service.findRiskTraineeRates(cohortId, projectId, null, null, null, null, null, ACTOR_EMAIL);
 
 		assertThat(response.projectId()).isEqualTo(projectId);
 	}
@@ -326,7 +326,7 @@ class RiskTraineeAnalyticsServiceTest {
 		when(riskTraineeQueryRepository.projectBelongsToCohort(any(), any(), any(), any())).thenReturn(false);
 
 		assertThatThrownBy(() ->
-				service.findRiskTraineeRates(cohortId, projectId, null, null, null, null, ACTOR_EMAIL))
+				service.findRiskTraineeRates(cohortId, projectId, null, null, null, null, null, ACTOR_EMAIL))
 				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
 						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
 		verify(riskTraineeQueryRepository, never()).aggregateRiskCells(any());
@@ -363,7 +363,7 @@ class RiskTraineeAnalyticsServiceTest {
 				.thenReturn(Optional.of(new RiskTraineeQueryRepository.CohortScope(cohortId, organizationId)));
 
 		assertThatThrownBy(() ->
-				service.findRiskTraineeRates(cohortId, null, null, 4, 2, null, ACTOR_EMAIL))
+				service.findRiskTraineeRates(cohortId, null, null, 4, 2, null, null, ACTOR_EMAIL))
 				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
 						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
 		verify(riskTraineeQueryRepository, never()).aggregateRiskCells(any());
@@ -374,7 +374,7 @@ class RiskTraineeAnalyticsServiceTest {
 	}
 
 	private RiskTraineeRateResponse findRates(RiskTraineeSort sort) {
-		return service.findRiskTraineeRates(cohortId, null, null, null, null, sort, ACTOR_EMAIL);
+		return service.findRiskTraineeRates(cohortId, null, null, null, null, null, sort, ACTOR_EMAIL);
 	}
 
 	private RiskTraineeRateResponse.RiskCell cellOf(RiskTraineeRateResponse response, String className) {
