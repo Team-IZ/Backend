@@ -40,47 +40,99 @@ public class OperationsController {
 			description = """
 					**상태**: ✅ 사용 가능
 
-					지정한 기관의 특정 월(period) 사용량을 조회한다. \
-					슈퍼어드민의 SA-02 ③ `사용량 · AI 비용` 탭과 오퍼레이터의 OP-06 ⑤ `비용` 탭이 함께 쓴다.
+					SA-02 ③ `사용량 · AI 비용` 탭(슈퍼어드민)과 OP-06 ⑤ `비용` 탭(오퍼레이터)이 함께 쓴다.
 
-					**권한**
-					- 슈퍼어드민: 모든 기관 조회 가능
-					- 오퍼레이터: 자기 기관만 조회 가능 (다른 기관이면 403)
-					- 매니저·교육생: 접근 불가 — 목업 주석: "매니저에게는 비용을 보여주지 않는다. \
-					보이면 '비싸니까 세션 짧게'라는 잘못된 압력이 생긴다."
+					**권한** — 슈퍼어드민은 모든 기관, 오퍼레이터는 **자기 기관만**(다른 기관이면 403).
+					매니저·교육생은 접근 불가 — 목업: *"매니저에게는 비용을 보여주지 않는다.
+					보이면 '비싸니까 세션 짧게'라는 잘못된 압력이 생긴다."*
 
-					**요청**
-					- organizationId (경로)
-					- period (선택, yyyy-MM 형식, 예: 2026-07): 생략하면 이번 달(UTC 기준)
-					- cohortId (선택): 기수별·반별 내역의 범위. OP-06 ⑤ 비용 탭은 상단 기수 스위처가 범위를 정하므로 \
-					그 기수를 넘긴다. 생략하면 기관 전체(SA-02 ③ 슈퍼어드민 화면).
+					## 요청
 
-					**응답**
-					- storage: 코드 제출물·문답 원문·채점 근거·리포트별 저장 바이트 + 전월 대비 증감률. \
-					주기 스냅샷을 합산하면 중복 집계되므로 카테고리별 최신 스냅샷(시점 값)을 사용한다.
-					- activity: 활성 교육생·완료 세션·채점 건수·생성 리포트 수
-					- aiCost: 총 비용·월 예산·소진율·초과 여부·전월 대비 증감률·합계 행·(용도, 모델)별 내역
-					- cohortCosts / classCosts: 기수별·반별 비용
+					| 파라미터 | 위치 | 필수 | 타입 | 설명 |
+					|---|---|---|---|---|
+					| `organizationId` | 경로 | **필수** | UUID | 기관 식별자 |
+					| `period` | 쿼리 | 선택 | `yyyy-MM` | 조회 월(예: `2026-07`). 생략하면 **이번 달(UTC)** |
+					| `cohortId` | 쿼리 | 선택 | UUID | 반별 내역(`classCosts`)의 범위. **생략하면 `classCosts` 가 빈 배열** |
 
-					증감률은 전월 값이 0이면 계산할 수 없어 null을 반환한다(화면에서는 `—`).
+					`cohortId` 는 OP-06 비용 탭의 상단 기수 스위처 값을 넘기면 된다.
+					SA-02(슈퍼어드민)는 기관 전체를 보므로 생략한다.
 
-					**집계 실패 (목업 case 6)** — 기간 내 집계 실패 스냅샷이 있으면 `USAGE_UNAVAILABLE`(503)을 반환한다. \
-					실패분을 빼고 남은 것만 더해 0처럼 보여주지 않는다 — "안 쓴 것"과 "못 읽은 것"은 다르고, \
-					0으로 그리면 청구액이 실제보다 작아 보인다. 화면은 이 오류로 **사용량 패널만** 오류 상태로 바꾸고 \
-					기관 정보·다른 탭은 그대로 보여준다.
+					## 응답 — 최상위
 
-					**집계 출처** — aggregationSource가 SNAPSHOT이면 organization_usage_snapshot 기준이고, \
-					LIVE면 ai_usage를 그 자리에서 합산한 값이다. 스냅샷 수집 배치가 붙기 전에는 LIVE로 내려온다.
+					| 필드 | 타입 | 설명 |
+					|---|---|---|
+					| `organizationId` | UUID | 요청한 기관 |
+					| `period` | string | 집계 월(`yyyy-MM`) |
+					| `currencyCode` | string? | 통화. 플랫폼 공통 `USD` |
+					| `aggregationSource` | enum | `SNAPSHOT`(배치 집계) · `LIVE`(즉시 합산). 배치가 붙기 전에는 항상 `LIVE` |
+					| `storage` | object | 저장량 |
+					| `activity` | object | 사용 규모 |
+					| `aiCost` | object | AI 비용 |
+					| `cohortCosts[]` | array | 기수별 비용 |
+					| `classCosts[]` | array | 반별 비용. **`cohortId` 를 안 보내면 빈 배열** |
 
-					**단가 미설정 처리** — 단가가 없는 호출은 비용을 0으로 더하지 않고 합계에서 제외하며, \
-					제외된 건수를 aiCost.unpricedCallCount로, 합계가 완전한지를 aiCost.costComplete로 알려준다.
+					**storage** — 목업 `저장량 구성 총 9.4 GB`
 
-					**활동량 집계 기준** — v07에서 06_MEAS·10_RPT 테이블이 생겨 LIVE 경로에서도 실제 값을 센다.
-					- 완료 세션: assessment_session.ended_at이 기간에 들어온 COMPLETED 세션
-					- 채점 회차: project_assessment_round.submission_due_at이 기간에 들어온 회차 \
-					(채점 실행 시각 컬럼이 없어 마감을 실행 시점으로 본다)
-					- 발행 리포트: report.published_at이 기간에 들어온 리포트
-					- classCosts의 sessionCount: 교육생 반 배정을 타고 집계하며, 배정이 해제된 교육생은 제외
+					| 필드 | 타입 | 설명 |
+					|---|---|---|
+					| `totalBytes` | long | 총 저장 바이트 |
+					| `codeSubmissionBytes` | long | 코드 제출물(레포·ZIP) |
+					| `sessionLogBytes` | long | 문답 원문 |
+					| `gradingEvidenceBytes` | long | 채점 근거 |
+					| `reportBytes` | long | 리포트·내보내기 PDF |
+					| `changeRateVsPrevMonth` | decimal? | 전월 대비 증감률. 전월이 0이면 `null` |
+
+					**activity** — 목업 `활성 교육생 148 / 완료 세션 612 / 채점 회차 1,840 / 발행 리포트 96`
+
+					| 필드 | 타입 | 설명 |
+					|---|---|---|
+					| `activeTrainees` | int | 활성 교육생 수 |
+					| `completedSessions` | long | 완료 세션 수(`ended_at` 기준) |
+					| `gradingRounds` | long | 채점 회차 수(제출 마감 `submission_due_at` 기준) |
+					| `generatedReports` | long | 발행 리포트 수(`published_at` 기준) |
+
+					**aiCost** — 목업 `AI 비용 · 이번 달 $412 / 예산 $600 · 전월 +12%`
+
+					| 필드 | 타입 | 설명 |
+					|---|---|---|
+					| `totalCost` | decimal | 비용 합계. **단가 미설정 호출은 제외** |
+					| `monthlyBudget` | decimal | 월 예산 |
+					| `budgetUsageRate` | decimal? | 소진율(0~1). 예산이 0이면 `null` |
+					| `budgetExceeded` | boolean | 예산 초과 여부. 초과해도 서비스는 중단되지 않는다 |
+					| `changeRateVsPrevMonth` | decimal? | 전월 대비 증감률 |
+					| `costComplete` | boolean | **`false` 면 합계가 실제보다 작다**(단가 미설정 호출 존재) |
+					| `unpricedCallCount` | long | 단가가 없어 합계에서 빠진 호출 수 |
+					| `total` | object | `{ calls, inputTokens, outputTokens, cost }` 합계 행 |
+					| `models[]` | array | (용도, 모델) 조합별 내역 |
+
+					**models[] 각 항목** — `usageType` · `tier` · `model` · `calls` · `inputTokens` ·
+					`outputTokens` · `inputPricePerMillionTokens` · `outputPricePerMillionTokens` ·
+					`pricingMissing`(단가 미설정) · `cost`
+
+					**cohortCosts[]** — `cohortId` · `name` · `traineeCount` · `cost` ·
+					`costPerTrainee`(인원 0이면 `null`) · `unpricedCallCount`
+
+					**classCosts[]** — `classId` · `name` · `managerName`(담당 없으면 `null`) ·
+					`traineeCount` · `sessionCount` · `cost` · `unpricedCallCount`
+
+					## 화면에서 주의할 것
+
+					**① `costComplete=false` 면 금액에 주석을 달아야 한다.**
+					단가 미설정 호출을 0으로 더하지 않고 **빼기** 때문에 합계가 실제보다 작다.
+					`unpricedCallCount` 건이 빠졌다고 표시하세요 — 목업 SA-03 `단가 미설정` 원칙.
+
+					**② 증감률 `null` 은 0%가 아니다.** 전월 값이 없어 계산 불가라는 뜻이라 `—` 로 그린다.
+
+					## 오류
+
+					| 코드 | 상황 |
+					|---|---|
+					| 403 | 오퍼레이터가 다른 기관을 조회 |
+					| 404 `ORG_NOT_FOUND` | 없는 기관 |
+					| 503 `USAGE_UNAVAILABLE` | **기간 집계가 실패한 상태**(목업 case 6) |
+
+					503 일 때 화면은 **사용량 패널만** 오류 상태로 바꾸고 기관 정보·다른 탭은 그대로 보여준다.
+					실패분을 빼고 남은 것만 더해 0 처럼 보여주지 않는다 — *"안 쓴 것"과 "못 읽은 것"은 다르다.*
 					"""
 	)
 	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'OPERATOR')")
@@ -99,21 +151,45 @@ public class OperationsController {
 			description = """
 					**상태**: ✅ 사용 가능
 
-					지정한 기관의 현재 활성(ACTIVE) 운영 정책을 조회한다. 목업 SA-02 ④ 설정 탭.
+					SA-02 ④ 설정 탭을 채운다. 현재 **활성(ACTIVE) 정책 버전**의 값이다.
 
-					**요청**
-					- organizationId (경로)
+					## 요청
 
-					**응답**
-					- organizationStatus: 기관 상태
-					- monthlyAiBudget / currencyCode: 월 AI 예산과 통화
-					- dataRetentionDays: 데이터 보존기간
-					- defaultDisclosureScope: 신규 기수 공개 범위 기본값 (SUMMARY/PRIVATE/FULL)
-					- policyVersion: 현재 정책 버전
-					- 기관에 활성 정책이 없으면(정상 생성 경로를 거치지 않은 데이터 등) 500 오류가 발생한다.
+					| 변수 | 필수 | 타입 | 설명 |
+					|---|---|---|---|
+					| `organizationId` | **필수** | UUID | 기관 식별자 |
 
-					**아직 채워지지 않는 값** — monthlyTokenLimit, githubOrgIntegrationEnabled, \
-					zipUploadEnabled, contributionAnalysisEnabled (organization_policy 컬럼 없음 → null)
+					본문 없음.
+
+					## 응답
+
+					| 필드 | 타입 | 설명 |
+					|---|---|---|
+					| `organizationId` | UUID | 기관 식별자 |
+					| `organizationStatus` | enum | `ACTIVE` · `SUSPENDED` · `DELETION_PENDING` · `DELETED` |
+					| `monthlyAiBudget` | decimal | 월 AI 예산 상한. `0` 은 무제한이 아니라 **예산 0** |
+					| `currencyCode` | string | 통화. 플랫폼 공통 `USD` 고정, 변경 불가 |
+					| `monthlyTokenLimit` | long? | 월 토큰 상한. **`null` 이면 무제한** |
+					| `storageLimitBytes` | long? | 저장량 상한(바이트). **`null` 이면 무제한** |
+					| `dataRetentionDays` | int | 보존기간. `90` · `180` · `365` 중 하나 |
+					| `defaultDisclosureScope` | enum | 신규 기수 공개범위 기본값. `SUMMARY` · `PRIVATE` · `FULL` |
+					| `codeSessionTierCode` | enum | 코드 세션 모델 티어. `ACCURACY_FIRST` · `BALANCED` · `COST_FIRST` |
+					| `allowManagerInvite` | boolean | 신규 매니저 초대·재발송 허용 |
+					| `allowDataExport` | boolean | 신규 데이터 export 생성 허용 |
+					| `allowZipSubmission` | boolean | ZIP 코드 제출 허용. 끄면 GitHub 연동만 남는다 |
+					| `allowGithubIntegration` | boolean | GitHub 조직 연동 허용(**정책**이며 실제 연결은 별도 흐름) |
+					| `enableBigProjectContributionAnalysis` | boolean | 빅프로젝트 기여도 분석 허용 |
+					| `policyVersion` | int | 현재 정책 버전. 변경할 때마다 올라간다 |
+
+					⚠️ **변경 API 가 전체 치환이므로 이 응답을 그대로 폼 초기값으로 쓰세요.**
+					사용자가 바꾼 필드만 덮어쓰고 나머지는 여기서 받은 값을 그대로 다시 보내야 합니다.
+
+					## 오류
+
+					| 코드 | 상황 |
+					|---|---|
+					| 404 `ORG_NOT_FOUND` | 없는 기관 |
+					| 409 `ORG_POLICY_NOT_FOUND` | 활성 정책이 없음(API 를 거치지 않고 만들어진 데이터) |
 					"""
 	)
 	@PreAuthorize("hasRole('SUPER_ADMIN')")
@@ -127,27 +203,59 @@ public class OperationsController {
 			description = """
 					**상태**: ✅ 사용 가능
 
-					지정한 기관의 운영 설정을 변경한다. organization_policy는 append-only 이력 테이블이라 \
-					기존 설정을 수정하는 게 아니라 기존 활성 버전을 SUPERSEDED로 닫고 새 버전을 발급하는 방식으로 동작한다.
+					SA-02 ④ 설정 탭의 저장 액션. **슈퍼어드민 전용**이다(오퍼레이터는 사용량 조회만 가능).
 
-					설정 변경은 슈퍼어드민 전용이다(목업상 진입점이 SA-02 ④ 설정 탭 하나뿐). \
-					오퍼레이터는 사용량 조회만 가능하다.
+					## ⚠️ 부분 수정(PATCH)이 아니라 전체 치환(PUT)이다
 
-					**요청** (부분 수정이 아니라 아래 값을 모두 포함해서 보내야 한다)
-					- organizationId (경로)
-					- organizationStatus (필수): ACTIVE 또는 SUSPENDED만 직접 지정 가능
-					- monthlyAiBudget (필수)
-					- dataRetentionDays (필수, 30~3650일)
-					- defaultDisclosureScope (필수)
-					- monthlyTokenLimit, githubOrgIntegrationEnabled, zipUploadEnabled, contributionAnalysisEnabled (선택)
+					**보내지 않은 필드는 유지되는 게 아니라 검증 오류(400)가 난다.**
+					`GET .../settings` 응답을 폼 초기값으로 받아 두고, 사용자가 바꾼 것만 덮어써서
+					**전체를 다시 보내세요.**
 
-					**응답**
-					- 새로 발급된 버전 기준의 운영 설정
-					- 삭제된 기관이면 409를 반환한다.
+					`organization_policy` 는 append-only 이력 테이블이라 기존 행을 고치지 않는다.
+					활성 버전을 `SUPERSEDED` 로 닫고 **새 버전을 발급**하므로 `policyVersion` 이 1 올라간다.
 
-					⚠ monthlyTokenLimit / githubOrgIntegrationEnabled / zipUploadEnabled / \
-					contributionAnalysisEnabled는 organization_policy에 컬럼이 아직 없어 **값을 보내도 저장되지 않고** \
-					응답에 null이 반환된다. 프론트가 설정 화면을 먼저 만들 수 있도록 계약에만 포함해 둔 필드다.
+					## 요청
+
+					**경로 변수** — `organizationId` (**필수**, UUID)
+
+					**JSON 본문**
+
+					| 필드 | 필수 | 타입 | 설명 |
+					|---|---|---|---|
+					| `organizationStatus` | **필수** | enum | `ACTIVE` 또는 `SUSPENDED` 만. 그 외 값은 400 |
+					| `monthlyAiBudget` | **필수** | decimal | 0 이상. `0` 은 무제한이 아니라 **예산 0** |
+					| `dataRetentionDays` | **필수** | int | **`90` · `180` · `365` 중 하나만** |
+					| `defaultDisclosureScope` | **필수** | enum | `SUMMARY` · `PRIVATE` · `FULL` |
+					| `codeSessionTierCode` | **필수** | enum | `ACCURACY_FIRST` · `BALANCED` · `COST_FIRST` |
+					| `allowManagerInvite` | **필수** | boolean | 신규 매니저 초대·재발송 허용 |
+					| `allowDataExport` | **필수** | boolean | 신규 데이터 export 생성 허용 |
+					| `allowZipSubmission` | **필수** | boolean | ZIP 코드 제출 허용 |
+					| `allowGithubIntegration` | **필수** | boolean | GitHub 조직 연동 허용(정책이며 실제 연결은 별도 흐름) |
+					| `enableBigProjectContributionAnalysis` | **필수** | boolean | 빅프로젝트 기여도 분석 허용 |
+					| `monthlyTokenLimit` | 선택 | long | 월 토큰 상한. **`null` 이면 무제한**. 보낼 경우 0 초과 |
+					| `storageLimitBytes` | 선택 | long | 저장량 상한(바이트). **`null` 이면 무제한**. 0 이상 |
+
+					통화(`currencyCode`)는 **요청 항목이 아니다.** 플랫폼 공통 USD 고정이며 DB CHECK 로도 강제된다.
+
+					## 응답
+
+					새 버전 기준의 운영 설정. **`GET .../settings` 와 완전히 같은 구조**다.
+					`policyVersion` 이 올라간 것을 확인하면 저장이 반영된 것이다.
+
+					## 이 API 로 기관 상태도 바뀐다
+
+					`organizationStatus` 가 함께 저장되므로 설정 탭의 `기관 상태` 행이 여기서 처리된다.
+					다만 **삭제(`DELETED`)된 기관은 이 API 로 되살릴 수 없다** —
+					`POST /organizations/{organizationId}/restore` 를 쓰세요.
+
+					## 오류
+
+					| 코드 | 상황 |
+					|---|---|
+					| 400 | 필수 누락 · `dataRetentionDays` 가 90/180/365 밖 · `organizationStatus` 가 ACTIVE/SUSPENDED 밖 |
+					| 404 `ORG_NOT_FOUND` | 없는 기관 |
+					| 409 `ORG_ALREADY_DELETED` | 삭제된 기관 |
+					| 409 `ORG_POLICY_NOT_FOUND` | 활성 정책이 없음 |
 					"""
 	)
 	@PreAuthorize("hasRole('SUPER_ADMIN')")

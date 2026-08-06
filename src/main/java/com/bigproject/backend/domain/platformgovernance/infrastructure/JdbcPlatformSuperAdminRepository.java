@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.platformgovernance.infrastructure;
 
 import com.bigproject.backend.domain.platformgovernance.domain.PlatformSuperAdminRepository;
+import com.bigproject.backend.domain.organization.domain.AccountInactivationReason;
 import com.bigproject.backend.domain.organization.domain.OperatorAccountStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -69,17 +70,40 @@ public class JdbcPlatformSuperAdminRepository implements PlatformSuperAdminRepos
 	}
 
 	@Override
-	public int updateStatus(UUID memberId, OperatorAccountStatus status) {
-		// row_version은 낙관적 락 컬럼이라 직접 UPDATE에서도 함께 올려 준다.
+	public int updateStatus(
+			UUID memberId,
+			OperatorAccountStatus status,
+			UUID inactivatedBy,
+			AccountInactivationReason reasonCode,
+			String reason
+	) {
+		/*
+		 * ck_app_user_status_3: status='INACTIVE'이면 inactivated_at·inactivated_by·
+		 * inactivated_reason_code가 모두 NOT NULL이어야 한다(오퍼레이터 정지와 같은 제약).
+		 * row_version은 낙관적 락 컬럼이라 직접 UPDATE에서도 함께 올려 준다.
+		 */
+		boolean inactivating = status == OperatorAccountStatus.INACTIVE;
 		String sql = """
 				UPDATE app_user
 				SET status = ?,
+				    inactivated_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,
+				    inactivated_by = CASE WHEN ? THEN ?::uuid ELSE NULL END,
+				    inactivated_reason_code = CASE WHEN ? THEN ? ELSE NULL END,
+				    inactivated_reason = CASE WHEN ? THEN ? ELSE NULL END,
 				    updated_at = CURRENT_TIMESTAMP,
 				    row_version = row_version + 1
 				WHERE user_id = ?
 					AND deleted_at IS NULL
 				""";
-		return jdbcTemplate.update(sql, status.name(), memberId);
+		return jdbcTemplate.update(
+				sql,
+				status.name(),
+				inactivating,
+				inactivating, inactivatedBy,
+				inactivating, reasonCode == null ? null : reasonCode.name(),
+				inactivating, reason,
+				memberId
+		);
 	}
 
 	private SuperAdminAccount map(ResultSet rs) throws SQLException {

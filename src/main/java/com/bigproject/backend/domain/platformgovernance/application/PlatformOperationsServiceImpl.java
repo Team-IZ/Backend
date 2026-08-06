@@ -21,6 +21,7 @@ import com.bigproject.backend.domain.platformgovernance.presentation.dto.SuperAd
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.UpdateGradingModelRequest;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.UpdateModelPricingRequest;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.UpdateTierModelRequest;
+import com.bigproject.backend.domain.organization.domain.AccountInactivationReason;
 import com.bigproject.backend.domain.organization.domain.OperatorAccountStatus;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationException;
@@ -354,7 +355,12 @@ public class PlatformOperationsServiceImpl implements PlatformOperationsService 
 
 	@Override
 	@Transactional
-	public SuperAdminListResponse updateSuperAdminStatus(UUID memberId, OperatorAccountStatus status) {
+	public SuperAdminListResponse updateSuperAdminStatus(
+			UUID memberId,
+			OperatorAccountStatus status,
+			String reason,
+			UUID requesterId
+	) {
 		PlatformSuperAdminRepository.SuperAdminAccount target = superAdminRepository.findSuperAdmin(memberId)
 				.orElseThrow(() -> new OrganizationException(OrganizationErrorCode.SUPER_ADMIN_NOT_FOUND));
 
@@ -373,7 +379,15 @@ public class PlatformOperationsServiceImpl implements PlatformOperationsService 
 			);
 		}
 
-		superAdminRepository.updateStatus(memberId, status);
+		superAdminRepository.updateStatus(
+				memberId,
+				status,
+				requesterId,
+				// 이 화면에서 오는 정지는 전부 관리자 조치다. 요청의 reason은 코드가 아니라
+				// 사람이 읽을 설명이므로 자유 텍스트 컬럼으로 따로 넘긴다.
+				AccountInactivationReason.ADMIN_SUSPENDED,
+				reason
+		);
 		return buildSuperAdminList();
 	}
 
