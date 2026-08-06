@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -138,7 +139,9 @@ class InvitationPersistenceServiceTest {
 				eq(organizationId),
 				eq("manager@example.com"),
 				eq("manager@example.com"),
-				eq("manager@example.com"),
+				// 이름은 비워 둔다 — 초대받은 본인이 가입할 때 정한다.
+				// 예전에는 이메일을 넣어서 목록 이름 칸에 `—` 대신 이메일이 그대로 보였다.
+				isNull(),
 				eq(Role.MANAGER),
 				any(),
 				any()

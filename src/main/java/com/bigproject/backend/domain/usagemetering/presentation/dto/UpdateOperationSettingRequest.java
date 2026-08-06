@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.usagemetering.presentation.dto;
 import com.bigproject.backend.domain.platformgovernance.domain.AiTier;
 import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
 import com.bigproject.backend.domain.organization.domain.OrganizationStatus;
+import com.bigproject.backend.global.validation.AllowedRetentionDays;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.DecimalMin;
@@ -47,8 +48,8 @@ public record UpdateOperationSettingRequest(
 		@PositiveOrZero
 		Long storageLimitBytes,
 
-		@Schema(description = "데이터 보존기간(일)", example = "180")
-		@Min(30) @Max(3650)
+		@Schema(description = "데이터 보존기간(일)", allowableValues = {"90", "180", "365"}, example = "180")
+		@AllowedRetentionDays
 		int dataRetentionDays,
 
 		@Schema(description = "신규 기수 공개 범위 기본값", example = "SUMMARY")

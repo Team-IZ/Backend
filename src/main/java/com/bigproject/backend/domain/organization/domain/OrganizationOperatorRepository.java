@@ -24,8 +24,25 @@ public interface OrganizationOperatorRepository {
 	/** 기관의 활성(ACTIVE) 오퍼레이터 수. 마지막 1인 정지 차단 판정에 쓴다. */
 	int countActiveOperators(UUID organizationId);
 
-	/** 계정 상태를 변경한다. 변경된 행 수를 반환한다. */
-	int updateOperatorStatus(UUID memberId, OperatorAccountStatus status);
+	/**
+	 * 계정 상태를 변경한다. 변경된 행 수를 반환한다.
+	 *
+	 * <p>{@code ck_app_user_status_3}이 status='INACTIVE'일 때 {@code inactivated_at}·
+	 * {@code inactivated_by}·{@code inactivated_reason_code}를 <b>한 세트로</b> 요구하므로
+	 * 정지 정보를 함께 받는다. ACTIVE로 되돌릴 때는 이 값들을 비운다 — 남겨 두면
+	 * "지금 활성인데 정지 이력이 붙어 있는" 모순된 행이 된다.
+	 *
+	 * @param inactivatedBy 정지시킨 사람. ACTIVE로 되돌릴 때는 쓰이지 않는다.
+	 * @param reasonCode    정지 사유 코드. ACTIVE로 되돌릴 때는 쓰이지 않는다.
+	 * @param reason        사람이 읽을 설명(선택). 코드가 아니라 자유 텍스트 컬럼에 들어간다.
+	 */
+	int updateOperatorStatus(
+			UUID memberId,
+			OperatorAccountStatus status,
+			UUID inactivatedBy,
+			AccountInactivationReason reasonCode,
+			String reason
+	);
 
 	/** 대기 중인 오퍼레이터 초대 토큰을 조회한다(취소 대상 검증용). */
 	Optional<PendingOperatorInvitation> findPendingInvitation(UUID organizationId, UUID tokenId);

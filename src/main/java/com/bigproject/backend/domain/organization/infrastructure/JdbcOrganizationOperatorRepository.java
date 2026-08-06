@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.organization.infrastructure;
 
+import com.bigproject.backend.domain.organization.domain.AccountInactivationReason;
 import com.bigproject.backend.domain.organization.domain.OperatorAccountStatus;
 import com.bigproject.backend.domain.organization.domain.OrganizationOperatorRepository;
 import lombok.RequiredArgsConstructor;
@@ -71,17 +72,42 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 	}
 
 	@Override
-	public int updateOperatorStatus(UUID memberId, OperatorAccountStatus status) {
-		// row_version은 낙관적 락 컬럼이라 JPA가 아닌 직접 UPDATE에서도 함께 올려 준다.
+	public int updateOperatorStatus(
+			UUID memberId,
+			OperatorAccountStatus status,
+			UUID inactivatedBy,
+			AccountInactivationReason reasonCode,
+			String reason
+	) {
+		/*
+		 * ck_app_user_status_3: status='INACTIVE'이면 inactivated_at·inactivated_by·
+		 * inactivated_reason_code가 모두 NOT NULL이어야 한다. status만 바꾸면 CHECK 위반으로 실패한다.
+		 * ACTIVE로 되돌릴 때는 반대로 비운다 — 활성 계정에 정지 이력이 남아 있으면 모순이다.
+		 *
+		 * row_version은 낙관적 락 컬럼이라 JPA가 아닌 직접 UPDATE에서도 함께 올려 준다.
+		 */
+		boolean inactivating = status == OperatorAccountStatus.INACTIVE;
 		String sql = """
 				UPDATE app_user
 				SET status = ?,
+				    inactivated_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,
+				    inactivated_by = CASE WHEN ? THEN ?::uuid ELSE NULL END,
+				    inactivated_reason_code = CASE WHEN ? THEN ? ELSE NULL END,
+				    inactivated_reason = CASE WHEN ? THEN ? ELSE NULL END,
 				    updated_at = CURRENT_TIMESTAMP,
 				    row_version = row_version + 1
 				WHERE user_id = ?
 					AND deleted_at IS NULL
 				""";
-		return jdbcTemplate.update(sql, status.name(), memberId);
+		return jdbcTemplate.update(
+				sql,
+				status.name(),
+				inactivating,
+				inactivating, inactivatedBy,
+				inactivating, reasonCode == null ? null : reasonCode.name(),
+				inactivating, reason,
+				memberId
+		);
 	}
 
 	@Override
