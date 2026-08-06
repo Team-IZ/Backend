@@ -62,8 +62,9 @@ public class InvitationPersistenceService {
 		String normalizedEmail = EmailNormalizer.normalize(email);
 		InvitationContext context = InvitationContext.platform();
 		Instant now = Instant.now();
+		// 이름은 null로 둔다 — 본인이 가입할 때 정한다. 화면은 이 값이 비어 있으면 `—`로 그린다.
 		UUID memberId = resolveInvitationSlot(
-				null, email, normalizedEmail, email, Role.SUPER_ADMIN, now
+				null, email, normalizedEmail, null, Role.SUPER_ADMIN, now
 		);
 		UUID invitationId = invitationRepository.createInvitation(
 				null,
@@ -104,8 +105,14 @@ public class InvitationPersistenceService {
 		}
 
 		Instant now = Instant.now();
+		/*
+		 * 이름은 null로 둔다 — 초대받은 본인이 가입할 때 정한다.
+		 * 예전에는 여기에 이메일을 넣어서, 목록 화면 이름 칸에 `—` 대신 이메일 주소가 뜨고
+		 * 이메일 칸과 같은 문자열이 두 번 보였다. app_user.name은 nullable이고
+		 * ck_app_user_status_2도 status='PENDING'일 때 NULL을 허용한다.
+		 */
 		UUID memberId = resolveInvitationSlot(
-				context.organizationId(), email, normalizedEmail, email, invitedRole, now
+				context.organizationId(), email, normalizedEmail, null, invitedRole, now
 		);
 		UUID invitationId = invitationRepository.createInvitation(
 				context.organizationId(),

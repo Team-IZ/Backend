@@ -153,7 +153,7 @@ public class OrganizationController {
 					(형식 검증만 하며, `""` 빈 문자열은 400이므로 쓰지 않으려면 필드를 생략하거나 null로 보낸다). \
 					⚠ 이 값은 **오퍼레이터 초대를 제한하지 않는다** — 오퍼레이터는 기관의 첫 계정이라 \
 					초대 시점에 기관 메일함이 없기 때문이다. 매니저·교육생 초대(OP-06)에서 쓰일 값이다.
-					- dataRetentionDays (필수, 30~3650일): 데이터 보존기간
+					- dataRetentionDays (필수): 데이터 보존기간. **90 / 180 / 365 중 하나만** 지정할 수 있다
 
 					**응답**
 					- 생성된 기관 정보(organizationId 포함) — 이후 다른 API 호출 시 이 organizationId를 사용한다.

@@ -137,7 +137,7 @@ public class OperationsController {
 					- organizationId (경로)
 					- organizationStatus (필수): ACTIVE 또는 SUSPENDED만 직접 지정 가능
 					- monthlyAiBudget (필수)
-					- dataRetentionDays (필수, 30~3650일)
+					- dataRetentionDays (필수): **90 / 180 / 365 중 하나만** 지정할 수 있다
 					- defaultDisclosureScope (필수)
 					- monthlyTokenLimit, githubOrgIntegrationEnabled, zipUploadEnabled, contributionAnalysisEnabled (선택)
 

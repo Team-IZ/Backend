@@ -1,8 +1,7 @@
 package com.bigproject.backend.domain.organization.presentation.dto;
 
+import com.bigproject.backend.global.validation.AllowedRetentionDays;
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.constraints.Max;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -45,8 +44,12 @@ public record CreateOrganizationRequest(
 		@Size(max = 32)
 		String displayCode,
 
-		@Schema(description = "데이터 보존기간(일). 종료 기수의 코드·문답·채점 근거 보관 기간", example = "180")
-		@Min(30) @Max(3650)
+		@Schema(
+				description = "데이터 보존기간(일). 종료 기수의 코드·문답·채점 근거 보관 기간",
+				allowableValues = {"90", "180", "365"},
+				example = "180"
+		)
+		@AllowedRetentionDays
 		int dataRetentionDays
 ) {
 }
