@@ -26,6 +26,6 @@ public class InvitationResolveService {
 		String tokenHash = tokenHasher.hash(request.invitationToken().trim());
 		InvitationRecipient recipient = invitationResolveRepository.findResolvableByTokenHash(tokenHash, Instant.now())
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, INVALID_INVITATION_MESSAGE));
-		return new InvitationResolveResponse(recipient.userId(), recipient.email());
+		return new InvitationResolveResponse(recipient.userId(), recipient.email(), recipient.role());
 	}
 }

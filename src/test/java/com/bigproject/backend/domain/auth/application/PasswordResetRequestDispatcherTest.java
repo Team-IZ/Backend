@@ -3,7 +3,6 @@ package com.bigproject.backend.domain.auth.application;
 import com.bigproject.backend.domain.auth.domain.PasswordResetAccount;
 import com.bigproject.backend.domain.auth.domain.PasswordResetRepository;
 import com.bigproject.backend.domain.auth.infrastructure.PasswordResetAuditLogger;
-import com.bigproject.backend.domain.member.application.InvitationMailSender;
 import com.bigproject.backend.domain.member.application.OneTimeTokenGenerator;
 import com.bigproject.backend.domain.member.application.OneTimeTokenHasher;
 import com.bigproject.backend.domain.member.domain.Role;
@@ -25,18 +24,17 @@ class PasswordResetRequestDispatcherTest {
 
 	private final PasswordResetRepository repository = mock(PasswordResetRepository.class);
 	private final PasswordResetMailSender resetMailSender = mock(PasswordResetMailSender.class);
-	private final InvitationMailSender invitationMailSender = mock(InvitationMailSender.class);
+	private final InvitationResendDispatcher invitationResendDispatcher = mock(InvitationResendDispatcher.class);
 	private final PasswordResetAuditLogger auditLogger = mock(PasswordResetAuditLogger.class);
 	private final PasswordResetRequestDispatcher dispatcher = new PasswordResetRequestDispatcher(
 			repository,
 			resetMailSender,
-			invitationMailSender,
+			invitationResendDispatcher,
 			new OneTimeTokenGenerator(),
 			new OneTimeTokenHasher(),
 			auditLogger,
 			Duration.ofMinutes(30),
-			Duration.ofMinutes(1),
-			Duration.ofHours(24)
+			Duration.ofMinutes(1)
 	);
 
 	@Test

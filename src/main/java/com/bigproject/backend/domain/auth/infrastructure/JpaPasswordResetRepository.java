@@ -89,7 +89,16 @@ public class JpaPasswordResetRepository implements PasswordResetRepository {
 
 	@Override
 	public Optional<PasswordResetToken> findTokenForUpdate(String tokenHash) {
-		return tokenRepository.findPasswordResetTokenForUpdate(tokenHash).map(row -> new PasswordResetToken(
+		return tokenRepository.findPasswordResetTokenForUpdate(tokenHash).map(JpaPasswordResetRepository::toToken);
+	}
+
+	@Override
+	public Optional<PasswordResetToken> findToken(String tokenHash) {
+		return tokenRepository.findPasswordResetToken(tokenHash).map(JpaPasswordResetRepository::toToken);
+	}
+
+	private static PasswordResetToken toToken(OneTimeTokenJpaRepository.PasswordResetTokenProjection row) {
+		return new PasswordResetToken(
 				row.getTokenId(),
 				row.getUserId(),
 				row.getOrganizationId(),
@@ -101,7 +110,7 @@ public class JpaPasswordResetRepository implements PasswordResetRepository {
 				row.getExpiresAt(),
 				row.getUsedAt(),
 				row.getInvalidatedAt()
-		));
+		);
 	}
 
 	@Override

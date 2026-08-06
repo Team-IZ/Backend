@@ -9,10 +9,14 @@ import java.time.Instant;
 import java.util.UUID;
 
 public interface AuditLogJpaRepository extends JpaRepository<AuditLogJpaEntity, UUID> {
+	/**
+	 * 재설정 안내와 초대 재발송이 <b>하나의</b> 쿨다운 창을 공유한다. 이벤트 코드를 나누어 세면
+	 * 두 엔드포인트를 번갈아 호출해 메일 발송 속도를 두 배로 올릴 수 있다.
+	 */
 	@Query(value = """
 			SELECT CASE WHEN COUNT(*) > 0 THEN TRUE ELSE FALSE END
 			FROM audit_log
-			WHERE event_code = 'AUTH.PASSWORD_RESET_REQUEST'
+			WHERE event_code IN ('AUTH.PASSWORD_RESET_REQUEST', 'AUTH.INVITATION_RESEND_REQUEST')
 				AND target_type = 'APP_USER'
 				AND target_id = :targetId
 				AND result = 'SUCCESS'

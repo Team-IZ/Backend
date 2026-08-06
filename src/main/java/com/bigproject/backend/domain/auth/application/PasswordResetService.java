@@ -5,6 +5,8 @@ import com.bigproject.backend.domain.auth.domain.PasswordResetToken;
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetConfirmationRequest;
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetConfirmationResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetRequestResponse;
+import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetValidationRequest;
+import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetValidationResponse;
 import com.bigproject.backend.domain.auth.infrastructure.PasswordResetAuditLogger;
 import com.bigproject.backend.domain.member.application.EmailNormalizer;
 import com.bigproject.backend.domain.member.application.OneTimeTokenHasher;
@@ -54,6 +56,14 @@ public class PasswordResetService {
 			auditLogger.recordFailure(null, requestId, "RESET_MAIL_FAILED");
 		}
 		return new PasswordResetRequestResponse(ACCEPTED_MESSAGE);
+	}
+
+	@Transactional(readOnly = true)
+	public PasswordResetValidationResponse validate(PasswordResetValidationRequest request) {
+		PasswordResetToken token = repository.findToken(tokenHasher.hash(request.token().trim()))
+				.orElseThrow(this::invalidToken);
+		validateToken(token);
+		return new PasswordResetValidationResponse(token.email(), token.expiresAt());
 	}
 
 	@Transactional
