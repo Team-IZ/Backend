@@ -7,6 +7,7 @@ import com.bigproject.backend.domain.academicoperations.presentation.dto.CohortL
 import com.bigproject.backend.domain.academicoperations.presentation.dto.CohortResponse;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.CreateCohortRequest;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.EndCohortRequest;
+import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -29,7 +30,6 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -46,6 +46,11 @@ import java.util.UUID;
 public class CohortController {
 
 	private final CohortService cohortService;
+
+	// 기존 TODO("인증 연동 후 X-Actor-User-Id 헤더 제거")를 해소한 것이다.
+	// feat/rbac 머지로 CurrentUserResolver가 생겼고 organization·operations가 이미 이 방식을 쓴다.
+	// 헤더 방식은 클라이언트가 임의 UUID를 보내 cohort.created_by / updated_by를 위조할 수 있었다.
+	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
 			summary = "기관 기수 목록 조회",
@@ -168,13 +173,10 @@ public class CohortController {
 	@PostMapping
 	public ResponseEntity<CohortResponse> createCohort(
 			@Valid @RequestBody CreateCohortRequest request,
-			// TODO: 인증 연동(feat/rbac 머지) 후 X-Actor-User-Id 헤더 제거하고
-			// Authentication에서 실제 사용자 UUID를 꺼내도록 교체. 현재는 클라이언트가
-			// 임의 UUID로 감사 필드를 조작할 수 있는 임시 상태.
-			@RequestHeader("X-Actor-User-Id") UUID actorUserId,
 			Authentication authentication
 	) {
 		verifyOrganizationScope(request.organizationId(), authentication);
+		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
 
 		Cohort cohort = cohortService.createCohort(
 				request.organizationId(),
@@ -219,12 +221,9 @@ public class CohortController {
 	public ResponseEntity<CohortResponse> endCohort(
 			@PathVariable UUID cohortId,
 			@Valid @RequestBody EndCohortRequest request,
-			// TODO: 인증 연동(feat/rbac 머지) 후 X-Actor-User-Id 헤더 제거하고
-			// Authentication에서 실제 사용자 UUID를 꺼내도록 교체. 현재는 클라이언트가
-			// 임의 UUID로 감사 필드를 조작할 수 있는 임시 상태.
-			@RequestHeader("X-Actor-User-Id") UUID actorUserId,
 			Authentication authentication
 	) {
+		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
 		Cohort cohort = cohortService.closeCohort(cohortId, extractOrganizationId(authentication), actorUserId);
 		return ResponseEntity.ok(CohortResponse.from(cohort));
 	}
