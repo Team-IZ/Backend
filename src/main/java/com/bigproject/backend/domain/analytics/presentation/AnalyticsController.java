@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.analytics.presentation;
 import com.bigproject.backend.domain.analytics.application.CohortComparisonAnalyticsService;
 import com.bigproject.backend.domain.analytics.application.RiskTraineeAnalyticsService;
 import com.bigproject.backend.domain.analytics.domain.ComparisonSort;
+import com.bigproject.backend.domain.analytics.domain.RiskTraineeSort;
 import com.bigproject.backend.domain.analytics.presentation.dto.CohortComparisonResponse;
 import com.bigproject.backend.domain.analytics.presentation.dto.RiskTraineeRateResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -50,8 +51,16 @@ public class AnalyticsController {
 					한 교육생이 여러 유형에 해당해도 1명으로 셉니다.
 					위험 유형 INVALID_ATTEMPT는 해당 교육생이 무효 응시로 분모에서 이미 빠지므로 분자에 넣지 않습니다.
 
-					회차가 아직 확정되지 않았으면 riskRate는 0이 아니라 null이고 aggregationStatus로 원인을 구분합니다.
+					집계 상태는 회차 생명주기가 아니라 발행된 리포트 유무로 판정합니다.
+					발행본이 없으면 riskRate는 0이 아니라 null이고 aggregationStatus로 원인을 구분합니다.
 					빅프로젝트는 위험 판정식이 달라 이 격자에 포함하지 않습니다.
+
+					반 행의 comparisonToCohort는 같은 회차의 기수 전체 비율과 견준 방향이며
+					임계 구간 없이 단순 비교합니다. 클라이언트가 다시 계산할 필요는 없습니다.
+
+					round_no는 (project_id, round_no) UNIQUE라 프로젝트마다 1부터 다시 시작합니다.
+					기수에 미니프로젝트가 여러 건이면 같은 회차 번호가 여러 열에 나타나므로
+					한 프로젝트의 흐름만 보려면 projectId로 좁힙니다.
 					"""
 	)
 	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
@@ -66,20 +75,34 @@ public class AnalyticsController {
 	public ResponseEntity<RiskTraineeRateResponse> findRiskTraineeRates(
 			@Parameter(description = "분석할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
 			@PathVariable UUID cohortId,
+			@Parameter(description = """
+					조회 대상을 한 미니프로젝트로 좁힙니다. 생략 시 기수의 모든 미니프로젝트를 조회합니다.
+					회차 번호는 프로젝트마다 1부터 다시 시작하므로 미니프로젝트가 여러 건인 기수에서
+					한 프로젝트의 회차 흐름만 보려면 지정해야 합니다.
+					""")
+			@RequestParam(required = false) UUID projectId,
 			@Parameter(description = "조회할 반 ID 목록이며 생략 시 기수의 모든 반을 조회합니다.")
 			@RequestParam(required = false) List<UUID> classroomId,
 			@Parameter(description = "조회 시작 회차 번호이며 생략 시 1차부터 조회합니다.", example = "1")
 			@RequestParam(required = false) @Min(1) Integer fromRoundNo,
 			@Parameter(description = "조회 종료 회차 번호이며 생략 시 마지막 회차까지 조회합니다.", example = "4")
 			@RequestParam(required = false) @Min(1) Integer toRoundNo,
+			@Parameter(description = """
+					반 행 정렬 기준입니다.
+					RECENT_ROUND_WORST(최근 발행 회차 나쁜 순) / WORSE_ROUND_COUNT(기준보다 나쁜 회차가 많은 순)
+					/ EXCLUSION_COUNT(미집계 많은 순) / NAME(이름순)
+					""", example = "RECENT_ROUND_WORST")
+			@RequestParam(required = false, defaultValue = "RECENT_ROUND_WORST") RiskTraineeSort sort,
 			@Parameter(hidden = true)
 			Authentication authentication
 	) {
 		return ResponseEntity.ok(riskTraineeAnalyticsService.findRiskTraineeRates(
 				cohortId,
+				projectId,
 				classroomId,
 				fromRoundNo,
 				toRoundNo,
+				sort,
 				authentication.getName()
 		));
 	}

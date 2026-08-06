@@ -20,7 +20,15 @@ public interface RiskTraineeQueryRepository {
 
 	boolean classroomBelongsToCohort(UUID classroomId, UUID cohortId, UUID organizationId);
 
+	boolean projectBelongsToCohort(UUID projectId, UUID cohortId, UUID organizationId, String projectCategory);
+
 	List<RoundRow> findRounds(RoundCriteria criteria);
+
+	/**
+	 * 회차 범위 필터를 적용하기 전의 등록 회차 수.
+	 * 화면의 회차 범위 선택지를 그리려면 필터로 잘려 나간 회차까지 세어야 한다.
+	 */
+	int countRegisteredRounds(RoundCriteria criteria);
 
 	List<RiskCellRow> aggregateRiskCells(RoundCriteria criteria);
 
@@ -28,10 +36,19 @@ public interface RiskTraineeQueryRepository {
 
 	RosterCount findCohortRoster(UUID cohortId, UUID organizationId);
 
+	/**
+	 * projectId는 선택이며 null이면 기수의 모든 미니프로젝트를 조회한다.
+	 *
+	 * round_no는 (project_id, round_no) UNIQUE라 프로젝트마다 1부터 다시 시작한다.
+	 * 기수에 미니프로젝트가 여러 건이면 같은 round_no 열이 프로젝트 수만큼 생기므로
+	 * 한 프로젝트의 회차 흐름만 보려면 projectId로 좁혀야 한다.
+	 * analysis_sequence_no(미니프로젝트 재번호화 조회값)와 혼용하지 않는다.
+	 */
 	record RoundCriteria(
 			UUID cohortId,
 			UUID organizationId,
 			String projectCategory,
+			UUID projectId,
 			int fromRoundNo,
 			int toRoundNo
 	) {
@@ -43,7 +60,8 @@ public interface RiskTraineeQueryRepository {
 			String roundName,
 			UUID projectId,
 			String projectName,
-			String roundStatus
+			String roundStatus,
+			boolean reportPublished
 	) {
 	}
 

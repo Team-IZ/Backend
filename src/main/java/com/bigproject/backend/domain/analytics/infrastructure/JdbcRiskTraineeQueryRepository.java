@@ -5,6 +5,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -60,39 +62,125 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 	}
 
 	@Override
-	public List<RoundRow> findRounds(RoundCriteria criteria) {
-		return jdbcTemplate.query(
+	public boolean projectBelongsToCohort(
+			UUID projectId,
+			UUID cohortId,
+			UUID organizationId,
+			String projectCategory
+	) {
+		Integer count = jdbcTemplate.queryForObject(
 				"""
+				SELECT COUNT(*)
+				FROM project
+				WHERE project_id = ?
+					AND cohort_id = ?
+					AND org_id = ?
+					AND project_category = ?
+					AND deleted_at IS NULL
+				""",
+				Integer.class,
+				projectId,
+				cohortId,
+				organizationId,
+				projectCategory
+		);
+		return count != null && count > 0;
+	}
+
+	/**
+	 * 회차 열을 조회한다.
+	 *
+	 * 집계 상태는 회차 생명주기가 아니라 발행된 리포트 유무로 판정한다.
+	 * 화면이 '리포트가 발행되면 채워집니다'로 설명하므로 그 계약에 맞춘다.
+	 * PLANNED만 회차 status에서 직접 읽어 '시작 전'과 '집계 전'을 구분한다.
+	 */
+	@Override
+	public List<RoundRow> findRounds(RoundCriteria criteria) {
+		String sql = """
 				SELECT
 					r.assessment_round_id,
 					r.round_no,
 					r.round_name,
 					p.project_id,
 					p.name AS project_name,
-					r.status AS round_status
+					r.status AS round_status,
+					EXISTS (
+						SELECT 1
+						FROM report rpt
+						WHERE rpt.assessment_round_id = r.assessment_round_id
+							AND rpt.lifecycle_status = 'ACTIVE'
+							AND rpt.published_at IS NOT NULL
+					) AS report_published
 				FROM project_assessment_round r
 				JOIN project p ON p.project_id = r.project_id AND p.deleted_at IS NULL
 				WHERE r.cohort_id = ?
 					AND r.org_id = ?
 					AND r.deleted_at IS NULL
-					AND p.project_category = ?
+					AND p.project_category = ?%s
 					AND r.round_no BETWEEN ? AND ?
 				ORDER BY p.sequence_no, r.round_no, r.assessment_round_id
-				""",
+				""".formatted(projectFilter(criteria));
+
+		return jdbcTemplate.query(
+				sql,
 				(rs, rowNum) -> new RoundRow(
 						rs.getObject("assessment_round_id", UUID.class),
 						rs.getInt("round_no"),
 						rs.getString("round_name"),
 						rs.getObject("project_id", UUID.class),
 						rs.getString("project_name"),
-						rs.getString("round_status")
+						rs.getString("round_status"),
+						rs.getBoolean("report_published")
 				),
+				appendRoundRange(
+						scopeArguments(criteria),
+						criteria
+				)
+		);
+	}
+
+	@Override
+	public int countRegisteredRounds(RoundCriteria criteria) {
+		String sql = """
+				SELECT COUNT(*)
+				FROM project_assessment_round r
+				JOIN project p ON p.project_id = r.project_id AND p.deleted_at IS NULL
+				WHERE r.cohort_id = ?
+					AND r.org_id = ?
+					AND r.deleted_at IS NULL
+					AND p.project_category = ?%s
+				""".formatted(projectFilter(criteria));
+
+		Integer count = jdbcTemplate.queryForObject(sql, Integer.class, scopeArguments(criteria));
+		return count == null ? 0 : count;
+	}
+
+	/**
+	 * projectId를 지정했을 때만 프로젝트 조건을 붙인다.
+	 * 바인딩 파라미터에 NULL UUID를 넘겨 `? IS NULL` 로 분기하면 PostgreSQL이 타입을 추론하지 못해
+	 * 명시적 캐스팅이 필요해지므로, 조건 자체를 넣고 빼는 쪽이 단순하다.
+	 */
+	private String projectFilter(RoundCriteria criteria) {
+		return criteria.projectId() == null ? "" : "\n\t\t\t\tAND p.project_id = ?";
+	}
+
+	private Object[] scopeArguments(RoundCriteria criteria) {
+		if (criteria.projectId() == null) {
+			return new Object[]{criteria.cohortId(), criteria.organizationId(), criteria.projectCategory()};
+		}
+		return new Object[]{
 				criteria.cohortId(),
 				criteria.organizationId(),
 				criteria.projectCategory(),
-				criteria.fromRoundNo(),
-				criteria.toRoundNo()
-		);
+				criteria.projectId()
+		};
+	}
+
+	private Object[] appendRoundRange(Object[] scope, RoundCriteria criteria) {
+		Object[] merged = Arrays.copyOf(scope, scope.length + 2);
+		merged[scope.length] = criteria.fromRoundNo();
+		merged[scope.length + 1] = criteria.toRoundNo();
+		return merged;
 	}
 
 	/**
@@ -114,7 +202,7 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 					WHERE r.cohort_id = ?
 						AND r.org_id = ?
 						AND r.deleted_at IS NULL
-						AND p.project_category = ?
+						AND p.project_category = ?%s
 						AND r.round_no BETWEEN ? AND ?
 				),
 				attempt_scope AS (
@@ -168,7 +256,14 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 					ON r.assessment_round_id = a.assessment_round_id
 					AND r.user_id = a.user_id
 				GROUP BY a.assessment_round_id, a.class_id
-				""".formatted(RISK_REASON_CODES, ELIGIBLE_CONDITION, ELIGIBLE_CONDITION);
+				""".formatted(projectFilter(criteria), RISK_REASON_CODES, ELIGIBLE_CONDITION, ELIGIBLE_CONDITION);
+
+		// round_scope → attempt_scope → risk_scope 순서로 기수·기관 조건을 다시 바인딩한다.
+		List<Object> arguments = new ArrayList<>(List.of(appendRoundRange(scopeArguments(criteria), criteria)));
+		arguments.add(criteria.cohortId());
+		arguments.add(criteria.organizationId());
+		arguments.add(criteria.cohortId());
+		arguments.add(criteria.organizationId());
 
 		return jdbcTemplate.query(
 				sql,
@@ -181,15 +276,7 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 						rs.getLong("session_incomplete_count"),
 						rs.getLong("invalid_attempt_count")
 				),
-				criteria.cohortId(),
-				criteria.organizationId(),
-				criteria.projectCategory(),
-				criteria.fromRoundNo(),
-				criteria.toRoundNo(),
-				criteria.cohortId(),
-				criteria.organizationId(),
-				criteria.cohortId(),
-				criteria.organizationId()
+				arguments.toArray()
 		);
 	}
 

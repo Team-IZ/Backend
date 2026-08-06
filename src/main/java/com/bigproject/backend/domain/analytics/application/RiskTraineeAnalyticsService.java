@@ -1,6 +1,8 @@
 package com.bigproject.backend.domain.analytics.application;
 
+import com.bigproject.backend.domain.analytics.domain.CohortRiskComparison;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeQueryRepository;
+import com.bigproject.backend.domain.analytics.domain.RiskTraineeSort;
 import com.bigproject.backend.domain.analytics.domain.RoundAggregationStatus;
 import com.bigproject.backend.domain.analytics.presentation.dto.RiskTraineeRateResponse;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
@@ -16,6 +18,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,9 +39,11 @@ public class RiskTraineeAnalyticsService {
 
 	public RiskTraineeRateResponse findRiskTraineeRates(
 			UUID cohortId,
+			UUID projectId,
 			List<UUID> classroomIds,
 			Integer fromRoundNo,
 			Integer toRoundNo,
+			RiskTraineeSort sort,
 			String actorEmail
 	) {
 		AuthUser actor = activeActor(actorEmail);
@@ -57,25 +62,35 @@ public class RiskTraineeAnalyticsService {
 				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "해당 기수에 속한 반이 아닙니다.");
 			}
 		}
+		if (projectId != null && !riskTraineeQueryRepository.projectBelongsToCohort(
+				projectId, cohortId, cohort.organizationId(), MINI_PROJECT)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "해당 기수의 미니프로젝트가 아닙니다.");
+		}
 		int from = fromRoundNo == null ? 1 : fromRoundNo;
 		int to = toRoundNo == null ? Integer.MAX_VALUE : toRoundNo;
 		if (from < 1 || to < from) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "회차 범위가 올바르지 않습니다.");
 		}
+		RiskTraineeSort appliedSort = sort == null ? RiskTraineeSort.RECENT_ROUND_WORST : sort;
 
 		RiskTraineeQueryRepository.RoundCriteria criteria = new RiskTraineeQueryRepository.RoundCriteria(
 				cohortId,
 				cohort.organizationId(),
 				MINI_PROJECT,
+				projectId,
 				from,
 				to
 		);
 		List<RiskTraineeQueryRepository.RoundRow> rounds = riskTraineeQueryRepository.findRounds(criteria);
+		int totalRegisteredRoundCount = riskTraineeQueryRepository.countRegisteredRounds(criteria);
 		List<RiskTraineeQueryRepository.RiskCellRow> cells = riskTraineeQueryRepository.aggregateRiskCells(criteria);
 
 		Map<UUID, RoundAggregationStatus> statusByRound = new LinkedHashMap<>();
 		for (RiskTraineeQueryRepository.RoundRow round : rounds) {
-			statusByRound.put(round.assessmentRoundId(), RoundAggregationStatus.from(round.roundStatus()));
+			statusByRound.put(
+					round.assessmentRoundId(),
+					RoundAggregationStatus.from(round.roundStatus(), round.reportPublished())
+			);
 		}
 		Map<UUID, RiskTraineeQueryRepository.RiskCellRow> cohortTotals = new LinkedHashMap<>();
 		Map<UUID, Map<UUID, RiskTraineeQueryRepository.RiskCellRow>> classTotals = new LinkedHashMap<>();
@@ -94,23 +109,40 @@ public class RiskTraineeAnalyticsService {
 				riskTraineeQueryRepository.findClassRosters(cohortId, cohort.organizationId());
 		Set<UUID> classroomFilter = Set.copyOf(requestedClassroomIds);
 
+		// 기수 전체 행을 먼저 만들어 반 행의 색 판정 기준으로 쓴다.
+		List<RiskTraineeRateResponse.RiskCell> cohortCells = toCells(rounds, statusByRound, cohortTotals, Map.of());
+		Map<UUID, BigDecimal> cohortRateByRound = new LinkedHashMap<>();
+		for (RiskTraineeRateResponse.RiskCell cell : cohortCells) {
+			if (cell.riskRate() != null) {
+				cohortRateByRound.put(cell.assessmentRoundId(), cell.riskRate());
+			}
+		}
+		UUID recentAggregatedRoundId = recentAggregatedRoundId(rounds, statusByRound);
+
 		List<RiskTraineeRateResponse.ClassRiskSummary> classSummaries = new ArrayList<>();
 		for (RiskTraineeQueryRepository.ClassRosterRow roster : classRosters) {
 			if (!classroomFilter.isEmpty() && !classroomFilter.contains(roster.classId())) {
 				continue;
 			}
+			Map<UUID, RiskTraineeQueryRepository.RiskCellRow> totals =
+					classTotals.getOrDefault(roster.classId(), Map.of());
 			classSummaries.add(new RiskTraineeRateResponse.ClassRiskSummary(
 					roster.classId(),
 					roster.className(),
 					roster.traineeCount(),
 					roster.withdrawnCount(),
-					toCells(rounds, statusByRound, classTotals.getOrDefault(roster.classId(), Map.of()))
+					exclusionRollup(totals, recentAggregatedRoundId),
+					toCells(rounds, statusByRound, totals, cohortRateByRound)
 			));
 		}
+		classSummaries.sort(comparator(appliedSort, recentAggregatedRoundId, cohortRateByRound));
 
 		return new RiskTraineeRateResponse(
 				cohortId,
 				MINI_PROJECT,
+				projectId,
+				totalRegisteredRoundCount,
+				appliedSort,
 				rounds.stream()
 						.map(round -> new RiskTraineeRateResponse.RoundColumn(
 								round.assessmentRoundId(),
@@ -124,16 +156,21 @@ public class RiskTraineeAnalyticsService {
 				new RiskTraineeRateResponse.CohortRiskSummary(
 						cohortRoster.traineeCount(),
 						cohortRoster.withdrawnCount(),
-						toCells(rounds, statusByRound, cohortTotals)
+						exclusionRollup(cohortTotals, recentAggregatedRoundId),
+						cohortCells
 				),
 				classSummaries
 		);
 	}
 
+	/**
+	 * cohortRateByRound가 비어 있으면 기수 전체 행이라 견줄 대상이 없어 색 판정을 남기지 않는다.
+	 */
 	private List<RiskTraineeRateResponse.RiskCell> toCells(
 			List<RiskTraineeQueryRepository.RoundRow> rounds,
 			Map<UUID, RoundAggregationStatus> statusByRound,
-			Map<UUID, RiskTraineeQueryRepository.RiskCellRow> totals
+			Map<UUID, RiskTraineeQueryRepository.RiskCellRow> totals,
+			Map<UUID, BigDecimal> cohortRateByRound
 	) {
 		List<RiskTraineeRateResponse.RiskCell> result = new ArrayList<>();
 		for (RiskTraineeQueryRepository.RoundRow round : rounds) {
@@ -141,13 +178,15 @@ public class RiskTraineeAnalyticsService {
 			RiskTraineeQueryRepository.RiskCellRow total = totals.get(round.assessmentRoundId());
 			long eligibleCount = total == null ? 0 : total.eligibleCount();
 			long riskCount = total == null ? 0 : total.riskCount();
+			BigDecimal rate = riskRate(status, eligibleCount, riskCount);
 			result.add(new RiskTraineeRateResponse.RiskCell(
 					round.assessmentRoundId(),
 					round.roundNo(),
 					status,
 					eligibleCount,
 					riskCount,
-					riskRate(status, eligibleCount, riskCount),
+					rate,
+					comparison(rate, cohortRateByRound.get(round.assessmentRoundId())),
 					new RiskTraineeRateResponse.ExclusionBreakdown(
 							total == null ? 0 : total.notAttendedCount(),
 							total == null ? 0 : total.sessionIncompleteCount(),
@@ -156,6 +195,113 @@ public class RiskTraineeAnalyticsService {
 			));
 		}
 		return result;
+	}
+
+	/**
+	 * 같은 회차의 기수 전체 비율과 단순 비교한다. 완충 구간을 두지 않는다.
+	 * 척도가 다른 값을 비교해도 되도록 compareTo가 아니라 부호만 본다.
+	 */
+	private CohortRiskComparison comparison(BigDecimal rate, BigDecimal cohortRate) {
+		if (rate == null || cohortRate == null) {
+			return null;
+		}
+		int direction = rate.compareTo(cohortRate);
+		if (direction > 0) {
+			return CohortRiskComparison.WORSE;
+		}
+		return direction < 0 ? CohortRiskComparison.BETTER : CohortRiskComparison.SAME;
+	}
+
+	/**
+	 * 화면의 '채점에서 빠진 사람' 열은 회차마다가 아니라 행마다 한 벌이다.
+	 * 기준 회차는 최근 발행 회차로 고정해 기본 정렬(RECENT_ROUND_WORST)이 보는 회차와 일치시킨다.
+	 */
+	private RiskTraineeRateResponse.ExclusionBreakdown exclusionRollup(
+			Map<UUID, RiskTraineeQueryRepository.RiskCellRow> totals,
+			UUID recentAggregatedRoundId
+	) {
+		RiskTraineeQueryRepository.RiskCellRow total =
+				recentAggregatedRoundId == null ? null : totals.get(recentAggregatedRoundId);
+		if (total == null) {
+			return new RiskTraineeRateResponse.ExclusionBreakdown(0, 0, 0);
+		}
+		return new RiskTraineeRateResponse.ExclusionBreakdown(
+				total.notAttendedCount(),
+				total.sessionIncompleteCount(),
+				total.invalidAttemptCount()
+		);
+	}
+
+	private UUID recentAggregatedRoundId(
+			List<RiskTraineeQueryRepository.RoundRow> rounds,
+			Map<UUID, RoundAggregationStatus> statusByRound
+	) {
+		UUID recent = null;
+		for (RiskTraineeQueryRepository.RoundRow round : rounds) {
+			RoundAggregationStatus status = statusByRound.get(round.assessmentRoundId());
+			if (status != null && status.readable()) {
+				recent = round.assessmentRoundId();
+			}
+		}
+		return recent;
+	}
+
+	/**
+	 * 네 정렬 기준 모두 조립된 응답 값만으로 계산한다.
+	 * 값이 없는 반은 항상 뒤로 보내고, 마지막 비교는 이름으로 고정해 순서를 결정적으로 만든다.
+	 */
+	private Comparator<RiskTraineeRateResponse.ClassRiskSummary> comparator(
+			RiskTraineeSort sort,
+			UUID recentAggregatedRoundId,
+			Map<UUID, BigDecimal> cohortRateByRound
+	) {
+		Comparator<RiskTraineeRateResponse.ClassRiskSummary> byName =
+				Comparator.comparing(RiskTraineeRateResponse.ClassRiskSummary::className,
+						Comparator.nullsLast(Comparator.naturalOrder()));
+		return switch (sort) {
+			case NAME -> byName;
+			case EXCLUSION_COUNT -> Comparator
+					.comparingLong((RiskTraineeRateResponse.ClassRiskSummary summary) ->
+							summary.exclusionRollup().total())
+					.reversed()
+					.thenComparing(byName);
+			case WORSE_ROUND_COUNT -> Comparator
+					.comparingLong((RiskTraineeRateResponse.ClassRiskSummary summary) -> summary.cells().stream()
+							.filter(cell -> cell.comparisonToCohort() == CohortRiskComparison.WORSE)
+							.count())
+					.reversed()
+					.thenComparing(byName);
+			case RECENT_ROUND_WORST -> Comparator
+					.comparing(
+							(RiskTraineeRateResponse.ClassRiskSummary summary) ->
+									gapAtRecentRound(summary, recentAggregatedRoundId, cohortRateByRound),
+							Comparator.nullsLast(Comparator.reverseOrder()))
+					.thenComparing(byName);
+		};
+	}
+
+	/**
+	 * 최근 발행 회차에서 기수 전체 비율을 얼마나 웃도는지. 값이 없으면 null로 두어 뒤로 밀린다.
+	 */
+	private BigDecimal gapAtRecentRound(
+			RiskTraineeRateResponse.ClassRiskSummary summary,
+			UUID recentAggregatedRoundId,
+			Map<UUID, BigDecimal> cohortRateByRound
+	) {
+		if (recentAggregatedRoundId == null) {
+			return null;
+		}
+		BigDecimal cohortRate = cohortRateByRound.get(recentAggregatedRoundId);
+		if (cohortRate == null) {
+			return null;
+		}
+		return summary.cells().stream()
+				.filter(cell -> recentAggregatedRoundId.equals(cell.assessmentRoundId()))
+				.map(RiskTraineeRateResponse.RiskCell::riskRate)
+				.filter(java.util.Objects::nonNull)
+				.findFirst()
+				.map(rate -> rate.subtract(cohortRate))
+				.orElse(null);
 	}
 
 	/**
