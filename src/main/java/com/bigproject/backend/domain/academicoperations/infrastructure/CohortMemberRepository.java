@@ -24,4 +24,7 @@ public interface CohortMemberRepository extends JpaRepository<CohortMember, UUID
 
 	// 기수 종료 시 cascade 해제 대상 조회용: 이 기수의 유효한 구성원 전체
 	List<CohortMember> findByCohortIdAndOrgIdAndLeftAtIsNull(UUID cohortId, UUID orgId);
+
+	// GET /members/me/enrollments — 로그인한 사용자가 지금 유효하게 소속된 기수 전체(보통 1건)
+	List<CohortMember> findByUserIdAndOrgIdAndLeftAtIsNull(UUID userId, UUID orgId);
 }
