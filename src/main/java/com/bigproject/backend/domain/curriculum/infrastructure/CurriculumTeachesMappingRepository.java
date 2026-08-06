@@ -40,4 +40,12 @@ public interface CurriculumTeachesMappingRepository extends JpaRepository<Curric
      */
     Optional<CurriculumTeachesMapping> findByMappingIdAndTeachesIdAndVersionIdAndOrgIdAndMappingStatus(
             UUID mappingId, UUID teachesId, UUID versionId, UUID orgId, MappingStatus mappingStatus);
+
+    /**
+     * MG-09 ②③④ 섹션 상세 탭용 — 이 섹션 안의 매핑(가르친 항목) 전체를 문항 순서대로.
+     * "★가 검증 개념으로 쓰인 항목" 표시(②④)와 "★ 없이 항목만"(③)을 가르는 것은
+     * 이 결과를 project 도메인의 findRoundLabelsUsingTeaches로 하나씩 대조해야 알 수 있다 —
+     * 이 쿼리 자체는 섹션 안의 후보 전체만 돌려준다.
+     */
+    List<CurriculumTeachesMapping> findAllBySectionIdOrderBySequenceNoAsc(UUID sectionId);
 }
