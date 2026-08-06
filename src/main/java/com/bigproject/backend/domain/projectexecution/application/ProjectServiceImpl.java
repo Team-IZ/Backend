@@ -1,17 +1,17 @@
-package projectexecution.application;
+package com.bigproject.backend.domain.projectexecution.application;
 
-import projectexecution.domain.ConceptSetStatus;
-import projectexecution.domain.Project;
-import projectexecution.domain.ProjectCategory;
-import projectexecution.domain.ProjectRequirement;
-import projectexecution.domain.ProjectVerificationConcept;
-import projectexecution.domain.ProjectVerificationConceptSet;
-import projectexecution.infrastructure.ProjectRepository;
-import projectexecution.infrastructure.ProjectRequirementRepository;
-import projectexecution.infrastructure.ProjectVerificationConceptRepository;
-import projectexecution.infrastructure.ProjectVerificationConceptSetRepository;
-import projectexecution.domain.ProjectCurriculum;
-import projectexecution.infrastructure.ProjectCurriculumRepository;
+import com.bigproject.backend.domain.projectexecution.domain.ConceptSetStatus;
+import com.bigproject.backend.domain.projectexecution.domain.Project;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectCategory;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectRequirement;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectVerificationConcept;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectVerificationConceptSet;
+import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectRepository;
+import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectRequirementRepository;
+import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectVerificationConceptRepository;
+import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectVerificationConceptSetRepository;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectCurriculum;
+import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectCurriculumRepository;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;

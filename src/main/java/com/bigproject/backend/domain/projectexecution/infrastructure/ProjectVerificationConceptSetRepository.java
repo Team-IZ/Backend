@@ -1,7 +1,7 @@
-package projectexecution.infrastructure;
+package com.bigproject.backend.domain.projectexecution.infrastructure;
 
-import projectexecution.domain.ConceptSetStatus;
-import projectexecution.domain.ProjectVerificationConceptSet;
+import com.bigproject.backend.domain.projectexecution.domain.ConceptSetStatus;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectVerificationConceptSet;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;

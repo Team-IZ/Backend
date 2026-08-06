@@ -1,6 +1,6 @@
-package projectexecution.application;
+package com.bigproject.backend.domain.projectexecution.application;
 
-import projectexecution.domain.ProjectRequirement;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectRequirement;
 
 import java.util.List;
 import java.util.UUID;

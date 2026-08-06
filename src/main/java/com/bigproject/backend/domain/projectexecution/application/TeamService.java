@@ -1,10 +1,10 @@
-package projectexecution.application;
+package com.bigproject.backend.domain.projectexecution.application;
 
-import projectexecution.domain.AssignmentMethod;
-import projectexecution.domain.Team;
-import projectexecution.domain.TeamMembership;
-import projectexecution.infrastructure.TeamMembershipRepository;
-import projectexecution.infrastructure.TeamRepository;
+import com.bigproject.backend.domain.projectexecution.domain.AssignmentMethod;
+import com.bigproject.backend.domain.projectexecution.domain.Team;
+import com.bigproject.backend.domain.projectexecution.domain.TeamMembership;
+import com.bigproject.backend.domain.projectexecution.infrastructure.TeamMembershipRepository;
+import com.bigproject.backend.domain.projectexecution.infrastructure.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;

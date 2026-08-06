@@ -1,6 +1,6 @@
-package projectexecution.infrastructure;
+package com.bigproject.backend.domain.projectexecution.infrastructure;
 
-import projectexecution.domain.MeasurementPlan;
+import com.bigproject.backend.domain.projectexecution.domain.MeasurementPlan;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;

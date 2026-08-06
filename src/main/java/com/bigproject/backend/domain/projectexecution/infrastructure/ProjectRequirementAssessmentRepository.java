@@ -1,6 +1,6 @@
-package projectexecution.infrastructure;
+package com.bigproject.backend.domain.projectexecution.infrastructure;
 
-import projectexecution.domain.ProjectRequirementAssessment;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectRequirementAssessment;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;

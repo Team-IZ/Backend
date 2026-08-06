@@ -1,10 +1,10 @@
-package projectexecution.application;
+package com.bigproject.backend.domain.projectexecution.application;
 
-import projectexecution.domain.Checkpoint;
-import projectexecution.domain.MeasurementPlan;
-import projectexecution.infrastructure.CheckpointQuestionFocusRepository;
-import projectexecution.infrastructure.CheckpointRepository;
-import projectexecution.infrastructure.MeasurementPlanRepository;
+import com.bigproject.backend.domain.projectexecution.domain.Checkpoint;
+import com.bigproject.backend.domain.projectexecution.domain.MeasurementPlan;
+import com.bigproject.backend.domain.projectexecution.infrastructure.CheckpointQuestionFocusRepository;
+import com.bigproject.backend.domain.projectexecution.infrastructure.CheckpointRepository;
+import com.bigproject.backend.domain.projectexecution.infrastructure.MeasurementPlanRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;

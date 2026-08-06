@@ -1,6 +1,6 @@
-package projectexecution.infrastructure;
+package com.bigproject.backend.domain.projectexecution.infrastructure;
 
-import projectexecution.domain.QuestionFocusItem;
+import com.bigproject.backend.domain.projectexecution.domain.QuestionFocusItem;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;

@@ -1,7 +1,7 @@
-package projectexecution.infrastructure;
+package com.bigproject.backend.domain.projectexecution.infrastructure;
 
-import projectexecution.domain.Project;
-import projectexecution.domain.ProjectCategory;
+import com.bigproject.backend.domain.projectexecution.domain.Project;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectCategory;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;

@@ -1,4 +1,4 @@
-package projectexecution.domain;
+package com.bigproject.backend.domain.projectexecution.domain;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
