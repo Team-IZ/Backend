@@ -35,6 +35,7 @@ public class AuthService {
 	private final PasswordEncoder passwordEncoder;
 	private final JwtProvider jwtProvider;
 	private final LoginClientValidator loginClientValidator;
+	private final LoginDestinationResolver loginDestinationResolver;
 	private final RefreshTokenRepository refreshTokenRepository;
 	private final RefreshTokenHasher refreshTokenHasher;
 
@@ -42,7 +43,6 @@ public class AuthService {
 	public LoginResult login(
 			LoginRequest request,
 			String origin,
-			String loginEntryPath,
 			TokenRequestMetadata requestMetadata
 	) {
 		Optional<AuthUser> candidate = authUserRepository.findByNormalizedEmail(normalizeEmail(request.email()));
@@ -53,17 +53,20 @@ public class AuthService {
 		AuthUser user = candidate.get();
 
 		validateAccount(user);
-		loginClientValidator.validate(origin, loginEntryPath, user.role());
+		loginClientValidator.validateOrigin(origin);
+		String redirectPath = loginDestinationResolver.resolveRedirectPath(user);
 
 		String accessToken = jwtProvider.createAccessToken(
 				user.email(),
 				user.role().name(),
-				user.organizationId()
+				user.organizationId(),
+				user.passwordChangedAt()
 		);
 		String refreshToken = jwtProvider.createRefreshToken(
 				user.email(),
 				user.role().name(),
-				user.organizationId()
+				user.organizationId(),
+				user.passwordChangedAt()
 		);
 		Instant loggedInAt = Instant.now();
 		Optional<RefreshTokenLineage> previousLineage = refreshTokenRepository.revokeForReplacement(
@@ -86,6 +89,7 @@ public class AuthService {
 				user.name(),
 				user.role(),
 				user.organizationId(),
+				redirectPath,
 				accessToken,
 				jwtProvider.getAccessTokenExpiration()
 		);
@@ -122,7 +126,8 @@ public class AuthService {
 		String accessToken = jwtProvider.createAccessToken(
 				user.email(),
 				user.role().name(),
-				user.organizationId()
+				user.organizationId(),
+				user.passwordChangedAt()
 		);
 		refreshTokenRepository.updateLastUsed(tokenSession.tokenId(), usedAt, requestMetadata);
 		return new RefreshTokenResponse(accessToken, jwtProvider.getAccessTokenExpiration());

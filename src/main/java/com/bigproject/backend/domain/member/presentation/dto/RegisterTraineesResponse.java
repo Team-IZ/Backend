@@ -8,9 +8,9 @@ import java.util.List;
 public record RegisterTraineesResponse(
 		@Schema(description = "처리 대상으로 받은 전체 교육생 행 수", example = "3")
 		int requestedCount,
-		@Schema(description = "계정과 기수 소속 등록에 성공한 교육생 수", example = "2")
+		@Schema(description = "PENDING 계정·기수 소속·초대 원장·토큰 등록에 성공한 교육생 수", example = "2")
 		int registeredCount,
-		@Schema(description = "SMTP 서버에 초대 메일 접수가 완료된 교육생 수", example = "2")
+		@Schema(description = "초대 메일 발송과 초대 상태 SENT 전환이 완료된 교육생 수. 계정 활성화 수가 아닙니다.", example = "2")
 		int invitationSentCount,
 		@Schema(description = "수정 또는 재처리가 필요한 입력 행별 실패 목록")
 		List<Failure> failures

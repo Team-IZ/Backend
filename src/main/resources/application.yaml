@@ -1,6 +1,14 @@
 server:
   port: ${PORT:8080}
   forward-headers-strategy: native
+  error:
+    # 오류 응답에 내부 정보를 싣지 않는다. 켜 두면 스택트레이스·실행 SQL·실패한 DB 행이 그대로 나가는데,
+    # 실제로 초대 취소 실패 500 응답에 사용자 이메일과 초대 토큰 해시까지 노출된 적이 있다.
+    # 원인은 서버 로그로 확인한다.
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+    include-exception: false
 
 spring:
   config:
@@ -24,6 +32,8 @@ spring:
       validation-timeout: 5000
       idle-timeout: 600000
       max-lifetime: 1800000
+      data-source-properties:
+        prepareThreshold: 0
 
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
@@ -61,8 +71,6 @@ jwt:
 auth:
   login:
     allowed-origins: ${AUTH_LOGIN_ALLOWED_ORIGINS}
-    super-admin-path: ${SUPER_ADMIN_LOGIN_PATH}
-    manager-path: ${MANAGER_LOGIN_PATH}
     swagger-origin-override-enabled: ${AUTH_SWAGGER_ORIGIN_OVERRIDE_ENABLED}
     swagger-ui-origin: ${AUTH_SWAGGER_UI_ORIGIN}
   refresh-cookie:
@@ -73,8 +81,6 @@ auth:
 
 invitation:
   base-url: ${INVITATION_BASE_URL}
-  manager-path: ${MANAGER_INVITATION_PATH}
-  trainee-path: ${TRAINEE_INVITATION_PATH}
   expiration: ${INVITATION_EXPIRATION}
   mail:
     host: ${INVITATION_MAIL_HOST:}
@@ -84,3 +90,8 @@ invitation:
     from: ${INVITATION_MAIL_FROM:}
     starttls-enabled: ${INVITATION_MAIL_STARTTLS_ENABLED:true}
     time-zone: ${INVITATION_MAIL_TIME_ZONE:Asia/Seoul}
+
+password-reset:
+  base-url: ${PASSWORD_RESET_BASE_URL:http://localhost:5173}
+  expiration: ${PASSWORD_RESET_EXPIRATION:PT30M}
+  request-cooldown: ${PASSWORD_RESET_REQUEST_COOLDOWN:PT1M}

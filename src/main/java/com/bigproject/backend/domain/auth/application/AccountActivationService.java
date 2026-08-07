@@ -18,22 +18,22 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
 public class AccountActivationService {
 	private static final String INVALID_INVITATION_MESSAGE = "유효하지 않거나 만료된 초대입니다.";
 	private static final String CAPTURE_CHANNEL = "INVITE_LINK";
-	private static final int BCRYPT_PASSWORD_MAX_BYTES = 72;
 
 	private final AccountActivationRepository accountActivationRepository;
 	private final OneTimeTokenHasher tokenHasher;
 	private final PasswordEncoder passwordEncoder;
 	private final int consentPolicyVersion;
+	private final PasswordPolicy passwordPolicy = new PasswordPolicy();
 
 	public AccountActivationService(
 			AccountActivationRepository accountActivationRepository,
@@ -56,14 +56,7 @@ public class AccountActivationService {
 	) {
 		validatePassword(request.password(), request.passwordConfirmation());
 		validateRequiredConsents(request.serviceTermsAgreed(), request.privacyCollectionAgreed());
-		AccountActivationTarget target = findTarget(
-				request.invitationToken(),
-				request.userId(),
-				InvitationPurpose.INVITE_MANAGER
-		);
-		if (target.role() != Role.LEAD_MANAGER && target.role() != Role.MANAGER) {
-			throw invalidInvitation();
-		}
+		AccountActivationTarget target = findInvitedStaff(request.invitationToken(), request.userId());
 		return activate(
 				target,
 				request.name().trim(),
@@ -119,13 +112,48 @@ public class AccountActivationService {
 		);
 	}
 
-	private AccountActivationTarget findTarget(
+	/**
+	 * 초대받은 운영 계정(슈퍼어드민·오퍼레이터·매니저)의 활성화 대상을 찾는다.
+	 *
+	 * <p><b>토큰 목적으로 허용 역할을 가른다.</b> INVITE_SUPER_ADMIN 토큰은 SUPER_ADMIN만,
+	 * INVITE_OPERATOR_MANAGER 토큰은 OPERATOR·MANAGER만 통과시킨다. 목적과 역할을 교차 허용하면
+	 * 오퍼레이터 초대 토큰으로 슈퍼어드민이 되는 권한 상승 경로가 열린다.
+	 */
+	private AccountActivationTarget findInvitedStaff(String invitationToken, UUID userId) {
+		AccountActivationTarget superAdmin = findTargetOrEmpty(
+				invitationToken, userId, InvitationPurpose.INVITE_SUPER_ADMIN
+		).orElse(null);
+		if (superAdmin != null) {
+			if (superAdmin.role() != Role.SUPER_ADMIN) {
+				throw invalidInvitation();
+			}
+			return superAdmin;
+		}
+
+		AccountActivationTarget target = findTarget(
+				invitationToken, userId, InvitationPurpose.INVITE_OPERATOR_MANAGER
+		);
+		if (target.role() != Role.OPERATOR && target.role() != Role.MANAGER) {
+			throw invalidInvitation();
+		}
+		return target;
+	}
+
+	private Optional<AccountActivationTarget> findTargetOrEmpty(
 			String invitationToken,
 			UUID userId,
 			InvitationPurpose purpose
 	) {
 		String tokenHash = tokenHasher.hash(invitationToken.trim());
-		return accountActivationRepository.findTargetForUpdate(tokenHash, userId, purpose, Instant.now())
+		return accountActivationRepository.findTargetForUpdate(tokenHash, userId, purpose, Instant.now());
+	}
+
+	private AccountActivationTarget findTarget(
+			String invitationToken,
+			UUID userId,
+			InvitationPurpose purpose
+	) {
+		return findTargetOrEmpty(invitationToken, userId, purpose)
 				.orElseThrow(this::invalidInvitation);
 	}
 
@@ -198,6 +226,7 @@ public class AccountActivationService {
 			);
 			records.add(new ConsentRecord(
 					UUID.randomUUID(),
+					target.organizationId(),
 					target.userId(),
 					choice.code(),
 					consentPolicyVersion,
@@ -217,8 +246,11 @@ public class AccountActivationService {
 		if (password == null || !password.equals(passwordConfirmation)) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "비밀번호 확인이 일치하지 않습니다.");
 		}
-		if (password.getBytes(StandardCharsets.UTF_8).length > BCRYPT_PASSWORD_MAX_BYTES) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "비밀번호가 허용 길이를 초과했습니다.");
+		if (!passwordPolicy.isStrong(password)) {
+			throw new ResponseStatusException(
+					HttpStatus.BAD_REQUEST,
+					"비밀번호는 8~64자이며 영문, 숫자, 특수문자를 포함해야 합니다."
+			);
 		}
 	}
 

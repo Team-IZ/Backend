@@ -9,17 +9,29 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class InviteManagerRequestSchemaTest {
 
+	/** 반 배정은 초대 시점에 하지 않으므로 요청에 반 필드가 있으면 안 된다. */
 	@Test
-	void exposesOnlyRequestFieldsWithRestrictedRoleAndUuidExample() {
+	void exposesRoleFreeInvitationScopeWithoutClassAssignment() {
 		var resolvedSchema = ModelConverters.getInstance()
 				.resolveAsResolvedSchema(new AnnotatedType(InviteManagerRequest.class));
 		var schema = resolvedSchema.referencedSchemas.get("InviteManagerRequest");
-		var roleSchema = (Schema<?>) schema.getProperties().get("role");
 		var cohortIdSchema = (Schema<?>) schema.getProperties().get("cohortId");
 
 		assertThat(schema.getProperties())
-				.containsOnlyKeys("email", "role", "cohortId", "classroomIds");
-		assertThat(roleSchema.getEnum().toString()).isEqualTo("[LEAD_MANAGER, MANAGER]");
+				.containsOnlyKeys("email", "cohortId");
 		assertThat(cohortIdSchema.getExample()).isEqualTo("UUID");
+	}
+
+	@Test
+	void documentsInvitationResponseSemantics() {
+		var resolvedSchema = ModelConverters.getInstance()
+				.resolveAsResolvedSchema(new AnnotatedType(InviteManagerResponse.class));
+		var schema = resolvedSchema.referencedSchemas.get("InviteManagerResponse");
+
+		assertThat(schema.getDescription()).contains("계정 활성화 완료를 의미하지 않습니다");
+		assertThat(((Schema<?>) schema.getProperties().get("role")).getDescription())
+				.contains("초대 경로별로 고정");
+		assertThat(((Schema<?>) schema.getProperties().get("status")).getDescription())
+				.contains("초대 발송 직후");
 	}
 }

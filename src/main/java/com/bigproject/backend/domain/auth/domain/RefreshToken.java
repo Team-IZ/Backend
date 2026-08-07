@@ -8,7 +8,7 @@ public record RefreshToken(
 		UUID tokenId,
 		UUID userId,
 		String tokenHash,
-		String tokenFamilyId,
+		UUID tokenFamilyId,
 		UUID parentTokenId,
 		Instant issuedAt,
 		Instant expiresAt,
@@ -27,7 +27,7 @@ public record RefreshToken(
 				userId,
 				tokenHash,
 				previousLineage.map(RefreshTokenLineage::tokenFamilyId)
-						.orElseGet(() -> UUID.randomUUID().toString()),
+						.orElseGet(UUID::randomUUID),
 				previousLineage.map(RefreshTokenLineage::parentTokenId).orElse(null),
 				Instant.now(),
 				expiresAt,

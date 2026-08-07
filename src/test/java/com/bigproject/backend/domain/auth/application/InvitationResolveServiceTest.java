@@ -4,6 +4,7 @@ import com.bigproject.backend.domain.auth.domain.InvitationRecipient;
 import com.bigproject.backend.domain.auth.domain.InvitationResolveRepository;
 import com.bigproject.backend.domain.auth.presentation.dto.InvitationResolveRequest;
 import com.bigproject.backend.domain.member.application.OneTimeTokenHasher;
+import com.bigproject.backend.domain.member.domain.Role;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.web.server.ResponseStatusException;
@@ -32,15 +33,17 @@ class InvitationResolveServiceTest {
 		when(repository.findResolvableByTokenHash(
 				org.mockito.ArgumentMatchers.eq(tokenHash),
 				org.mockito.ArgumentMatchers.any(Instant.class)
-		)).thenReturn(Optional.of(new InvitationRecipient(userId, email)));
+		)).thenReturn(Optional.of(new InvitationRecipient(userId, email, Role.TRAINEE)));
 
 		var response = service.resolve(new InvitationResolveRequest(" raw-token "));
 
 		assertThat(response.userId()).isEqualTo(userId);
 		assertThat(response.email()).isEqualTo(email);
+		assertThat(response.role()).isEqualTo(Role.TRAINEE);
 		String json = new ObjectMapper().writeValueAsString(response);
 		assertThat(json).contains("\"user_id\":\"" + userId + "\"");
 		assertThat(json).doesNotContain("\"userId\"");
+		assertThat(json).contains("\"role\":\"TRAINEE\"");
 		ArgumentCaptor<Instant> resolvedAt = ArgumentCaptor.forClass(Instant.class);
 		verify(repository).findResolvableByTokenHash(
 				org.mockito.ArgumentMatchers.eq(tokenHash),
