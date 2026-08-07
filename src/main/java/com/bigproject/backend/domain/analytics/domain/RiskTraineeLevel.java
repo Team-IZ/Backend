@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.analytics.domain;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * 위험 교육생 격자의 행 계층.
  *
@@ -8,6 +10,9 @@ package com.bigproject.backend.domain.analytics.domain;
  * manager_team_heatmap_view 명세도 "프로젝트가 바뀌면 팀 이름으로 추이를 연결하지 않습니다"라고
  * 못 박는다.
  */
+@Schema(name = "RiskTraineeLevel",
+		description = "위험 교육생 격자의 행 계층. CLASS(반 단위) · TEAM(팀 단위, projectId와 classroomId 한 건이 모두 필요)",
+		enumAsRef = true)
 public enum RiskTraineeLevel {
 	CLASS,
 	TEAM
