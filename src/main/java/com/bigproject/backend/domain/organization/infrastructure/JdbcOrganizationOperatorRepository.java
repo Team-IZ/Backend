@@ -80,9 +80,20 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 			String reason
 	) {
 		/*
+		 * CHECK 두 개를 함께 만족시켜야 한다.
+		 *
 		 * ck_app_user_status_3: status='INACTIVE'이면 inactivated_at·inactivated_by·
 		 * inactivated_reason_code가 모두 NOT NULL이어야 한다. status만 바꾸면 CHECK 위반으로 실패한다.
 		 * ACTIVE로 되돌릴 때는 반대로 비운다 — 활성 계정에 정지 이력이 남아 있으면 모순이다.
+		 *
+		 * ck_app_user_status_2: status='PENDING' OR (name IS NOT NULL AND password_hash IS NOT NULL
+		 * AND password_changed_at IS NOT NULL). 초대 시점에 만드는 자리는 이름이 비어 있다 —
+		 * 이름은 수락할 때 본인이 넣는 값이기 때문이다. 그 자리를 PENDING 밖으로 내보내려면
+		 * 이름을 채워야 하므로 이메일 로컬파트로 메운다.
+		 *
+		 * 임시값이 화면에 남지는 않는다. 재초대는 이 자리를 REACTIVATE_INVITED_USER로 되살리면서
+		 * name을 이번 초대 값으로 덮어쓴다(member 도메인). password_hash·password_changed_at은
+		 * 초대 시점에 이미 채워지므로 여기서 손댈 것이 없다.
 		 *
 		 * row_version은 낙관적 락 컬럼이라 JPA가 아닌 직접 UPDATE에서도 함께 올려 준다.
 		 */
@@ -90,6 +101,7 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 		String sql = """
 				UPDATE app_user
 				SET status = ?,
+				    name = CASE WHEN ? THEN COALESCE(name, split_part(email, '@', 1)) ELSE name END,
 				    inactivated_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,
 				    inactivated_by = CASE WHEN ? THEN ?::uuid ELSE NULL END,
 				    inactivated_reason_code = CASE WHEN ? THEN ? ELSE NULL END,
@@ -102,6 +114,7 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 		return jdbcTemplate.update(
 				sql,
 				status.name(),
+				inactivating,
 				inactivating,
 				inactivating, inactivatedBy,
 				inactivating, reasonCode == null ? null : reasonCode.name(),
