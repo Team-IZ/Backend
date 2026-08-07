@@ -52,7 +52,14 @@ public enum MemberErrorCode implements ApiErrorCode {
 	MANAGER_COHORT_REQUIRED(HttpStatus.BAD_REQUEST, "일반 매니저는 하나의 기수를 반드시 지정해야 합니다."),
 
 	/** 인증 사용자를 찾을 수 없다. 토큰은 유효한데 계정이 사라진 경우다. */
-	INVITER_NOT_FOUND(HttpStatus.UNAUTHORIZED, "인증 사용자를 찾을 수 없습니다.");
+	INVITER_NOT_FOUND(HttpStatus.UNAUTHORIZED, "인증 사용자를 찾을 수 없습니다."),
+
+	/**
+	 * 토큰은 유효한데 그 계정이 없다(삭제됐다). {@link #INVITER_NOT_FOUND}와 상황은 같지만
+	 * 초대 흐름이 아닌 곳에서 쓴다 — 이름이 맞지 않으면 프론트가 코드를 보고 무슨 일인지
+	 * 되짚어야 한다. 화면이 할 일은 조용히 로그인 화면으로 보내는 것뿐이다.
+	 */
+	MEMBER_NOT_FOUND(HttpStatus.UNAUTHORIZED, "인증 사용자를 찾을 수 없습니다.");
 
 	private final HttpStatus status;
 	private final String defaultMessage;

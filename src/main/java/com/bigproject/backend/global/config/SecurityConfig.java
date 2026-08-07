@@ -4,7 +4,6 @@ import com.bigproject.backend.global.exception.ErrorResponse;
 import com.bigproject.backend.global.security.JwtFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -21,7 +20,6 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.List;
 
 @RequiredArgsConstructor
@@ -31,8 +29,7 @@ import java.util.List;
 public class SecurityConfig {
 	private final ObjectMapper objectMapper;
 	private final JwtFilter jwtFilter;
-	@Value("${auth.login.allowed-origins}")
-	private String allowedOrigins;
+	private final AllowedOriginPolicy allowedOriginPolicy;
 
 	@Bean
 	public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -68,13 +65,18 @@ public class SecurityConfig {
 		return new BCryptPasswordEncoder();
 	}
 
+	/**
+	 * 허용 Origin은 {@link AllowedOriginPolicy} 하나만 본다 — 서버의 Origin 검사
+	 * ({@code LoginClientValidator})와 값이 갈리면 "CORS는 통과했는데 403"이 되어 원인을 찾기 어렵다.
+	 *
+	 * <p>{@code setAllowedOrigins}가 아니라 {@code setAllowedOriginPatterns}를 쓴다. 전자는
+	 * {@code https://*.vercel.app} 같은 항목을 받지 못해, 프리뷰 배포를 열어야 할 때 목록을 두 벌로
+	 * 갈라 담게 된다.
+	 */
 	@Bean
 	UrlBasedCorsConfigurationSource corsConfigurationSource() {
 		CorsConfiguration configuration = new CorsConfiguration();
-		configuration.setAllowedOrigins(Arrays.stream(allowedOrigins.split(","))
-				.map(String::trim)
-				.filter(origin -> !origin.isEmpty())
-				.toList());
+		configuration.setAllowedOriginPatterns(allowedOriginPolicy.corsOriginPatterns());
 		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
 		configuration.setAllowedHeaders(List.of(
 				"Authorization",

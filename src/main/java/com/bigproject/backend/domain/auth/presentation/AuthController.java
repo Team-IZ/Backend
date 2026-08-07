@@ -202,17 +202,25 @@ public class AuthController {
 					  라우트 구조는 프론트 지식이므로 **이 값을 따르지 않고 `role`로 라우팅해도 된다** —
 					  기수명이 필요하면 기수 목록 API에서 ID와 함께 받는 편이 낫다.
 					- accessToken: 액세스 토큰(Authorization: Bearer)
-					- accessTokenExpiresIn: 만료까지 남은 초
+					- accessTokenExpiresIn: 만료까지 남은 시간 — **단위는 밀리초다**(1시간이면 `3600000`).
+					  `Date.now() + accessTokenExpiresIn`이 만료 시각이며, 만료 전 미리 재발급할 때 이 값을 쓴다
 
 					**리프레시 토큰은 응답 본문에 없다.** `Set-Cookie`로 HttpOnly 쿠키에 담겨 나가므로
 					자바스크립트가 읽을 수 없고, 재발급은 `POST /auth/refresh`가 쿠키를 자동으로 실어 보내 처리한다.
+					쿠키는 `SameSite=None; Secure`라 다른 사이트인 프론트에서 보내는 fetch에도 실린다 —
+					`credentials: 'include'`만 켜면 된다.
+
+					**연속 실패는 잠시 지연된다.** 같은 **이메일+IP**로 5회 연속 실패하면 60초,
+					이후 실패마다 2배로 늘어 최대 15분까지 `429 LOGIN_TEMPORARILY_BLOCKED`가 나간다.
+					한 번 성공하면 카운터는 0으로 돌아간다. 계정을 잠그는 것이 아니므로 해제 절차는 없고,
+					다른 자리(다른 IP)에서의 로그인은 영향받지 않는다.
 
 					**오류 구분** — `code`로 분기한다. `message`는 사람이 읽는 문구라 바뀔 수 있다.
 
 					| code | 뜻 | 화면이 할 일 |
 					|---|---|---|
 					| `LOGIN_INVALID` | 이메일이 없거나 비밀번호가 틀림 | 문구만. **둘을 구분해 주지 않는다** — 구분하면 어떤 이메일이 가입돼 있는지 외부에서 확인할 수 있다 |
-					| `LOGIN_TEMPORARILY_BLOCKED` | 연속 실패로 일시 차단 | 응답의 `retryAfter`(초)와 `Retry-After` 헤더만큼 버튼을 잠근다 |
+					| `LOGIN_TEMPORARILY_BLOCKED` | 이메일+IP 5회 연속 실패 | 응답의 `retryAfter`(**초**)와 `Retry-After` 헤더만큼 버튼을 잠근다 |
 					| `LOGIN_ACCOUNT_INACTIVE` | 정지·퇴사 계정 | 문의 안내. 재시도해도 같다 |
 					| `LOGIN_ORG_SUSPENDED` | 계정은 정상이나 소속 기관이 정지 | 기관 문의 안내 |
 					| `LOGIN_ORIGIN_NOT_ALLOWED` | 허용되지 않은 Origin | 계정 문제가 아니다 |
@@ -262,11 +270,17 @@ public class AuthController {
 
 					**요청**
 					- refresh_token (쿠키, 필수): 로그인 시 발급된 HttpOnly 쿠키. 브라우저가 자동으로 실어 보내므로
-					  클라이언트가 직접 다룰 필요가 없다(`credentials: 'include'`만 켜면 된다)
+					  클라이언트가 직접 다룰 필요가 없다(`credentials: 'include'`만 켜면 된다).
+					  쿠키는 `SameSite=None; Secure`이므로 프론트가 백엔드와 다른 사이트여도 실린다
 					- X-Swagger-Client-Origin (헤더, 선택): Swagger UI 테스트 전용
 
 					**응답**
-					- accessToken / accessTokenExpiresIn
+					- accessToken
+					- accessTokenExpiresIn: 만료까지 남은 시간 — **단위는 밀리초다**(1시간이면 `3600000`)
+
+					**역할·이름은 주지 않는다.** 새로고침 후 세션을 복원할 때는 이 호출 뒤에
+					`GET /members/me`를 부른다 — 역할을 브라우저 저장소에 남기지 않아도 되고,
+					정지·역할 변경이 즉시 반영된다.
 
 					**401을 받으면 재시도하지 말고 로그인 화면으로 보내야 한다.** 쿠키가 없거나 만료·위조됐거나,
 					비밀번호 변경 등으로 세션이 폐기된 상태이므로 다시 호출해도 결과가 같다.
