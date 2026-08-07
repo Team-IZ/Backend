@@ -41,6 +41,7 @@ public class CohortComparisonAnalyticsService {
 			UUID cohortId,
 			UUID baselineCohortId,
 			ComparisonSort sort,
+			boolean sameCurriculumOnly,
 			String actorEmail
 	) {
 		AuthUser actor = analyticsActorGuard.operatorOrManager(actorEmail, "매니저만 기수 간 비교를 조회할 수 있습니다.");
@@ -78,7 +79,7 @@ public class CohortComparisonAnalyticsService {
 		// 두 기수 모두 발행된 수업 진단 리포트가 있어야 읽을 스냅샷이 생긴다.
 		if (!baseline.comparable() || !cohortComparisonQueryRepository.hasPublishedDiagnosis(cohortId, organizationId)) {
 			return emptyResponse(
-					targetRef, baselineRef, candidates, ComparisonEmptyState.REPORT_NOT_PUBLISHED, appliedSort);
+					targetRef, baselineRef, candidates, ComparisonEmptyState.REPORT_NOT_PUBLISHED, appliedSort, sameCurriculumOnly);
 		}
 
 		List<UUID> cohortIds = List.of(cohortId, baselineCohortId);
@@ -95,7 +96,7 @@ public class CohortComparisonAnalyticsService {
 		boolean hasSharedConcept = targetLevels.keySet().stream().anyMatch(baselineLevels::containsKey);
 		if (!hasSharedConcept) {
 			return emptyResponse(
-					targetRef, baselineRef, candidates, ComparisonEmptyState.NO_SHARED_CONCEPT, appliedSort);
+					targetRef, baselineRef, candidates, ComparisonEmptyState.NO_SHARED_CONCEPT, appliedSort, sameCurriculumOnly);
 		}
 
 		Set<UUID> everyConcept = new LinkedHashSet<>(targetLevels.keySet());
@@ -109,6 +110,7 @@ public class CohortComparisonAnalyticsService {
 						targetRounds.get(teachesId),
 						baselineRounds.get(teachesId)
 				))
+				.filter(concept -> !sameCurriculumOnly || sameCurriculum(concept))
 				.toList();
 
 		return new CohortComparisonResponse(
@@ -119,8 +121,23 @@ public class CohortComparisonAnalyticsService {
 				levelScale(),
 				changeThreshold(),
 				appliedSort,
+				sameCurriculumOnly,
 				sorted(concepts, appliedSort)
 		);
+	}
+
+	/**
+	 * 교안이 바뀌면 평균 차이가 교육생 변화인지 교안 변화인지 갈라 볼 수 없다.
+	 * 두 기수가 같은 교안 버전을 쓴 개념만 남겨 그 혼동을 없앤다.
+	 *
+	 * 한쪽 기수에 없던 개념은 애초에 비교가 성립하지 않으므로 함께 걸러진다.
+	 */
+	private boolean sameCurriculum(CohortComparisonResponse.ConceptComparison concept) {
+		CohortComparisonResponse.CurriculumVersionChange version = concept.curriculumVersion();
+		return version != null
+				&& version.baselineVersionNo() != null
+				&& version.targetVersionNo() != null
+				&& !version.versionChanged();
 	}
 
 	private CohortComparisonResponse.ConceptComparison toConcept(
@@ -300,6 +317,17 @@ public class CohortComparisonAnalyticsService {
 			ComparisonEmptyState emptyState,
 			ComparisonSort appliedSort
 	) {
+		return emptyResponse(target, baseline, candidates, emptyState, appliedSort, false);
+	}
+
+	private CohortComparisonResponse emptyResponse(
+			CohortComparisonResponse.CohortRef target,
+			CohortComparisonResponse.CohortRef baseline,
+			List<CohortComparisonQueryRepository.BaselineCandidateRow> candidates,
+			ComparisonEmptyState emptyState,
+			ComparisonSort appliedSort,
+			boolean sameCurriculumOnly
+	) {
 		return new CohortComparisonResponse(
 				target,
 				baseline,
@@ -308,6 +336,7 @@ public class CohortComparisonAnalyticsService {
 				levelScale(),
 				changeThreshold(),
 				appliedSort,
+				sameCurriculumOnly,
 				List.of()
 		);
 	}

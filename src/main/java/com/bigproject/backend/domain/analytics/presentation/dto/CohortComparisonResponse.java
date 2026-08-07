@@ -30,6 +30,11 @@ public record CohortComparisonResponse(
 		ChangeThreshold changeThreshold,
 		@Schema(description = "실제로 적용된 정렬 기준")
 		ComparisonSort appliedSort,
+		@Schema(description = """
+				같은 교안 버전을 쓴 개념만 남겼는지 여부입니다.
+				교안이 바뀌면 평균 차이가 교육생 변화인지 교안 변화인지 갈라 볼 수 없어 걸러냅니다.
+				""")
+		boolean sameCurriculumOnly,
 		@Schema(description = "검증 개념 행 목록")
 		List<ConceptComparison> concepts
 ) {

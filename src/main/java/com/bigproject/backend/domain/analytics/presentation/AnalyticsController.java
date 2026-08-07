@@ -223,6 +223,12 @@ public class AnalyticsController {
 			@RequestParam(required = false) UUID baselineCohortId,
 			@Parameter(description = "정렬 기준이며 나빠진 순·좋아진 순·검증 개념 순을 지원합니다.", example = "WORSENED")
 			@RequestParam(required = false, defaultValue = "WORSENED") ComparisonSort sort,
+			@Parameter(description = """
+					같은 교안 버전을 쓴 개념만 남깁니다.
+					교안이 바뀌면 평균 차이가 교육생 변화인지 교안 변화인지 갈라 볼 수 없어 걸러냅니다.
+					한쪽 기수에 없던 개념도 함께 제외됩니다.
+					""", example = "false")
+			@RequestParam(required = false, defaultValue = "false") boolean sameCurriculumOnly,
 			@Parameter(hidden = true)
 			Authentication authentication
 	) {
@@ -230,6 +236,7 @@ public class AnalyticsController {
 				cohortId,
 				baselineCohortId,
 				sort,
+				sameCurriculumOnly,
 				authentication.getName()
 		));
 	}
