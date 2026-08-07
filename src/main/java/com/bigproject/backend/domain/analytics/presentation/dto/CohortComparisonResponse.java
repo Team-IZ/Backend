@@ -15,14 +15,14 @@ import java.util.UUID;
 public record CohortComparisonResponse(
 		@Schema(description = "이번 기수")
 		CohortRef targetCohort,
-		@Schema(description = "지난 기수이며 비교 대상을 고르지 않았으면 null입니다.")
+		@Schema(description = "지난 기수이며 비교 대상을 고르지 않았으면 null입니다.", nullable = true)
 		CohortRef baselineCohort,
 		@Schema(description = "비교 드롭다운 후보이며 같은 기관의 다른 기수를 최근 시작 순으로 내려줍니다.")
 		List<BaselineOption> availableBaselineCohorts,
 		@Schema(description = """
 				격자를 그릴 수 없는 원인이며 비교 가능하면 null입니다.
 				값이 있으면 concepts는 항상 빈 배열입니다.
-				""")
+				""", nullable = true)
 		ComparisonEmptyState emptyStateCode,
 		@Schema(description = "색 눈금 정의")
 		LevelScale levelScale,
@@ -102,19 +102,21 @@ public record CohortComparisonResponse(
 
 	@Schema(description = "개념이 나온 교안 위치이며 이번 기수 기준이고 없으면 지난 기수 기준입니다.")
 	public record ConceptSource(
-			@Schema(description = "교안 이름", example = "AI_LLMOps")
+			@Schema(description = "교안 이름이며 개념이 교안에 매핑되지 않았으면 null입니다.", example = "AI_LLMOps", nullable = true)
 			String curriculumTitle,
-			@Schema(description = "교안 장 순번이며 화면의 '4장'입니다.", example = "4")
+			@Schema(description = "교안 장 순번이며 화면의 '4장'입니다. 개념이 교안에 매핑되지 않았으면 null입니다.", example = "4",
+					nullable = true)
 			Integer sectionSequenceNo,
-			@Schema(description = "교안 장 제목")
+			@Schema(description = "교안 장 제목이며 개념이 교안에 매핑되지 않았으면 null입니다.", nullable = true)
 			String sectionTitle,
-			@Schema(description = "개념이 시작되는 쪽수", example = "62")
+			@Schema(description = "개념이 시작되는 쪽수이며 개념이 교안에 매핑되지 않았으면 null입니다.", example = "62", nullable = true)
 			Integer pageStart,
-			@Schema(description = "개념이 끝나는 쪽수", example = "65")
+			@Schema(description = "개념이 끝나는 쪽수이며 개념이 교안에 매핑되지 않았으면 null입니다.", example = "65", nullable = true)
 			Integer pageEnd,
-			@Schema(description = "개념을 검증한 회차 번호이며 여러 회차면 가장 최근 회차입니다.", example = "3")
+			@Schema(description = "개념을 검증한 회차 번호이며 여러 회차면 가장 최근 회차입니다. 검증한 회차가 없으면 null입니다.",
+					example = "3", nullable = true)
 			Integer roundNo,
-			@Schema(description = "회차 이름이며 화면의 '미프 3차'입니다.")
+			@Schema(description = "회차 이름이며 화면의 '미프 3차'입니다. 검증한 회차가 없으면 null입니다.", nullable = true)
 			String roundLabel
 	) {
 	}
@@ -124,9 +126,9 @@ public record CohortComparisonResponse(
 			@Schema(description = """
 					평균 도달 단계이며 Σ(도달 단계 × 인원) / Σ인원입니다.
 					개념이 없거나 분모가 0이면 0단이 아니라 null입니다.
-					""", example = "2.50")
+					""", example = "2.50", nullable = true)
 			BigDecimal averageReachedLevel,
-			@Schema(description = "평균이 속한 색 밴드(0~4)이며 값이 없으면 null입니다.", example = "3")
+			@Schema(description = "평균이 속한 색 밴드(0~4)이며 값이 없으면 null입니다.", example = "3", nullable = true)
 			Integer levelBand,
 			@Schema(description = "평균의 분모가 된 인원", example = "24")
 			long participantCount,
@@ -134,7 +136,7 @@ public record CohortComparisonResponse(
 			long missingCount,
 			@Schema(description = "PRESENT / ABSENT_IN_COHORT(그 기수에 없던 개념) / MERGED(다른 개념으로 병합)")
 			ConceptPresence presence,
-			@Schema(description = "발행 스냅샷의 집계 상태이며 개념이 없으면 null입니다.", example = "SINGLE_SOURCE")
+			@Schema(description = "발행 스냅샷의 집계 상태이며 개념이 없으면 null입니다.", example = "SINGLE_SOURCE", nullable = true)
 			String aggregationStatus
 	) {
 	}
@@ -146,18 +148,20 @@ public record CohortComparisonResponse(
 			@Schema(description = """
 					이번 기수 평균 - 지난 기수 평균이며 비교할 수 없으면 null입니다.
 					화면에 보이는 두 평균을 그대로 뺀 값이라 표시값과 항상 일치합니다.
-					""", example = "-0.40")
+					""", example = "-0.40", nullable = true)
 			BigDecimal delta,
-			@Schema(description = "비교할 수 없는 이유이며 비교 가능하면 null입니다.")
+			@Schema(description = "비교할 수 없는 이유이며 비교 가능하면 null입니다.", nullable = true)
 			NotComparableReason notComparableReasonCode
 	) {
 	}
 
 	@Schema(description = "교안 버전 변화이며 화면의 'v1 → v2' 또는 'v3 · 그대로'입니다.")
 	public record CurriculumVersionChange(
-			@Schema(description = "지난 기수에서 쓴 교안 버전", example = "1")
+			@Schema(description = "지난 기수에서 쓴 교안 버전이며 지난 기수에 없던 개념이거나 교안에 매핑되지 않았으면 null입니다.",
+					example = "1", nullable = true)
 			Integer baselineVersionNo,
-			@Schema(description = "이번 기수에서 쓴 교안 버전", example = "2")
+			@Schema(description = "이번 기수에서 쓴 교안 버전이며 이번 기수에 없던 개념이거나 교안에 매핑되지 않았으면 null입니다.",
+					example = "2", nullable = true)
 			Integer targetVersionNo,
 			@Schema(description = "두 버전이 모두 있고 서로 다르면 true입니다.")
 			boolean versionChanged

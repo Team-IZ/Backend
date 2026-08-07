@@ -23,7 +23,7 @@ public record GroupGapResponse(
 		@Schema(description = """
 				목록이 비어 있는 이유이며 미달 건이 있으면 null입니다.
 				NO_ELIGIBLE_PARTICIPANT(평가된 조합이 없음) / NO_GROUP_UNDERPERFORMANCE(평가했으나 미달 0건)
-				""")
+				""", nullable = true)
 		GroupGapEmptyReason emptyReasonCode,
 		@Schema(description = "미달 비율 내림차순 목록")
 		List<GroupGapRow> gaps

@@ -18,13 +18,13 @@ public record ActionRequiredResponse(
 		UUID cohortId,
 		@Schema(description = "실제로 발생한 경보 수이며 화면의 '조치 필요 · N건'입니다.", example = "4")
 		int actionCount,
-		@Schema(description = "활성 담당 매니저가 없는 반이며 없으면 null입니다.")
+		@Schema(description = "활성 담당 매니저가 없는 반이며 없으면 null입니다.", nullable = true)
 		ManagerUnassignedAlert managerUnassigned,
-		@Schema(description = "코드 근거를 찾지 못한 팀이 가장 많은 검증 개념이며 없으면 null입니다.")
+		@Schema(description = "코드 근거를 찾지 못한 팀이 가장 많은 검증 개념이며 없으면 null입니다.", nullable = true)
 		ConceptGapAlert conceptGap,
-		@Schema(description = "반 인원의 절반을 넘게 2단 이하가 나온 반·개념 중 가장 나쁜 건이며 없으면 null입니다.")
+		@Schema(description = "반 인원의 절반을 넘게 2단 이하가 나온 반·개념 중 가장 나쁜 건이며 없으면 null입니다.", nullable = true)
 		GroupGapAlert groupGap,
-		@Schema(description = "면담 예정일이 가장 오래 지난 반이며 없으면 null입니다.")
+		@Schema(description = "면담 예정일이 가장 오래 지난 반이며 없으면 null입니다.", nullable = true)
 		InterviewBacklogAlert interviewBacklog
 ) {
 

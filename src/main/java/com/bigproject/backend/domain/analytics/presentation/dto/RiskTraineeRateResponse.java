@@ -16,7 +16,7 @@ public record RiskTraineeRateResponse(
 		UUID cohortId,
 		@Schema(description = "집계 대상 프로젝트 분류이며 미니프로젝트만 지원합니다.", example = "MINI_PROJECT")
 		String projectCategory,
-		@Schema(description = "조회 대상을 한 프로젝트로 좁혔으면 그 프로젝트 ID이고 좁히지 않았으면 null입니다.")
+		@Schema(description = "조회 대상을 한 프로젝트로 좁혔으면 그 프로젝트 ID이고 좁히지 않았으면 null입니다.", nullable = true)
 		UUID projectId,
 		@Schema(description = """
 				회차 범위 필터를 적용하기 전의 등록 회차 수입니다.
@@ -66,13 +66,14 @@ public record RiskTraineeRateResponse(
 			long eligibleCount,
 			@Schema(description = "위험 유형(단계 하락·지속 저점)을 하나라도 가진 고유 교육생 수입니다.", example = "6")
 			long riskCount,
-			@Schema(description = "riskCount / eligibleCount 비율이며 집계 전이거나 분모가 0이면 null입니다.", example = "0.2500")
+			@Schema(description = "riskCount / eligibleCount 비율이며 집계 전이거나 분모가 0이면 null입니다.", example = "0.2500",
+					nullable = true)
 			BigDecimal riskRate,
 			@Schema(description = """
 					같은 회차의 기수 전체 비율과 견준 방향입니다.
 					BETTER(낮음) / SAME(같음) / WORSE(높음)이며 임계 구간 없이 단순 비교합니다.
 					기수 전체 행이거나 두 비율 중 하나라도 없으면 null입니다.
-					""")
+					""", nullable = true)
 			CohortRiskComparison comparisonToCohort,
 			@Schema(description = "미집계 내역")
 			ExclusionBreakdown exclusion
