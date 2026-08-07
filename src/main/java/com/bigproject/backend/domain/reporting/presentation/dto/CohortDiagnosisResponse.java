@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.reporting.presentation.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import java.util.List;
 
 /**
@@ -26,10 +28,12 @@ import java.util.List;
 public record CohortDiagnosisResponse(
 		String status,
 		String cohortName,
+		@Schema(description = "기수 결산 확정 시각. 확정 전이면 null — 화면이 PDF를 잠그는 근거다.", nullable = true)
 		String publishedAt,
 		int completedRounds,
 		int totalRounds,
 		String periodStart,
+		@Schema(description = "집계 종료일. 확정 전이면 아직 끝나지 않았으므로 null", nullable = true)
 		String periodEnd,
 		int traineeCount,
 		int classCount,

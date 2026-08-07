@@ -21,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -43,13 +44,14 @@ import java.util.UUID;
 @Validated
 @RequiredArgsConstructor
 @RestController
-@RequestMapping("/cohorts")
+@RequestMapping(value = "/cohorts", produces = MediaType.APPLICATION_JSON_VALUE)
 public class CohortController {
 
 	private final CohortService cohortService;
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
+			operationId = "findCohorts",
 			summary = "기관 기수 목록 조회 | ✅ 사용 가능",
 			description = """
 					로그인한 사용자의 소속 기관에 개설된 기수를 상태 필터·이름 검색으로 페이지네이션 조회한다.
@@ -110,6 +112,7 @@ public class CohortController {
 	}
 
 	@Operation(
+			operationId = "findCohort",
 			summary = "기수 상세 조회 | ✅ 사용 가능",
 			description = """
 					기수 하나의 상세 정보를 조회한다. 조회 범위인 기관은 액세스 토큰에서 가져오며,
@@ -148,6 +151,7 @@ public class CohortController {
 	}
 
 	@Operation(
+			operationId = "createCohort",
 			summary = "기수 생성 | ✅ 사용 가능",
 			description = """
 					오퍼레이터가 자기 기관에 새 기수를 개설한다. 개설 시 기관의 활성 운영 정책에서
@@ -194,6 +198,7 @@ public class CohortController {
 	}
 
 	@Operation(
+			operationId = "endCohort",
 			summary = "기수 종료 | ✅ 사용 가능",
 			description = """
 					진행 중인 기수를 CLOSED로 전환한다. 종료 대상 기관은 액세스 토큰에서 가져오므로

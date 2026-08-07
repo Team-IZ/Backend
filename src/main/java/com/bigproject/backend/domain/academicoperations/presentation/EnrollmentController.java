@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,7 +28,7 @@ import java.util.UUID;
 @Tag(name = "Academic Operations")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/members/me")
+@RequestMapping(value = "/members/me", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class EnrollmentController {
 
@@ -35,6 +36,7 @@ public class EnrollmentController {
     private final CurrentUserResolver currentUserResolver;
 
     @Operation(
+            operationId = "findMyEnrollments",
             summary = "내 소속 기수·반 조회 | ✅ 사용 가능",
             description = """
 					로그인한 사용자가 현재 유효하게(LEFT 아닌) 소속된 기수와, 기수별 현재 반 배정을 조회한다.

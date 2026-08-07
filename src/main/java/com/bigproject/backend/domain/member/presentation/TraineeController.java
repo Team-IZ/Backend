@@ -34,7 +34,7 @@ import java.util.UUID;
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController
-@RequestMapping("/cohorts/{cohortId}/trainees")
+@RequestMapping(value = "/cohorts/{cohortId}/trainees", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class TraineeController {
 	private static final String REQUEST_ID_HEADER = "X-Request-Id";
@@ -43,6 +43,7 @@ public class TraineeController {
 	private final TraineeCsvParser traineeCsvParser;
 
 	@Operation(
+			operationId = "registerTraineesFromCsv",
 			summary = "CSV 교육생 명단 등록 및 초대 | ✅ 사용 가능",
 			description = """
 					오퍼레이터가 CSV 파일을 올려 기수 교육생을 한 번에 등록하고 초대 메일을 보낸다.
@@ -96,6 +97,7 @@ public class TraineeController {
 	}
 
 	@Operation(
+			operationId = "registerTrainees",
 			summary = "직접 입력 교육생 등록 및 초대 | ✅ 사용 가능",
 			description = """
 					CSV 업로드 대신 화면에서 이름·이메일을 직접 입력해 교육생을 등록한다.

@@ -19,6 +19,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -37,7 +38,7 @@ import java.util.UUID;
 @Tag(name = "Academic Operations")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/cohorts/{cohortId}/classrooms")
+@RequestMapping(value = "/cohorts/{cohortId}/classrooms", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class ClassroomController {
 
@@ -45,6 +46,7 @@ public class ClassroomController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
+			operationId = "findClassrooms",
 			summary = "기수 반 목록 조회 | ✅ 사용 가능",
 			description = """
 					기수에 편성된 반 전체를 조회한다. 조회 범위인 기관은 액세스 토큰에서 가져온다.
@@ -87,6 +89,7 @@ public class ClassroomController {
 	// 이전에는 request.managerIds()를 서비스로 넘기지 않아, 반 추가 모델에서 매니저를 골라도
 	// 에러 없이 조용히 버려졌다.
 	@Operation(
+			operationId = "createClassroom",
 			summary = "반 생성 | ✅ 사용 가능",
 			description = """
 					오퍼레이터가 기수 안에 반을 만든다.
@@ -128,6 +131,7 @@ public class ClassroomController {
 	}
 
 	@Operation(
+			operationId = "updateManagers",
 			summary = "반 담당 매니저 변경 | ✅ 사용 가능",
 			description = """
 					반의 담당 매니저를 **전체 교체**한다. 부분 추가·삭제가 아니라 보낸 목록이 그대로 최종 상태가 된다 —
@@ -173,6 +177,7 @@ public class ClassroomController {
 	}
 
 	@Operation(
+			operationId = "assignTrainees",
 			summary = "교육생 일괄 반 배정 | ✅ 사용 가능",
 			description = """
 					교육생 여러 명을 한 반으로 **옮긴다**(이동 배정). 대상자가 이미 다른 반에 있으면 그 배정을
@@ -218,6 +223,7 @@ public class ClassroomController {
 	}
 
 	@Operation(
+			operationId = "rollbackAssignment",
 			summary = "교육생 반 배정 되돌리기 | ✅ 사용 가능",
 			description = """
 					교육생의 현재 반 배정을 **해제만** 한다(사유 `IMMEDIATE_ROLLBACK`). `assignTrainees`(이동 배정)와

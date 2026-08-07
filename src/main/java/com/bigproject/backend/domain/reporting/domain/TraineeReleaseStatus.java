@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.reporting.domain;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * report.trainee_release_status — 교육생에게 리포트를 열어 줬는지.
  * DB CHECK(ck_report_trainee_release_status)와 1:1이다.
@@ -18,6 +20,7 @@ package com.bigproject.backend.domain.reporting.domain;
  * {@link #WITHHELD} → 목록에는 회차가 보이되 본문이 잠긴다,
  * {@link #RELEASED} → `PUBLISHED`.
  */
+@Schema(name = "TraineeReleaseStatus", description = "교육생 리포트 공개 상태. NOT_CONFIGURED(공개 범위 미지정) · WITHHELD(비공개) · RELEASED(공개)", enumAsRef = true)
 public enum TraineeReleaseStatus {
 
 	/** 공개 범위를 아직 정하지 않았다. TR-04 `PENDING_VISIBILITY`. */

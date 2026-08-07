@@ -28,7 +28,11 @@ import java.util.UUID;
  * @param visibleFields 공개 범위가 본문의 어느 필드까지 여는가. 프론트가 범위→필드 규칙을
  *                      다시 구현하지 않도록 서버가 계산해 준다.
  */
-@Schema(description = "리포트 공개 상태")
+@Schema(description = """
+		리포트 공개 상태. `releaseStatus`가 판별자이고 나머지는 그 값에 딸린다.
+
+		`scope`는 NOT_CONFIGURED이면 키가 없다. `publishedAt`은 발행 전이면, `releasedAt`은 RELEASED가
+		아니면 마찬가지로 키가 없다 — null을 실어 보내지 않는다.""")
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ReportDisclosureResponse(
 
@@ -38,10 +42,8 @@ public record ReportDisclosureResponse(
 		@Schema(description = "어느 회차의 리포트인가")
 		UUID assessmentRoundId,
 
-		@Schema(description = "공개 상태 판별자", example = "RELEASED")
 		TraineeReleaseStatus releaseStatus,
 
-		@Schema(description = "공개 범위. NOT_CONFIGURED이면 키가 없다", example = "SUMMARY")
 		DisclosureScope scope,
 
 		@Schema(description = "발행 시각. 발행 전이면 키가 없다")

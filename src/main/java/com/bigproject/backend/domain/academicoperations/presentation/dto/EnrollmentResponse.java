@@ -9,7 +9,7 @@ import java.util.UUID;
 public record EnrollmentResponse(
         @Schema(description = "기수 ID") UUID cohortId,
         @Schema(description = "기수명", example = "7기") String cohortName,
-        @Schema(description = "현재 배정된 반. 아직 배정 전이면 null") Classroom classroom
+        @Schema(description = "현재 배정된 반. 아직 배정 전이면 null", nullable = true) Classroom classroom
 ) {
     // 서비스가 주는 EnrollmentView는 classId/className을 플랫하게 담고 있지만,
     // 응답에서는 하나의 classroom 객체로 묶어 null 여부 판단 지점을 한 곳으로 만든다.

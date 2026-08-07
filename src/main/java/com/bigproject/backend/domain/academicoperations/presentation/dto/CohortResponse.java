@@ -13,12 +13,10 @@ public record CohortResponse(
 		@Schema(description = "기수 ID") UUID cohortId,
 		@Schema(description = "소속 기관 ID") UUID organizationId,
 		@Schema(description = "기수명", example = "7기") String name,
-
-		@Schema(description = "PLANNED(개설 예정) / RUNNING(진행 중) / CLOSED(종료)")
 		CohortStatus status,
 
-		@Schema(description = "기수 시작일") LocalDate startDate,
-		@Schema(description = "기수 종료일") LocalDate endDate,
+		@Schema(description = "기수 시작일", nullable = true) LocalDate startDate,
+		@Schema(description = "기수 종료일", nullable = true) LocalDate endDate,
 
 		@Schema(description = "⚠ 아직 채워지지 않는 값 — 항상 0이다. member 도메인 조인이 필요해 아직 연결되지 않았다.", example = "0")
 		int traineeCount,

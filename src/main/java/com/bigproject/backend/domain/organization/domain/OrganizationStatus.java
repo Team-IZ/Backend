@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.organization.domain;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * organization.status에 실제로 저장되는 값. DB CHECK(ck_organization_status_1)와 1:1로 맞춘다.
  *
@@ -10,6 +12,7 @@ package com.bigproject.backend.domain.organization.domain;
  * {@code OrganizationResponse.budgetExceeded} / {@code operatorUnassigned} 플래그로 내려보낸다.
  * (두 값은 DB CHECK에 없어 애초에 저장도 불가능했다.)
  */
+@Schema(name = "OrganizationStatus", description = "기관 운영 상태. ACTIVE(활성) · SUSPENDED(정지) · DELETION_PENDING(삭제 예정) · DELETED(삭제됨). `예산 초과`·`오퍼레이터 미배정`은 저장 상태가 아니라 파생 배지다.", enumAsRef = true)
 public enum OrganizationStatus {
 	ACTIVE,
 	SUSPENDED,
