@@ -158,7 +158,10 @@ class LoginThrottleBehindProxyTest {
 	 */
 	private MockHttpServletRequest requestThroughProxy(int hop, String clientIp) {
 		MockHttpServletRequest request = new MockHttpServletRequest();
-		request.setRemoteAddr("fd00::" + (100 + hop));
+		// hop을 두 번째 그룹에 넣는다 — /64 접두(첫 4그룹)에 들어가야 접속 주소별로 차단 키가
+		// 실제로 갈린다. 뒷그룹(인터페이스 식별자)에만 넣으면 IPv6 프라이버시-확장 대응으로 추가된
+		// /64 묶음(ClientIpAddresses.throttleKey)에 의해 전부 같은 키로 뭉쳐 이 테스트의 전제가 깨진다.
+		request.setRemoteAddr("fd00:" + (100 + hop) + "::1");
 		request.addHeader("X-Forwarded-For", clientIp);
 		return request;
 	}
