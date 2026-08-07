@@ -24,6 +24,7 @@ import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetValidati
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetValidationResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.RefreshTokenResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.TraineeActivationRequest;
+import com.bigproject.backend.global.security.ClientIpResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -60,6 +61,7 @@ public class AuthController {
 	private final RefreshTokenCookieManager refreshTokenCookieManager;
 	private final LoginOriginResolver loginOriginResolver;
 	private final PasswordResetService passwordResetService;
+	private final ClientIpResolver clientIpResolver;
 
 	@Operation(
 			operationId = "requestPasswordReset",
@@ -554,11 +556,17 @@ public class AuthController {
 		return languageTag.isBlank() || "und".equals(languageTag) ? "ko-KR" : languageTag;
 	}
 
+	/**
+	 * <b>{@code getRemoteAddr()}를 그대로 쓰지 않는다.</b> 이 서비스는 프록시 뒤에 있어서 그 값은
+	 * 브라우저가 아니라 <b>프록시의 주소</b>이고, 프록시가 여러 대라 요청마다 값이 달라진다.
+	 * 그 값이 연속 실패 차단의 키로 들어가면서 <b>카운터가 흩어져 차단이 새어나갔다</b>
+	 * (4차 요청서 Q1). 재발급 토큰의 감사 기록에 남는 IP도 같은 이유로 프록시 주소였다 —
+	 * "어디서 로그인했나"를 남기려던 칼럼이 아무 정보도 담지 못하고 있었다.
+	 */
 	private TokenRequestMetadata requestMetadata(HttpServletRequest request) {
-		String ipAddress = request.getRemoteAddr();
 		String userAgent = request.getHeader(HttpHeaders.USER_AGENT);
 		return new TokenRequestMetadata(
-				ipAddress == null || ipAddress.isBlank() ? "0.0.0.0" : ipAddress,
+				clientIpResolver.resolve(request),
 				userAgent == null ? "" : userAgent
 		);
 	}
