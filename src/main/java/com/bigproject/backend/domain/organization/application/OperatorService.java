@@ -46,4 +46,12 @@ public interface OperatorService {
 
 	/** 아직 수락되지 않은 초대를 취소한다(토큰 무효화 + 계정 정지). */
 	OperatorListResponse cancelInvitation(UUID organizationId, UUID tokenId);
+
+	/**
+	 * 오퍼레이터 초대 메일 재발송(목업 SA-02 ② case 4·5 [재발송]).
+	 *
+	 * <p>발송 실패로 남은 초대뿐 아니라 만료된 초대도 대상이다. 새 토큰을 발급하고 이전 토큰은 무효화한다 —
+	 * 재발송 뒤에도 옛 링크가 살아 있으면 안 된다.
+	 */
+	OperatorListResponse resendInvitation(UUID organizationId, UUID tokenId, String actorEmail, String requestId);
 }

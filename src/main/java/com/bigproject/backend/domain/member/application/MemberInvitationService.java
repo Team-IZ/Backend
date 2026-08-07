@@ -49,6 +49,116 @@ public class MemberInvitationService {
 	 * 지금은 경로마다 역할이 고정된다 — 오퍼레이터 초대(SA-02 ②)는 {@link Role#OPERATOR},
 	 * 매니저 초대(OP-06)는 {@link Role#MANAGER}다.
 	 */
+	/**
+	 * 슈퍼어드민을 초대한다(목업 SA-03 ②).
+	 *
+	 * <p>{@link #inviteManager}와 별도 진입점인 이유는 <b>기관이 없기 때문</b>이다. 그쪽은
+	 * {@code findActiveOrganization}으로 기관을 확정하고 시작하는데, 슈퍼어드민은 어느 기관에도
+	 * 속하지 않아 그 단계를 통과할 수 없다. 대상 역할도 SUPER_ADMIN으로 고정이라 인자로 받지 않는다.
+	 *
+	 * <p>초대 주체는 슈퍼어드민뿐이다 — 오퍼레이터·매니저가 자기보다 상위 권한을 만들 수 없어야 한다.
+	 *
+	 * <p>이메일 도메인 제한을 두지 않는다. 플랫폼 도메인을 저장하는 곳이 없고, 오퍼레이터 초대와 같은
+	 * 이유(초대 시점에는 그 도메인 메일함을 아직 가질 수 없다)가 슈퍼어드민에도 적용된다.
+	 */
+	/**
+	 * 초대 메일을 다시 보낸다(목업 SA-02 ② [재발송]).
+	 *
+	 * <p>발송 실패(DELIVERY_FAILED)뿐 아니라 <b>만료된 초대</b>도 대상이다 — 만료야말로 재발송이 필요한
+	 * 상황이다. 이미 수락·취소된 초대는 조회 단계에서 걸러진다.
+	 *
+	 * <p>권한은 <b>최초 초대와 같은 규칙</b>을 쓴다. 재발송이 초대보다 헐거우면 그쪽이 우회로가 된다 —
+	 * 오퍼레이터 초대는 슈퍼어드민만, 매니저 초대는 그 기관 오퍼레이터만 다시 보낼 수 있다.
+	 *
+	 * <p>기관 범위 검증(이 토큰이 그 기관 것인가)은 호출부가 한다. 여기서는 역할 축만 본다.
+	 */
+	public InviteManagerResponse resendInvitation(UUID tokenId, String actorEmail, String requestId) {
+		AuthUser actor = activeActor(actorEmail);
+		MemberInvitationRepository.ResendableInvitation target = invitationRepository
+				.findResendableInvitation(tokenId)
+				.orElseThrow(() -> new ResponseStatusException(
+						HttpStatus.NOT_FOUND, "재발송할 수 있는 초대를 찾을 수 없습니다."
+				));
+		validateResendAuthority(actor, target);
+
+		PendingInvitation invitation;
+		try {
+			invitation = invitationDispatcher.resend(target, actor, requestId(requestId));
+		} catch (InvitationDeliveryException exception) {
+			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage(), exception);
+		}
+
+		return new InviteManagerResponse(
+				invitation.memberId(),
+				invitation.email(),
+				invitation.role(),
+				AccountStatus.INVITED,
+				invitation.invitedAt()
+		);
+	}
+
+	/** 재발송 권한. 최초 초대({@link #validateManagerInvitationAuthority})와 같은 규칙을 역할별로 적용한다. */
+	private void validateResendAuthority(AuthUser actor, MemberInvitationRepository.ResendableInvitation target) {
+		switch (target.targetRole()) {
+			case SUPER_ADMIN, OPERATOR -> {
+				if (actor.role() != Role.SUPER_ADMIN) {
+					throw new ResponseStatusException(
+							HttpStatus.FORBIDDEN, "슈퍼어드민만 이 초대를 재발송할 수 있습니다."
+					);
+				}
+			}
+			case MANAGER, TRAINEE -> {
+				if (actor.role() != Role.OPERATOR) {
+					throw new ResponseStatusException(
+							HttpStatus.FORBIDDEN, "오퍼레이터만 이 초대를 재발송할 수 있습니다."
+					);
+				}
+				if (!java.util.Objects.equals(target.organizationId(), actor.organizationId())) {
+					throw new ResponseStatusException(
+							HttpStatus.FORBIDDEN, "다른 기관의 초대는 재발송할 수 없습니다."
+					);
+				}
+			}
+		}
+	}
+
+	public InviteManagerResponse inviteSuperAdmin(String email, String actorEmail, String requestId) {
+		AuthUser actor = activeActor(actorEmail);
+		if (actor.role() != Role.SUPER_ADMIN) {
+			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "슈퍼어드민만 슈퍼어드민을 초대할 수 있습니다.");
+		}
+		String trimmedEmail = email == null ? "" : email.trim();
+		if (!isValidEmail(trimmedEmail)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "이메일 형식이 올바르지 않습니다.");
+		}
+
+		PendingInvitation invitation;
+		try {
+			invitation = invitationDispatcher.inviteSuperAdmin(trimmedEmail, actor, requestId(requestId));
+		} catch (DataIntegrityViolationException exception) {
+			String normalizedEmail = EmailNormalizer.normalize(trimmedEmail);
+			if (invitationRepository.existsUserByNormalizedEmail(normalizedEmail)
+					|| invitationRepository.existsIncompleteInvitationByNormalizedEmail(normalizedEmail)) {
+				throw new InvitationConflictException("이미 등록되었거나 초대된 이메일입니다.", exception);
+			}
+			throw new ResponseStatusException(
+					HttpStatus.INTERNAL_SERVER_ERROR,
+					"초대 정보를 저장할 수 없습니다.",
+					exception
+			);
+		} catch (InvitationDeliveryException exception) {
+			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage(), exception);
+		}
+
+		return new InviteManagerResponse(
+				invitation.memberId(),
+				invitation.email(),
+				invitation.role(),
+				AccountStatus.INVITED,
+				invitation.invitedAt()
+		);
+	}
+
 	public InviteManagerResponse inviteManager(
 			UUID organizationId,
 			InviteManagerRequest request,

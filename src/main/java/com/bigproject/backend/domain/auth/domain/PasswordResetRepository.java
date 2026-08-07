@@ -36,6 +36,8 @@ public interface PasswordResetRepository {
 
 	Optional<PasswordResetToken> findTokenForUpdate(String tokenHash);
 
+	Optional<PasswordResetToken> findToken(String tokenHash);
+
 	boolean updatePassword(UUID userId, String passwordHash, Instant changedAt);
 
 	boolean markTokenUsed(UUID tokenId, String requestId, Instant usedAt);

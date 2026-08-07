@@ -51,7 +51,17 @@ public record OperatorListResponse(
 			@Schema(description = """
 					이 계정을 정지할 수 있는지. 마지막 활성 오퍼레이터는 정지할 수 없다 —
 					기관에 들어갈 수 있는 사람이 아무도 없어지기 때문(고아 기관 방지).""")
-			boolean suspendable
+			boolean suspendable,
+
+			@Schema(description = """
+					가장 최근 초대의 메일 발송이 실패했는지(user_invitation.status = DELIVERY_FAILED).
+					true면 목업 case 4·5의 `오퍼레이터로 지정됐지만 초대 메일이 나가지 않았습니다` 안내와
+					[재발송] 액션을 노출한다.
+
+					status(PENDING)와 구분해서 쓴다 — 둘 다 아직 활성화 전이지만 화면이 할 말이 다르다.
+					false + PENDING은 `수락 대기`, true는 `재발송 필요`다.
+					실패 후 다시 초대해 성공하면 false로 돌아온다(가장 최근 초대 기준).""")
+			boolean invitationDeliveryFailed
 	) {
 	}
 }

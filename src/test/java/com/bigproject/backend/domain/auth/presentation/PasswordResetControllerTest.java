@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.auth.presentation;
 
 import com.bigproject.backend.domain.auth.application.AccountActivationService;
 import com.bigproject.backend.domain.auth.application.AuthService;
+import com.bigproject.backend.domain.auth.application.InvitationResendService;
 import com.bigproject.backend.domain.auth.application.InvitationResolveService;
 import com.bigproject.backend.domain.auth.application.LoginOriginResolver;
 import com.bigproject.backend.domain.auth.application.PasswordResetService;
@@ -26,6 +27,7 @@ class PasswordResetControllerTest {
 				mock(AuthService.class),
 				mock(AccountActivationService.class),
 				mock(InvitationResolveService.class),
+				mock(InvitationResendService.class),
 				mock(RefreshTokenCookieManager.class),
 				mock(LoginOriginResolver.class),
 				passwordResetService

@@ -49,6 +49,29 @@ public class SmtpInvitationMailSender implements InvitationMailSender {
 	private String timeZone;
 
 	@Override
+	public void sendSuperAdminInvitation(PendingInvitation invitation) {
+		String invitationLink = linkFactory.superAdminLink(invitation);
+		send(
+				invitation.email(),
+				"[AIVLE] 슈퍼어드민 초대",
+				"""
+				<!doctype html>
+				<html lang="ko">
+				<body>
+				<p>IZ-Get 플랫폼 콘솔의 슈퍼어드민으로 초대되었습니다.</p>
+				<p>아래 링크에서 계정을 등록해 주세요.</p>
+				<p><a href="%s">계정 등록하기</a></p>
+				<p>초대 만료 시각: %s</p>
+				</body>
+				</html>
+				""".formatted(
+						HtmlUtils.htmlEscape(invitationLink),
+						formatExpiration(invitation)
+				)
+		);
+	}
+
+	@Override
 	public void sendManagerInvitation(PendingInvitation invitation) {
 		String roleName = invitation.role() == Role.OPERATOR ? "오퍼레이터" : "일반 매니저";
 		String invitationLink = linkFactory.managerLink(invitation);

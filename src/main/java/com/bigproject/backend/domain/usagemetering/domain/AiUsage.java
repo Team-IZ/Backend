@@ -37,11 +37,9 @@ public class AiUsage {
 	private UUID orgId;
 
 	/*
-	 * v07에서 참조 키가 model_id(UUID FK)에서 model_code(자연키)로 바뀌었다
-	 * (fk_ai_usage_model_code → ai_model.model_code, uq_ai_model_model_code로 유일성 보장).
-	 * 호출 당시 논리 모델 코드를 그대로 원장에 남기려는 변경이라 PK가 아닌 model_code를 참조하며,
-	 * 연관관계로 매핑하지 않고 문자열로 복사해 둔다 — 조회 시 조인이 필요 없고(N+1 방지),
-	 * 표시명이 필요하면 호출부가 코드 목록으로 ai_model을 한 번에 조회한다.
+	 * v07에서 model_id FK가 model_code 문자열로 대체됐다. 사용 원장이 모델 마스터에 의존하지 않도록
+	 * 호출 시점의 모델 코드를 그대로 복사해 두는 방식이며, 모델이 마스터에서 사라져도 이력이 끊기지 않는다.
+	 * 표시명이 필요한 화면은 이 코드로 ai_model을 따로 조회한다(OperationsServiceImpl).
 	 */
 	@Column(name = "model_code", nullable = false, updatable = false, length = 100)
 	private String modelCode;
@@ -84,14 +82,14 @@ public class AiUsage {
 	@Column(name = "trigger_type", nullable = false, updatable = false, length = 30)
 	private TriggerType triggerType;
 
-	/** 질문 생성·요약 실행 시 기관이 선택한 티어 스냅샷. 그 외 기능은 NULL이라 화면에서 `플랫폼 고정`으로 표시한다. */
+	/** 코드 세션 실행 시 기관이 선택한 티어 스냅샷. 그 외 기능은 NULL이라 화면에서 `플랫폼 고정`으로 표시한다. */
 	@Enumerated(EnumType.STRING)
 	@Column(name = "tier_code", updatable = false, length = 30)
 	private AiTier tierCode;
 
 	/*
 	 * 실행 당시 적용된 플랫폼 정책 스냅샷. 나중에 정책이 바뀌어도 이 호출이 어떤 기준으로 실행됐는지 재현할 수 있다.
-	 * 질문 생성·요약은 티어 정책을, 답변 채점은 채점 모델 정책과 캘리브레이션 버전을 남긴다(해당 없으면 NULL).
+	 * 코드 세션은 티어 정책을, 답변 채점은 채점 모델 정책과 캘리브레이션 버전을 남긴다(해당 없으면 NULL).
 	 */
 	@Column(name = "tier_policy_id", updatable = false)
 	private UUID tierPolicyId;

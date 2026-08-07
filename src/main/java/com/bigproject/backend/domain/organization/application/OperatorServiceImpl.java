@@ -5,6 +5,7 @@ import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerResponse;
+import com.bigproject.backend.domain.organization.domain.AccountInactivationReason;
 import com.bigproject.backend.domain.organization.domain.OperatorAccountStatus;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationException;
@@ -14,6 +15,7 @@ import com.bigproject.backend.domain.organization.presentation.dto.InviteOperato
 import com.bigproject.backend.domain.organization.presentation.dto.InviteOperatorResponse;
 import com.bigproject.backend.domain.organization.presentation.dto.OperatorListResponse;
 import com.bigproject.backend.domain.organization.presentation.dto.UpdateOperatorStatusRequest;
+import com.bigproject.backend.global.security.CurrentUserResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -28,7 +30,15 @@ import java.util.UUID;
 @Transactional(readOnly = true) // 기본은 조회 트랜잭션. 쓰기가 필요한 메서드에만 @Transactional을 개별로 얹는다.
 public class OperatorServiceImpl implements OperatorService {
 
-	private static final String CANCEL_REASON = "슈퍼어드민이 오퍼레이터 초대를 취소했습니다.";
+	/**
+	 * 토큰 무효화 사유. {@code one_time_token.invalidated_reason}은 자유 문장이 아니라
+	 * <b>코드값 컬럼</b>이다 — {@code ck_one_time_token_invalidated_reason}이 8개 값만 허용한다.
+	 * 설명 문장을 넣으면 CHECK 위반으로 INSERT 자체가 실패한다.
+	 */
+	private static final String CANCEL_REASON_CODE = "INVITATION_CANCELLED";
+
+	/** 계정 정지 이력에 남길 사람이 읽을 설명. 코드 컬럼이 아니라 자유 텍스트 컬럼에 들어간다. */
+	private static final String CANCEL_ACCOUNT_REASON = "슈퍼어드민이 오퍼레이터 초대를 취소했습니다.";
 
 	private final OrganizationRepository organizationRepository;
 	private final OrganizationOperatorRepository operatorRepository;
@@ -40,6 +50,7 @@ public class OperatorServiceImpl implements OperatorService {
 	 * 이 클래스는 목업의 오퍼레이터 탭 계약(이메일만 받는 요청)으로 감싸는 역할만 한다.
 	 */
 	private final MemberInvitationService memberInvitationService;
+	private final CurrentUserResolver currentUserResolver;
 
 	@Override
 	public OperatorListResponse findOperators(UUID organizationId) {
@@ -131,7 +142,15 @@ public class OperatorServiceImpl implements OperatorService {
 		}
 
 		if (target.status() != request.status()) {
-			operatorRepository.updateOperatorStatus(memberId, request.status());
+			operatorRepository.updateOperatorStatus(
+					memberId,
+					request.status(),
+					currentUserResolver.resolveCurrentMemberId(),
+					// 화면에서 오는 정지는 전부 관리자 조치다. 요청의 reason은 코드가 아니라 설명이므로
+					// 자유 텍스트 컬럼으로 따로 넘긴다.
+					AccountInactivationReason.ADMIN_SUSPENDED,
+					request.reason()
+			);
 		}
 
 		return buildListResponse(organizationId);
@@ -148,12 +167,78 @@ public class OperatorServiceImpl implements OperatorService {
 						OrganizationErrorCode.OPERATOR_INVITATION_NOT_FOUND, "취소할 수 있는 오퍼레이터 초대를 찾을 수 없습니다: " + tokenId
 				));
 
-		operatorRepository.invalidateInvitation(tokenId, CANCEL_REASON);
+		operatorRepository.invalidateInvitation(tokenId, CANCEL_REASON_CODE);
 
-		// 토큰만 무효화하면 계정 자리가 PENDING으로 남아 로그인 경로가 애매해진다. 자리는 남기되(이력 보존)
-		// 로그인은 막도록 INACTIVE로 내린다 — 목업의 "퇴사한 계정도 지우지 않고 정지로 남긴다"와 같은 처리다.
+		/*
+		 * 토큰만 무효화하면 초대 원장이 SENT로 남는다. 그러면 감사·통계가 발송된 초대로 계속 세고,
+		 * uq_user_invitation_incomplete가 (기관, 이메일, 역할) 조합을 계속 점유해 같은 주소로
+		 * 재초대할 수 없다. 원장도 함께 CANCELLED로 닫는다.
+		 */
+		if (invitation.invitationId() != null) {
+			operatorRepository.cancelInvitationLedger(
+					invitation.invitationId(), currentUserResolver.resolveCurrentMemberId()
+			);
+		}
+
+		/*
+		 * 자리는 남기되(이력 보존) 로그인은 막도록 INACTIVE로 내린다 —
+		 * 목업의 "퇴사한 계정도 지우지 않고 정지로 남긴다"와 같은 처리다.
+		 *
+		 * <b>INACTIVE는 재초대의 전제다. 상태를 안 내리면 같은 주소로 다시 초대할 수 없다.</b>
+		 * app_user.normalized_email이 UNIQUE라 재초대는 새 계정을 만들지 못하고 기존 자리를
+		 * 되살려 쓰는데, member 도메인의 FIND_REUSABLE_INVITED_USER가 그 자리를
+		 * status='INACTIVE'로 찾기 때문이다. PENDING으로 남기면 재사용 조회가 비고,
+		 * 그다음 EXISTS_USER(상태 무관)에 걸려 409 ALREADY_INVITED가 난다.
+		 *
+		 * 수락 전 자리는 이름이 비어 있어 그대로 내리면 ck_app_user_status_2에 걸리는데,
+		 * 그 보정은 리포지토리의 UPDATE가 한다(JdbcOrganizationOperatorRepository 참고).
+		 */
 		if (invitation.memberId() != null) {
-			operatorRepository.updateOperatorStatus(invitation.memberId(), OperatorAccountStatus.INACTIVE);
+			operatorRepository.updateOperatorStatus(
+					invitation.memberId(),
+					OperatorAccountStatus.INACTIVE,
+					currentUserResolver.resolveCurrentMemberId(),
+					AccountInactivationReason.ADMIN_SUSPENDED,
+					CANCEL_ACCOUNT_REASON
+			);
+		}
+
+		return buildListResponse(organizationId);
+	}
+
+	@Override
+	@Transactional
+	public OperatorListResponse resendInvitation(
+			UUID organizationId,
+			UUID tokenId,
+			String actorEmail,
+			String requestId
+	) {
+		assertOrganizationExists(organizationId);
+
+		/*
+		 * 이 토큰이 정말 이 기관의 오퍼레이터 초대인지 먼저 본다. member 도메인은 역할 축(누가 재발송할 수
+		 * 있는가)만 검증하므로, 기관 경계는 여기서 세운다 — 다른 기관 토큰 ID를 넣어 남의 초대를 건드리는
+		 * 경로를 막는다.
+		 */
+		operatorRepository.findPendingInvitation(organizationId, tokenId)
+				.orElseThrow(() -> new OrganizationException(
+						OrganizationErrorCode.OPERATOR_INVITATION_NOT_FOUND,
+						"재발송할 수 있는 오퍼레이터 초대를 찾을 수 없습니다: " + tokenId
+				));
+
+		try {
+			memberInvitationService.resendInvitation(tokenId, actorEmail, requestId);
+		} catch (ResponseStatusException exception) {
+			// 목업 case 4·5는 메일 실패와 토큰 실패를 한 코드로 합쳤다 — 사용자가 할 일은 [재발송] 하나다.
+			if (exception.getStatusCode() == HttpStatus.BAD_GATEWAY) {
+				throw new OrganizationException(
+						OrganizationErrorCode.INVITE_MAIL_FAILED,
+						OrganizationErrorCode.INVITE_MAIL_FAILED.defaultMessage(),
+						exception
+				);
+			}
+			throw exception;
 		}
 
 		return buildListResponse(organizationId);
@@ -197,7 +282,8 @@ public class OperatorServiceImpl implements OperatorService {
 						operator.lastLoginAt(),
 						operator.pendingInvitationTokenId(),
 						// 활성 계정이면서 마지막 1인이 아닐 때만 정지 버튼이 살아 있다.
-						operator.status() == OperatorAccountStatus.ACTIVE && activeCount > 1
+						operator.status() == OperatorAccountStatus.ACTIVE && activeCount > 1,
+						operator.invitationDeliveryFailed()
 				))
 				.toList();
 

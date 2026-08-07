@@ -8,7 +8,6 @@ import com.bigproject.backend.domain.organization.domain.Organization;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationException;
 import com.bigproject.backend.domain.organization.domain.OrganizationPolicy;
-import com.bigproject.backend.domain.organization.domain.OrganizationSchemaPending;
 import com.bigproject.backend.domain.organization.domain.OrganizationStatsRepository;
 import com.bigproject.backend.domain.organization.domain.OrganizationStatus;
 import com.bigproject.backend.domain.organization.infrastructure.OrganizationPolicyRepository;
@@ -132,7 +131,7 @@ public class OrganizationServiceImpl implements OrganizationService {
 				currentMonth,
 				new PlatformSummaryResponse.Organizations(counts.total(), counts.active(), counts.suspended()),
 				organizationStatsRepository.countAllActiveTrainees(),
-				OrganizationSchemaPending.ACTIVE_SESSION_COUNT,
+				organizationStatsRepository.countAllActiveSessions(),
 				new PlatformSummaryResponse.AiCost(
 						currentCost,
 						totalBudget,
@@ -428,6 +427,7 @@ public class OrganizationServiceImpl implements OrganizationService {
 				organizationStatsRepository.countCohortsByOrgId(orgIds),
 				organizationStatsRepository.findOperatorsByOrgId(orgIds),
 				organizationStatsRepository.countActiveTraineesByOrgId(orgIds),
+				organizationStatsRepository.countActiveSessionsByOrgId(orgIds),
 				currentMonthAiCostByOrgId(orgIds)
 		);
 	}
@@ -569,7 +569,8 @@ public class OrganizationServiceImpl implements OrganizationService {
 						.toList(),
 				new OrganizationResponse.CohortCounts(cohorts.total(), cohorts.running(), cohorts.closed()),
 				aggregates.trainees().getOrDefault(orgId, 0),
-				OrganizationSchemaPending.ACTIVE_SESSION_COUNT,
+				// v07에서 assessment_session이 생겨 실제 집계로 대체됐다(이전에는 OrganizationSchemaPending으로 0 고정).
+				aggregates.activeSessions().getOrDefault(orgId, 0),
 				aiCost,
 				budget,
 				usageRate(aiCost, budget),
@@ -586,10 +587,11 @@ public class OrganizationServiceImpl implements OrganizationService {
 			Map<UUID, OrganizationStatsRepository.CohortCounts> cohorts,
 			Map<UUID, List<OrganizationStatsRepository.OrganizationOperator>> operators,
 			Map<UUID, Integer> trainees,
+			Map<UUID, Integer> activeSessions,
 			Map<UUID, BigDecimal> aiCosts
 	) {
 		static OrgAggregates empty() {
-			return new OrgAggregates(Map.of(), Map.of(), Map.of(), Map.of());
+			return new OrgAggregates(Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
 		}
 	}
 }
