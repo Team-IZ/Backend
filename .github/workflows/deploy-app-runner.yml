@@ -1,0 +1,89 @@
+name: Deploy to App Runner
+
+on:
+  push:
+    branches: [develop]
+
+# 배포 도중 새 push가 들어와도 진행 중인 배포는 끝까지 — 취소하면 ECR에 반쪽 이미지가 남을 수 있다.
+concurrency:
+  group: deploy-app-runner
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # CI에는 .env가 없으므로 application.yaml이 요구하는 값을 더미로 채운다.
+    # 실제 비밀값이 아니며, 테스트는 H2를 쓰므로 실제 DB에 접속하지 않는다.
+    env:
+      DB_URL: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+      DB_USERNAME: sa
+      DB_PASSWORD: ""
+      JWT_SECRET: ci-dummy-secret-key-for-tests-only-do-not-use-in-production
+      JWT_ACCESS_TOKEN_EXPIRATION: "1800000"
+      JWT_REFRESH_TOKEN_EXPIRATION: "1209600000"
+      AUTH_LOGIN_ALLOWED_ORIGINS: http://localhost:5173
+      AUTH_SWAGGER_ORIGIN_OVERRIDE_ENABLED: "false"
+      AUTH_SWAGGER_UI_ORIGIN: http://localhost:8080
+      REFRESH_TOKEN_COOKIE_NAME: refresh_token
+      REFRESH_TOKEN_COOKIE_PATH: /
+      REFRESH_TOKEN_COOKIE_SECURE: "false"
+      REFRESH_TOKEN_COOKIE_SAME_SITE: Lax
+      INVITATION_BASE_URL: http://localhost:5173
+      INVITATION_EXPIRATION: PT24H
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run tests
+        run: ./gradlew test --no-daemon --console=plain
+
+  deploy:
+    name: Build & push to ECR
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 장기 자격증명(액세스키)을 저장하지 않고 OIDC로 짧은 수명 토큰만 발급받는다.
+      # 이 역할은 repo:Team-IZ/Backend:ref:refs/heads/develop 에서만 assume 가능하도록
+      # 신뢰정책에 스코프가 걸려 있다.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::357457230521:role/github-actions-teamiz-backend-deploy
+          aws-region: ap-northeast-1
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # App Runner의 컨테이너 이미지 배포는 amd64만 지원한다(아키텍처 선택 옵션이 API에 없음).
+      # GitHub 러너는 기본이 amd64라 --platform 없이도 맞지만, 명시해서 사고를 원천 차단한다.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.ecr-login.outputs.registry }}/teamiz-backend:latest
+
+      # App Runner Service의 AutoDeploymentsEnabled=true가 새 :latest 이미지를 감지해서
+      # 자동으로 재배포한다 -- 이 워크플로에서 apprunner API를 별도로 호출할 필요 없음.
