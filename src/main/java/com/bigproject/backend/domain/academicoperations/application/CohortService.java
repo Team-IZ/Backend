@@ -24,7 +24,9 @@ public class CohortService {
     private final CohortRepository cohortRepository;
     private final OrganizationPolicyRepository organizationPolicyRepository;
     private final ClassroomService classroomService;
-
+    private final com.bigproject.backend.domain.academicoperations.infrastructure.CohortMemberRepository cohortMemberRepository;
+    private final com.bigproject.backend.domain.academicoperations.infrastructure.ClassMembershipRepository classMembershipRepository;
+    private final com.bigproject.backend.domain.academicoperations.infrastructure.ClassroomRepository classroomRepository;
     // 기수 생성
     @Transactional
     public Cohort createCohort(UUID orgId, String name, LocalDate startDate,
@@ -83,5 +85,30 @@ public class CohortService {
     // 기수 목록 조회
     public Page<Cohort> findCohorts(UUID orgId, CohortStatus status, String query, Pageable pageable) {
         return cohortRepository.findCohorts(orgId, status, query, pageable);
+    }
+
+    // GET /members/me/enrollments — 로그인한 교육생이 자기 소속 기수·반을 모른 채로 맨 처음 호출하는 진입점.
+    // 기수당 반은 최대 1건이라 가정하고, 배정 전(className=null)도 정상 케이스로 내려준다.
+    public java.util.List<EnrollmentView> findMyEnrollments(UUID userId, UUID orgId) {
+        java.util.List<com.bigproject.backend.domain.academicoperations.domain.CohortMember> memberships =
+                cohortMemberRepository.findByUserIdAndOrgIdAndLeftAtIsNull(userId, orgId);
+
+        return memberships.stream()
+                .map(member -> {
+                    Cohort cohort = findCohort(member.getCohortId(), orgId);
+                    return classMembershipRepository
+                            .findByCohortMemberIdAndOrgIdAndUnassignedAtIsNull(member.getCohortMemberId(), orgId)
+                            .map(classMembership -> classroomRepository
+                                    .findByClassIdAndOrgIdAndDeletedAtIsNull(classMembership.getClassId(), orgId)
+                                    .map(classroom -> new EnrollmentView(
+                                            cohort.getCohortId(), cohort.getName(),
+                                            classroom.getClassId(), classroom.getName()))
+                                    .orElse(new EnrollmentView(cohort.getCohortId(), cohort.getName(), null, null)))
+                            .orElse(new EnrollmentView(cohort.getCohortId(), cohort.getName(), null, null));
+                })
+                .toList();
+    }
+
+    public record EnrollmentView(UUID cohortId, String cohortName, UUID classId, String className) {
     }
 }
