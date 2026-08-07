@@ -1,6 +1,19 @@
 server:
   port: ${PORT:8080}
+  # X-Forwarded-Proto를 읽어 https를 인식하게 한다(Swagger UI가 서버 URL을 요청에서 만든다).
   forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      # 클라이언트 IP는 애플리케이션(ClientIpResolver)이 직접 뽑는다. 그래서 톰캣이
+      # remoteAddr를 덮어쓰는 경로는 꺼 둔다 — 존재하지 않는 헤더를 가리키게 하는 방식이다.
+      #
+      # 왜 톰캣에 맡기지 않나: RemoteIpValve는 "직전 홉이 internal-proxies 정규식과 맞을 때만"
+      # 동작한다. 그 기본 정규식은 사설 IPv4 대역만 담고 있어 Railway처럼 다른 대역을 쓰는
+      # 환경에서는 조용히 아무것도 하지 않는다. 켜졌는지 꺼졌는지가 배포 환경에 따라 갈리는
+      # 상태로 두면, 지금 고치는 종류의 버그가 "어디서는 되고 어디서는 안 되는" 모습으로 돌아온다.
+      # 여기서 명시적으로 꺼 두면 어느 환경이든 클라이언트 IP를 뽑는 곳이 한 군데뿐이다.
+      remote-ip-header: x-client-ip-handled-by-application
+      protocol-header: x-forwarded-proto
   error:
     # 오류 응답에 내부 정보를 싣지 않는다. 켜 두면 스택트레이스·실행 SQL·실패한 DB 행이 그대로 나가는데,
     # 실제로 초대 취소 실패 500 응답에 사용자 이메일과 초대 토큰 해시까지 노출된 적이 있다.
@@ -46,6 +59,22 @@ spring:
           batch_size: 50
         order_inserts: true
         order_updates: true
+
+web:
+  client-ip:
+    # 클라이언트 IP를 담아 오는 프록시 헤더.
+    header: ${CLIENT_IP_HEADER:X-Forwarded-For}
+    # 우리 앞에 있는 프록시(신뢰하는 홉)의 개수. Railway 하나만 앞에 있으면 1이다.
+    #
+    # X-Forwarded-For는 홉마다 자기가 본 상대의 주소를 뒤에 붙인다. 그래서 오른쪽에서
+    # 이 개수만큼 센 자리가 "가장 바깥 프록시가 직접 관측한 주소" = 진짜 클라이언트다.
+    # 왼쪽 끝을 쓰면 클라이언트가 적어 보낸 값을 그대로 믿게 되어 차단을 무한히 우회할 수 있고,
+    # 남의 IP를 적어 그 사람을 막을 수도 있다.
+    #
+    # 앞단에 CDN을 추가하는 등 홉이 늘면 이 값도 함께 올려야 한다. 값이 실제보다 크면
+    # 헤더가 모자라 프록시 주소로 떨어지고(차단이 다시 새기 시작한다), 작으면 프록시 자신의
+    # 주소를 클라이언트로 읽는다. 배포 직후 "client-ip 첫 관측" 로그 한 줄로 확인할 수 있다.
+    trusted-proxy-count: ${CLIENT_IP_TRUSTED_PROXY_COUNT:1}
 
 springdoc:
   api-docs:
