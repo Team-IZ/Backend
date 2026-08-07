@@ -58,7 +58,7 @@ public record SubmissionAnalysisResponse(
 				job.getExecutionNo(),
 				job.getStartedAt(),
 				job.getCompletedAt(),
-				job.getFailureCode(),
+				job.getFailureCode() == null ? null : job.getFailureCode().name(),
 				job.getFailureReason(),
 				job.getAnalysisId()
 		);
