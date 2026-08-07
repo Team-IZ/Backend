@@ -4,19 +4,27 @@ import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysis;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumException;
+import com.bigproject.backend.domain.curriculum.domain.CurriculumMaterial;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumSection;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumTeachesMapping;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumVersion;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumVersionStatus;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumAnalysisRepository;
+import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumMaterialRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumSectionRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumTeachesMappingRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumVersionRepository;
 import com.bigproject.backend.domain.projectexecution.application.ProjectService;
+
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import lombok.RequiredArgsConstructor;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.UUID;
 
@@ -30,8 +38,9 @@ public class CurriculumServiceImpl implements CurriculumService {
     private final CurriculumAnalysisRepository analysisRepository;
     private final CurriculumSectionRepository sectionRepository;
     private final ProjectService projectService;
-    private final com.bigproject.backend.domain.curriculum.infrastructure.CurriculumMaterialRepository materialRepository;
+    private final CurriculumMaterialRepository materialRepository;
     private final FileStorageService fileStorageService;
+    private final AiCurriculumClient aiCurriculumClient;
 
     @Override
     public List<CurriculumVersion> findLinkableCurricula(UUID orgId) {
@@ -81,39 +90,54 @@ public class CurriculumServiceImpl implements CurriculumService {
     }
 
     @Override
-    @org.springframework.transaction.annotation.Transactional
-    public com.bigproject.backend.domain.curriculum.domain.CurriculumVersion registerCurriculum(
-            UUID orgId, String title, String topic, org.springframework.web.multipart.MultipartFile file, UUID actorUserId) {
-
+    @Transactional
+    public CurriculumVersion registerCurriculum(UUID orgId, String title, String topic, MultipartFile file, UUID actorUserId) {
         if (file == null || file.isEmpty()) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_UNAVAILABLE, "업로드할 파일이 없습니다.");
         }
 
         String normalizedTitle = title.trim().replaceAll("\\s+", " ").toLowerCase();
 
-        com.bigproject.backend.domain.curriculum.domain.CurriculumMaterial material =
-                com.bigproject.backend.domain.curriculum.domain.CurriculumMaterial.create(
-                        orgId, title, normalizedTitle, topic, "PDF", actorUserId);
+        CurriculumMaterial material = CurriculumMaterial.create(orgId, title, normalizedTitle, topic, "PDF", actorUserId);
         materialRepository.save(material);
 
         FileStorageService.StoredFile stored = fileStorageService.store(file);
 
-        com.bigproject.backend.domain.curriculum.domain.CurriculumVersion version =
-                com.bigproject.backend.domain.curriculum.domain.CurriculumVersion.createFirstVersion(
-                        material.getMaterialId(), stored.originalFileName(), stored.fileUri(),
-                        stored.fileSizeBytes(), stored.contentHash(), actorUserId);
+        CurriculumVersion version = CurriculumVersion.createFirstVersion(
+                material.getMaterialId(), stored.originalFileName(), stored.fileUri(),
+                stored.fileSizeBytes(), stored.contentHash(), actorUserId);
 
         return curriculumVersionRepository.save(version);
     }
 
     @Override
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public void requestAnalysis(UUID materialId, UUID orgId, UUID actorUserId) {
         if (!materialRepository.existsByMaterialIdAndOrgId(materialId, orgId)) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND);
         }
-        // ⚠ 임시: 실제 AI 호출은 여기서 하지 않는다. 분석 요청 레코드만 만들어 대기 상태로 남긴다.
-        // AI 팀 워커가 이 레코드(status=PENDING)를 폴링하거나, 별도 트리거로 처리하는 것을 전제로 한다.
+
+        CurriculumVersion version = curriculumVersionRepository
+                .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId)
+                .stream().findFirst()
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+
+        byte[] pdfBytes;
+        try {
+            pdfBytes = Files.readAllBytes(Paths.get(URI.create(version.getFileUri())));
+        } catch (IOException e) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_UNAVAILABLE, "저장된 파일을 읽을 수 없습니다.");
+        }
+
+        String idempotencyKey = version.getVersionId() + ":1";
+        aiCurriculumClient.requestAnalysis(version.getVersionId(), "AI", pdfBytes, idempotencyKey);
+
+        UUID placeholderModelId = UUID.fromString("00000000-0000-0000-0000-000000000000");
+        CurriculumAnalysis analysis = CurriculumAnalysis.createInitial(
+                version.getVersionId(), placeholderModelId, 1,
+                UUID.randomUUID(), idempotencyKey, actorUserId);
+
+        analysisRepository.save(analysis);
     }
 
     private SectionView toSectionView(CurriculumSection section, UUID orgId) {
