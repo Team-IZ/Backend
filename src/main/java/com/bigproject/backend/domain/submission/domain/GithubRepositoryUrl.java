@@ -16,8 +16,7 @@ import java.util.regex.Pattern;
  * <p>정규화 결과는 {@code repository_verification.normalized_repo_url}에 저장되고,
  * {@code repository.normalized_repo_url}과 대조해 같은 저장소인지 판정하는 데 쓰인다. 그래서
  * 대소문자·{@code .git} 접미사·후행 슬래시처럼 같은 저장소를 다르게 보이게 하는 요소를 전부 제거한다.
- */
-/**
+ *
  * @param original 교육생이 입력한 원문. {@code repository.repo_url}에 그대로 저장한다. 정규화값만 남기면
  *                 화면에 "내가 낸 주소"를 되돌려줄 수 없고, 대소문자가 접힌 주소가 표시된다.
  */

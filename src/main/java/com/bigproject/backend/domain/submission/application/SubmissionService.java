@@ -6,6 +6,7 @@ import com.bigproject.backend.domain.submission.domain.Repository;
 import com.bigproject.backend.domain.submission.domain.RepositoryStatus;
 import com.bigproject.backend.domain.submission.domain.Submission;
 import com.bigproject.backend.domain.submission.domain.SubmissionArtifact;
+import com.bigproject.backend.domain.submission.domain.SubmissionAcceptedEvent;
 import com.bigproject.backend.domain.submission.domain.SubmissionErrorCode;
 import com.bigproject.backend.domain.submission.domain.SubmissionException;
 import com.bigproject.backend.domain.submission.infrastructure.GithubRepositoryRepository;
@@ -18,6 +19,7 @@ import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnaly
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -32,8 +34,13 @@ import java.util.zip.ZipInputStream;
  * 코드 제출 접수와 분석 상태 조회.
  *
  * <p><b>이 서비스는 AI 서버를 호출하지 않는다.</b> GitHub 접근 주체가 AI 서버로 확정되면서(2026-08-06)
- * 저장소 검증·코드 fetch·분석이 전부 회차 마감 후 배치로 이동했다. 제출 시점에 백엔드가 판정할 수 있는 것은
+ * 저장소 검증·코드 fetch·분석이 전부 이쪽 책임에서 빠졌다. 제출 시점에 백엔드가 판정할 수 있는 것은
  * URL 형식·호스트와 ZIP의 크기·압축 형식뿐이고, 그 밖의 실패는 분석 단계의 사건이다.
+ *
+ * <p>GitHub 제출이 성공하면 {@link com.bigproject.backend.domain.submission.domain.SubmissionAcceptedEvent}를
+ * 발행해 분석을 즉시 트리거한다(2026-08-07). "마감 후 배치 1회"였던 종전 정책을 바꾼 것으로, 팀이 마감 전
+ * 재제출할 때마다 AI 호출 비용이 다시 드는 대신 저장소 URL 오타 같은 실수를 마감 전에 알고 고칠 수 있다.
+ * 실제 AI 호출은 이 서비스가 아니라 {@code codeanalysis} 모듈의 배치가 이벤트를 받아 수행한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -48,6 +55,7 @@ public class SubmissionService {
 	private final SubmissionContextRepository submissionContextRepository;
 	private final AnalysisJobRepository analysisJobRepository;
 	private final SubmissionArtifactStorage artifactStorage;
+	private final ApplicationEventPublisher eventPublisher;
 
 	/**
 	 * 파일당 상한. 정의서에 원천 컬럼이 없어 애플리케이션 상수로 두고 적용값을
@@ -61,10 +69,16 @@ public class SubmissionService {
 	 *
 	 * <p><b>{@code repository_verification}을 여기서 만들지 않는다.</b> 그 행의 {@code requested_at}이
 	 * "코드 분석이 저장소 확인을 시작한 시각"으로 재정의되면서(S-12) 제출 시점에는 채울 값이 없다.
-	 * 확인 실행 행은 마감 후 분석 배치가 만든다.
+	 * 확인 실행 행은 분석 시작 시점에 만들어진다.
 	 *
 	 * <p>제출된 URL은 팀의 ACTIVE {@code repository} 행이 보관한다. 브랜치는 제출마다 다를 수 있어
 	 * {@code submission.requested_branch}가 따로 갖는다.
+	 *
+	 * <p>접수에 성공하면 {@link SubmissionAcceptedEvent}를 발행한다(2026-08-07). 분석 트리거가
+	 * "마감 후 배치"에서 "제출 즉시"로 바뀌면서, 이 트랜잭션이 커밋된 뒤 분석 배치가 백그라운드로
+	 * 이어받는다. 이벤트를 이 메서드가 직접 발행하는 것이 아니라 트랜잭션 커밋 후 리스너가 받는 이유는
+	 * AI 서버 호출이 이 제출의 DB 트랜잭션을 붙든 채 일어나면 안 되기 때문이다 — 마감 직전 동시 제출에서
+	 * 커넥션 풀이 마른다.
 	 */
 	@Transactional
 	public SubmissionResponse submitGithubUrl(
@@ -98,6 +112,8 @@ public class SubmissionService {
 				submittedAt,
 				idempotencyKey
 		));
+
+		eventPublisher.publishEvent(new SubmissionAcceptedEvent(submission.getSubmissionId()));
 
 		return SubmissionResponse.of(submission, null);
 	}
@@ -136,6 +152,9 @@ public class SubmissionService {
 	 *
 	 * <p>여기서 판정하는 것은 크기와 압축 형식뿐이다. {@code EMPTY_CODE}·{@code GIT_LOG_MISSING}과 안전 추출은
 	 * 아직 구현되지 않았고, 그 때문에 제출은 {@code VALIDATING}에 머문다.
+	 *
+	 * <p>{@link SubmissionAcceptedEvent}를 발행하지 않는다. AI 서버가 ZIP을 받을 방법이 아직 없어
+	 * {@code POST /submissions/zip} 자체가 {@code deprecated}다.
 	 */
 	@Transactional
 	public SubmissionResponse submitZip(

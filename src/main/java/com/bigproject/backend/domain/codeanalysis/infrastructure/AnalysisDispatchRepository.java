@@ -7,20 +7,54 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
- * 마감된 회차에서 분석 대상 제출을 찾는다.
+ * 분석 대상 제출을 찾는다.
  *
  * <p>엔티티를 새로 만들지 않고 네이티브 조회로 두는 이유는, 여기 필요한 것이 회차·팀·제출을 가로지르는
  * 읽기 한 번뿐이기 때문이다. 회차 엔티티를 만들면 이 배치 하나 때문에 매핑이 늘어난다.
+ *
+ * <p>주 트리거는 {@link #findDispatchTarget}이다(2026-08-07). GitHub 제출이 접수되면 즉시 분석을
+ * 걸어, 마감 후에야 저장소 URL 오타를 알게 되는 사고를 막는다. {@link #findDueSubmissions}는 이제
+ * <b>안전망</b>이다 — 이벤트 발행 실패나 앱 재시작으로 트리거가 유실된 제출을 마감 시점에 한 번 더
+ * 훑는다. 정상 경로에서는 이미 {@code analysis_job}이 있어 걸리지 않는다.
  */
 public interface AnalysisDispatchRepository extends Repository<AnalysisJob, UUID> {
 
 	/**
-	 * 마감이 지났는데 아직 분석 실행이 없는 현재 제출들.
+	 * 방금 접수된 제출 하나의 분석 대상 컨텍스트. 제출 완료 이벤트가 이 메서드로 호출된다.
 	 *
-	 * <p>이미 실행이 있는 제출을 제외하는 것은 성능이 아니라 <b>정확성</b> 때문이다. 배치가 겹쳐 돌면
+	 * <p>마감을 보지 않는다 — 마감 전 재제출마다 즉시 분석하는 것이 이 트리거의 목적이다.
+	 *
+	 * <p>결과가 비어 있을 수 있다. 이벤트가 중복 발행됐거나, 도착하기 전에 팀원이 다시 제출해
+	 * {@code is_current}가 다른 행으로 넘어갔거나(이 경우 새 제출이 자기 이벤트를 따로 발행한다),
+	 * {@link #findDueSubmissions} 안전망이 먼저 처리했을 수 있다. 셋 다 오류가 아니라 "이미 처리됨"이다.
+	 */
+	@Query(value = """
+			SELECT s.submission_id      AS submissionId,
+			       s.org_id             AS orgId,
+			       s.team_id            AS teamId,
+			       s.assessment_round_id AS assessmentRoundId,
+			       s.method             AS method,
+			       s.requested_branch   AS requestedBranch,
+			       r.repo_url           AS repositoryUrl
+			  FROM submission s
+			  LEFT JOIN repository r ON r.repository_id = s.repository_id
+			 WHERE s.submission_id = :submissionId
+			   AND s.is_current    = TRUE
+			   AND s.status        = 'ACCEPTED'
+			   AND NOT EXISTS (
+			       SELECT 1 FROM analysis_job j WHERE j.submission_id = s.submission_id
+			   )
+			""", nativeQuery = true)
+	Optional<DispatchTarget> findDispatchTarget(@Param("submissionId") UUID submissionId);
+
+	/**
+	 * 안전망: 마감이 지났는데 아직 분석 실행이 없는 현재 제출들.
+	 *
+	 * <p>이미 실행이 있는 제출을 제외하는 것은 성능이 아니라 <b>정확성</b> 때문이다. 두 번 걸리면
 	 * 같은 제출에 두 번째 job을 만들려 하고, {@code uq_analysis_job_active}가 그걸 예외로 터뜨린다.
 	 * 예외로 막는 것과 애초에 고르지 않는 것은 로그의 소음 차이가 크다.
 	 *

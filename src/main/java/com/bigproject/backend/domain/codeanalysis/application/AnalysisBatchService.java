@@ -19,11 +19,16 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 마감 후 코드 분석 배치.
+ * 코드 분석 배치.
  *
- * <p><b>교육생에게 분석 실행 API를 주지 않는다.</b> 실행 주체는 이 배치뿐이다. 근거: 정의서가 트리거를
- * "마감 후 배치"로 규정 · 분석은 팀 단위인데 화면은 개인 단위 · {@code monthly_ai_budget}을 최종
- * 사용자가 쥐면 안 됨 · 마감 전 재제출로 뒤집힐 제출을 분석하면 낭비.
+ * <p><b>교육생에게 분석 실행 API를 주지 않는다.</b> 실행 주체는 이 배치뿐이고, 트리거는
+ * {@link com.bigproject.backend.domain.submission.domain.SubmissionAcceptedEvent}다(2026-08-07).
+ * 종전에는 "마감 후 배치 1회"였지만, 저장소 URL 오타를 마감 후에야 알게 되는 문제(P-09)를 해소하기
+ * 위해 제출 즉시로 바꿨다. 팀이 마감 전 재제출할 때마다 AI 호출 비용이 다시 드는 것은 감수한다 —
+ * 재시도 제한은 두지 않기로 했다.
+ *
+ * <p>여전히 지키는 것: 분석은 팀 단위 실행이라 개인이 화면에서 직접 실행 버튼을 누르는 구조는 아니고,
+ * {@code monthly_ai_budget}은 이 배치가 대신 쥔다.
  *
  * <p>지금은 <b>상태 추적까지만</b> 한다. 분석 결과(문제·근거·커밋 이력)를 DB에 넣는 부분은
  * {@code gitHistory} 필드 이름이 AI 회신으로 확정된 뒤에 붙인다.
@@ -44,10 +49,33 @@ public class AnalysisBatchService {
 	private final AnalysisServerClient analysisServerClient;
 
 	/**
-	 * 마감된 회차의 현재 제출을 팀당 1건씩 분석 요청한다.
+	 * 방금 접수된 제출 1건을 분석 요청한다. {@code SubmissionAcceptedEvent} 리스너가 부르는 주 진입점이다.
 	 *
-	 * <p>제출 1건마다 트랜잭션을 나눈다. 한 팀의 요청이 실패해도 나머지가 함께 롤백되면 안 되기
-	 * 때문이다 — 마감 직후 한 번에 도는 배치라 실패 하나가 회차 전체를 막으면 피해가 크다.
+	 * <p>대상이 없으면(이미 처리됐거나 슈퍼시드됨) 조용히 넘어간다 — {@link AnalysisDispatchRepository#findDispatchTarget}
+	 * 문서 참조. 그 밖의 실패는 로그로 남기고 삼킨다. 비동기 리스너에서 예외를 던지면 호출자(제출
+	 * 트랜잭션)에는 이미 응답이 나간 뒤라 아무도 못 받고, {@link #dispatchDueSubmissions} 안전망이
+	 * 다음 기회에 다시 집는다.
+	 */
+	public void dispatchSubmission(UUID submissionId) {
+		dispatchRepository.findDispatchTarget(submissionId).ifPresentOrElse(
+				target -> {
+					try {
+						dispatchOne(target, Instant.now());
+					} catch (RuntimeException exception) {
+						log.error("제출 직후 분석 요청 실패: submissionId={}", submissionId, exception);
+					}
+				},
+				() -> log.debug("분석 대상이 아니다(이미 처리됐거나 슈퍼시드됨): submissionId={}", submissionId)
+		);
+	}
+
+	/**
+	 * 안전망: 마감이 지났는데 아직 분석 실행이 없는 현재 제출을 팀당 1건씩 요청한다.
+	 *
+	 * <p>정상 경로에서는 {@link #dispatchSubmission}이 제출 시점에 이미 처리해, 여기서 걸리는 것은
+	 * 이벤트 유실·앱 재시작 같은 예외적인 경우뿐이다.
+	 *
+	 * <p>제출 1건마다 트랜잭션을 나눈다. 한 팀의 요청이 실패해도 나머지가 함께 롤백되면 안 되기 때문이다.
 	 *
 	 * @return 요청을 보낸 제출 수
 	 */
@@ -72,9 +100,14 @@ public class AnalysisBatchService {
 	 *
 	 * <p>순서가 중요하다. <b>job 행을 먼저 QUEUED로 저장하고</b> AI를 부른다. 반대로 하면 202를 받고도
 	 * 행이 없는 순간이 생기고, 그 사이에 프로세스가 죽으면 AI에는 실행이 있는데 우리 원장에는 없다.
+	 *
+	 * <p>{@code @Transactional}을 이 메서드에 걸지 않는다. {@link #dispatchSubmission}·
+	 * {@link #dispatchDueSubmissions} 둘 다 같은 클래스 안에서 이 메서드를 호출하는데, Spring AOP는
+	 * 프록시를 거치지 않는 자기 호출에 트랜잭션 어드바이스를 적용하지 못한다 — 붙여 봐야 조용히
+	 * 무시된다. 대신 각 {@code save()}가 Spring Data JPA의 기본 동작으로 자기 완결적 트랜잭션이 되고,
+	 * 그 편이 오히려 맞다: 하나의 트랜잭션으로 감싸면 AI 서버 HTTP 호출 동안 DB 커넥션을 붙들게 된다.
 	 */
-	@Transactional
-	protected void dispatchOne(DispatchTarget target, Instant now) {
+	private void dispatchOne(DispatchTarget target, Instant now) {
 		String traceId = UUID.randomUUID().toString();
 		AnalysisJob job = analysisJobRepository.save(AnalysisJob.queued(
 				target.getOrgId(),
@@ -102,10 +135,12 @@ public class AnalysisBatchService {
 					traceId
 			));
 			job.acceptExternalJob(externalJobId);
+			analysisJobRepository.save(job);
 		} catch (AnalysisServerException exception) {
 			// 요청이 거절되면 그 자체가 분석 실패다. QUEUED로 남겨 두면 폴링이 영원히 붙들고 있는데,
 			// external_job_id 가 없어 조회할 대상조차 없다.
 			job.markFailed(exception.failureCode(), exception.getMessage(), now, now);
+			analysisJobRepository.save(job);
 			throw exception;
 		}
 	}
