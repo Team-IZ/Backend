@@ -234,7 +234,7 @@ class CohortComparisonAnalyticsServiceTest {
 		givenCandidates(new CohortComparisonQueryRepository.BaselineCandidateRow(baselineCohortId, "6기", true));
 
 		CohortComparisonResponse response =
-				service.findCohortComparison(targetCohortId, null, ComparisonSort.WORSENED, ACTOR_EMAIL);
+				service.findCohortComparison(targetCohortId, null, ComparisonSort.WORSENED, false, ACTOR_EMAIL);
 
 		assertThat(response.emptyStateCode()).isNull();
 		assertThat(response.baselineCohort()).isNull();
@@ -248,7 +248,7 @@ class CohortComparisonAnalyticsServiceTest {
 		givenCandidates();
 
 		CohortComparisonResponse response =
-				service.findCohortComparison(targetCohortId, null, ComparisonSort.WORSENED, ACTOR_EMAIL);
+				service.findCohortComparison(targetCohortId, null, ComparisonSort.WORSENED, false, ACTOR_EMAIL);
 
 		assertThat(response.emptyStateCode()).isEqualTo(ComparisonEmptyState.NO_COMPARABLE_COHORT);
 		assertThat(response.concepts()).isEmpty();
@@ -298,7 +298,7 @@ class CohortComparisonAnalyticsServiceTest {
 		givenCandidates(new CohortComparisonQueryRepository.BaselineCandidateRow(baselineCohortId, "6기", true));
 
 		assertThatThrownBy(() -> service.findCohortComparison(
-				targetCohortId, UUID.randomUUID(), ComparisonSort.WORSENED, ACTOR_EMAIL))
+				targetCohortId, UUID.randomUUID(), ComparisonSort.WORSENED, false, ACTOR_EMAIL))
 				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
 						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
 		verify(queryRepository, never()).aggregateConceptLevels(any(), anyList());
@@ -338,7 +338,7 @@ class CohortComparisonAnalyticsServiceTest {
 	}
 
 	private CohortComparisonResponse compare(ComparisonSort sort) {
-		return service.findCohortComparison(targetCohortId, baselineCohortId, sort, ACTOR_EMAIL);
+		return service.findCohortComparison(targetCohortId, baselineCohortId, sort, false, ACTOR_EMAIL);
 	}
 
 	private int bandOf(String average) {
