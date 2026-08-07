@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.usagemetering.presentation;
 
 import com.bigproject.backend.domain.usagemetering.application.OperationsService;
+import com.bigproject.backend.domain.usagemetering.presentation.dto.CohortCostResponse;
 import com.bigproject.backend.domain.usagemetering.presentation.dto.OperationSettingResponse;
 import com.bigproject.backend.domain.usagemetering.presentation.dto.OrganizationUsageResponse;
 import com.bigproject.backend.domain.usagemetering.presentation.dto.UpdateOperationSettingRequest;
@@ -262,5 +263,82 @@ public class OperationsController {
 				organizationId, request, currentUserResolver.resolveCurrentMemberId()
 		);
 		return ResponseEntity.ok(response);
+	}
+
+	@Operation(
+			summary = "기수 비용 조회 (OP-06 ⑤) | ✅ 사용 가능",
+			description = """
+					OP-06 `운영 관리 › 비용` 탭 전체를 이 응답 하나로 그린다.
+					프론트 `getCost()` 반환 타입과 **필드명까지 1:1**이라 매핑 코드가 필요 없다.
+
+					## `/usage`와 나눈 이유 — 축이 다르다
+
+					| | `/usage` (SA-02 ③) | `/cost` (OP-06 ⑤) |
+					|---|---|---|
+					| 묻는 것 | 이번 달에 **무엇을** 얼마나 썼나 | 기수 동안 **어느 달 어느 반이** 튀었나 |
+					| 기간 | 한 달 | 기수 시작월 ~ 이번 달 |
+					| 형태 | 모델별·기수별·반별 한 달 합계 | **월 × 반 매트릭스** |
+
+					`/usage`에 월 배열을 얹으면 SA-02가 안 쓰는 데이터를 매번 받게 되고,
+					월마다 `/usage`를 반복 호출하면 7개월 × 10반을 7번 왕복으로 모으게 된다.
+
+					## 요청
+
+					| 파라미터 | 위치 | 필수 | 타입 | 설명 |
+					|---|---|---|---|---|
+					| `organizationId` | 경로 | **필수** | UUID | 기관 식별자 |
+					| `cohortId` | 쿼리 | **필수** | UUID | 이 탭의 범위는 기수다 |
+					| `sort` | 쿼리 | | enum | `NAME`(기본) · `COHORT_AMOUNT` |
+
+					**정렬이 둘뿐인 이유** — 월이 열로 펼쳐졌으므로 *어느 달에 누가 많이 썼나*는
+					눈으로 훑는 일이다. 달마다 정렬을 만들면 일곱 개가 되고, 그건 매트릭스가 이미 하는 일이다.
+
+					## 월 범위
+
+					`기수 시작월 ~ min(이번 달, 기수 종료월)`. **아직 오지 않은 달은 담지 않는다** —
+					기수가 9월까지여도 7월이면 다섯 칸이다.
+
+					## 방향이 반대인 두 배열 ⚠️
+
+					| 배열 | 순서 | 이유 |
+					|---|---|---|
+					| `summary.monthly` | **최근이 앞** | 월별 표는 최신이 위 |
+					| `classes[].monthly` | **오래된 것이 앞** | 매트릭스는 왼쪽에서 오른쪽으로 시간이 흐른다 |
+
+					## 범위가 섞여 있다
+
+					`summary.total`·`previousTotal`은 **기관 전체**, 나머지는 **선택 기수**다.
+					화면도 제목에 각각의 범위를 쓴다.
+
+					## 계산 규칙
+
+					| 값 | 규칙 |
+					|---|---|
+					| 금액 | **단가가 설정된 호출만** 합산(`pricing_status <> 'UNPRICED'`). 0으로 더하면 청구액이 작아 보인다 |
+					| `budget` | `월 예산 × 기수 개월 수`로 **파생**. 기수 단위 예산 컬럼이 스키마에 없다. 정책이 없거나 예산 0이면 `null` |
+					| `changePct` | 전월 대비 **퍼센트**(`+12.0`). ⚠️ 다른 API의 `changeRate`(0~1)와 단위가 다르다 |
+					| `previousTotal` | 지난달 행이 아예 없으면 `null` — **0과 구분**해야 화면이 `—`를 그린다 |
+					| 월 버킷 | **UTC 고정**. 서버 로컬 존을 쓰면 배포 환경에 따라 월 경계가 흔들린다 |
+					| `cohorts[]` | 기준 월에 **실제로 비용이 난** 기수만. 평시 1건, 전환기 2건 |
+
+					## 오류
+
+					| 코드 | 상황 |
+					|---|---|
+					| 404 `ORG_NOT_FOUND` | 없는 기관 **또는 없는 기수** |
+					| 403 `ORG_ACCESS_DENIED` | 오퍼레이터가 다른 기관을 조회 |
+					"""
+	)
+	@PreAuthorize("hasAnyRole('SUPER_ADMIN', 'OPERATOR')")
+	@GetMapping("/cost")
+	public ResponseEntity<CohortCostResponse> findCohortCost(
+			@PathVariable UUID organizationId,
+			@RequestParam UUID cohortId,
+			@RequestParam(required = false) CohortCostResponse.ClassCostSort sort
+	) {
+		CohortCostResponse.ClassCostSort effectiveSort =
+				sort == null ? CohortCostResponse.ClassCostSort.NAME : sort;
+		return ResponseEntity.ok(
+				operationsService.findCohortCost(organizationId, cohortId, effectiveSort));
 	}
 }

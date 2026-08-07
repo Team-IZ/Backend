@@ -6,6 +6,7 @@ import com.bigproject.backend.domain.platformgovernance.domain.AiModel;
 import com.bigproject.backend.domain.platformgovernance.domain.AiTier;
 import com.bigproject.backend.domain.platformgovernance.infrastructure.AiModelRepository;
 import com.bigproject.backend.domain.usagemetering.domain.AiUsage;
+import com.bigproject.backend.domain.usagemetering.domain.CohortCostRepository;
 import com.bigproject.backend.domain.usagemetering.domain.OperationsActivityRepository;
 import com.bigproject.backend.domain.usagemetering.domain.OperationsCostRepository;
 import com.bigproject.backend.domain.usagemetering.domain.OrganizationUsageSnapshot;
@@ -13,6 +14,7 @@ import com.bigproject.backend.domain.usagemetering.domain.StorageUsageSnapshot;
 import com.bigproject.backend.domain.usagemetering.infrastructure.AiUsageRepository;
 import com.bigproject.backend.domain.usagemetering.infrastructure.OrganizationUsageSnapshotRepository;
 import com.bigproject.backend.domain.usagemetering.infrastructure.StorageUsageSnapshotRepository;
+import com.bigproject.backend.domain.usagemetering.presentation.dto.CohortCostResponse;
 import com.bigproject.backend.domain.usagemetering.presentation.dto.OperationSettingResponse;
 import com.bigproject.backend.domain.usagemetering.presentation.dto.OrganizationUsageResponse;
 import com.bigproject.backend.domain.usagemetering.presentation.dto.UpdateOperationSettingRequest;
@@ -32,8 +34,15 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +72,7 @@ public class OperationsServiceImpl implements OperationsService {
 	private final AiModelRepository aiModelRepository;
 	private final OperationsCostRepository operationsCostRepository;
 	private final OperationsActivityRepository operationsActivityRepository;
+	private final CohortCostRepository cohortCostRepository;
 	private final CurrentUserResolver currentUserResolver;
 
 	@Override
@@ -533,5 +543,181 @@ public class OperationsServiceImpl implements OperationsService {
 
 	/** (기능, 티어, 모델 코드) 조합. 티어가 호출 스냅샷으로 남아 같은 모델이라도 티어가 다르면 별도 행으로 보여준다. */
 	private record UsageGroupKey(AiUsage.FeatureCode featureCode, AiTier tierCode, String modelCode) {
+	}
+
+	// ════════════════════════════════════════════════════════════════
+	// OP-06 ⑤ 비용 탭
+	// ════════════════════════════════════════════════════════════════
+
+	@Override
+	@Transactional(readOnly = true)
+	public CohortCostResponse findCohortCost(
+			UUID organizationId, UUID cohortId, CohortCostResponse.ClassCostSort sort) {
+
+		assertOrganizationExists(organizationId);
+		assertUsageAccessible(organizationId);
+
+		CohortCostRepository.CohortPeriod cohort =
+				cohortCostRepository.findCohortPeriod(organizationId, cohortId);
+		if (cohort == null) {
+			throw new OrganizationException(
+					OrganizationErrorCode.ORG_NOT_FOUND, "기수를 찾을 수 없습니다: " + cohortId);
+		}
+
+		/*
+		 * 월 범위 = 기수 시작월 ~ min(이번 달, 기수 종료월).
+		 * 아직 오지 않은 달은 담지 않는다 — 기수가 9월까지여도 7월이면 다섯 칸이다.
+		 */
+		YearMonth firstMonth = YearMonth.from(cohort.startDate());
+		YearMonth currentMonth = YearMonth.now(ZoneOffset.UTC);
+		YearMonth lastMonth = YearMonth.from(cohort.endDate());
+		if (lastMonth.isAfter(currentMonth)) {
+			lastMonth = currentMonth;
+		}
+		if (lastMonth.isBefore(firstMonth)) {
+			lastMonth = firstMonth;
+		}
+
+		List<YearMonth> months = new ArrayList<>();
+		for (YearMonth m = firstMonth; !m.isAfter(lastMonth); m = m.plusMonths(1)) {
+			months.add(m);
+		}
+
+		Instant rangeFrom = startOf(firstMonth);
+		Instant rangeTo = startOf(lastMonth.plusMonths(1));
+
+		// ── 기수 월별 (비용 + 세션) ──
+		Map<YearMonth, CohortCostRepository.MonthlyCohortCost> cohortByMonth =
+				cohortCostRepository.findCohortMonthlyCost(organizationId, cohortId, rangeFrom, rangeTo)
+						.stream()
+						.collect(Collectors.toMap(
+								CohortCostRepository.MonthlyCohortCost::month, r -> r, (a, b) -> a));
+
+		Map<YearMonth, List<String>> roundNamesByMonth = new LinkedHashMap<>();
+		for (CohortCostRepository.MonthlyRoundName row
+				: cohortCostRepository.findCohortMonthlyRoundNames(organizationId, cohortId, rangeFrom, rangeTo)) {
+			roundNamesByMonth.computeIfAbsent(row.month(), k -> new ArrayList<>()).add(row.roundName());
+		}
+
+		// 최근 달이 앞 — 월별 표는 최신이 위다(반 매트릭스와 방향이 반대).
+		List<CohortCostResponse.MonthlyCost> monthly = new ArrayList<>();
+		BigDecimal cohortTotal = BigDecimal.ZERO;
+		for (YearMonth m : months) {
+			CohortCostRepository.MonthlyCohortCost row = cohortByMonth.get(m);
+			BigDecimal amount = row == null ? BigDecimal.ZERO : row.amount();
+			cohortTotal = cohortTotal.add(amount);
+			monthly.add(new CohortCostResponse.MonthlyCost(
+					m.toString(),
+					amount,
+					row == null ? 0L : row.sessions(),
+					roundNamesByMonth.getOrDefault(m, List.of())
+			));
+		}
+		Collections.reverse(monthly);
+
+		// ── 기관 전체 이번 달 / 지난달 ──
+		YearMonth basisMonth = lastMonth;
+		YearMonth previousMonth = basisMonth.minusMonths(1);
+		Map<YearMonth, BigDecimal> orgByMonth =
+				cohortCostRepository.findOrganizationMonthlyCost(
+								organizationId, startOf(previousMonth), startOf(basisMonth.plusMonths(1)))
+						.stream()
+						.collect(Collectors.toMap(
+								CohortCostRepository.MonthlyAmount::month,
+								CohortCostRepository.MonthlyAmount::amount, (a, b) -> a));
+
+		BigDecimal total = orgByMonth.getOrDefault(basisMonth, BigDecimal.ZERO);
+		// 지난달 행이 아예 없으면 "첫 달"이라 null이다 — 0과 구분해야 화면이 `—`를 그린다.
+		BigDecimal previousTotal = orgByMonth.get(previousMonth);
+		BigDecimal changePct = changePercent(total, previousTotal);
+
+		// ── 기수 카드 (기준 월에 실제로 비용이 난 기수만) ──
+		List<CohortCostResponse.CohortCard> cards =
+				cohortCostRepository.findActiveCohortCards(
+								organizationId, startOf(basisMonth), startOf(basisMonth.plusMonths(1)))
+						.stream()
+						.map(c -> new CohortCostResponse.CohortCard(
+								c.cohortId(), c.name(), c.amount(), c.traineeCount(),
+								periodLabel(c.startDate(), c.endDate())))
+						.toList();
+
+		// ── 반별 ──
+		Map<UUID, Map<YearMonth, BigDecimal>> classMonthly = new HashMap<>();
+		for (CohortCostRepository.MonthlyClassAmount row
+				: cohortCostRepository.findClassMonthlyCost(organizationId, cohortId, rangeFrom, rangeTo)) {
+			classMonthly.computeIfAbsent(row.classId(), k -> new HashMap<>()).put(row.month(), row.amount());
+		}
+
+		List<YearMonth> ascendingMonths = months;   // 매트릭스는 왼쪽에서 오른쪽으로 시간이 흐른다
+		List<CohortCostResponse.ClassCost> classes = new ArrayList<>();
+		for (CohortCostRepository.ClassSummary cs
+				: cohortCostRepository.findClassSummaries(organizationId, cohortId, rangeFrom, rangeTo)) {
+			Map<YearMonth, BigDecimal> byMonth = classMonthly.getOrDefault(cs.classId(), Map.of());
+			List<CohortCostResponse.MonthlyClassCost> cells = ascendingMonths.stream()
+					.map(m -> new CohortCostResponse.MonthlyClassCost(
+							m.toString(), byMonth.getOrDefault(m, BigDecimal.ZERO)))
+					.toList();
+			classes.add(new CohortCostResponse.ClassCost(
+					cs.classId(), cohortId, cs.name(), cs.managerName(),
+					cells, cs.cohortAmount(), cs.cohortSessions()));
+		}
+
+		if (sort == CohortCostResponse.ClassCostSort.COHORT_AMOUNT) {
+			classes.sort(Comparator.comparing(
+					CohortCostResponse.ClassCost::cohortAmount).reversed());
+		}
+		// NAME은 조회 쿼리가 이미 이름순으로 준다.
+
+		// ── 예산 ──
+		OrganizationPolicy policy = organizationPolicyRepository
+				.findByOrgIdAndStatus(organizationId, OrganizationPolicy.Status.ACTIVE)
+				.orElse(null);
+		BigDecimal budget = cohortBudget(policy, cohort.startDate(), cohort.endDate());
+
+		int monthsLeft = (int) Math.max(0, ChronoUnit.MONTHS.between(basisMonth, YearMonth.from(cohort.endDate())));
+
+		CohortCostResponse.CostSummary summary = new CohortCostResponse.CostSummary(
+				basisMonth.toString(), total, previousTotal, changePct,
+				cohortTotal, budget, monthsLeft, monthly, cards);
+
+		return new CohortCostResponse(organizationId, cohortId, OrganizationPolicy.PLATFORM_CURRENCY_CODE, summary, classes);
+	}
+
+	/**
+	 * 전월 대비 증감률을 <b>퍼센트</b>로 낸다(`+12.0`). 화면 계약이 퍼센트라 0~1 비율을 쓰는
+	 * 다른 응답과 단위가 다르다. 지난달이 없거나 0이면 나눌 수 없어 0을 준다 —
+	 * 이 자리는 화면이 부호와 함께 그대로 찍는 값이라 null을 주면 렌더가 깨진다.
+	 */
+	private BigDecimal changePercent(BigDecimal current, BigDecimal previous) {
+		if (previous == null || previous.compareTo(BigDecimal.ZERO) == 0) {
+			return BigDecimal.ZERO;
+		}
+		return current.subtract(previous)
+				.multiply(BigDecimal.valueOf(100))
+				.divide(previous, 1, RoundingMode.HALF_UP);
+	}
+
+	/**
+	 * 기수 전체 예산 = 월 예산 × 기수 개월 수.
+	 *
+	 * <p>기수 단위 예산 컬럼이 스키마에 없어 파생한다. 활성 정책이 없거나 월 예산이 0이면
+	 * null을 주고, 화면은 그때 비율을 그리지 않는다 — 분모 없는 퍼센트는 만들 수 없다.
+	 */
+	private BigDecimal cohortBudget(OrganizationPolicy policy, LocalDate start, LocalDate end) {
+		if (policy == null || policy.getMonthlyAiBudget() == null
+				|| policy.getMonthlyAiBudget().compareTo(BigDecimal.ZERO) <= 0) {
+			return null;
+		}
+		long spanMonths = ChronoUnit.MONTHS.between(YearMonth.from(start), YearMonth.from(end)) + 1;
+		return policy.getMonthlyAiBudget().multiply(BigDecimal.valueOf(Math.max(1, spanMonths)));
+	}
+
+	/** `2026-03 ~ 09`. 해가 넘어가면 뒤쪽도 연도를 붙인다 — `2026-11 ~ 2027-02`. */
+	private String periodLabel(LocalDate start, LocalDate end) {
+		String head = YearMonth.from(start).toString();
+		YearMonth tail = YearMonth.from(end);
+		return start.getYear() == end.getYear()
+				? head + " ~ " + String.format("%02d", tail.getMonthValue())
+				: head + " ~ " + tail;
 	}
 }
