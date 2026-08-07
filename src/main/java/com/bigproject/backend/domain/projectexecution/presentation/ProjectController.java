@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -26,14 +27,14 @@ import java.util.UUID;
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController
-@RequestMapping("/projects/{projectId}")
+@RequestMapping(value = "/projects/{projectId}", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class ProjectController {
 
 	private final ClassProgressService classProgressService;
 
 	@Operation(
-			summary = "반별 제출·분석·응시 현황 조회",
+			summary = "반별 제출·분석·응시 현황 조회 | ✅ 사용 가능",
 			description = """
 					프로젝트 회차의 반별 진행을 제출 → 분석 → 응시 순으로 한 번에 조회합니다.
 

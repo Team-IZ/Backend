@@ -19,6 +19,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -36,7 +37,7 @@ import java.util.UUID;
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController
-@RequestMapping("/cohorts/{cohortId}/analytics")
+@RequestMapping(value = "/cohorts/{cohortId}/analytics", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class AnalyticsController {
 
@@ -46,7 +47,7 @@ public class AnalyticsController {
 	private final GroupGapAnalyticsService groupGapAnalyticsService;
 
 	@Operation(
-			summary = "조치 필요 경보 조회",
+			summary = "조치 필요 경보 조회 | ✅ 사용 가능",
 			description = """
 					오퍼레이터 대시보드의 '조치 필요' 네 경보를 한 번에 조회합니다.
 
@@ -79,7 +80,7 @@ public class AnalyticsController {
 	}
 
 	@Operation(
-			summary = "집단 미달 목록 조회",
+			summary = "집단 미달 목록 조회 | ✅ 사용 가능",
 			description = """
 					기수 전체에서 반 인원의 절반을 넘는 인원이 한 검증 개념에서 2단 이하인 조합을 조회합니다.
 
@@ -112,7 +113,7 @@ public class AnalyticsController {
 	}
 
 	@Operation(
-			summary = "회차별 기수 전체·반별 위험 교육생 비율 조회",
+			summary = "회차별 기수 전체·반별 위험 교육생 비율 조회 | ✅ 사용 가능",
 			description = """
 					선택 기수의 미니프로젝트 회차별로 기수 전체와 반별 위험 교육생 비율을 계산합니다.
 
@@ -187,7 +188,7 @@ public class AnalyticsController {
 	}
 
 	@Operation(
-			summary = "두 기수의 검증 개념별 평균 도달 단계 비교",
+			summary = "두 기수의 검증 개념별 평균 도달 단계 비교 | ✅ 사용 가능",
 			description = """
 					같은 기관의 두 기수를 검증 개념(teaches_id) 단위로 맞대어 평균 도달 단계를 비교합니다.
 
