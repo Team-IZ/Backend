@@ -3,10 +3,14 @@ package com.bigproject.backend.domain.member.presentation;
 import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
 import com.bigproject.backend.domain.member.application.ManagerRosterService;
 import com.bigproject.backend.domain.member.application.MemberInvitationService;
+import com.bigproject.backend.domain.member.application.MemberProfileService;
 import com.bigproject.backend.domain.member.application.TraineeCsvParser;
 import com.bigproject.backend.domain.member.application.TraineeCsvRow;
 import com.bigproject.backend.domain.member.application.TraineeRosterService;
+import com.bigproject.backend.domain.member.domain.AccountStatus;
+import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.domain.TraineeInvitationFailureStatus;
+import com.bigproject.backend.domain.member.presentation.dto.MemberProfileResponse;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import com.bigproject.backend.global.config.ApiPathConfig;
@@ -31,6 +35,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -49,6 +54,9 @@ class MemberQueryControllerTest {
 	private TraineeCsvParser traineeCsvParser;
 
 	@MockitoBean
+	private MemberProfileService memberProfileService;
+
+	@MockitoBean
 	private TraineeRosterService traineeRosterService;
 
 	@MockitoBean
@@ -62,6 +70,34 @@ class MemberQueryControllerTest {
 
 	@MockitoBean
 	private AuthUserRepository authUserRepository;
+
+	/**
+	 * 새로고침하면 브라우저 메모리가 비워지는데 재발급 응답에는 토큰만 있어 역할을 알 수 없다.
+	 * 역할을 브라우저 저장소에 남기지 않고 <b>부팅 → refresh → /me</b>로 세션을 복원하기 위한 경로다.
+	 */
+	@Test
+	@WithMockUser(username = "lead@example.com", roles = "TRAINEE")
+	void 역할에_상관없이_자기_정보를_돌려준다() throws Exception {
+		UUID memberId = UUID.randomUUID();
+		UUID organizationId = UUID.randomUUID();
+		when(memberProfileService.currentMember()).thenReturn(new MemberProfileResponse(
+				memberId,
+				"lead@example.com",
+				"홍길동",
+				Role.TRAINEE,
+				organizationId,
+				AccountStatus.ACTIVE
+		));
+
+		mockMvc.perform(get("/api/v0/members/me"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.memberId").value(memberId.toString()))
+				.andExpect(jsonPath("$.email").value("lead@example.com"))
+				.andExpect(jsonPath("$.name").value("홍길동"))
+				.andExpect(jsonPath("$.role").value("TRAINEE"))
+				.andExpect(jsonPath("$.organizationId").value(organizationId.toString()))
+				.andExpect(jsonPath("$.status").value("ACTIVE"));
+	}
 
 	@Test
 	@WithMockUser(username = "lead@example.com", roles = "OPERATOR")

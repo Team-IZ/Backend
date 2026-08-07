@@ -39,6 +39,7 @@ public class AuthService {
 	private final LoginDestinationResolver loginDestinationResolver;
 	private final RefreshTokenRepository refreshTokenRepository;
 	private final RefreshTokenHasher refreshTokenHasher;
+	private final LoginAttemptThrottle loginAttemptThrottle;
 
 	@Transactional
 	public LoginResult login(
@@ -46,11 +47,23 @@ public class AuthService {
 			String origin,
 			TokenRequestMetadata requestMetadata
 	) {
-		Optional<AuthUser> candidate = authUserRepository.findByNormalizedEmail(normalizeEmail(request.email()));
+		String normalizedEmail = normalizeEmail(request.email());
+		String ipAddress = requestMetadata.ipAddress();
+		// 비밀번호 검사보다 먼저 본다. 뒤에 두면 차단 중에도 매번 비밀번호를 대조하게 되어
+		// 자동화를 실제로 막지 못한다.
+		loginAttemptThrottle.checkNotBlocked(normalizedEmail, ipAddress);
+
+		Optional<AuthUser> candidate = authUserRepository.findByNormalizedEmail(normalizedEmail);
 		String passwordHash = candidate.map(AuthUser::passwordHash).orElse("");
 		if (!passwordEncoder.matches(request.password(), passwordHash) || candidate.isEmpty()) {
+			// 자격 증명이 틀린 경우만 센다. 정지 계정·기관 정지는 재시도해도 결과가 같아
+			// 세어 봐야 정상 사용자만 더 막는다.
+			loginAttemptThrottle.recordFailure(normalizedEmail, ipAddress);
 			throw invalidCredentials();
 		}
+		// 자격 증명이 맞았다 — 이 자리의 카운터는 여기서 버린다. 뒤의 계정 상태 검사에서 걸리더라도
+		// 그건 "연속 실패"가 아니다.
+		loginAttemptThrottle.reset(normalizedEmail, ipAddress);
 		AuthUser user = candidate.get();
 
 		validateAccount(user);

@@ -249,7 +249,23 @@ public class SwaggerConfig {
 	 * 내려보내는 기본값을 쓴다(인증·인가 실패는 시큐리티 필터가 고정 코드로 쓴다).
 	 */
 	private List<String> errorCodesFor(String statusCode, ApiResponse response, boolean publicPath) {
-		List<String> declared = extractErrorCodes(response.getDescription());
+		List<String> declared = new ArrayList<>(extractErrorCodes(response.getDescription()));
+
+		// 인증·인가 실패는 컨트롤러에 닿기도 전에 시큐리티 필터가 고정 코드로 답한다. 그 코드는
+		// 밑줄이 없어(UNAUTHENTICATED) 설명에서 뽑히지 않으므로, 도메인 코드를 하나라도 적어 두면
+		// 조용히 사라진다 — 실제로는 그쪽이 훨씬 자주 나가는 응답인데도 그렇다. 그래서 더한다.
+		// 공개 경로는 대상이 아니다. 필터가 막지 않으므로 401·403은 전부 도메인이 내는 것이다.
+		if (!publicPath) {
+			String securityCode = switch (statusCode) {
+				case "401" -> "UNAUTHENTICATED";
+				case "403" -> "ACCESS_DENIED";
+				default -> null;
+			};
+			if (securityCode != null && !declared.contains(securityCode)) {
+				declared.add(securityCode);
+			}
+		}
+
 		if (!declared.isEmpty()) {
 			return declared;
 		}

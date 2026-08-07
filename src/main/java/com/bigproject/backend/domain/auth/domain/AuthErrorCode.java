@@ -46,9 +46,13 @@ public enum AuthErrorCode implements ApiErrorCode {
 	LOGIN_ORG_SUSPENDED(HttpStatus.FORBIDDEN, "소속 기관이 정지되어 로그인할 수 없습니다."),
 
 	/**
-	 * 연속 실패로 일시 차단된 상태다({@code app_user.login_blocked_until}).
-	 * 화면은 남은 시간을 세어 보여 주므로 응답에 {@code retryAfter}(초)와
-	 * {@code Retry-After} 헤더를 함께 싣는다.
+	 * 연속 실패로 일시 차단된 상태다. 화면은 남은 시간을 세어 보여 주므로 응답에
+	 * {@code retryAfter}(초)와 {@code Retry-After} 헤더를 함께 싣는다.
+	 *
+	 * <p>내는 곳이 둘이다 — 이메일+IP로 연속 실패를 세는
+	 * {@link com.bigproject.backend.domain.auth.application.LoginAttemptThrottle}(5회 → 60초, 이후
+	 * 실패마다 2배, 상한 15분)와, 운영자가 계정 단위로 직접 채우는
+	 * {@code app_user.login_blocked_until}이다. 화면이 할 일은 둘 다 같으므로 코드는 하나다.
 	 */
 	LOGIN_TEMPORARILY_BLOCKED(HttpStatus.TOO_MANY_REQUESTS, "로그인 시도가 많아 잠시 차단되었습니다."),
 
