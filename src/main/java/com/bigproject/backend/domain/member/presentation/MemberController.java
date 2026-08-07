@@ -1,9 +1,11 @@
 package com.bigproject.backend.domain.member.presentation;
 
 import com.bigproject.backend.domain.member.application.MemberInvitationService;
+import com.bigproject.backend.domain.member.application.MemberProfileService;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerResponse;
+import com.bigproject.backend.domain.member.presentation.dto.MemberProfileResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -16,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -36,6 +39,42 @@ public class MemberController {
 	private static final String REQUEST_ID_HEADER = "X-Request-Id";
 
 	private final MemberInvitationService memberInvitationService;
+	private final MemberProfileService memberProfileService;
+
+	@Operation(
+			operationId = "getCurrentMember",
+			summary = "내 정보 조회 | ✅ 사용 가능",
+			description = """
+					**지금 이 액세스 토큰의 주인**을 서버에서 다시 읽어 내려줍니다. 역할에 관계없이 호출할 수 있습니다.
+
+					**요청**
+					- 본문·경로 파라미터 없음. `Authorization: Bearer {accessToken}`만 필요합니다
+
+					**응답**
+					- memberId / email / name / role / organizationId(슈퍼어드민은 null) / status
+
+					**세션 복원용입니다.** 새로고침하면 브라우저 메모리가 비워지는데 `POST /auth/refresh`는
+					토큰만 돌려주고 역할을 주지 않습니다. 역할을 모르면 사이드바도 라우팅도 그릴 수 없어
+					역할을 브라우저 저장소에 남기게 되는데, 그러면 **정지·역할 변경을 화면이 모릅니다.**
+					`부팅 → refresh → /members/me` 순서로 부르면 역할이 서버 진실이 되고 저장소에 신원 정보를
+					남기지 않아도 됩니다.
+
+					**값은 로그인 응답과 같습니다** — `redirectPath`와 토큰만 빠집니다. 즉 로그인 직후에는
+					부를 필요가 없고, 새로고침·권한 재확인 시점에 부르면 됩니다.
+
+					`status`가 `INACTIVE`로 오는 것은 **세션 도중에 계정이 정지된 것**입니다. 액세스 토큰은
+					만료 전까지 계속 통과하므로, 그 사이에 알아채려면 이 값을 봐야 합니다.
+					"""
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "현재 로그인한 사용자 정보"),
+			@ApiResponse(responseCode = "401",
+					description = "UNAUTHENTICATED 액세스 토큰이 없거나 만료됨 · MEMBER_NOT_FOUND 토큰은 유효하지만 계정이 삭제됨")
+	})
+	@GetMapping("/me")
+	public ResponseEntity<MemberProfileResponse> getCurrentMember() {
+		return ResponseEntity.ok(memberProfileService.currentMember());
+	}
 
 	@Operation(
 			operationId = "inviteManager",

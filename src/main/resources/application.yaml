@@ -68,14 +68,36 @@ jwt:
 
 auth:
   login:
-    allowed-origins: ${AUTH_LOGIN_ALLOWED_ORIGINS}
+    # 로그인·재발급·로그아웃에서 서버가 직접 검사하는 Origin 허용 목록. CORS 설정도 같은 값을 쓴다.
+    # 목록에 없으면 브라우저가 아니라 서버가 403 LOGIN_ORIGIN_NOT_ALLOWED로 거절하므로,
+    # 배포 도메인이 빠지면 로그인 자체가 되지 않는다.
+    #
+    # 로컬 오리진을 여러 개 여는 것은 위험하지 않다 — http://localhost:*는 그 사람의 자기 컴퓨터에서
+    # 띄운 것만 해당하고, 공격자가 그 오리진을 쓸 수 있는 시점이면 이미 피해자 PC에서 코드를 돌리는
+    # 중이라 CORS가 막을 수 있는 것이 없다. 5173 하나만 열어 두면 Vite가 포트를 말없이 밀거나
+    # (5174·5175) 127.0.0.1로 열거나 vite preview(4173)를 쓸 때마다 "로그인이 갑자기 안 된다"가 된다.
+    allowed-origins: ${AUTH_LOGIN_ALLOWED_ORIGINS:https://frontend-eight-neon-73.vercel.app,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:5173,http://localhost:4173}
+    # 호스트에 * 와일드카드를 쓴 항목(예: https://*.vercel.app)을 허용할지. Vercel 프리뷰 배포는 PR마다
+    # URL이 바뀌어 고정 등록이 안 되므로 그때 켠다. 기본은 꺼 둔다 — *.vercel.app은 남의 프로젝트까지
+    # 포함하는 범위라 상시로 열어 둘 값이 아니다.
+    allow-origin-wildcards: ${AUTH_LOGIN_ALLOW_ORIGIN_WILDCARDS:false}
     swagger-origin-override-enabled: ${AUTH_SWAGGER_ORIGIN_OVERRIDE_ENABLED}
     swagger-ui-origin: ${AUTH_SWAGGER_UI_ORIGIN}
+    # 연속 실패 차단(A1). 기준 잠금이 지날 때마다 다음 잠금이 2배로 늘고 상한에서 멈춘다.
+    # 성공하면 카운터를 버린다. 임계값이 낮거나 지속이 길면 그 자체가 남을 막는 공격 수단이 되므로
+    # 5회·60초로 잡았다 — 오타 반복은 넘기고 자동화만 실질적으로 막는 선이다.
+    throttle:
+      max-attempts: ${AUTH_LOGIN_THROTTLE_MAX_ATTEMPTS:5}
+      initial-block: ${AUTH_LOGIN_THROTTLE_INITIAL_BLOCK:PT1M}
+      max-block: ${AUTH_LOGIN_THROTTLE_MAX_BLOCK:PT15M}
   refresh-cookie:
-    name: ${REFRESH_TOKEN_COOKIE_NAME}
-    path: ${REFRESH_TOKEN_COOKIE_PATH}
-    secure: ${REFRESH_TOKEN_COOKIE_SECURE}
-    same-site: ${REFRESH_TOKEN_COOKIE_SAME_SITE}
+    name: ${REFRESH_TOKEN_COOKIE_NAME:refresh_token}
+    path: ${REFRESH_TOKEN_COOKIE_PATH:/api/v0/auth}
+    # SameSite=None에는 Secure가 필수다(브라우저가 Secure 없는 None 쿠키를 조용히 버린다).
+    # Lax로 두면 다른 사이트에서 보내는 fetch/XHR에 쿠키가 실리지 않아 재발급이 전면 불가해진다 —
+    # 프론트(Vercel·localhost)와 백엔드(railway.app)는 서로 다른 사이트다.
+    secure: ${REFRESH_TOKEN_COOKIE_SECURE:true}
+    same-site: ${REFRESH_TOKEN_COOKIE_SAME_SITE:None}
 
 invitation:
   base-url: ${INVITATION_BASE_URL}

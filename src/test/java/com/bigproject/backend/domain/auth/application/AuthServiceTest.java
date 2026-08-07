@@ -11,6 +11,7 @@ import com.bigproject.backend.domain.auth.domain.RefreshTokenSession;
 import com.bigproject.backend.domain.auth.domain.TokenRequestMetadata;
 import com.bigproject.backend.domain.auth.presentation.dto.LoginRequest;
 import com.bigproject.backend.domain.member.domain.Role;
+import com.bigproject.backend.global.config.AllowedOriginPolicy;
 import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.global.security.JwtProvider;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
@@ -45,7 +47,12 @@ class AuthServiceTest {
 	private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 	private final JwtProvider jwtProvider = new JwtProvider(SECRET, 1_800_000, 604_800_000);
 	private final LoginClientValidator loginClientValidator = new LoginClientValidator(
-			"http://localhost:5173"
+			new AllowedOriginPolicy("http://localhost:5173", false)
+	);
+	private final LoginAttemptThrottle loginAttemptThrottle = new LoginAttemptThrottle(
+			5,
+			Duration.ofMinutes(1),
+			Duration.ofMinutes(15)
 	);
 	private final LoginCohortRepository loginCohortRepository = mock(LoginCohortRepository.class);
 	private final LoginDestinationResolver loginDestinationResolver = new LoginDestinationResolver(loginCohortRepository);
@@ -263,7 +270,8 @@ class AuthServiceTest {
 				loginClientValidator,
 				loginDestinationResolver,
 				refreshTokenRepository,
-				refreshTokenHasher
+				refreshTokenHasher,
+				loginAttemptThrottle
 		);
 	}
 
@@ -336,8 +344,88 @@ class AuthServiceTest {
 		assertLoginFailure(() -> login(serviceReturning(pending)));
 	}
 
+	// ── 연속 실패 차단(A1) ────────────────────────────────────────────
+	//
+	// 코드(LOGIN_TEMPORARILY_BLOCKED)와 retryAfter는 전부터 있었지만 카운터가 없어
+	// 실제로는 한 번도 발생하지 않았다. 임계값은 3차 요청서 A1로 확정됐다.
+
+	@Test
+	void 다섯_번_연속_실패하면_60초_동안_거절한다() {
+		AuthService service = serviceReturning(activeUser(Role.OPERATOR, ORGANIZATION_ID));
+
+		for (int attempt = 0; attempt < 4; attempt++) {
+			// 4회까지는 여전히 "로그인 정보 불일치"다. 오타 반복을 차단으로 처리하면 안 된다.
+			assertLoginFailure(() -> loginWithWrongPassword(service));
+		}
+		assertLoginFailure(() -> loginWithWrongPassword(service));
+
+		assertThatThrownBy(() -> loginWithWrongPassword(service))
+				.isInstanceOfSatisfying(ApiException.class, exception -> {
+					assertThat(exception.errorCode()).isEqualTo(AuthErrorCode.LOGIN_TEMPORARILY_BLOCKED);
+					assertThat(exception.retryAfterSeconds()).isBetween(1L, 60L);
+				});
+	}
+
+	@Test
+	void 차단_중에는_올바른_비밀번호도_거절한다() {
+		// 비밀번호 검사보다 먼저 봐야 자동화를 실제로 막는다. 뒤에 두면 차단 중에도 매번 대조하게 된다.
+		AuthService service = serviceReturning(activeUser(Role.OPERATOR, ORGANIZATION_ID));
+		for (int attempt = 0; attempt < 5; attempt++) {
+			assertLoginFailure(() -> loginWithWrongPassword(service));
+		}
+
+		assertThatThrownBy(() -> login(service))
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AuthErrorCode.LOGIN_TEMPORARILY_BLOCKED));
+	}
+
+	@Test
+	void 실패가_이어져도_임계값_전이면_막지_않는다() {
+		AuthService service = serviceReturning(activeUser(Role.OPERATOR, ORGANIZATION_ID));
+		for (int attempt = 0; attempt < 4; attempt++) {
+			assertLoginFailure(() -> loginWithWrongPassword(service));
+		}
+
+		assertThatCode(() -> login(service)).doesNotThrowAnyException();
+	}
+
+	@Test
+	void 성공하면_카운터가_0으로_돌아간다() {
+		AuthService service = serviceReturning(activeUser(Role.OPERATOR, ORGANIZATION_ID));
+		for (int attempt = 0; attempt < 4; attempt++) {
+			assertLoginFailure(() -> loginWithWrongPassword(service));
+		}
+
+		login(service);
+
+		// 리셋되지 않았다면 다음 실패 한 번으로 5회에 닿아 429가 났을 것이다.
+		assertLoginFailure(() -> loginWithWrongPassword(service));
+		assertThatCode(() -> login(service)).doesNotThrowAnyException();
+	}
+
+	@Test
+	void 다른_IP에서의_실패는_남의_로그인을_막지_않는다() {
+		// 이메일만으로 세면 남의 이메일에 다섯 번 틀리는 것만으로 그 사람을 막을 수 있다 —
+		// 화면정의서 v2가 계정 잠금을 버린 이유가 바로 그것이다.
+		AuthService service = serviceReturning(activeUser(Role.OPERATOR, ORGANIZATION_ID));
+		TokenRequestMetadata attacker = new TokenRequestMetadata("203.0.113.9", "attacker");
+		for (int attempt = 0; attempt < 6; attempt++) {
+			assertThatThrownBy(() -> service.login(
+					new LoginRequest("lead@example.com", "wrong-password"),
+					"http://localhost:5173",
+					attacker
+			)).isInstanceOf(ApiException.class);
+		}
+
+		assertThatCode(() -> login(service)).doesNotThrowAnyException();
+	}
+
 	private void login(AuthService service) {
 		service.login(new LoginRequest("lead@example.com", PASSWORD), "http://localhost:5173", REQUEST_METADATA);
+	}
+
+	private void loginWithWrongPassword(AuthService service) {
+		service.login(new LoginRequest("lead@example.com", "wrong-password"), "http://localhost:5173", REQUEST_METADATA);
 	}
 
 	private AuthUser userWith(
