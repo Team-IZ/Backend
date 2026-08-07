@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.academicoperations.presentation;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.academicoperations.application.CohortService;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.EnrollmentListResponse;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.EnrollmentResponse;
@@ -59,7 +61,7 @@ public class EnrollmentController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "조회 성공(소속이 없으면 빈 배열)"),
             @ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-            @ApiResponse(responseCode = "500", description = "인증 정보에서 organizationId를 확인할 수 없음")
+            @ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
     })
     @GetMapping("/enrollments")
     public ResponseEntity<EnrollmentListResponse> findMyEnrollments(Authentication authentication) {
@@ -76,8 +78,7 @@ public class EnrollmentController {
     private UUID extractOrganizationId(Authentication authentication) {
         Object details = authentication.getDetails();
         if (!(details instanceof UUID organizationId)) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "인증 정보에서 organizationId(UUID)를 확인할 수 없습니다.");
+            throw new ApiException(AcademicOperationsErrorCode.ORGANIZATION_CONTEXT_MISSING);
         }
         return organizationId;
     }

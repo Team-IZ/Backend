@@ -11,6 +11,7 @@ import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetValidati
 import com.bigproject.backend.domain.auth.infrastructure.PasswordResetAuditLogger;
 import com.bigproject.backend.domain.member.application.EmailNormalizer;
 import com.bigproject.backend.domain.member.application.OneTimeTokenHasher;
+import com.bigproject.backend.global.exception.ApiException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -87,12 +88,12 @@ public class PasswordResetService {
 					"COMPLETED",
 					"비밀번호가 바뀌었습니다. 새 비밀번호로 다시 로그인해 주세요."
 			);
-		} catch (PasswordResetException exception) {
-			auditLogger.recordFailure(token, requestId, exception.code());
+		} catch (ApiException exception) {
+			auditLogger.recordFailure(token, requestId, exception.errorCode().name());
 			throw exception;
 		} catch (DataAccessException | IllegalStateException exception) {
-			PasswordResetException resetFailed = resetFailed(exception);
-			auditLogger.recordFailure(token, requestId, resetFailed.code());
+			ApiException resetFailed = resetFailed(exception);
+			auditLogger.recordFailure(token, requestId, resetFailed.errorCode().name());
 			throw resetFailed;
 		}
 	}
@@ -105,27 +106,27 @@ public class PasswordResetService {
 			throw invalidToken();
 		}
 		if (token.usedAt() != null) {
-			throw new PasswordResetException(AuthErrorCode.RESET_TOKEN_USED);
+			throw new ApiException(AuthErrorCode.RESET_TOKEN_USED);
 		}
 		if (!token.expiresAt().isAfter(Instant.now())) {
-			throw new PasswordResetException(AuthErrorCode.RESET_TOKEN_EXPIRED);
+			throw new ApiException(AuthErrorCode.RESET_TOKEN_EXPIRED);
 		}
 	}
 
 	private void validatePassword(String newPassword, String currentPasswordHash) {
 		if (!passwordPolicy.isStrong(newPassword)) {
-			throw new PasswordResetException(AuthErrorCode.WEAK_PASSWORD);
+			throw new ApiException(AuthErrorCode.WEAK_PASSWORD);
 		}
 		if (currentPasswordHash != null && passwordEncoder.matches(newPassword, currentPasswordHash)) {
-			throw new PasswordResetException(AuthErrorCode.SAME_AS_CURRENT);
+			throw new ApiException(AuthErrorCode.SAME_AS_CURRENT);
 		}
 	}
 
-	private PasswordResetException invalidToken() {
-		return new PasswordResetException(AuthErrorCode.RESET_TOKEN_INVALID);
+	private ApiException invalidToken() {
+		return new ApiException(AuthErrorCode.RESET_TOKEN_INVALID);
 	}
 
-	private PasswordResetException resetFailed(Throwable cause) {
-		return new PasswordResetException(AuthErrorCode.RESET_FAILED, cause);
+	private ApiException resetFailed(Throwable cause) {
+		return new ApiException(AuthErrorCode.RESET_FAILED, cause);
 	}
 }

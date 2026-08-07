@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.auth.application;
 
+import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.auth.domain.InvitationRecipient;
 import com.bigproject.backend.domain.auth.domain.InvitationResolveRepository;
 import com.bigproject.backend.domain.auth.presentation.dto.InvitationResolveRequest;
@@ -7,7 +9,6 @@ import com.bigproject.backend.domain.member.application.OneTimeTokenHasher;
 import com.bigproject.backend.domain.member.domain.Role;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
@@ -61,9 +62,8 @@ class InvitationResolveServiceTest {
 		)).thenReturn(Optional.empty());
 
 		assertThatThrownBy(() -> service.resolve(new InvitationResolveRequest("invalid-token")))
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception -> {
-					assertThat(exception.getStatusCode().value()).isEqualTo(400);
-					assertThat(exception.getReason()).isEqualTo("유효하지 않거나 만료된 초대입니다.");
+				.isInstanceOfSatisfying(ApiException.class, exception -> {
+					assertThat(exception.errorCode()).isEqualTo(AuthErrorCode.INVITATION_INVALID);
 				});
 	}
 }

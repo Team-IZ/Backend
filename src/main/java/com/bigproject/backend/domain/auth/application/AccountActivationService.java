@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.auth.application;
 
 import com.bigproject.backend.domain.auth.domain.AccountActivationRepository;
+import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
 import com.bigproject.backend.domain.auth.domain.AccountActivationTarget;
 import com.bigproject.backend.domain.auth.domain.ConsentCode;
 import com.bigproject.backend.domain.auth.domain.ConsentRecord;
@@ -11,12 +12,11 @@ import com.bigproject.backend.domain.auth.presentation.dto.TraineeActivationRequ
 import com.bigproject.backend.domain.member.application.OneTimeTokenHasher;
 import com.bigproject.backend.domain.member.domain.InvitationPurpose;
 import com.bigproject.backend.domain.member.domain.Role;
+import com.bigproject.backend.global.exception.ApiException;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -242,32 +242,40 @@ public class AccountActivationService {
 		return List.copyOf(records);
 	}
 
+	/**
+	 * 비밀번호 입력을 검사한다.
+	 *
+	 * <p>"확인 값 불일치"와 "정책 미충족"은 화면이 다른 칸에 다른 문구를 붙여야 하므로 코드를 가른다.
+	 * 정책 미충족은 비밀번호 재설정 흐름과 <b>같은</b> {@code WEAK_PASSWORD}를 쓴다 — 같은 개념에
+	 * 흐름별로 다른 코드를 주면 프론트가 규칙 안내 문구를 두 벌 관리하게 된다.
+	 */
 	private void validatePassword(String password, String passwordConfirmation) {
 		if (password == null || !password.equals(passwordConfirmation)) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "비밀번호 확인이 일치하지 않습니다.");
+			throw new ApiException(AuthErrorCode.PASSWORD_CONFIRMATION_MISMATCH);
 		}
 		if (!passwordPolicy.isStrong(password)) {
-			throw new ResponseStatusException(
-					HttpStatus.BAD_REQUEST,
-					"비밀번호는 8~64자이며 영문, 숫자, 특수문자를 포함해야 합니다."
-			);
+			throw new ApiException(AuthErrorCode.WEAK_PASSWORD);
 		}
 	}
 
 	private void validateRequiredConsents(boolean... requiredConsents) {
 		for (boolean agreed : requiredConsents) {
 			if (!agreed) {
-				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "필수 동의 항목에 모두 동의해야 합니다.");
+				throw new ApiException(AuthErrorCode.REQUIRED_CONSENT_MISSING);
 			}
 		}
 	}
 
-	private ResponseStatusException invalidInvitation() {
-		return new ResponseStatusException(HttpStatus.BAD_REQUEST, INVALID_INVITATION_MESSAGE);
+	private ApiException invalidInvitation() {
+		return new ApiException(AuthErrorCode.INVITATION_INVALID, INVALID_INVITATION_MESSAGE);
 	}
 
-	private ResponseStatusException activationConflict() {
-		return new ResponseStatusException(HttpStatus.CONFLICT, "계정 활성화 상태가 변경되었습니다. 다시 시도해 주세요.");
+	/**
+	 * 동시 요청으로 계정·초대 상태가 먼저 바뀐 경우. <b>입력이 틀린 것이 아니므로</b> 화면은
+	 * 입력칸에 오류를 붙이지 말고 새로고침 후 재시도를 안내해야 한다 — 코드를 갈라 두는 이유다.
+	 */
+	private ApiException activationConflict() {
+		return new ApiException(AuthErrorCode.ACTIVATION_STATE_CHANGED);
 	}
 
 	private record ConsentChoice(ConsentCode code, boolean agreed) {

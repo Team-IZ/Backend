@@ -1,15 +1,15 @@
 package com.bigproject.backend.domain.member.infrastructure;
 
+import com.bigproject.backend.domain.member.domain.MemberErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.member.domain.InvitationContext;
 import com.bigproject.backend.domain.member.domain.InvitationPurpose;
 import com.bigproject.backend.domain.member.domain.InvitationToken;
 import com.bigproject.backend.domain.member.domain.MemberInvitationRepository;
 import com.bigproject.backend.domain.member.domain.Role;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.sql.ResultSet;
 import java.sql.Timestamp;
@@ -293,7 +293,7 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				organizationId
 		);
 		if (cohortCount == null || cohortCount != 1) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "기관에 속하지 않은 기수입니다.");
+			throw new ApiException(MemberErrorCode.COHORT_NOT_IN_ORGANIZATION);
 		}
 	}
 

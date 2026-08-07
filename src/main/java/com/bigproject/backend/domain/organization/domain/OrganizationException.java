@@ -1,30 +1,31 @@
 package com.bigproject.backend.domain.organization.domain;
 
-/**
- * organization/operations 도메인이 목업 케이스 계약대로 <b>에러 코드</b>를 실어 보내기 위한 예외.
- *
- * <p>{@code ResponseStatusException}을 상속하지 않는다 — 상속하면 global의
- * {@code GlobalExceptionHandler.handleResponseStatus}와 이 도메인의 어드바이스가 둘 다 매칭되어
- * 어느 쪽이 잡을지 순서에 의존하게 된다. 별도 타입으로 두면 이 도메인 어드바이스만 매칭된다.
- */
-public class OrganizationException extends RuntimeException {
+import com.bigproject.backend.global.exception.ApiException;
 
-	private final OrganizationErrorCode errorCode;
+/**
+ * organization/operations 도메인이 에러 코드를 실어 보내기 위한 예외.
+ *
+ * <p>{@link ApiException}을 상속하므로 전용 어드바이스가 필요 없다 —
+ * {@code ApiExceptionHandler} 하나가 모든 도메인의 코드를 응답에 싣는다.
+ * 이 타입을 남겨 두는 이유는 {@link #errorCode()}가 {@link OrganizationErrorCode}를 그대로 돌려주어
+ * 호출부에서 코드 범위가 좁게 유지되기 때문이다.
+ */
+public class OrganizationException extends ApiException {
 
 	public OrganizationException(OrganizationErrorCode errorCode) {
-		this(errorCode, errorCode.defaultMessage(), null);
+		super(errorCode);
 	}
 
 	public OrganizationException(OrganizationErrorCode errorCode, String message) {
-		this(errorCode, message, null);
+		super(errorCode, message);
 	}
 
 	public OrganizationException(OrganizationErrorCode errorCode, String message, Throwable cause) {
-		super(message, cause);
-		this.errorCode = errorCode;
+		super(errorCode, message, cause);
 	}
 
+	@Override
 	public OrganizationErrorCode errorCode() {
-		return errorCode;
+		return (OrganizationErrorCode) super.errorCode();
 	}
 }

@@ -1,9 +1,9 @@
 package com.bigproject.backend.domain.member.application;
 
-import org.springframework.http.HttpStatus;
+import com.bigproject.backend.domain.member.domain.MemberErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -65,7 +65,7 @@ public class TraineeCsvParser {
 		} catch (CharacterCodingException exception) {
 			throw badRequest("CSV 파일은 UTF-8 인코딩이어야 합니다.");
 		} catch (IOException exception) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "CSV 파일을 읽을 수 없습니다.", exception);
+			throw new ApiException(MemberErrorCode.CSV_FORMAT_INVALID, "CSV 파일을 읽을 수 없습니다.", exception);
 		}
 	}
 
@@ -142,7 +142,11 @@ public class TraineeCsvParser {
 		return value.startsWith("\uFEFF") ? value.substring(1) : value;
 	}
 
-	private ResponseStatusException badRequest(String reason) {
-		return new ResponseStatusException(HttpStatus.BAD_REQUEST, reason);
+	/**
+	 * CSV 형식 오류는 코드를 하나로 묶는다 — 화면이 하는 일이 "파일을 고쳐 다시 올리세요"로
+	 * 모두 같기 때문이다. 어느 행이 왜 틀렸는지는 message에 담아 사람이 읽게 한다.
+	 */
+	private ApiException badRequest(String reason) {
+		return new ApiException(MemberErrorCode.CSV_FORMAT_INVALID, reason);
 	}
 }

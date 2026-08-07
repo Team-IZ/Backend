@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.academicoperations.presentation;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.academicoperations.application.ClassroomService;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.AssignTraineesRequest;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.AssignTraineesResponse;
@@ -69,8 +71,8 @@ public class ClassroomController {
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "반 목록 조회 성공"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "404", description = "기수를 찾을 수 없음(다른 기관의 기수 포함)"),
-			@ApiResponse(responseCode = "500", description = "인증 정보에서 organizationId를 확인할 수 없음")
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수 포함)"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
 	})
 	@GetMapping
 	public ResponseEntity<ClassroomListResponse> findClassrooms(
@@ -110,10 +112,10 @@ public class ClassroomController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "201", description = "반 생성 성공"),
-			@ApiResponse(responseCode = "400", description = "반 이름이 비었거나 정원이 1 미만임"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 반 이름이 비었거나 정원이 1 미만임"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한이 없음"),
-			@ApiResponse(responseCode = "404", description = "기수를 찾을 수 없음(다른 기관의 기수 포함)")
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수 포함)")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@PostMapping
@@ -154,10 +156,10 @@ public class ClassroomController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "담당 매니저 변경 성공"),
-			@ApiResponse(responseCode = "400", description = "managerIds가 누락됨"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED managerIds가 누락됨"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한이 없음"),
-			@ApiResponse(responseCode = "404", description = "반을 찾을 수 없거나 지정한 기수에 속하지 않음")
+			@ApiResponse(responseCode = "404", description = "CLASSROOM_NOT_FOUND 반을 찾을 수 없거나 지정한 기수에 속하지 않음")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/{classroomId}/managers")
@@ -202,10 +204,10 @@ public class ClassroomController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "반 배정 성공"),
-			@ApiResponse(responseCode = "400", description = "traineeIds가 비었거나 기수에 속하지 않은 교육생이 포함됨"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED traineeIds가 비었음 · TRAINEE_NOT_IN_COHORT 기수에 속하지 않은 교육생이 포함됨(일부만 처리하지 않고 전체를 거부한다)"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한이 없음"),
-			@ApiResponse(responseCode = "404", description = "반을 찾을 수 없거나 지정한 기수에 속하지 않음")
+			@ApiResponse(responseCode = "404", description = "CLASSROOM_NOT_FOUND 반을 찾을 수 없거나 지정한 기수에 속하지 않음")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/trainee-assignments")
@@ -244,10 +246,10 @@ public class ClassroomController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "반 배정 되돌리기 성공"),
-			@ApiResponse(responseCode = "400", description = "traineeIds가 비었거나 기수에 속하지 않은 교육생 포함, 또는 현재 활성 배정이 없는 교육생 포함"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED traineeIds가 비었음 · TRAINEE_NOT_IN_COHORT 기수에 속하지 않은 교육생 · ASSIGNMENT_NOT_FOUND 되돌릴 활성 배정이 없는 교육생"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한이 없음"),
-			@ApiResponse(responseCode = "404", description = "기수를 찾을 수 없음(다른 기관의 기수 포함)")
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수 포함)")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/trainee-assignments/rollback")
@@ -267,8 +269,7 @@ public class ClassroomController {
 	private UUID extractOrganizationId(Authentication authentication) {
 		Object details = authentication.getDetails();
 		if (!(details instanceof UUID organizationId)) {
-			throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-					"인증 정보에서 organizationId(UUID)를 확인할 수 없습니다.");
+			throw new ApiException(AcademicOperationsErrorCode.ORGANIZATION_CONTEXT_MISSING);
 		}
 		return organizationId;
 	}

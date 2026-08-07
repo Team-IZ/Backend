@@ -37,10 +37,17 @@ class DumpSpecTest {
 	@Autowired
 	private MockMvc mockMvc;
 
+	/**
+	 * 생성된 스펙을 {@code build/api-docs.json}으로 떨군다. 프론트 요청서의 부록이 세는 수치를
+	 * 직접 확인하거나 생성기에 물려 볼 때 쓴다.
+	 *
+	 * <p>전에는 특정 사람의 로컬 임시 폴더 절대경로가 박혀 있어 <b>다른 기계에서는 항상 실패</b>했다.
+	 * 저장소 기준 상대경로로 바꾸고, 부모 디렉터리도 만들어 둔다.
+	 */
 	@Test
 	void dump() throws Exception {
-		Path target = Path.of(
-				"/private/tmp/claude-501/-Users-devpark-Documents-projects-kt-aivle-big-project-backend/6b068c34-fb39-447d-8a02-22a26bedfddd/scratchpad/api-docs.json");
+		Path target = Path.of("build", "api-docs.json");
+		Files.createDirectories(target.getParent());
 		Files.writeString(target, mockMvc.perform(get("/v3/api-docs")).andReturn().getResponse().getContentAsString());
 	}
 }

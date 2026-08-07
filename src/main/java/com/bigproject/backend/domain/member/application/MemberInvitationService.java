@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.member.application;
 
+import com.bigproject.backend.domain.member.domain.MemberErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
 import com.bigproject.backend.domain.member.domain.AccountStatus;
@@ -14,9 +16,7 @@ import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesReq
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -76,16 +76,14 @@ public class MemberInvitationService {
 		AuthUser actor = activeActor(actorEmail);
 		MemberInvitationRepository.ResendableInvitation target = invitationRepository
 				.findResendableInvitation(tokenId)
-				.orElseThrow(() -> new ResponseStatusException(
-						HttpStatus.NOT_FOUND, "재발송할 수 있는 초대를 찾을 수 없습니다."
-				));
+				.orElseThrow(() -> new ApiException(MemberErrorCode.INVITATION_NOT_RESENDABLE));
 		validateResendAuthority(actor, target);
 
 		PendingInvitation invitation;
 		try {
 			invitation = invitationDispatcher.resend(target, actor, requestId(requestId));
 		} catch (InvitationDeliveryException exception) {
-			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage(), exception);
+			throw new ApiException(MemberErrorCode.INVITE_MAIL_FAILED, exception.getMessage(), exception);
 		}
 
 		return new InviteManagerResponse(
@@ -102,21 +100,15 @@ public class MemberInvitationService {
 		switch (target.targetRole()) {
 			case SUPER_ADMIN, OPERATOR -> {
 				if (actor.role() != Role.SUPER_ADMIN) {
-					throw new ResponseStatusException(
-							HttpStatus.FORBIDDEN, "슈퍼어드민만 이 초대를 재발송할 수 있습니다."
-					);
+					throw new ApiException(MemberErrorCode.INVITE_ROLE_NOT_ALLOWED, "슈퍼어드민만 이 초대를 재발송할 수 있습니다.");
 				}
 			}
 			case MANAGER, TRAINEE -> {
 				if (actor.role() != Role.OPERATOR) {
-					throw new ResponseStatusException(
-							HttpStatus.FORBIDDEN, "오퍼레이터만 이 초대를 재발송할 수 있습니다."
-					);
+					throw new ApiException(MemberErrorCode.INVITE_ROLE_NOT_ALLOWED, "오퍼레이터만 이 초대를 재발송할 수 있습니다.");
 				}
 				if (!java.util.Objects.equals(target.organizationId(), actor.organizationId())) {
-					throw new ResponseStatusException(
-							HttpStatus.FORBIDDEN, "다른 기관의 초대는 재발송할 수 없습니다."
-					);
+					throw new ApiException(MemberErrorCode.INVITE_CROSS_ORGANIZATION, "다른 기관의 초대는 재발송할 수 없습니다.");
 				}
 			}
 		}
@@ -125,11 +117,11 @@ public class MemberInvitationService {
 	public InviteManagerResponse inviteSuperAdmin(String email, String actorEmail, String requestId) {
 		AuthUser actor = activeActor(actorEmail);
 		if (actor.role() != Role.SUPER_ADMIN) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "슈퍼어드민만 슈퍼어드민을 초대할 수 있습니다.");
+			throw new ApiException(MemberErrorCode.INVITE_ROLE_NOT_ALLOWED, "슈퍼어드민만 슈퍼어드민을 초대할 수 있습니다.");
 		}
 		String trimmedEmail = email == null ? "" : email.trim();
 		if (!isValidEmail(trimmedEmail)) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "이메일 형식이 올바르지 않습니다.");
+			throw new ApiException(MemberErrorCode.EMAIL_FORMAT_INVALID);
 		}
 
 		PendingInvitation invitation;
@@ -141,13 +133,13 @@ public class MemberInvitationService {
 					|| invitationRepository.existsIncompleteInvitationByNormalizedEmail(normalizedEmail)) {
 				throw new InvitationConflictException("이미 등록되었거나 초대된 이메일입니다.", exception);
 			}
-			throw new ResponseStatusException(
-					HttpStatus.INTERNAL_SERVER_ERROR,
+			throw new ApiException(
+					MemberErrorCode.INVITATION_SAVE_FAILED,
 					"초대 정보를 저장할 수 없습니다.",
 					exception
 			);
 		} catch (InvitationDeliveryException exception) {
-			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage(), exception);
+			throw new ApiException(MemberErrorCode.INVITE_MAIL_FAILED, exception.getMessage(), exception);
 		}
 
 		return new InviteManagerResponse(
@@ -170,7 +162,7 @@ public class MemberInvitationService {
 		validateManagerInvitationRequest(request, targetRole);
 		validateManagerInvitationAuthority(actor, targetRole, organizationId);
 		InvitationContext context = invitationRepository.findActiveOrganization(organizationId)
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "활성 기관을 찾을 수 없습니다."));
+				.orElseThrow(() -> new ApiException(MemberErrorCode.ORGANIZATION_NOT_FOUND));
 
 		PendingInvitation invitation;
 		try {
@@ -187,13 +179,13 @@ public class MemberInvitationService {
 					|| invitationRepository.existsIncompleteInvitationByNormalizedEmail(normalizedEmail)) {
 				throw new InvitationConflictException("이미 등록되었거나 초대된 이메일입니다.", exception);
 			}
-			throw new ResponseStatusException(
-					HttpStatus.INTERNAL_SERVER_ERROR,
+			throw new ApiException(
+					MemberErrorCode.INVITATION_SAVE_FAILED,
 					"초대 정보를 저장할 수 없습니다.",
 					exception
 			);
 		} catch (InvitationDeliveryException exception) {
-			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage(), exception);
+			throw new ApiException(MemberErrorCode.INVITE_MAIL_FAILED, exception.getMessage(), exception);
 		}
 
 		return new InviteManagerResponse(
@@ -240,12 +232,12 @@ public class MemberInvitationService {
 	) {
 		AuthUser actor = activeActor(actorEmail);
 		if (actor.role() != Role.OPERATOR) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "오퍼레이터만 교육생을 초대할 수 있습니다.");
+			throw new ApiException(MemberErrorCode.INVITE_ROLE_NOT_ALLOWED, "오퍼레이터만 교육생을 초대할 수 있습니다.");
 		}
 		InvitationContext context = invitationRepository.findInvitableCohort(cohortId)
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "초대 가능한 기수를 찾을 수 없습니다."));
+				.orElseThrow(() -> new ApiException(MemberErrorCode.COHORT_NOT_INVITABLE));
 		if (!context.organizationId().equals(actor.organizationId())) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "다른 기관의 기수에는 교육생을 초대할 수 없습니다.");
+			throw new ApiException(MemberErrorCode.INVITE_CROSS_ORGANIZATION, "다른 기관의 기수에는 교육생을 초대할 수 없습니다.");
 		}
 
 		int registeredCount = 0;
@@ -314,7 +306,7 @@ public class MemberInvitationService {
 				}
 				throw exception;
 			} catch (InvitationDeliveryException exception) {
-				throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage(), exception);
+				throw new ApiException(MemberErrorCode.INVITE_MAIL_FAILED, exception.getMessage(), exception);
 			}
 
 			invitationSentCount++;
@@ -356,10 +348,10 @@ public class MemberInvitationService {
 		for (TraineeCsvRow row : rows) {
 			String name = row.name() == null ? "" : row.name().trim();
 			if (name.isBlank()) {
-				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, row.row() + "행의 이름을 입력해야 합니다.");
+				throw new ApiException(MemberErrorCode.TRAINEE_NAME_INVALID, row.row() + "행의 이름을 입력해야 합니다.");
 			}
 			if (name.length() > 200) {
-				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, row.row() + "행의 이름은 200자 이하여야 합니다.");
+				throw new ApiException(MemberErrorCode.TRAINEE_NAME_INVALID, row.row() + "행의 이름은 200자 이하여야 합니다.");
 			}
 		}
 	}
@@ -374,9 +366,9 @@ public class MemberInvitationService {
 
 	private AuthUser activeActor(String email) {
 		AuthUser actor = authUserRepository.findByNormalizedEmail(EmailNormalizer.normalize(email))
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "인증 사용자를 찾을 수 없습니다."));
+				.orElseThrow(() -> new ApiException(MemberErrorCode.INVITER_NOT_FOUND));
 		if (!ACTIVE.equals(actor.status()) || !actor.emailVerified()) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "활성 사용자만 초대할 수 있습니다.");
+			throw new ApiException(MemberErrorCode.INVITER_NOT_ACTIVE);
 		}
 		return actor;
 	}
@@ -389,19 +381,19 @@ public class MemberInvitationService {
 		switch (targetRole) {
 			case OPERATOR -> {
 				if (actor.role() != Role.SUPER_ADMIN) {
-					throw new ResponseStatusException(HttpStatus.FORBIDDEN, "슈퍼어드민만 오퍼레이터를 초대할 수 있습니다.");
+					throw new ApiException(MemberErrorCode.INVITE_ROLE_NOT_ALLOWED, "슈퍼어드민만 오퍼레이터를 초대할 수 있습니다.");
 				}
 			}
 			case MANAGER -> {
 				if (actor.role() != Role.OPERATOR) {
-					throw new ResponseStatusException(HttpStatus.FORBIDDEN, "오퍼레이터만 매니저를 초대할 수 있습니다.");
+					throw new ApiException(MemberErrorCode.INVITE_ROLE_NOT_ALLOWED, "오퍼레이터만 매니저를 초대할 수 있습니다.");
 				}
 				if (!organizationId.equals(actor.organizationId())) {
-					throw new ResponseStatusException(HttpStatus.FORBIDDEN, "다른 기관의 매니저를 초대할 수 없습니다.");
+					throw new ApiException(MemberErrorCode.INVITE_CROSS_ORGANIZATION, "다른 기관의 매니저를 초대할 수 없습니다.");
 				}
 			}
-			default -> throw new ResponseStatusException(
-					HttpStatus.BAD_REQUEST,
+			default -> throw new ApiException(
+					MemberErrorCode.INVITE_ROLE_NOT_ALLOWED,
 					"이 경로로 초대할 수 없는 역할입니다: " + targetRole
 			);
 		}
@@ -409,13 +401,13 @@ public class MemberInvitationService {
 
 	private void validateManagerInvitationRequest(InviteManagerRequest request, Role targetRole) {
 		if (targetRole == Role.OPERATOR && request.cohortId() != null) {
-			throw new ResponseStatusException(
-					HttpStatus.BAD_REQUEST,
+			throw new ApiException(
+					MemberErrorCode.MANAGER_COHORT_REQUIRED,
 					"오퍼레이터는 기관 전체를 담당하므로 기수를 배정하지 않습니다."
 			);
 		}
 		if (targetRole == Role.MANAGER && request.cohortId() == null) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "일반 매니저는 하나의 기수를 반드시 지정해야 합니다.");
+			throw new ApiException(MemberErrorCode.MANAGER_COHORT_REQUIRED);
 		}
 	}
 
