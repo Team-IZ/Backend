@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.reporting.domain;
 
+import com.bigproject.backend.global.exception.ApiErrorCode;
 import org.springframework.http.HttpStatus;
 
 /**
@@ -8,7 +9,7 @@ import org.springframework.http.HttpStatus;
  *
  * <p>화면 대응: OP-05 리포트({@code #cases-op05}) · TR-04 내 리포트({@code #cases-tr04}).
  */
-public enum ReportErrorCode {
+public enum ReportErrorCode implements ApiErrorCode {
 
 	// ── 공통 ──
 	REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "리포트를 찾을 수 없습니다."),
@@ -52,6 +53,7 @@ public enum ReportErrorCode {
 		return status;
 	}
 
+	@Override
 	public String defaultMessage() {
 		return defaultMessage;
 	}

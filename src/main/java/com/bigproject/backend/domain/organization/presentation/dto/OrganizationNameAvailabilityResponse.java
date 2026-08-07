@@ -18,7 +18,7 @@ public record OrganizationNameAvailabilityResponse(
 		@Schema(description = "사용 가능 여부")
 		boolean available,
 
-		@Schema(description = "사용 불가 사유. 사용 가능하면 null", example = "이미 사용 중인 기관명입니다.")
+		@Schema(description = "사용 불가 사유. 사용 가능하면 null", example = "이미 사용 중인 기관명입니다.", nullable = true)
 		String reason
 ) {
 

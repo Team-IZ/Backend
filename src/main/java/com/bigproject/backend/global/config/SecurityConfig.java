@@ -56,9 +56,9 @@ public class SecurityConfig {
 				)
 				.exceptionHandling(exception -> exception
 						.authenticationEntryPoint((request, response, authException) ->
-								writeSecurityError(response, request.getRequestURI(), 401, "Unauthenticated", "로그인이 필요합니다."))
+								writeSecurityError(response, 401, "Unauthenticated", "UNAUTHENTICATED", "로그인이 필요합니다."))
 						.accessDeniedHandler((request, response, authException) ->
-								writeSecurityError(response, request.getRequestURI(), 403, "Access Denied", "접근 권한이 없습니다."))
+								writeSecurityError(response, 403, "Access Denied", "ACCESS_DENIED", "접근 권한이 없습니다."))
 				);
 		return http.build();
 	}
@@ -90,15 +90,19 @@ public class SecurityConfig {
 		return source;
 	}
 
+	/**
+	 * 필터 단계에서 나가는 401·403도 컨트롤러 오류와 <b>같은 {@link ErrorResponse} 모양</b>이어야 한다.
+	 * 여기만 다르면 프론트가 "인증 실패"만 별도 타입으로 다뤄야 한다.
+	 */
 	private void writeSecurityError(
 			HttpServletResponse response,
-			String path,
 			int status,
 			String error,
+			String code,
 			String message
 	) throws IOException {
 		response.setStatus(status);
 		response.setContentType("application/json;charset=UTF-8");
-		objectMapper.writeValue(response.getWriter(), ErrorResponse.of(status, error, message));
+		objectMapper.writeValue(response.getWriter(), ErrorResponse.of(status, error, code, message));
 	}
 }

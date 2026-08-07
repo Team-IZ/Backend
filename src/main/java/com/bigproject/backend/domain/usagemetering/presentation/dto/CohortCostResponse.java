@@ -54,7 +54,7 @@ public record CohortCostResponse(
 			@Schema(description = """
 					**기관 전체** 지난달 사용액. 증감만으로는 판단이 안 되므로 절대값을 함께 준다 —
 					`+12%`가 `$400→$412`인지 `$50→$56`인지에 따라 할 일이 다르다.
-					기준 월이 첫 달이면 null.""")
+					기준 월이 첫 달이면 null.""", nullable = true)
 			BigDecimal previousTotal,
 
 			@Schema(description = """
@@ -70,7 +70,7 @@ public record CohortCostResponse(
 			@Schema(description = """
 					**기수 전체** 계약 예산. `organization_policy.monthly_ai_budget × 기수 개월 수`로 파생한다 —
 					기수 단위 예산 컬럼이 스키마에 없어 월 예산에서 계산한다.
-					활성 정책이 없거나 월 예산이 0이면 null이며, 그때 화면은 비율을 그리지 않는다.""")
+					활성 정책이 없거나 월 예산이 0이면 null이며, 그때 화면은 비율을 그리지 않는다.""", nullable = true)
 			BigDecimal budget,
 
 			@Schema(description = "기준 월 기준 기수 종료까지 남은 개월 수. 이미 종료됐으면 0", example = "2")
@@ -145,7 +145,7 @@ public record CohortCostResponse(
 
 			String className,
 
-			@Schema(description = "반 담당 매니저 이름. 공동 담당이면 가장 먼저 배정된 1명. 없으면 null")
+			@Schema(description = "반 담당 매니저 이름. 공동 담당이면 가장 먼저 배정된 1명. 없으면 null", nullable = true)
 			String managerName,
 
 			@Schema(description = "월별 비용. **오래된 달이 앞**이다(매트릭스는 왼쪽에서 오른쪽으로 시간이 흐른다).")

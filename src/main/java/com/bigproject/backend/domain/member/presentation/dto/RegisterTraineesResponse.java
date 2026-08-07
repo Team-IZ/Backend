@@ -19,7 +19,7 @@ public record RegisterTraineesResponse(
 	public record Failure(
 			@Schema(description = "CSV는 헤더를 포함한 실제 행 번호, 직접 입력은 1부터 시작하는 배열 순번", example = "4")
 			int row,
-			@Schema(description = "해당 행에 입력된 이메일", example = "invalid-email")
+			@Schema(description = "해당 행에 입력된 이메일", example = "invalid-email", nullable = true)
 			String email,
 			@Schema(
 					description = "실패 상태: 1=유효하지 않은 이메일 형식, 2=요청 내부 중복 이메일, "

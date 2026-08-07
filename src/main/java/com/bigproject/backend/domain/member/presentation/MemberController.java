@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -29,7 +30,7 @@ import java.util.UUID;
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController
-@RequestMapping("/members")
+@RequestMapping(value = "/members", produces = MediaType.APPLICATION_JSON_VALUE)
 @lombok.RequiredArgsConstructor
 public class MemberController {
 	private static final String REQUEST_ID_HEADER = "X-Request-Id";
@@ -37,6 +38,7 @@ public class MemberController {
 	private final MemberInvitationService memberInvitationService;
 
 	@Operation(
+			operationId = "inviteManager",
 			summary = "매니저 초대 | ✅ 사용 가능",
 			description = """
 					오퍼레이터가 자기 기관의 **매니저**를 초대합니다(OP-06). \
