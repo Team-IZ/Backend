@@ -19,16 +19,13 @@ import jakarta.validation.constraints.NotNull;
  * <p>{@code NOT_CONFIGURED}로 되돌리는 값은 없다. 미지정은 "아직 아무도 정하지 않았다"는
  * 초기 상태이지 선택지가 아니다 — 한 번 열었다 닫는 것은 {@code PRIVATE}이다.
  */
-@Schema(description = "리포트 공개 범위 설정 요청")
+@Schema(description = """
+		리포트 공개 범위 설정 요청.
+
+		`scope`의 `PRIVATE`은 비공개 확정(withhold), `SUMMARY`·`FULL`은 공개(release)다.
+		`SUMMARY`는 축별 서술과 교안 위치까지, `FULL`은 문답 원문까지 연다.""")
 public record UpdateReportDisclosureRequest(
 
-		@Schema(
-				description = """
-						공개 범위. `PRIVATE`은 비공개 확정(withhold), `SUMMARY`·`FULL`은 공개(release)다.
-						`SUMMARY`는 축별 서술과 교안 위치까지, `FULL`은 문답 원문까지 연다.""",
-				allowableValues = {"PRIVATE", "SUMMARY", "FULL"},
-				example = "SUMMARY"
-		)
 		@NotNull
 		DisclosureScope scope
 ) {

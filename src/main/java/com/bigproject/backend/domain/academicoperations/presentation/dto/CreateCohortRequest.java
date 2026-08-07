@@ -26,7 +26,7 @@ public record CreateCohortRequest(
         @NotNull LocalDate endDate,
 
         @Schema(description = "⚠ 요청에 넣어도 저장되지 않는다. 교육생 등록은 POST /cohorts/{cohortId}/trainees(CSV) " +
-                "또는 .../trainees/invitations(직접 입력)로 별도 처리한다.")
+                "또는 .../trainees/invitations(직접 입력)로 별도 처리한다.", nullable = true)
         List<@Valid InitialTrainee> initialTrainees
 ) {
     public CreateCohortRequest {

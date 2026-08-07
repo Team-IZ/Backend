@@ -26,15 +26,14 @@ public record SuperAdminListResponse(
 	public record SuperAdmin(
 			UUID memberId,
 
-			@Schema(description = "이름. 초대만 되고 활성화 전이면 null")
+			@Schema(description = "이름. 초대만 되고 활성화 전이면 null", nullable = true)
 			String name,
 
 			String email,
 
-			@Schema(description = "계정 상태. ACTIVE(활성) / PENDING(초대됨) / INACTIVE(정지)")
 			OperatorAccountStatus status,
 
-			@Schema(description = "최근 로그인 시각. 한 번도 로그인하지 않았으면 null")
+			@Schema(description = "최근 로그인 시각. 한 번도 로그인하지 않았으면 null", nullable = true)
 			Instant lastLoginAt,
 
 			Instant createdAt,

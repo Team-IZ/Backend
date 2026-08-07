@@ -12,6 +12,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,7 +30,7 @@ import java.util.UUID;
 @Tag(name = "Usage Metering", description = "AI 호출량·토큰·비용, 저장소 사용량, 기관 한도, 비용 집계 API (v2 IA: SA-02 ③④ / OP-06 ⑤)")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/organizations/{organizationId}/operations")
+@RequestMapping(value = "/organizations/{organizationId}/operations", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class OperationsController {
 
@@ -37,6 +38,7 @@ public class OperationsController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
+			operationId = "findUsage",
 			summary = "기관 월별 저장량·활동·AI 비용 조회 | ✅ 사용 가능",
 			description = """
 					SA-02 ③ `사용량 · AI 비용` 탭(슈퍼어드민)과 OP-06 ⑤ `비용` 탭(오퍼레이터)이 함께 쓴다.
@@ -146,6 +148,7 @@ public class OperationsController {
 	}
 
 	@Operation(
+			operationId = "findOrganizationOperationSettings",
 			summary = "기관 운영 설정 조회 | ✅ 사용 가능",
 			description = """
 					SA-02 ④ 설정 탭을 채운다. 현재 **활성(ACTIVE) 정책 버전**의 값이다.
@@ -196,6 +199,7 @@ public class OperationsController {
 	}
 
 	@Operation(
+			operationId = "updateOrganizationOperationSettings",
 			summary = "기관 운영 설정 변경 | ✅ 사용 가능",
 			description = """
 					SA-02 ④ 설정 탭의 저장 액션. **슈퍼어드민 전용**이다(오퍼레이터는 사용량 조회만 가능).
@@ -266,6 +270,7 @@ public class OperationsController {
 	}
 
 	@Operation(
+			operationId = "findCohortCost",
 			summary = "기수 비용 조회 (OP-06 ⑤) | ✅ 사용 가능",
 			description = """
 					OP-06 `운영 관리 › 비용` 탭 전체를 이 응답 하나로 그린다.

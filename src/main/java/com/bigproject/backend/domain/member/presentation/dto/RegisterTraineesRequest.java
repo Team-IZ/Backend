@@ -16,7 +16,7 @@ public record RegisterTraineesRequest(
 	public record Trainee(
 			@Schema(description = "교육생 명단에 저장할 필수 이름", example = "홍길동")
 			@NotBlank @Size(max = 200) String name,
-			@Schema(description = "교육생 로그인·초대 이메일. 형식·요청 내부 중복·기존 기관 계정을 행별 검증합니다.", example = "trainee@example.com")
+			@Schema(description = "교육생 로그인·초대 이메일. 형식·요청 내부 중복·기존 기관 계정을 행별 검증합니다.", example = "trainee@example.com", nullable = true)
 			String email
 	) {
 	}

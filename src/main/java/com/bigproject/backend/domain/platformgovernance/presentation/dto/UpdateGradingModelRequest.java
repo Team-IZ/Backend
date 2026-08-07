@@ -33,7 +33,7 @@ public record UpdateGradingModelRequest(
 		@Size(max = 100)
 		String calibrationVersionCode,
 
-		@Schema(description = "변경 사유. 감사·이력 확인용", example = "claude-opus-5 로 상향")
+		@Schema(description = "변경 사유. 감사·이력 확인용", example = "claude-opus-5 로 상향", nullable = true)
 		String changeReason,
 
 		@Schema(description = """

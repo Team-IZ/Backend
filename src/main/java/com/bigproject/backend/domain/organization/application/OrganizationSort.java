@@ -10,7 +10,7 @@ import org.springframework.data.domain.Sort;
  * SQL 정렬 대상이 아니다(페이지를 자른 뒤 집계하므로 전역 정렬이 성립하지 않는다).
  * 그래서 organization 행 자체가 가진 컬럼만 정렬 옵션으로 노출한다.
  */
-@Schema(description = "기관 목록 정렬 기준")
+@Schema(name = "OrganizationSort", description = "기관 목록 정렬 기준", enumAsRef = true)
 public enum OrganizationSort {
 
 	/** 최근 생성순(기본). */

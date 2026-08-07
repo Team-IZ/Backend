@@ -35,6 +35,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -46,7 +47,7 @@ import java.util.UUID;
 
 @Tag(name = "Auth", description = "로그인, Access/Refresh Token 재발급·세션 폐기, 비밀번호 재설정, 초대 계정 활성화 API")
 @RestController
-@RequestMapping("/auth")
+@RequestMapping(value = "/auth", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class AuthController {
 	public static final String SWAGGER_CLIENT_ORIGIN_HEADER = "X-Swagger-Client-Origin";
@@ -61,6 +62,7 @@ public class AuthController {
 	private final PasswordResetService passwordResetService;
 
 	@Operation(
+			operationId = "requestPasswordReset",
 			summary = "비밀번호 재설정 안내 요청 | ✅ 사용 가능",
 			description = """
 					비밀번호 재설정 안내 메일 발송을 요청한다. 인증 없이 호출한다.
@@ -93,6 +95,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "validatePasswordResetToken",
 			summary = "재설정 토큰 사전 검증 | ✅ 사용 가능",
 			description = """
 					비밀번호 재설정 메일 링크로 들어온 화면이 **입력폼을 그리기 전에** 호출한다. 인증 없이 호출한다.
@@ -132,6 +135,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "confirmPasswordReset",
 			summary = "비밀번호 재설정 확정 | ✅ 사용 가능",
 			description = """
 					메일 링크의 1회용 토큰으로 비밀번호를 실제로 바꾼다. 인증 없이 호출한다.
@@ -174,6 +178,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "login",
 			summary = "통합 로그인 | ✅ 사용 가능",
 			description = """
 					슈퍼어드민·오퍼레이터·매니저·교육생이 **같은 화면에서** 로그인한다. 역할별 로그인 URL이 따로 없다.
@@ -226,6 +231,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "refresh",
 			summary = "액세스 토큰 재발급 | ✅ 사용 가능",
 			description = """
 					액세스 토큰이 만료됐을 때 새로 발급받는다. 만료된 액세스 토큰을 보낼 필요는 없다 —
@@ -270,6 +276,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "logout",
 			summary = "로그아웃 | ✅ 사용 가능",
 			description = """
 					서버에서 리프레시 토큰을 폐기하고 인증 쿠키를 만료시킨다.
@@ -313,6 +320,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "resolveInvitation",
 			summary = "초대 토큰 해석 | ✅ 사용 가능",
 			description = """
 					초대 메일 링크를 열었을 때 **가장 먼저** 호출한다. 토큰이 아직 쓸 수 있는지 확인하고,
@@ -351,6 +359,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "resendAccountInvitation",
 			summary = "초대 메일 재발송 | ✅ 사용 가능",
 			description = """
 					초대 링크가 만료됐거나 아직 활성화하지 않은 계정이 초대 메일을 다시 받는다. 인증 없이 호출한다.
@@ -390,6 +399,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "signupManager",
 			summary = "초대받은 오퍼레이터·매니저 가입 | ✅ 사용 가능",
 			description = """
 					초대받은 오퍼레이터 또는 매니저가 이름·비밀번호를 정해 계정을 활성화한다(AU-02).
@@ -439,6 +449,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "activateTrainee",
 			summary = "초대받은 교육생 계정 활성화 | ✅ 사용 가능",
 			description = """
 					초대받은 교육생이 비밀번호를 정해 계정을 활성화한다. 인증 없이 호출하며,

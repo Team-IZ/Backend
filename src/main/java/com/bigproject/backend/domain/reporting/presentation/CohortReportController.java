@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,13 +26,14 @@ import java.util.UUID;
 @Tag(name = "Reporting", description = "리포트 발행 이력·본문·문답 조회 API (v2 IA: TR-04 / OP-05)")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/reports")
+@RequestMapping(value = "/reports", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class CohortReportController {
 
 	private final CohortReportService cohortReportService;
 
 	@Operation(
+			operationId = "findClassDiagnosis",
 			summary = "수업 진단 리포트 조회 | ⚠️ 사용 불가",
 			description = """
 					OP-05 `리포트` 화면 전체를 이 응답 하나로 그린다. **섹션 5개가 한 문서**다 —

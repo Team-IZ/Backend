@@ -33,7 +33,10 @@ public record OrganizationCohortListResponse(
 			@Schema(description = "현재 소속 교육생 수(기수를 나간 인원 제외)")
 			int traineeCount,
 
+			@Schema(description = "기수 시작일. 미정이면 null", nullable = true)
 			LocalDate startDate,
+
+			@Schema(description = "기수 종료일. 미정이면 null", nullable = true)
 			LocalDate endDate
 	) {
 	}

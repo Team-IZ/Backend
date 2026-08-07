@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.platformgovernance.domain;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * 기관이 선택하는 AI 모델 티어.
  *
@@ -10,6 +12,7 @@ package com.bigproject.backend.domain.platformgovernance.domain;
  * 목업 OP-06 §7: "모델별 단가는 SA-03(플랫폼이 정하고 기관은 티어 이름만 본다)".
  * 채점(ANSWER_EVALUATION)은 티어 선택 대상이 아니라 플랫폼 고정이므로 이 값을 쓰지 않는다.
  */
+@Schema(name = "AiTier", description = "AI 모델 티어. ACCURACY_FIRST(정확도 우선) · BALANCED(균형) · COST_FIRST(비용 우선)", enumAsRef = true)
 public enum AiTier {
 	ACCURACY_FIRST,
 	BALANCED,
