@@ -1,7 +1,7 @@
 package com.bigproject.backend.domain.auth.application;
 
+import com.bigproject.backend.global.exception.ApiException;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -20,7 +20,7 @@ class LoginClientValidatorTest {
 	void rejectsUnknownOrigin() {
 		assertThatThrownBy(() ->
 				validator.validateOrigin("http://localhost:5174")
-		).isInstanceOf(ResponseStatusException.class)
+		).isInstanceOf(ApiException.class)
 				.hasMessageContaining("허용되지 않은 클라이언트");
 	}
 }

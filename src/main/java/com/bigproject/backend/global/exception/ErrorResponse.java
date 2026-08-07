@@ -52,7 +52,15 @@ public record ErrorResponse(
 
 		@Schema(description = "필드 단위 검증 실패 목록. 검증 오류(400)가 아니면 키 자체가 없다.",
 				nullable = true)
-		List<FieldError> fieldErrors
+		List<FieldError> fieldErrors,
+
+		@Schema(description = """
+				다시 시도할 수 있을 때까지 남은 초. 일시 차단(429)에서만 실리고 그 외에는 키 자체가 없다.
+
+				같은 값이 `Retry-After` 헤더로도 나간다 — 화면이 남은 시간을 세려면 본문에서
+				읽는 편이 간단하고, 프록시·클라이언트 라이브러리의 공통 재시도 처리는 헤더를 본다.""",
+				nullable = true, example = "300")
+		Long retryAfter
 ) {
 
 	/** 어떤 입력이 왜 거절됐는지. 화면이 입력칸 옆에 그대로 붙일 수 있게 필드명을 함께 준다. */
@@ -75,7 +83,7 @@ public record ErrorResponse(
 	}
 
 	public static ErrorResponse of(int status, String error, String code, String message) {
-		return new ErrorResponse(Instant.now(), status, error, code, message, null);
+		return new ErrorResponse(Instant.now(), status, error, code, message, null, null);
 	}
 
 	public static ErrorResponse of(HttpStatus status, String code, String message) {
@@ -89,7 +97,14 @@ public record ErrorResponse(
 				status.name(),
 				code,
 				message,
-				fieldErrors == null || fieldErrors.isEmpty() ? null : List.copyOf(fieldErrors)
+				fieldErrors == null || fieldErrors.isEmpty() ? null : List.copyOf(fieldErrors),
+				null
 		);
+	}
+
+	/** 일시 차단처럼 "언제 다시 되는지"가 답의 일부인 경우. */
+	public static ErrorResponse of(HttpStatus status, String code, String message, Long retryAfterSeconds) {
+		return new ErrorResponse(
+				Instant.now(), status.value(), status.name(), code, message, null, retryAfterSeconds);
 	}
 }

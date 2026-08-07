@@ -70,13 +70,13 @@ public class MemberController {
 	@PreAuthorize("hasRole('OPERATOR')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "201", description = "초대 원장·현재 토큰 생성 및 메일 발송 성공; 계정 활성화 완료를 의미하지 않음"),
-			@ApiResponse(responseCode = "400", description = "이메일 형식이 올바르지 않거나 담당 기수가 없거나 기관에 속하지 않은 기수임"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "403", description = "호출자가 오퍼레이터가 아니거나 다른 기관을 지정함"),
-			@ApiResponse(responseCode = "404", description = "초대 대상 기관을 찾을 수 없음"),
-			@ApiResponse(responseCode = "409", description = "이미 등록된 계정 또는 동일 대상의 미완료 초대가 존재함"),
-			@ApiResponse(responseCode = "500", description = "이메일 중복이 아닌 DB 제약 위반 등으로 초대 정보를 저장하지 못함"),
-			@ApiResponse(responseCode = "502", description = "초대 메일 발송 실패로 초대 트랜잭션을 완료하지 못함")
+			@ApiResponse(responseCode = "400", description = "EMAIL_FORMAT_INVALID 이메일 형식 오류 · MANAGER_COHORT_REQUIRED 담당 기수 미지정 · COHORT_NOT_IN_ORGANIZATION 기관에 속하지 않은 기수"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰 없음 · INVITER_NOT_FOUND 인증 사용자를 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "INVITE_ROLE_NOT_ALLOWED 이 역할을 초대할 권한이 없음 · INVITE_CROSS_ORGANIZATION 다른 기관 지정 · INVITER_NOT_ACTIVE 호출자가 활성 계정이 아님"),
+			@ApiResponse(responseCode = "404", description = "ORGANIZATION_NOT_FOUND 초대 대상 기관을 찾을 수 없음"),
+			@ApiResponse(responseCode = "409", description = "ALREADY_INVITED 이미 등록된 계정 또는 동일 대상의 미완료 초대가 존재함"),
+			@ApiResponse(responseCode = "500", description = "INVITATION_SAVE_FAILED 이메일 중복이 아닌 DB 제약 위반 등으로 초대 정보를 저장하지 못함"),
+			@ApiResponse(responseCode = "502", description = "INVITE_MAIL_FAILED 초대 메일 발송 실패로 초대 트랜잭션을 완료하지 못함. 계정은 만들어지지 않았다")
 	})
 	@PostMapping("/organizations/{organizationId}/manager-invitations")
 	public ResponseEntity<InviteManagerResponse> inviteManager(

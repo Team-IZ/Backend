@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.academicoperations.presentation;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.academicoperations.application.CohortService;
 import com.bigproject.backend.domain.academicoperations.domain.Cohort;
 import com.bigproject.backend.domain.academicoperations.domain.CohortStatus;
@@ -76,9 +78,9 @@ public class CohortController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "기수 목록 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "page·size 범위가 올바르지 않음"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED page·size 범위가 올바르지 않음"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "500", description = "인증 정보에서 organizationId를 확인할 수 없음")
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
 	})
 	@GetMapping
 	public ResponseEntity<CohortListResponse> findCohorts(
@@ -137,8 +139,8 @@ public class CohortController {
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "기수 상세 조회 성공"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "404", description = "기수를 찾을 수 없음(다른 기관의 기수·삭제된 기수 포함)"),
-			@ApiResponse(responseCode = "500", description = "인증 정보에서 organizationId를 확인할 수 없음")
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수·삭제된 기수 포함)"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
 	})
 	@GetMapping("/{cohortId}")
 	public ResponseEntity<CohortResponse> findCohort(
@@ -172,11 +174,12 @@ public class CohortController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "201", description = "기수 생성 성공"),
-			@ApiResponse(responseCode = "400", description = "필수값 누락 또는 종료일이 시작일보다 빠름"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 필수값 누락 · COHORT_PERIOD_INVALID 종료일이 시작일보다 빠름"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "오퍼레이터가 아니거나 다른 기관의 organizationId를 지정함"),
-			@ApiResponse(responseCode = "409", description = "같은 기관에 이미 존재하는 기수명"),
-			@ApiResponse(responseCode = "500", description = "기관에 활성 운영 정책이 없음")
+			@ApiResponse(responseCode = "409",
+					description = "COHORT_NAME_TAKEN 같은 기관에 이미 존재하는 기수명 · ORG_POLICY_NOT_FOUND 기관에 활성 운영 정책이 없음"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@PostMapping
@@ -217,10 +220,10 @@ public class CohortController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "기수 종료 성공"),
-			@ApiResponse(responseCode = "400", description = "종료 사유가 비어 있음"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 종료 사유가 비어 있음"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한이 없음"),
-			@ApiResponse(responseCode = "404", description = "기수를 찾을 수 없음(다른 기관의 기수 포함)")
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수 포함)")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/{cohortId}/end")
@@ -238,8 +241,7 @@ public class CohortController {
 	private UUID extractOrganizationId(Authentication authentication) {
 		Object details = authentication.getDetails();
 		if (!(details instanceof UUID organizationId)) {
-			throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-					"인증 정보에서 organizationId(UUID)를 확인할 수 없습니다.");
+			throw new ApiException(AcademicOperationsErrorCode.ORGANIZATION_CONTEXT_MISSING);
 		}
 		return organizationId;
 	}

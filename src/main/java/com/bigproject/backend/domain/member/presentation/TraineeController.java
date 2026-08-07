@@ -72,10 +72,10 @@ public class TraineeController {
 	@PreAuthorize("hasRole('OPERATOR')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "201", description = "CSV 행별 등록·초대 처리 완료; 성공·실패 건수와 실패 행을 응답"),
-			@ApiResponse(responseCode = "400", description = "CSV 파일·헤더·인코딩 또는 열 구성이 올바르지 않음"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한·계정 상태 또는 기관 범위가 허용되지 않음"),
-			@ApiResponse(responseCode = "404", description = "등록 가능한 기수를 찾을 수 없음")
+			@ApiResponse(responseCode = "400", description = "CSV_FORMAT_INVALID CSV 파일·헤더·인코딩·열 구성 오류. 어느 행이 왜 틀렸는지는 message에 있다"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰 없음 · INVITER_NOT_FOUND 인증 사용자를 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "INVITE_ROLE_NOT_ALLOWED 오퍼레이터만 교육생을 초대할 수 있음 · INVITER_NOT_ACTIVE 활성 계정이 아님 · INVITE_CROSS_ORGANIZATION 다른 기관의 기수"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_INVITABLE 등록 가능한 기수를 찾을 수 없음")
 	})
 	@PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	public ResponseEntity<RegisterTraineesResponse> registerTraineesFromCsv(
@@ -126,10 +126,10 @@ public class TraineeController {
 	@PreAuthorize("hasRole('OPERATOR')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "201", description = "직접 입력 행별 등록·초대 처리 완료; 성공·실패 건수와 실패 행을 응답"),
-			@ApiResponse(responseCode = "400", description = "교육생 목록·이름·이메일 값이 올바르지 않음"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한·계정 상태 또는 기관 범위가 허용되지 않음"),
-			@ApiResponse(responseCode = "404", description = "등록 가능한 기수를 찾을 수 없음")
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 교육생 목록이 비었음 · TRAINEE_NAME_INVALID 이름이 비었거나 200자 초과 · EMAIL_FORMAT_INVALID 이메일 형식 오류"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰 없음 · INVITER_NOT_FOUND 인증 사용자를 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "INVITE_ROLE_NOT_ALLOWED 오퍼레이터만 교육생을 초대할 수 있음 · INVITER_NOT_ACTIVE 활성 계정이 아님 · INVITE_CROSS_ORGANIZATION 다른 기관의 기수"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_INVITABLE 등록 가능한 기수를 찾을 수 없음")
 	})
 	@PostMapping(path = "/invitations", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<RegisterTraineesResponse> registerTrainees(

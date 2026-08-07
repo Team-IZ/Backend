@@ -1,7 +1,5 @@
 package com.bigproject.backend.global.exception;
 
-import com.bigproject.backend.domain.member.application.InvitationConflictException;
-import com.bigproject.backend.domain.auth.application.PasswordResetException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
@@ -21,26 +19,6 @@ public class GlobalExceptionHandler {
 
 	/** 안정 코드가 없는 예외에 붙이는 검증 실패 코드. 프론트는 fieldErrors를 읽어 입력칸에 붙인다. */
 	static final String VALIDATION_FAILED = "VALIDATION_FAILED";
-
-	@ExceptionHandler(PasswordResetException.class)
-	public ResponseEntity<ErrorResponse> handlePasswordReset(PasswordResetException exception) {
-		return ResponseEntity.status(exception.status()).body(ErrorResponse.of(
-				exception.status().value(),
-				exception.code(),
-				exception.code(),
-				exception.getMessage()
-		));
-	}
-
-	@ExceptionHandler(InvitationConflictException.class)
-	public ResponseEntity<ErrorResponse> handleInvitationConflict(InvitationConflictException exception) {
-		return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.of(
-				HttpStatus.CONFLICT.value(),
-				HttpStatus.CONFLICT.getReasonPhrase(),
-				"ALREADY_INVITED",
-				exception.getMessage()
-		));
-	}
 
 	/**
 	 * 본문 DTO의 Bean Validation 실패.

@@ -1,6 +1,8 @@
 package com.bigproject.backend.global.config;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
+import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
 import com.bigproject.backend.global.exception.ApiErrorCode;
@@ -70,7 +72,8 @@ public class SwaggerConfig {
 
 	/** 도메인 에러 코드 카탈로그. 새 도메인이 {@link ApiErrorCode} enum을 만들면 여기 등록한다. */
 	private static final Map<String, String> ERROR_CODE_CATALOG = Stream.<ApiErrorCode[]>of(
-					OrganizationErrorCode.values(), ReportErrorCode.values(), AuthErrorCode.values())
+					OrganizationErrorCode.values(), ReportErrorCode.values(), AuthErrorCode.values(),
+					AcademicOperationsErrorCode.values(), MemberErrorCode.values())
 			.flatMap(Arrays::stream)
 			.collect(LinkedHashMap::new, (map, code) -> map.put(code.name(), code.defaultMessage()), Map::putAll);
 

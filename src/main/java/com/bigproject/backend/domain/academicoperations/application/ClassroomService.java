@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.academicoperations.application;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.academicoperations.domain.ClassMembership;
 import com.bigproject.backend.domain.academicoperations.domain.Classroom;
 import com.bigproject.backend.domain.academicoperations.domain.ManagerAssignment;
@@ -9,10 +11,8 @@ import com.bigproject.backend.domain.academicoperations.infrastructure.ManagerAs
 import com.bigproject.backend.domain.academicoperations.domain.CohortMember;
 import com.bigproject.backend.domain.academicoperations.infrastructure.CohortMemberRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -49,7 +49,7 @@ public class ClassroomService {
         // 같은 기수 안에서 반 이름이 겹치면 안 되는데 DB에 제약이 없어서 여기서 확인
         // (동시 요청 시 이 검사를 통과할 수도 있다. 부분 유니크 인덱스를 추가하면 DB가 막아준다.)
         if (classroomRepository.existsByCohortIdAndNameAndDeletedAtIsNull(cohortId, name)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 존재하는 반 이름입니다: " + name);
+            throw new ApiException(AcademicOperationsErrorCode.CLASSROOM_NAME_TAKEN, "이미 존재하는 반 이름입니다: " + name);
         }
 
         Classroom classroom = Classroom.builder()
@@ -76,7 +76,7 @@ public class ClassroomService {
 
     public Classroom findClassroom(UUID classId, UUID orgId) {
         return classroomRepository.findByClassIdAndOrgIdAndDeletedAtIsNull(classId, orgId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "반을 찾을 수 없습니다."));
+                .orElseThrow(() -> new ApiException(AcademicOperationsErrorCode.CLASSROOM_NOT_FOUND));
     }
 
     public ClassroomView findClassroomView(UUID classId, UUID orgId) {
@@ -108,7 +108,7 @@ public class ClassroomService {
                                      UUID actorUserId) {
         Classroom classroom = findClassroom(classroomId, orgId);
         if (!classroom.getCohortId().equals(cohortId)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "반을 찾을 수 없습니다.");
+            throw new ApiException(AcademicOperationsErrorCode.CLASSROOM_NOT_FOUND);
         }
 
         List<UUID> distinctTraineeUserIds = traineeUserIds.stream().distinct().toList();
@@ -127,7 +127,7 @@ public class ClassroomService {
                 .filter(userId -> !cohortMembersByUserId.containsKey(userId))
                 .toList();
         if (!missingTraineeIds.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+            throw new ApiException(AcademicOperationsErrorCode.TRAINEE_NOT_IN_COHORT,
                     "기수에 속하지 않은 교육생입니다: " + missingTraineeIds);
         }
 
@@ -165,7 +165,7 @@ public class ClassroomService {
                 .filter(userId -> !cohortMembersByUserId.containsKey(userId))
                 .toList();
         if (!missingTraineeIds.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+            throw new ApiException(AcademicOperationsErrorCode.TRAINEE_NOT_IN_COHORT,
                     "기수에 속하지 않은 교육생입니다: " + missingTraineeIds);
         }
 
@@ -180,7 +180,7 @@ public class ClassroomService {
                 .map(CohortMember::getUserId)
                 .toList();
         if (!traineesWithoutActiveAssignment.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+            throw new ApiException(AcademicOperationsErrorCode.ASSIGNMENT_NOT_FOUND,
                     "되돌릴 반 배정이 없는 교육생입니다: " + traineesWithoutActiveAssignment);
         }
 
@@ -214,7 +214,7 @@ public class ClassroomService {
                                                  List<UUID> managerUserIds, UUID actorUserId) {
         Classroom classroom = findClassroom(classroomId, orgId);
         if (!classroom.getCohortId().equals(cohortId)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "반을 찾을 수 없습니다.");
+            throw new ApiException(AcademicOperationsErrorCode.CLASSROOM_NOT_FOUND);
         }
 
         replaceClassroomManagers(classroomId, orgId, managerUserIds, actorUserId, OffsetDateTime.now());
