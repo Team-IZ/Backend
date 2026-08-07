@@ -7,7 +7,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public interface CurriculumMaterialRepository extends JpaRepository<CurriculumMaterial, UUID> {
+public interface
+CurriculumMaterialRepository extends JpaRepository<CurriculumMaterial, UUID> {
 
     Optional<CurriculumMaterial> findByMaterialIdAndOrgId(UUID materialId, UUID orgId);
 

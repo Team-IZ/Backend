@@ -42,7 +42,7 @@ public class AiUsage {
 
 	// 같은 operations 도메인 소속이라 AiModel과는 실제 연관관계로 매핑해, 사용량 집계 시 모델 표시명 등을 조인해 가져온다.
 	@ManyToOne(fetch = FetchType.LAZY)
-	@JoinColumn(name = "model_id", nullable = false, updatable = false)
+	@JoinColumn(name = "model_code", referencedColumnName = "model_code", nullable = false, updatable = false)
 	private AiModel model;
 
   

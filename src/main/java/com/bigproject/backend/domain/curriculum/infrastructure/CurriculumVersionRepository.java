@@ -36,4 +36,16 @@ public interface CurriculumVersionRepository extends JpaRepository<CurriculumVer
             where m.orgId = :orgId and v.status = :status and m.deletedAt is null
             """)
     List<CurriculumVersion> findAllActiveByOrgId(@Param("orgId") UUID orgId, @Param("status") CurriculumVersionStatus status);
+
+    // GET /curricula/{materialId}/sections — materialId는 버전이 바뀌어도 유지되는 안정적 식별자이므로,
+    // 여기서 최신 버전(version_no 최대)으로 해석한 뒤 그 versionId로 섹션 조회를 이어간다.
+    // 다른 기관의 material을 넘겨받았을 때 404로 막기 위해 orgId까지 함께 확인한다.
+    @Query("""
+            select v from CurriculumVersion v
+            join CurriculumMaterial m on m.materialId = v.materialId
+            where v.materialId = :materialId and m.orgId = :orgId
+            order by v.versionNo desc
+            """)
+    List<CurriculumVersion> findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(
+            @Param("materialId") UUID materialId, @Param("orgId") UUID orgId);
 }

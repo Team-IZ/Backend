@@ -1,5 +1,4 @@
 package com.bigproject.backend.domain.curriculum.domain;
-
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;

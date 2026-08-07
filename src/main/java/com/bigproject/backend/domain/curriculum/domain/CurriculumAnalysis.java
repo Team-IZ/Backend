@@ -42,6 +42,7 @@ public class CurriculumAnalysis {
     @Column(name = "idempotency_key", nullable = false, updatable = false)
     private UUID idempotencyKey;
 
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.CHAR)
     @Column(name = "request_fingerprint", nullable = false, updatable = false, length = 64)
     private String requestFingerprint;
 
