@@ -1,13 +1,16 @@
 package com.bigproject.backend.domain.member.presentation;
 
 import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
+import com.bigproject.backend.domain.member.application.ManagerRosterService;
 import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.application.TraineeCsvParser;
 import com.bigproject.backend.domain.member.application.TraineeCsvRow;
+import com.bigproject.backend.domain.member.application.TraineeRosterService;
 import com.bigproject.backend.domain.member.domain.TraineeInvitationFailureStatus;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import com.bigproject.backend.global.config.ApiPathConfig;
+import com.bigproject.backend.global.security.CurrentUserResolver;
 import com.bigproject.backend.global.security.JwtProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,6 +47,15 @@ class MemberQueryControllerTest {
 
 	@MockitoBean
 	private TraineeCsvParser traineeCsvParser;
+
+	@MockitoBean
+	private TraineeRosterService traineeRosterService;
+
+	@MockitoBean
+	private ManagerRosterService managerRosterService;
+
+	@MockitoBean
+	private CurrentUserResolver currentUserResolver;
 
 	@MockitoBean
 	private JwtProvider jwtProvider;
