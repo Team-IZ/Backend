@@ -94,6 +94,30 @@ class LoginAttemptThrottleTest {
 				});
 	}
 
+	/**
+	 * IP 표기가 조금 달라도 같은 클라이언트면 한 카운터로 센다. 이것이 갈리면 다섯 번을 틀려도
+	 * 카운터가 흩어져 임계값에 닿지 못한다 — 4차 요청서 Q1이 관측한 "차단이 새는" 증상이다.
+	 */
+	@Test
+	void IP_표기가_달라도_같은_클라이언트면_한_카운터로_센다() {
+		String[] sameClient = {IP, "::ffff:203.0.113.1", "::FFFF:203.0.113.1", IP + ":51514", "  " + IP + "  "};
+
+		for (String address : sameClient) {
+			throttle.recordFailure(EMAIL, address);
+		}
+
+		assertThatThrownBy(() -> throttle.checkNotBlocked(EMAIL, IP)).isInstanceOf(ApiException.class);
+	}
+
+	@Test
+	void IP를_알_수_없는_요청끼리는_한_카운터로_센다() {
+		for (String address : new String[]{null, "", "  ", "unknown", "_hidden"}) {
+			throttle.recordFailure(EMAIL, address);
+		}
+
+		assertThatThrownBy(() -> throttle.checkNotBlocked(EMAIL, null)).isInstanceOf(ApiException.class);
+	}
+
 	private long retryAfterSeconds() {
 		try {
 			throttle.checkNotBlocked(EMAIL, IP);
