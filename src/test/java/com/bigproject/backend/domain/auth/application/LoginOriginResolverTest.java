@@ -1,7 +1,7 @@
 package com.bigproject.backend.domain.auth.application;
 
+import com.bigproject.backend.global.exception.ApiException;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -31,7 +31,7 @@ class LoginOriginResolverTest {
 
 		assertThatThrownBy(() ->
 				resolver.resolve("http://localhost:8080", "http://localhost:5173")
-		).isInstanceOf(ResponseStatusException.class)
+		).isInstanceOf(ApiException.class)
 				.hasMessageContaining("비활성화");
 	}
 
@@ -41,7 +41,7 @@ class LoginOriginResolverTest {
 
 		assertThatThrownBy(() ->
 				resolver.resolve("http://localhost:5173", "https://team-iz.github.io")
-		).isInstanceOf(ResponseStatusException.class)
+		).isInstanceOf(ApiException.class)
 				.hasMessageContaining("Swagger UI 요청");
 	}
 
@@ -51,7 +51,7 @@ class LoginOriginResolverTest {
 
 		assertThatThrownBy(() ->
 				resolver.resolve(null, "http://localhost:5173")
-		).isInstanceOf(ResponseStatusException.class)
+		).isInstanceOf(ApiException.class)
 				.hasMessageContaining("Swagger UI 요청");
 	}
 }

@@ -1,5 +1,7 @@
 package com.bigproject.backend.global.exception;
 
+import org.springframework.http.HttpStatus;
+
 /**
  * 도메인 에러 코드 enum이 구현하는 공통 계약.
  *
@@ -17,4 +19,13 @@ public interface ApiErrorCode {
 
 	/** 사람이 읽는 기본 메시지. 화면 문구는 프론트가 정하므로 로그·폴백·문서 예시용이다. */
 	String defaultMessage();
+
+	/**
+	 * 이 코드가 나갈 때의 HTTP 상태.
+	 *
+	 * <p>코드가 상태를 들고 있으므로 던지는 쪽은 코드만 고르면 된다 — 같은 코드가 호출부마다
+	 * 다른 상태로 나가는 일을 막는다. 프론트는 {@code code}로 분기하지만 재시도·인증 갱신 같은
+	 * 공통 처리는 여전히 상태를 보고 하므로, 둘이 어긋나면 그 처리가 조용히 틀린다.
+	 */
+	HttpStatus status();
 }

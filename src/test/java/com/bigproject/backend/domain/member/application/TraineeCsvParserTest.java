@@ -1,8 +1,8 @@
 package com.bigproject.backend.domain.member.application;
 
+import com.bigproject.backend.global.exception.ApiException;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
 
@@ -29,7 +29,7 @@ class TraineeCsvParserTest {
 		MockMultipartFile file = csv("name,email\nTrainee,trainee@example.com\n");
 
 		assertThatThrownBy(() -> parser.parse(file))
-				.isInstanceOf(ResponseStatusException.class)
+				.isInstanceOf(ApiException.class)
 				.hasMessageContaining("이름,이메일");
 	}
 
@@ -38,7 +38,7 @@ class TraineeCsvParserTest {
 		MockMultipartFile file = csv("이름,이메일\n홍길동,trainee@example.com,extra\n");
 
 		assertThatThrownBy(() -> parser.parse(file))
-				.isInstanceOf(ResponseStatusException.class)
+				.isInstanceOf(ApiException.class)
 				.hasMessageContaining("2행");
 	}
 

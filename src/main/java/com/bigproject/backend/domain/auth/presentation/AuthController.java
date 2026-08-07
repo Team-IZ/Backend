@@ -82,7 +82,7 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "202", description = "계정 상태와 무관한 동일 안내 응답"),
-			@ApiResponse(responseCode = "400", description = "이메일 형식 오류")
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 이메일 형식 오류")
 	})
 	@PostMapping("/password-reset/requests")
 	public ResponseEntity<PasswordResetRequestResponse> requestPasswordReset(
@@ -123,9 +123,9 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "아직 사용할 수 있는 토큰"),
-			@ApiResponse(responseCode = "400", description = "유효하지 않은 토큰 또는 활성 상태가 아닌 계정"),
-			@ApiResponse(responseCode = "409", description = "이미 사용된 토큰"),
-			@ApiResponse(responseCode = "410", description = "만료된 토큰")
+			@ApiResponse(responseCode = "400", description = "RESET_TOKEN_INVALID 유효하지 않은 토큰 또는 활성 상태가 아닌 계정"),
+			@ApiResponse(responseCode = "409", description = "RESET_TOKEN_USED 이미 사용된 토큰"),
+			@ApiResponse(responseCode = "410", description = "RESET_TOKEN_EXPIRED 만료된 토큰")
 	})
 	@PostMapping("/password-reset/validations")
 	public ResponseEntity<PasswordResetValidationResponse> validatePasswordResetToken(
@@ -162,11 +162,11 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "비밀번호 변경 완료"),
-			@ApiResponse(responseCode = "400", description = "유효하지 않은 토큰 또는 요청 형식 오류"),
-			@ApiResponse(responseCode = "409", description = "이미 사용된 토큰"),
-			@ApiResponse(responseCode = "410", description = "만료된 토큰"),
-			@ApiResponse(responseCode = "422", description = "비밀번호 정책 미충족 또는 현재 비밀번호와 동일"),
-			@ApiResponse(responseCode = "500", description = "변경 저장 실패 및 롤백")
+			@ApiResponse(responseCode = "400", description = "RESET_TOKEN_INVALID 유효하지 않은 토큰 · VALIDATION_FAILED 요청 형식 오류"),
+			@ApiResponse(responseCode = "409", description = "RESET_TOKEN_USED 이미 사용된 토큰"),
+			@ApiResponse(responseCode = "410", description = "RESET_TOKEN_EXPIRED 만료된 토큰"),
+			@ApiResponse(responseCode = "422", description = "WEAK_PASSWORD 비밀번호 정책 미충족 · SAME_AS_CURRENT 현재 비밀번호와 동일"),
+			@ApiResponse(responseCode = "500", description = "RESET_FAILED 변경 저장 실패. 비밀번호는 바뀌지 않았다")
 	})
 	@PostMapping("/password-reset/confirmations")
 	public ResponseEntity<PasswordResetConfirmationResponse> confirmPasswordReset(
@@ -190,23 +190,46 @@ public class AuthController {
 
 					**응답**
 					- memberId / email / name / role / organizationId (슈퍼어드민은 organizationId가 null)
-					- redirectPath: **로그인 후 이동할 경로를 서버가 정해서 내려준다.** 클라이언트가 역할을 보고
-					  분기하지 말고 이 값을 그대로 따라가면 된다 — 접근 범위 판단(담당 기수가 하나뿐인 매니저 등)이
-					  서버에만 있기 때문이다
+					- redirectPath: 로그인 후 이동할 경로 제안. 낼 수 있는 값은 넷뿐이다.
+					  | role | 값 |
+					  |---|---|
+					  | SUPER_ADMIN | `/admin/orgs` |
+					  | OPERATOR | 기관의 최신 기수가 있으면 `/cohorts/{기수명 URL 인코딩}`, 없으면 `/cohorts` |
+					  | MANAGER | 담당 최신 기수가 있으면 `/cohorts/{기수명 URL 인코딩}`, 없으면 `/cohorts` |
+					  | TRAINEE | `/home` |
+
+					  즉 `role` 외에 담기는 정보는 **최신 기수의 이름 하나**이며, 그것도 ID가 아니라 표시명이다.
+					  라우트 구조는 프론트 지식이므로 **이 값을 따르지 않고 `role`로 라우팅해도 된다** —
+					  기수명이 필요하면 기수 목록 API에서 ID와 함께 받는 편이 낫다.
 					- accessToken: 액세스 토큰(Authorization: Bearer)
 					- accessTokenExpiresIn: 만료까지 남은 초
 
 					**리프레시 토큰은 응답 본문에 없다.** `Set-Cookie`로 HttpOnly 쿠키에 담겨 나가므로
 					자바스크립트가 읽을 수 없고, 재발급은 `POST /auth/refresh`가 쿠키를 자동으로 실어 보내 처리한다.
 
-					**오류 구분** — 이메일이 없는 경우와 비밀번호가 틀린 경우를 400으로 합쳐 응답한다(계정 존재 여부 비노출).
-					403은 계정·기관이 정지·비활성 상태이거나 허용되지 않은 Origin에서 온 요청이다.
+					**오류 구분** — `code`로 분기한다. `message`는 사람이 읽는 문구라 바뀔 수 있다.
+
+					| code | 뜻 | 화면이 할 일 |
+					|---|---|---|
+					| `LOGIN_INVALID` | 이메일이 없거나 비밀번호가 틀림 | 문구만. **둘을 구분해 주지 않는다** — 구분하면 어떤 이메일이 가입돼 있는지 외부에서 확인할 수 있다 |
+					| `LOGIN_TEMPORARILY_BLOCKED` | 연속 실패로 일시 차단 | 응답의 `retryAfter`(초)와 `Retry-After` 헤더만큼 버튼을 잠근다 |
+					| `LOGIN_ACCOUNT_INACTIVE` | 정지·퇴사 계정 | 문의 안내. 재시도해도 같다 |
+					| `LOGIN_ORG_SUSPENDED` | 계정은 정상이나 소속 기관이 정지 | 기관 문의 안내 |
+					| `LOGIN_ORIGIN_NOT_ALLOWED` | 허용되지 않은 Origin | 계정 문제가 아니다 |
+					| `LOGIN_NO_ORG_CONTEXT` | 기관 소속이 없는 비-슈퍼어드민 계정 | **계정 데이터 결함**이라 5xx다. 관리자 문의 |
+
+					**아직 활성화하지 않은 계정은 `LOGIN_INVALID`로 온다.** 그 계정은 비밀번호가 아예 없어
+					상태 검사에 도달하지 못한다. 구분해 주려면 비밀번호 검사 앞에서 상태를 봐야 하는데
+					그러면 계정 열거가 가능해지므로 <b>의도적으로 합쳤다.</b>
 					"""
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "로그인 성공 및 토큰 발급"),
-			@ApiResponse(responseCode = "400", description = "요청 형식 오류 또는 로그인 정보 불일치"),
-			@ApiResponse(responseCode = "403", description = "계정·기관 상태 또는 요청 Origin이 허용되지 않음")
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 요청 형식 오류 · LOGIN_INVALID 로그인 정보 불일치"),
+			@ApiResponse(responseCode = "403",
+					description = "LOGIN_ACCOUNT_INACTIVE 정지 계정 · LOGIN_ORG_SUSPENDED 기관 정지 · LOGIN_ORIGIN_NOT_ALLOWED 허용되지 않은 출처"),
+			@ApiResponse(responseCode = "429", description = "LOGIN_TEMPORARILY_BLOCKED 연속 실패로 일시 차단. retryAfter(초) 동봉"),
+			@ApiResponse(responseCode = "500", description = "LOGIN_NO_ORG_CONTEXT 기관 소속이 없는 계정")
 	})
 	@PostMapping("/login")
 	public ResponseEntity<LoginResponse> login(
@@ -257,8 +280,12 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "액세스 토큰 재발급 성공"),
-			@ApiResponse(responseCode = "401", description = "리프레시 토큰 누락·만료·위조 또는 인증 정보 변경"),
-			@ApiResponse(responseCode = "403", description = "계정·기관 상태 또는 요청 Origin이 허용되지 않음")
+			@ApiResponse(responseCode = "401",
+					description = "REFRESH_TOKEN_INVALID 토큰 누락·만료·위조 · REFRESH_IDENTITY_CHANGED 역할·기관이 바뀌어 재로그인 필요"),
+			@ApiResponse(responseCode = "403",
+					description = "LOGIN_ACCOUNT_INACTIVE 정지 계정 · LOGIN_ORG_SUSPENDED 기관 정지 · LOGIN_ORIGIN_NOT_ALLOWED 허용되지 않은 출처"),
+			@ApiResponse(responseCode = "429", description = "LOGIN_TEMPORARILY_BLOCKED 일시 차단. retryAfter(초) 동봉"),
+			@ApiResponse(responseCode = "500", description = "LOGIN_NO_ORG_CONTEXT 기관 소속이 없는 계정")
 	})
 	@PostMapping("/refresh")
 	public ResponseEntity<RefreshTokenResponse> refresh(
@@ -300,7 +327,7 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "204", description = "로그아웃 처리 및 인증 쿠키 삭제"),
-			@ApiResponse(responseCode = "403", description = "요청 Origin이 허용되지 않음")
+			@ApiResponse(responseCode = "403", description = "LOGIN_ORIGIN_NOT_ALLOWED 허용되지 않은 요청 출처")
 	})
 	@PostMapping("/logout")
 	public ResponseEntity<Void> logout(
@@ -349,7 +376,7 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "현재 유효한 SUPER_ADMIN·OPERATOR·MANAGER·TRAINEE 초대 대상 해석 성공"),
-			@ApiResponse(responseCode = "400", description = "토큰 누락·위변조·만료·사용 완료·교체 또는 초대 상태가 SENT가 아님")
+			@ApiResponse(responseCode = "400", description = "INVITATION_INVALID 토큰 누락·위변조·사용 완료·교체 또는 초대 상태가 SENT가 아님")
 	})
 	@PostMapping("/invitations/resolve")
 	public ResponseEntity<InvitationResolveResponse> resolveInvitation(
@@ -386,7 +413,7 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "202", description = "계정 상태와 무관한 동일 안내 응답"),
-			@ApiResponse(responseCode = "400", description = "이메일 형식 오류")
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 이메일 형식 오류")
 	})
 	@PostMapping("/invitations/resend")
 	public ResponseEntity<InvitationResendResponse> resendInvitation(
@@ -429,8 +456,10 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "OPERATOR 또는 MANAGER 계정 활성화와 초대 ACCEPTED 전환 성공"),
-			@ApiResponse(responseCode = "400", description = "사용자 ID·비밀번호 확인·필수 동의·현재 초대 토큰 또는 대상 역할이 유효하지 않음"),
-			@ApiResponse(responseCode = "409", description = "동시 요청으로 계정·초대·토큰 상태가 먼저 변경됨")
+			@ApiResponse(responseCode = "400",
+					description = "INVITATION_INVALID 초대 토큰·대상 역할이 유효하지 않음 · PASSWORD_CONFIRMATION_MISMATCH 비밀번호 확인 불일치 · REQUIRED_CONSENT_MISSING 필수 동의 누락"),
+			@ApiResponse(responseCode = "409", description = "ACTIVATION_STATE_CHANGED 동시 요청으로 계정·초대·토큰 상태가 먼저 변경됨"),
+			@ApiResponse(responseCode = "422", description = "WEAK_PASSWORD 비밀번호 정책 미충족")
 	})
 	@PostMapping("/manager-signup")
 	public ResponseEntity<ActivateAccountResponse> signupManager(
@@ -481,8 +510,10 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "TRAINEE 계정·기수 소속 활성화와 초대 ACCEPTED 전환 성공"),
-			@ApiResponse(responseCode = "400", description = "사용자 ID·비밀번호 확인·필수 동의·현재 교육생 초대 토큰 또는 명단 범위가 유효하지 않음"),
-			@ApiResponse(responseCode = "409", description = "동시 요청으로 계정·기수 소속·초대·토큰 상태가 먼저 변경됨")
+			@ApiResponse(responseCode = "400",
+					description = "INVITATION_INVALID 교육생 초대 토큰·명단 범위가 유효하지 않음 · PASSWORD_CONFIRMATION_MISMATCH 비밀번호 확인 불일치 · REQUIRED_CONSENT_MISSING 필수 동의 누락"),
+			@ApiResponse(responseCode = "409", description = "ACTIVATION_STATE_CHANGED 동시 요청으로 계정·기수 소속·초대·토큰 상태가 먼저 변경됨"),
+			@ApiResponse(responseCode = "422", description = "WEAK_PASSWORD 비밀번호 정책 미충족")
 	})
 	@PostMapping("/trainee-activation")
 	public ResponseEntity<ActivateAccountResponse> activateTrainee(
