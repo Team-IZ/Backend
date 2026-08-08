@@ -62,8 +62,6 @@ public enum MemberErrorCode implements ApiErrorCode {
 	ACCOUNT_STATUS_FILTER_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "지원하지 않는 계정 상태 필터입니다."),
 	/** 그 기수·기관에 그 교육생이 없다. 다른 기수·다른 기관인 경우도 존재를 알리지 않고 여기로 묶는다. */
 	TRAINEE_NOT_FOUND(HttpStatus.NOT_FOUND, "교육생을 찾을 수 없습니다."),
-	/** ACTIVE·INACTIVE 외의 상태를 직접 지정했다. 입력 오류라 화면은 버튼을 다시 그린다. */
-	TRAINEE_STATUS_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "교육생 계정 상태는 활성 또는 비활성만 직접 설정할 수 있습니다."),
 	/**
 	 * 초대 대기(INVITED) 교육생의 상태를 바꾸려 했다. 아직 계정이 활성화되지 않아 정지·재활성
 	 * 개념이 성립하지 않는다 — 화면이 할 일은 상태 변경이 아니라 <b>초대 재발송</b>이라 입력
