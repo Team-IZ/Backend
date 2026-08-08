@@ -1,6 +1,10 @@
 package com.bigproject.backend.domain.curriculum.presentation;
 
 import com.bigproject.backend.domain.curriculum.application.CurriculumService;
+import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus;
+import com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogSort;
+import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumCatalogItemResponse;
+import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumCatalogResponse;
 import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumVersionResponse;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
@@ -9,7 +13,10 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.MediaType;
@@ -26,6 +33,7 @@ import java.util.UUID;
 
 @Tag(name = "Curriculum", description = "교안 조회 API (MG-09/OP-06)")
 @SecurityRequirement(name = "bearerAuth")
+@Validated
 @RestController
 // 응답은 전부 JSON이다. 안 걸면 스펙의 content-type이 `*/*`로 나가 생성기가 응답 타입을
 // 좁히지 못한다(OpenApiDocumentTest가 잡는다). 요청이 multipart인 registerCurriculum도
@@ -36,6 +44,95 @@ public class CurriculumController {
 
     private final CurriculumService curriculumService;
     private final CurrentUserResolver currentUserResolver;
+
+    @Operation(
+            operationId = "findOrganizationCurricula",
+            summary = "기관 교안 목록 | ✅ 사용 가능",
+            description = """
+					OP-06 `교안` 탭의 표를 채운다. **기관 전체 범위**이며 기수 스위처의 영향을 받지 않는다(9차 R8).
+
+					지금까지는 기수마다 `GET /cohorts/{cohortId}/curricula`를 부르고 합쳐야 했는데,
+					① 기수가 늘면 요청이 그만큼 늘고 ② *"연결 가능한 것"*은 전체와 같지 않다 —
+					이미 연결됐거나 분석에 실패한 교안이 빠진다. 이 API는 **기관의 모든 교안**을 준다.
+
+					## 요청
+
+					| 파라미터 | 필수 | 타입 | 설명 |
+					|---|---|---|---|
+					| `organizationId` | **필수**(경로) | UUID | 기관 식별자. 호출자의 소속 기관과 다르면 403 |
+					| `query` | 선택 | string | 파일명·교안 제목 부분검색(대소문자 무시) |
+					| `status` | 선택 | enum | `PENDING` · `RUNNING` · `SUCCEEDED` · `FAILED`. 최신 버전의 **가장 최근 분석 시도** 기준 |
+					| `sort` | 선택 | enum | `RECENT`(최근 업로드 순, **기본**) · `NAME`(파일명순) · `USAGE`(사용 회차 많은 순) |
+					| `page` | 선택 | int | 0부터 시작. 기본 `0` |
+					| `size` | 선택 | int | 페이지당 개수. 기본 `20`, 최대 `100` |
+
+					## 응답 (200)
+
+					`content[]` · `page` · `size` · `totalElements` · `totalPages` —
+					매니저 목록과 같은 모양이다. **`totalElements`가 OP-06 교안 탭의 배지 숫자**다.
+
+					### content[] 각 항목 — 한 행이 **교안 하나**, 값은 **최신 버전** 기준
+
+					| 필드 | 화면 |
+					|---|---|
+					| `materialId` · `versionId` | 상세 이동 / 프로젝트 연결에 보낼 값 |
+					| `title` · `originalFileName` · `versionNo` | 이름 열 |
+					| `analysisStatus` | `분석 중`(PENDING·RUNNING) · `분석 완료`(SUCCEEDED) · `분석 실패`(FAILED) 배지 |
+					| `sectionCount` · `conceptCount` | `12섹션 · 개념 48건` |
+					| `usedProjectCount` | `3개 회차에서 사용 중` — 삭제·교체 판단 근거 |
+					| `uploadedAt` · `uploadedByName` | 비고 |
+
+					⚠️ **`analysisStatus`는 한 번도 분석하지 않은 교안에서 `null`이다.** 실패와 구분해야 해서
+					값을 만들어 넣지 않는다. `POST /curricula/{materialId}/analyses`로 재분석을 건 뒤
+					이 값을 폴링하면 진행 중인지 실패했는지 알 수 있다.
+
+					💡 **한 행이 교안(material) 하나다.** 버전은 같은 자리의 새 파일이지 별도 항목이 아니라서,
+					값은 전부 최신 버전 기준이고 `usedProjectCount`만 모든 버전을 합쳐 센다.
+					"""
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "기관 교안 목록 조회 성공"),
+            @ApiResponse(responseCode = "400", description = "VALIDATION_FAILED page·size 값이 올바르지 않음"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "403", description = "ORG_ACCESS_DENIED 다른 기관의 교안은 조회할 수 없음"),
+    })
+    @GetMapping("/organizations/{organizationId}/curricula")
+    public ResponseEntity<CurriculumCatalogResponse> findOrganizationCurricula(
+            @Parameter(description = "기관 ID. 호출자의 소속 기관만 허용된다", example = "123e4567-e89b-12d3-a456-426614174000")
+            @PathVariable UUID organizationId,
+            @Parameter(description = "파일명·교안 제목 부분검색", example = "spring")
+            @RequestParam(required = false) String query,
+            @Parameter(description = "분석 상태 필터. 최신 버전의 가장 최근 분석 시도 기준")
+            @RequestParam(required = false) CurriculumAnalysisStatus status,
+            @Parameter(description = "정렬 기준", example = "RECENT")
+            @RequestParam(required = false, defaultValue = "RECENT") CurriculumCatalogSort sort,
+            @Parameter(description = "0부터 시작하는 페이지 번호", example = "0")
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @Parameter(description = "페이지당 개수(최대 100)", example = "20")
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size
+    ) {
+        UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
+        assertOwnOrganization(organizationId, orgId);
+
+        CurriculumService.CurriculumCatalogPage catalogPage =
+                curriculumService.findCatalog(orgId, query, status, sort, page, size);
+
+        return ResponseEntity.ok(new CurriculumCatalogResponse(
+                catalogPage.content().stream().map(CurriculumCatalogItemResponse::from).toList(),
+                catalogPage.page(),
+                catalogPage.size(),
+                catalogPage.totalElements(),
+                catalogPage.totalPages()));
+    }
+
+    /** 경로의 기관과 토큰의 기관이 같은지 본다. 다른 기관 ID로 남의 교안을 읽는 경로를 막는다. */
+    private void assertOwnOrganization(UUID pathOrganizationId, UUID callerOrganizationId) {
+        if (!callerOrganizationId.equals(pathOrganizationId)) {
+            throw new com.bigproject.backend.domain.organization.domain.OrganizationException(
+                    com.bigproject.backend.domain.organization.domain.OrganizationErrorCode.ORG_ACCESS_DENIED,
+                    "다른 기관의 교안은 조회할 수 없습니다.");
+        }
+    }
 
     @Operation(
             summary = "기수 연결 교안 목록 | ✅ 사용 가능",

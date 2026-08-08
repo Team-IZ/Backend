@@ -55,21 +55,41 @@ public record ManagerRosterResponse(
 					화면 비고의 '2026-07-24 초대 · 김오퍼레이터'에서 뒷부분이 이 값이라, 날짜와 사람이
 					서로 다른 초대에서 오면 안 됩니다. 초대 이력이 없거나 초대한 계정이 지워졌으면 null입니다.
 					""", example = "김오퍼레이터", nullable = true)
-			String invitedByName
+			String invitedByName,
+
+			@Schema(description = """
+					아직 수락·취소되지 않은 초대 토큰입니다. 재발송·취소가 **토큰 단위**라
+					`null`이 아닐 때만 그 두 버튼을 켭니다 — 오퍼레이터 목록의
+					`pendingInvitationTokenId`와 같은 규칙입니다.
+					이미 수락됐거나 취소된 초대는 넘길 토큰이 없어 `null`입니다.
+					""", nullable = true)
+			UUID pendingInvitationTokenId,
+
+			@Schema(description = """
+					`false`면 정지 버튼을 잠급니다. **기관의 마지막 활성 매니저**를 정지하면 담당이 통째로 비므로
+					서버가 미리 알려 줍니다(정지를 시도하면 409 `LAST_MANAGER`).
+					활성(ACTIVE) 계정이 아니면 애초에 정지 대상이 아니라 `false`입니다.
+					""")
+			boolean suspendable
 	) {
-		public static Manager from(ManagerRosterRepository.ManagerRosterRow row) {
+		public static Manager from(ManagerRosterRepository.ManagerRosterRow row, int activeManagerCount) {
+			AccountStatus status = toAccountStatus(row.rawAccountStatus());
 			return new Manager(
 					row.managerId(),
 					row.name(),
 					row.email(),
-					toAccountStatus(row.rawAccountStatus()),
+					status,
 					row.cohortId(),
 					row.cohortName(),
 					row.classroomNames(),
 					row.assignedTraineeCount(),
 					row.lastLoginAt(),
 					row.invitedAt(),
-					row.invitedByName()
+					row.invitedByName(),
+					row.pendingInvitationTokenId(),
+					// 활성 계정이면서 마지막 1인이 아닐 때만 정지 버튼이 살아 있다.
+					// OperatorServiceImpl.buildListResponse의 판정과 같은 규칙이다.
+					status == AccountStatus.ACTIVE && activeManagerCount > 1
 			);
 		}
 

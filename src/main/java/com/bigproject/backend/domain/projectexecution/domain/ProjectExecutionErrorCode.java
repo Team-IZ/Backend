@@ -48,6 +48,24 @@ public enum ProjectExecutionErrorCode implements ApiErrorCode {
     /** 확정하려는 매핑 ID가 원장에 없다. 후보 목록이 낡았다는 뜻이라 화면은 후보를 다시 읽어야 한다. */
     CONCEPT_MAPPING_NOT_FOUND(HttpStatus.BAD_REQUEST, "존재하지 않는 매핑입니다."),
 
+    /** 떼려는 교안 연결이 이 프로젝트에 없다. 이미 해제됐거나 다른 프로젝트의 연결 ID다. */
+    CURRICULUM_LINK_NOT_FOUND(HttpStatus.NOT_FOUND, "교안 연결을 찾을 수 없습니다."),
+
+    /**
+     * 확정된 검증 개념이 그 교안에서 왔기 때문에 뗄 수 없다(9차 R4).
+     * 출처가 끊긴 개념은 리포트가 교안 위치를 가리킬 수 없다 —
+     * 화면이 할 일은 검증 개념을 먼저 다시 확정하도록 안내하는 것이다.
+     */
+    CURRICULUM_IN_USE_BY_CONCEPTS(HttpStatus.CONFLICT, "확정된 검증 개념이 사용 중인 교안입니다."),
+
+    /**
+     * 제출·응시가 붙은 회차라 지울 수 없다(9차 R4).
+     *
+     * <p>사유를 코드로 쪼개지 않은 것은 <b>화면이 할 일이 하나</b>이기 때문이다 — 어느 쪽이든
+     * "지울 수 없습니다"를 보여주고 삭제 버튼을 잠근다. 무엇이 붙어 있는지는 {@code message}에 담는다.
+     */
+    PROJECT_NOT_DELETABLE(HttpStatus.CONFLICT, "이미 진행된 회차는 삭제할 수 없습니다."),
+
     /** 빅프로젝트에는 "미프 N차" 회차 라벨이 없다. */
     BIG_PROJECT_HAS_NO_ROUND_LABEL(HttpStatus.BAD_REQUEST, "빅프로젝트에는 회차 라벨이 없습니다."),
 

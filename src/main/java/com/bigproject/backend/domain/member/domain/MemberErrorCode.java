@@ -69,6 +69,19 @@ public enum MemberErrorCode implements ApiErrorCode {
 	 */
 	TRAINEE_STATUS_NOT_MUTABLE(HttpStatus.CONFLICT, "초대 대기 상태인 교육생은 상태를 직접 변경할 수 없습니다."),
 
+	// ── 매니저 계정 조작(9차 R7) ──
+
+	/** 그 기관의 매니저가 아니다. 다른 기관·다른 역할도 존재를 알리지 않고 여기로 묶는다. */
+	MANAGER_NOT_FOUND(HttpStatus.NOT_FOUND, "이 기관의 매니저 계정을 찾을 수 없습니다."),
+	/**
+	 * 기관의 마지막 활성 매니저를 정지하려 했다. 정지하면 담당이 통째로 비어 반 학생의 면담·독촉을
+	 * 아무도 처리하지 않는 상태가 된다. 화면은 {@code suspendable=false}인 행의 정지 버튼을
+	 * 미리 잠가 이 오류를 만나지 않게 한다 — 오퍼레이터의 {@code LAST_OPERATOR}와 같은 규칙이다.
+	 */
+	LAST_MANAGER(HttpStatus.CONFLICT, "이 기관의 마지막 활성 매니저입니다."),
+	/** 취소·재발송할 수 있는 매니저 초대가 없다. 이미 수락·취소됐거나 다른 기관·다른 역할의 토큰이다. */
+	MANAGER_INVITATION_NOT_FOUND(HttpStatus.NOT_FOUND, "취소할 수 있는 매니저 초대를 찾을 수 없습니다."),
+
 	/** 인증 사용자를 찾을 수 없다. 토큰은 유효한데 계정이 사라진 경우다. */
 	INVITER_NOT_FOUND(HttpStatus.UNAUTHORIZED, "인증 사용자를 찾을 수 없습니다."),
 

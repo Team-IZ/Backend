@@ -13,4 +13,7 @@ public interface ManagerAssignmentRepository extends JpaRepository<ManagerAssign
 
 	// 여러 반의 활성 담당 배정을 한 번에 조회 (목록 조회에서 반마다 따로 쿼리하지 않도록)
 	List<ManagerAssignment> findByClassIdInAndOrgIdAndUnassignedAtIsNull(List<UUID> classIds, UUID orgId);
+
+	// 매니저 한 명이 현재 담당 중인 배정 전체. 계정 정지 시 담당 반을 한 트랜잭션에서 놓는 데 쓴다(9차 R7).
+	List<ManagerAssignment> findByManagerUserIdAndOrgIdAndUnassignedAtIsNull(UUID managerUserId, UUID orgId);
 }

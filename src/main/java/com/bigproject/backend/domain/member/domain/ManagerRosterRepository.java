@@ -23,6 +23,20 @@ public interface ManagerRosterRepository {
 	Page<ManagerRosterRow> findManagers(ManagerRosterCriteria criteria, Pageable pageable);
 
 	/**
+	 * 매니저 한 명. 상태 변경·초대 취소·재발송 응답이 <b>바뀐 그 행</b>을 그대로 돌려주는 데 쓴다(9차 R7).
+	 * 목록과 같은 SELECT를 쓰므로 두 응답의 필드가 어긋날 수 없다.
+	 *
+	 * <p>기수 범위를 걸지 않는다 — 계정 조작은 기관 단위이고, 조작 대상은 이미 ID로 특정돼 있다.
+	 */
+	java.util.Optional<ManagerRosterRow> findManager(UUID orgId, UUID managerId);
+
+	/**
+	 * 기관 전체의 활성(ACTIVE) 매니저 수. {@code suspendable} 판정에 쓴다 —
+	 * 마지막 활성 매니저를 정지하면 그 기관의 담당이 통째로 빈다.
+	 */
+	int countActiveManagers(UUID orgId);
+
+	/**
 	 * 계정 상태별 매니저 수. <b>상태·검색 필터를 적용하지 않은</b> 모집단이라 페이지의
 	 * {@code totalElements}와 다르다. 화면 상단이 '매니저 8명 · 활성 7 · 초대 대기 1 · 정지 0'을
 	 * 필터와 무관하게 보여주는데, 그 내역을 목록 한 페이지에서는 만들 수 없어 따로 센다.
@@ -69,7 +83,12 @@ public interface ManagerRosterRepository {
 			long assignedTraineeCount,
 			Instant lastLoginAt,
 			Instant invitedAt,
-			String invitedByName
+			String invitedByName,
+			/**
+			 * 아직 수락·취소되지 않은 초대 토큰. 재발송·취소가 <b>토큰 단위</b>라 목록에 이 값이 없으면
+			 * 화면이 버튼을 켤 수도, 어느 토큰을 지목할지도 알 수 없다(9차 R7). null이면 버튼을 잠근다.
+			 */
+			UUID pendingInvitationTokenId
 	) {
 	}
 }

@@ -20,4 +20,8 @@ public interface ClassroomRepository extends JpaRepository<Classroom, UUID> {
 
     // 같은 기수 안에 같은 이름의 반이 이미 있는지 확인(반 이름 중복 방지용)
     boolean existsByCohortIdAndNameAndDeletedAtIsNull(UUID cohortId, String name);
+
+    // 반 이름 수정용 중복 확인. 자기 자신은 빼고 본다 — 이름은 그대로 두고 정원만 고치는 경우가 흔한데,
+    // 자기 자신을 세면 그때마다 409가 난다(9차 R6).
+    boolean existsByCohortIdAndNameAndDeletedAtIsNullAndClassIdNot(UUID cohortId, String name, UUID classId);
 }

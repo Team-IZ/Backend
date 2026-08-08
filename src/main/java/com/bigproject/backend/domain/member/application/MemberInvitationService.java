@@ -212,16 +212,17 @@ public class MemberInvitationService {
 			String actorEmail,
 			String requestId
 	) {
+		return inviteTrainees(cohortId, toRows(request), actorEmail, requestId);
+	}
+
+	/** 직접 입력 본문을 행 목록으로. 순번은 1부터이며 CSV와 달리 헤더가 없다. */
+	private static List<TraineeCsvRow> toRows(RegisterTraineesRequest request) {
 		List<TraineeCsvRow> rows = new ArrayList<>(request.trainees().size());
 		for (int index = 0; index < request.trainees().size(); index++) {
 			RegisterTraineesRequest.Trainee trainee = request.trainees().get(index);
-			rows.add(new TraineeCsvRow(
-					index + 1,
-					trainee.name(),
-					trainee.email()
-			));
+			rows.add(new TraineeCsvRow(index + 1, trainee.name(), trainee.email()));
 		}
-		return inviteTrainees(cohortId, rows, actorEmail, requestId);
+		return rows;
 	}
 
 	private RegisterTraineesResponse inviteTrainees(
@@ -250,36 +251,17 @@ public class MemberInvitationService {
 		for (TraineeCsvRow row : rows) {
 			String name = row.name() == null ? "" : row.name().trim();
 			String email = row.email() == null ? "" : row.email().trim();
-			if (!isValidEmail(email)) {
-				failures.add(failure(
-						row,
-						email,
-						TraineeInvitationFailureStatus.INVALID_EMAIL_FORMAT
-				));
+
+			// 행별 판정은 미리보기(previewTrainees)와 같은 메서드를 쓴다 —
+			// 규칙이 두 벌이면 "미리보기는 통과했는데 등록이 실패"하는 상태가 생긴다(9차 Q3-③).
+			TraineeInvitationFailureStatus rejection =
+					rejectionFor(email, duplicateEmails, context.organizationId());
+			if (rejection != null) {
+				failures.add(failure(row, email, rejection));
 				continue;
 			}
 
 			String normalizedEmail = EmailNormalizer.normalize(email);
-			if (duplicateEmails.contains(normalizedEmail)) {
-				failures.add(failure(
-						row,
-						email,
-						TraineeInvitationFailureStatus.DUPLICATE_EMAIL_IN_REQUEST
-				));
-				continue;
-			}
-			if (invitationRepository.existsOrganizationTraineeByNormalizedEmail(
-					context.organizationId(),
-					normalizedEmail
-			)) {
-				failures.add(failure(
-						row,
-						email,
-						TraineeInvitationFailureStatus.EXISTING_ORGANIZATION_TRAINEE_EMAIL
-				));
-				continue;
-			}
-
 			RegisterTraineesRequest.Trainee trainee = new RegisterTraineesRequest.Trainee(
 					name,
 					email
@@ -318,6 +300,79 @@ public class MemberInvitationService {
 				invitationSentCount,
 				List.copyOf(failures)
 		);
+	}
+
+	/**
+	 * 명단 등록 <b>사전 검증</b>(9차 Q3-③). 아무것도 만들지 않고 무엇이 걸리는지만 돌려준다.
+	 *
+	 * <p>200명을 붙여 넣고 나서야 30명이 중복이라는 걸 알게 되던 것을 없앤다. 형식 오류·기관 도메인 밖
+	 * 주소는 화면이 그 자리에서 걸러낼 수 있지만, <b>이미 등록된 이메일은 명단 전량을 받아야 셀 수 있어
+	 * 서버여야 한다</b>.
+	 *
+	 * <p>판정은 {@link #rejectionFor}로 등록 경로와 <b>같은 메서드</b>를 쓴다 — 규칙이 두 벌이면
+	 * "미리보기는 통과했는데 등록이 실패"하는 상태가 생긴다.
+	 *
+	 * <p><b>미리보기가 통과했다고 등록이 반드시 성공하지는 않는다.</b> 두 호출 사이에 다른 운영자가
+	 * 같은 주소를 등록할 수 있다. 등록 응답의 {@code failures}를 그대로 두는 이유다.
+	 */
+	public RegisterTraineesResponse previewTrainees(
+			UUID cohortId, RegisterTraineesRequest request, String actorEmail) {
+		return previewTrainees(cohortId, toRows(request), actorEmail);
+	}
+
+	/** @see #previewTrainees(UUID, RegisterTraineesRequest, String) */
+	public RegisterTraineesResponse previewTrainees(UUID cohortId, List<TraineeCsvRow> rows, String actorEmail) {
+		AuthUser actor = activeActor(actorEmail);
+		if (actor.role() != Role.OPERATOR) {
+			throw new ApiException(MemberErrorCode.INVITE_ROLE_NOT_ALLOWED, "오퍼레이터만 교육생을 초대할 수 있습니다.");
+		}
+		InvitationContext context = invitationRepository.findInvitableCohort(cohortId)
+				.orElseThrow(() -> new ApiException(MemberErrorCode.COHORT_NOT_INVITABLE));
+		if (!context.organizationId().equals(actor.organizationId())) {
+			throw new ApiException(MemberErrorCode.INVITE_CROSS_ORGANIZATION, "다른 기관의 기수에는 교육생을 초대할 수 없습니다.");
+		}
+
+		// 이름 검사는 등록과 같게 요청 전체를 400으로 거절한다 — 미리보기에서만 통과시키면
+		// "미리보기는 됐는데 등록이 400"이 되어 미리보기의 뜻이 없어진다.
+		validateTraineeNames(rows);
+
+		Set<String> duplicateEmails = findDuplicateNormalizedEmails(rows);
+		List<RegisterTraineesResponse.Failure> failures = new ArrayList<>();
+		for (TraineeCsvRow row : rows) {
+			String email = row.email() == null ? "" : row.email().trim();
+			TraineeInvitationFailureStatus rejection =
+					rejectionFor(email, duplicateEmails, context.organizationId());
+			if (rejection != null) {
+				failures.add(failure(row, email, rejection));
+			}
+		}
+
+		// 아무것도 만들지 않았으므로 registeredCount는 "등록될 수 있는 수", invitationSentCount는 항상 0이다.
+		return new RegisterTraineesResponse(
+				rows.size(),
+				rows.size() - failures.size(),
+				0,
+				List.copyOf(failures)
+		);
+	}
+
+	/**
+	 * 행 하나가 걸리는 사유. 통과하면 {@code null}이다.
+	 * 등록과 미리보기가 <b>이 한 메서드</b>를 공유하므로 두 응답이 서로 다른 말을 할 수 없다.
+	 */
+	private TraineeInvitationFailureStatus rejectionFor(
+			String email, Set<String> duplicateEmails, UUID organizationId) {
+		if (!isValidEmail(email)) {
+			return TraineeInvitationFailureStatus.INVALID_EMAIL_FORMAT;
+		}
+		String normalizedEmail = EmailNormalizer.normalize(email);
+		if (duplicateEmails.contains(normalizedEmail)) {
+			return TraineeInvitationFailureStatus.DUPLICATE_EMAIL_IN_REQUEST;
+		}
+		if (invitationRepository.existsOrganizationTraineeByNormalizedEmail(organizationId, normalizedEmail)) {
+			return TraineeInvitationFailureStatus.EXISTING_ORGANIZATION_TRAINEE_EMAIL;
+		}
+		return null;
 	}
 
 	private Set<String> findDuplicateNormalizedEmails(List<TraineeCsvRow> rows) {

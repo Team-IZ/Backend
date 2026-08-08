@@ -29,6 +29,15 @@ public enum AcademicOperationsErrorCode implements ApiErrorCode {
 
 	CLASSROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "반을 찾을 수 없습니다."),
 	CLASSROOM_NAME_TAKEN(HttpStatus.CONFLICT, "이미 있는 반 이름입니다."),
+	/**
+	 * 반에 이미 팀이 편성됐거나 리포트가 만들어져 지울 수 없다(9차 R6).
+	 *
+	 * <p>사유를 코드로 쪼개지 않은 것은 <b>화면이 할 일이 하나</b>이기 때문이다 — 어느 쪽이든
+	 * "지울 수 없습니다"를 보여주고 삭제 버튼을 잠근다. 무엇이 붙어 있는지는 {@code message}에 담는다.
+	 */
+	CLASSROOM_NOT_DELETABLE(HttpStatus.CONFLICT, "이미 사용 중인 반은 삭제할 수 없습니다."),
+	/** 수정 요청에 바꿀 값이 하나도 없다. 빈 PATCH는 아무 일도 하지 않으므로 입력 오류로 돌려준다. */
+	CLASSROOM_UPDATE_EMPTY(HttpStatus.BAD_REQUEST, "수정할 값이 없습니다."),
 
 	// ── 배정 ──
 

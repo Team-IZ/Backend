@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.member.application;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.member.domain.AccountStatus;
 import com.bigproject.backend.domain.member.domain.MemberErrorCode;
+import com.bigproject.backend.domain.member.domain.OrganizationEmailDomainRepository;
 import com.bigproject.backend.domain.member.presentation.dto.MemberProfileResponse;
 import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.global.security.CurrentUserResolver;
@@ -29,6 +30,7 @@ import java.util.Locale;
 public class MemberProfileService {
 
 	private final CurrentUserResolver currentUserResolver;
+	private final OrganizationEmailDomainRepository organizationEmailDomainRepository;
 
 	public MemberProfileResponse currentMember() {
 		AuthUser user = resolveCurrentUser();
@@ -38,7 +40,10 @@ public class MemberProfileService {
 				user.name(),
 				user.role(),
 				user.organizationId(),
-				accountStatus(user.status())
+				accountStatus(user.status()),
+				// 9차 Q3-④ — GET /organizations/{id}는 슈퍼어드민 전용이라 오퍼레이터가 기관 도메인을
+				// 읽을 곳이 없었다. 초대 화면이 도메인 제한을 걸려면 이 값이 필요하다.
+				organizationEmailDomainRepository.findEmailDomain(user.organizationId()).orElse(null)
 		);
 	}
 
@@ -67,10 +72,10 @@ public class MemberProfileService {
 		if (status == null) {
 			return AccountStatus.INACTIVE;
 		}
+		// LOCKED 분기는 9차 Q3-②로 제거했다 — ck_app_user_status가 세 값만 허용해 도달할 수 없었다.
 		return switch (status.trim().toUpperCase(Locale.ROOT)) {
 			case "ACTIVE" -> AccountStatus.ACTIVE;
 			case "PENDING", "INVITED" -> AccountStatus.INVITED;
-			case "LOCKED" -> AccountStatus.LOCKED;
 			default -> AccountStatus.INACTIVE;
 		};
 	}

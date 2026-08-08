@@ -39,7 +39,10 @@ public class ManagerRosterService {
 		);
 		return new RosterResult(
 				managerRosterRepository.findManagers(criteria, pageable),
-				toStatusCounts(managerRosterRepository.countByStatus(orgId, cohortId))
+				toStatusCounts(managerRosterRepository.countByStatus(orgId, cohortId)),
+				// suspendable은 기관 전체 기준이다(9차 R7). 기수로 좁힌 목록에서도 "마지막 활성 매니저"의
+				// 판정 모집단은 기관이라, statusCounts와 달리 cohortId를 걸지 않는다.
+				managerRosterRepository.countActiveManagers(orgId)
 		);
 	}
 
@@ -57,6 +60,12 @@ public class ManagerRosterService {
 		return counts;
 	}
 
+	/**
+	 * 화면 용어를 {@code app_user.status} 원문으로 옮긴다.
+	 *
+	 * <p>{@code LOCKED} 분기는 9차 Q3-②로 사라졌다 — enum에서 값을 빼서 <b>애초에 들어올 수 없게</b> 했다.
+	 * 이제 잘못된 값은 쿼리 파라미터 바인딩에서 400으로 걸린다.
+	 */
 	private String toRawStatus(AccountStatus status) {
 		if (status == null) {
 			return null;
@@ -65,15 +74,17 @@ public class ManagerRosterService {
 			case INVITED -> "PENDING";
 			case ACTIVE -> "ACTIVE";
 			case INACTIVE -> "INACTIVE";
-			case LOCKED -> throw new ApiException(
-					MemberErrorCode.ACCOUNT_STATUS_FILTER_NOT_SUPPORTED, "LOCKED는 계정 상태 필터로 지원하지 않습니다.");
 		};
 	}
 
-	/** 한 페이지와, 상태·검색 필터와 무관한 같은 조회 범위(기관 또는 그 기수)의 상태별 인원. */
+	/**
+	 * 한 페이지와, 상태·검색 필터와 무관한 같은 조회 범위(기관 또는 그 기수)의 상태별 인원,
+	 * 그리고 {@code suspendable} 판정에 쓰는 <b>기관 전체</b> 활성 매니저 수.
+	 */
 	public record RosterResult(
 			Page<ManagerRosterRepository.ManagerRosterRow> page,
-			Map<AccountStatus, Long> statusCounts
+			Map<AccountStatus, Long> statusCounts,
+			int activeManagerCount
 	) {
 	}
 }

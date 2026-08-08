@@ -61,6 +61,102 @@ public class TraineeController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
+			operationId = "previewTraineesFromCsv",
+			summary = "CSV 교육생 명단 사전 검증(드라이런) | ✅ 사용 가능",
+			description = """
+					**아무것도 만들지 않고** 무엇이 걸리는지만 돌려준다(9차 Q3-③).
+					200명을 붙여 넣고 나서야 30명이 중복이라는 걸 알게 되는 것을 없앤다.
+
+					**요청** (multipart/form-data) — 등록(`POST /cohorts/{cohortId}/trainees`)과 완전히 같다.
+					- cohortId (경로) · file: 첫 행이 '이름,이메일'인 UTF-8 CSV
+
+					**응답 (200)** — 등록 응답과 **같은 스키마**다(`RegisterTraineesResponse`).
+					화면이 미리보기와 등록 결과를 한 컴포넌트로 그릴 수 있다.
+
+					| 필드 | 미리보기에서의 뜻 |
+					|---|---|
+					| `requestedCount` | 검사한 행 수 |
+					| `registeredCount` | **등록될 수 있는** 행 수(= requestedCount − failures.length) |
+					| `invitationSentCount` | **항상 0** — 아무것도 보내지 않았다 |
+					| `failures[]` | 걸린 행. `row`·`email`·`status`는 등록과 같은 의미 |
+
+					## 판정은 등록과 **같은 규칙**이다
+
+					행별 사유(1=형식 오류, 2=요청 내 중복, 3=기관에 이미 있는 이메일)를 등록 경로와
+					**한 메서드**에서 판정하므로, 미리보기가 통과시킨 행을 등록이 거절하는 일이 없다.
+
+					이름이 비어 있거나 200자를 넘으면 등록과 똑같이 **요청 전체가 400**이다 —
+					미리보기에서만 통과시키면 미리보기의 뜻이 없어진다.
+
+					⚠️ **미리보기가 통과했다고 등록이 반드시 성공하지는 않는다.** 두 호출 사이에 다른 운영자가
+					같은 주소를 등록할 수 있다. 등록 응답의 `failures`는 그대로 확인해야 한다.
+
+					💡 **형식 오류·기관 도메인 밖 주소는 화면이 그 자리에서 걸러도 된다**(`rules.parseRosterCsv`).
+					이 API가 꼭 필요한 것은 **이미 등록된 이메일**이며, 명단 전량을 받아야 셀 수 있어 서버여야 한다.
+					"""
+	)
+	@PreAuthorize("hasRole('OPERATOR')")
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "사전 검증 완료; 등록될 수 있는 수와 걸린 행을 응답(아무것도 만들지 않음)"),
+			@ApiResponse(responseCode = "400", description = "CSV_FORMAT_INVALID CSV 파일·헤더·인코딩·열 구성 오류 · TRAINEE_NAME_INVALID 이름이 비었거나 200자 초과"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰 없음 · INVITER_NOT_FOUND 인증 사용자를 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "INVITE_ROLE_NOT_ALLOWED 오퍼레이터만 교육생을 초대할 수 있음 · INVITER_NOT_ACTIVE 활성 계정이 아님 · INVITE_CROSS_ORGANIZATION 다른 기관의 기수"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_INVITABLE 등록 가능한 기수를 찾을 수 없음")
+	})
+	@PostMapping(path = "/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	public ResponseEntity<RegisterTraineesResponse> previewTraineesFromCsv(
+			@Parameter(description = "교육생을 등록할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID cohortId,
+			@Parameter(description = "첫 행이 '이름,이메일'인 UTF-8 CSV 파일")
+			@RequestPart("file") MultipartFile file,
+			@Parameter(hidden = true)
+			Authentication authentication
+	) {
+		return ResponseEntity.ok(memberInvitationService.previewTrainees(
+				cohortId,
+				traineeCsvParser.parse(file),
+				authentication.getName()
+		));
+	}
+
+	@Operation(
+			operationId = "previewTrainees",
+			summary = "직접 입력 교육생 명단 사전 검증(드라이런) | ✅ 사용 가능",
+			description = """
+					CSV 대신 화면에서 직접 입력한 명단을 **등록하지 않고** 검사한다(9차 Q3-③).
+					판정 규칙과 응답 형식은 CSV 사전 검증(`POST /cohorts/{cohortId}/trainees/preview`)과 완전히 같다.
+
+					**요청** (application/json) — 등록(`POST …/trainees/invitations`)과 같은 본문이다.
+					- trainees[] (필수, 1건 이상): name(필수, 최대 200자) · email
+
+					**응답 (200)** — `registeredCount`는 **등록될 수 있는 수**이고 `invitationSentCount`는 항상 0이다.
+					`failures[].row`는 1부터 시작하는 배열 순번이다(CSV와 달리 헤더가 없다).
+					"""
+	)
+	@PreAuthorize("hasRole('OPERATOR')")
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "사전 검증 완료; 등록될 수 있는 수와 걸린 행을 응답(아무것도 만들지 않음)"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 교육생 목록이 비었음 · TRAINEE_NAME_INVALID 이름이 비었거나 200자 초과"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰 없음 · INVITER_NOT_FOUND 인증 사용자를 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "INVITE_ROLE_NOT_ALLOWED 오퍼레이터만 교육생을 초대할 수 있음 · INVITER_NOT_ACTIVE 활성 계정이 아님 · INVITE_CROSS_ORGANIZATION 다른 기관의 기수"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_INVITABLE 등록 가능한 기수를 찾을 수 없음")
+	})
+	@PostMapping(path = "/invitations/preview", consumes = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<RegisterTraineesResponse> previewTrainees(
+			@Parameter(description = "교육생을 등록할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID cohortId,
+			@Valid @RequestBody RegisterTraineesRequest request,
+			@Parameter(hidden = true)
+			Authentication authentication
+	) {
+		return ResponseEntity.ok(memberInvitationService.previewTrainees(
+				cohortId,
+				request,
+				authentication.getName()
+		));
+	}
+
+	@Operation(
 			operationId = "registerTraineesFromCsv",
 			summary = "CSV 교육생 명단 등록 및 초대 | ✅ 사용 가능",
 			description = """
@@ -193,7 +289,8 @@ public class TraineeController {
 					| `page` | 선택 | int | 0부터 시작. 기본 `0` |
 					| `size` | 선택 | int | 페이지당 개수. 기본 `20`, 최대 `100` |
 
-					⚠️ **`accountStatus`에 `LOCKED`는 쓸 수 없다.** 이 화면이 쓰지 않는 값이라 지정하면 400이다.
+					💡 **`accountStatus`는 세 값뿐이다.** `LOCKED`는 9차 Q3-②로 `AccountStatus`에서 제거했다 —
+					`ck_app_user_status`가 `PENDING`·`ACTIVE`·`INACTIVE`만 허용해 실제로 올 수 없던 값이다.
 
 					⚠️ **`classroomId`와 `unassignedOnly`는 함께 못 쓴다.** 화면에서 `반 · 전체 / 미배정 / A반…`이
 					단일 드롭다운이라 동시에 지정될 일이 없고, 들어오면 400으로 막는다.
@@ -257,7 +354,7 @@ public class TraineeController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "명단 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "ROSTER_FILTER_CONFLICT classroomId와 unassignedOnly를 함께 지정함 · ACCOUNT_STATUS_FILTER_NOT_SUPPORTED 이 화면이 쓰지 않는 계정 상태(LOCKED) · VALIDATION_FAILED page·size 값이 올바르지 않음"),
+			@ApiResponse(responseCode = "400", description = "ROSTER_FILTER_CONFLICT classroomId와 unassignedOnly를 함께 지정함 · VALIDATION_FAILED accountStatus·sort에 없는 값을 지정했거나 page·size 값이 올바르지 않음"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 만료됨"),
 			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터·매니저 권한이 아님"),
 			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 조회할 기수를 찾을 수 없음. 다른 기관의 기수도 존재를 알리지 않고 여기로 묶는다"),
@@ -332,7 +429,7 @@ public class TraineeController {
 					}
 					```
 
-					⚠️ **`status`는 `ACTIVE`·`INACTIVE` 두 값만 받는다.** `INVITED`·`LOCKED`는 초대·인증 흐름이
+					⚠️ **`status`는 `ACTIVE`·`INACTIVE` 두 값만 받는다.** `INVITED`는 초대 흐름이
 					설정하는 값이라 이 API의 대상이 아니다. 요청 타입 자체가 두 값만 받으므로 그 외 문자열은
 					역직렬화 단계에서 `VALIDATION_FAILED`(400)로 거절된다.
 
