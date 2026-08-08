@@ -18,6 +18,7 @@ import com.bigproject.backend.domain.usagemetering.presentation.dto.CohortCostRe
 import com.bigproject.backend.domain.usagemetering.presentation.dto.OperationSettingResponse;
 import com.bigproject.backend.domain.usagemetering.presentation.dto.OrganizationUsageResponse;
 import com.bigproject.backend.domain.usagemetering.presentation.dto.UpdateOperationSettingRequest;
+import com.bigproject.backend.global.json.PatchField;
 import com.bigproject.backend.domain.organization.domain.Organization;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationException;
@@ -142,43 +143,80 @@ public class OperationsServiceImpl implements OperationsService {
 		}
 
 		OrganizationPolicy currentPolicy = getActivePolicyOrThrow(organizationId);
+		OrganizationPolicy.Settings current = currentPolicy.toSettings();
+		OrganizationPolicy.Settings merged = merge(current, request);
 
-		// organization_policy는 append-only 이력 테이블이므로 기존 행을 고치지 않고,
-		// 현재 활성 버전은 SUPERSEDED로 닫은 뒤 새 버전을 INSERT한다.
-		// Hibernate는 같은 flush 안에서 INSERT를 UPDATE보다 먼저 실행하기 때문에, supersede()만 호출하고
-		// 넘어가면 새 버전 INSERT가 먼저 나가면서 부분 유니크 인덱스(uq_organization_policy_current)를
-		// 위반한다. saveAndFlush로 UPDATE를 먼저 커밋해 순서를 강제한다.
-		currentPolicy.supersede(requesterId);
-		organizationPolicyRepository.saveAndFlush(currentPolicy);
+		/*
+		 * 값이 그대로면 버전을 올리지 않는다. 부분 수정이라 "모달을 열었다가 바꾸지 않고 저장"이
+		 * 정상 경로로 들어오는데, 그때마다 버전이 하나씩 쌓이면 이력에 원인 없는 행이 섞여
+		 * 정작 무엇이 언제 바뀌었는지 읽기 어려워진다. 기관 상태만 바꾸는 요청도 마찬가지다 —
+		 * 상태는 organization의 값이라 정책 버전과 무관하다.
+		 */
+		OrganizationPolicy effectivePolicy = currentPolicy;
+		if (!isSameSettings(current, merged)) {
+			// organization_policy는 append-only 이력 테이블이므로 기존 행을 고치지 않고,
+			// 현재 활성 버전은 SUPERSEDED로 닫은 뒤 새 버전을 INSERT한다.
+			// Hibernate는 같은 flush 안에서 INSERT를 UPDATE보다 먼저 실행하기 때문에, supersede()만 호출하고
+			// 넘어가면 새 버전 INSERT가 먼저 나가면서 부분 유니크 인덱스(uq_organization_policy_current)를
+			// 위반한다. saveAndFlush로 UPDATE를 먼저 커밋해 순서를 강제한다.
+			currentPolicy.supersede(requesterId);
+			organizationPolicyRepository.saveAndFlush(currentPolicy);
 
-		OrganizationPolicy nextPolicy = OrganizationPolicy.createNextVersion(
-				currentPolicy,
-				toSettings(request),
-				requesterId
-		);
-		organizationPolicyRepository.save(nextPolicy);
+			effectivePolicy = organizationPolicyRepository.save(
+					OrganizationPolicy.createNextVersion(currentPolicy, merged, requesterId)
+			);
+		}
 
-		organization.changeStatus(request.organizationStatus());
+		// 상태는 보냈을 때만 바꾼다. 안 보낸 필드를 유지한다는 규칙이 정책값과 기관 상태에 같이 적용된다.
+		if (request.organizationStatus() != null) {
+			organization.changeStatus(request.organizationStatus());
+		}
 		organization.touchUpdatedBy(requesterId);
 
-		return toResponse(organization, nextPolicy);
+		return toResponse(organization, effectivePolicy);
 	}
 
-	/** 요청 DTO를 정책 버전에 실을 값 묶음으로 옮긴다. 버전형 테이블이라 전체 치환이다. */
-	private OrganizationPolicy.Settings toSettings(UpdateOperationSettingRequest request) {
+	/**
+	 * 부분 수정 병합. <b>보내지 않은 필드는 직전 활성 버전의 값을 그대로 승계한다.</b>
+	 *
+	 * <p>상한 두 개만 {@link PatchField}로 받는다 — {@code null}이 "값 없음"이 아니라 <b>무제한</b>이라는
+	 * 값이라, 안 보낸 것과 구분하지 못하면 한 번 건 상한을 다시 풀 방법이 사라진다.
+	 * 나머지 필드는 {@code null}이 의미를 갖지 않으므로 생략과 같게 본다.
+	 */
+	private OrganizationPolicy.Settings merge(
+			OrganizationPolicy.Settings current, UpdateOperationSettingRequest request) {
 		return new OrganizationPolicy.Settings(
-				request.monthlyAiBudget(),
-				request.monthlyTokenLimit(),
-				request.storageLimitBytes(),
-				request.dataRetentionDays(),
-				request.defaultDisclosureScope(),
-				request.codeSessionTierCode(),
-				request.allowManagerInvite(),
-				request.allowDataExport(),
-				request.allowZipSubmission(),
-				request.allowGithubIntegration(),
-				request.enableBigProjectContributionAnalysis()
+				requireNonNullElse(request.monthlyAiBudget(), current.monthlyAiBudget()),
+				PatchField.mergeInto(request.monthlyTokenLimit(), current.monthlyTokenLimit()),
+				PatchField.mergeInto(request.storageLimitBytes(), current.storageLimitBytes()),
+				requireNonNullElse(request.dataRetentionDays(), current.retentionDays()),
+				requireNonNullElse(request.defaultDisclosureScope(), current.defaultDisclosureScope()),
+				requireNonNullElse(request.codeSessionTierCode(), current.codeSessionTierCode()),
+				requireNonNullElse(request.allowManagerInvite(), current.allowManagerInvite()),
+				requireNonNullElse(request.allowDataExport(), current.allowDataExport()),
+				requireNonNullElse(request.allowZipSubmission(), current.allowZipSubmission()),
+				requireNonNullElse(request.allowGithubIntegration(), current.allowGithubIntegration()),
+				// 화면에서 빠진 항목이라 요청 필드가 없다. 정책 원장에는 남아 있으므로 직전 값을 그대로 승계한다
+				// (컬럼이 NOT NULL이고, 승계하지 않으면 새 버전마다 DB 기본값으로 되돌아간다).
+				current.enableBigProjectContributionAnalysis()
 		);
+	}
+
+	private static <T> T requireNonNullElse(T sent, T current) {
+		return sent == null ? current : sent;
+	}
+
+	/**
+	 * 새 버전을 발급할 값인지 판정한다. {@code record}의 {@code equals}를 그대로 쓰지 않는 이유는
+	 * {@link BigDecimal}이 <b>소수 자릿수까지 비교</b>하기 때문이다 — DB에서 읽은 {@code 1500.00}과
+	 * 요청으로 들어온 {@code 1500}이 다른 값이 되어, 바꾸지 않은 예산이 매번 새 버전을 만든다.
+	 */
+	private boolean isSameSettings(OrganizationPolicy.Settings left, OrganizationPolicy.Settings right) {
+		boolean sameBudget = left.monthlyAiBudget() == null || right.monthlyAiBudget() == null
+				? left.monthlyAiBudget() == right.monthlyAiBudget()
+				: left.monthlyAiBudget().compareTo(right.monthlyAiBudget()) == 0;
+
+		return sameBudget && left.withBudget(null).equals(right.withBudget(null));
 	}
 
 	/**
@@ -536,7 +574,6 @@ public class OperationsServiceImpl implements OperationsService {
 				policy.getAllowDataExport(),
 				policy.getAllowZipSubmission(),
 				policy.getAllowGithubIntegration(),
-				policy.getEnableBigProjectContributionAnalysis(),
 				policy.getPolicyVersion()
 		);
 	}
