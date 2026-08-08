@@ -3,6 +3,7 @@ package com.bigproject.backend.global.config;
 import com.bigproject.backend.domain.disclosure.presentation.dto.ReportDisclosureResponse;
 import com.bigproject.backend.domain.organization.presentation.dto.CreateOrganizationRequest;
 import com.bigproject.backend.domain.organization.presentation.dto.OrganizationResponse;
+import com.bigproject.backend.domain.reporting.presentation.dto.ManagedReportListResponse;
 import io.swagger.v3.core.converter.AnnotatedType;
 import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.models.media.Schema;
@@ -51,6 +52,20 @@ class ResponseRecordRequiredConverterTest {
 		Schema<?> schema = resolve(ReportDisclosureResponse.class).get("ReportDisclosureResponse");
 
 		assertThat(schema.getRequired()).isNullOrEmpty();
+	}
+
+	/**
+	 * 레코드 전체가 아니라 <b>필드 하나</b>에 걸린 {@code @JsonInclude}도 키를 뺀다.
+	 * 그 표시는 record 컴포넌트에 남지 않고 접근자로 전파되므로, 컴포넌트만 보면
+	 * 빠지는 키가 required로 나간다 — 스펙이 거짓말을 하는 쪽이라 더 나쁘다.
+	 */
+	@Test
+	void skipsOnlyTheFieldsThatCanDisappear() {
+		Schema<?> schema = resolve(ManagedReportListResponse.class).get("ManagedReportItem");
+
+		assertThat(schema.getRequired())
+				.contains("reportId", "roundNo", "releaseStatus", "bodyVisible")
+				.doesNotContain("roundName", "publishedAt", "scope", "releasedAt");
 	}
 
 	private Map<String, Schema> resolve(Class<?> type) {
