@@ -48,13 +48,8 @@ public class AnalyticsController {
 
 	@Operation(
 			operationId = "findCohortActionsRequired",
-			summary = "조치 필요 경보 조회 | ⚠️ 사용 불가",
+			summary = "조치 필요 경보 조회 | ✅ 사용 가능",
 			description = """
-					⚠️ **API 테스트를 위한 더미 데이터 없음** — 이 응답의 원천은 발행된 리포트 스냅샷과
-					회차 채점 결과인데 현재 어느 기수에도 그 데이터가 없습니다. 호출하면 200과 함께 빈
-					격자만 돌아오므로 **응답 형태를 확인하는 용도로도 쓸 수 없습니다.** 스펙과 구현은
-					완성돼 있어 시드가 준비되면 그대로 사용 가능으로 바뀝니다.
-
 					오퍼레이터 대시보드의 `조치 필요` 네 경보를 한 번에 조회합니다. 유형별로 **가장 나쁜 한 건씩**
 					올립니다.
 
@@ -191,13 +186,8 @@ public class AnalyticsController {
 
 	@Operation(
 			operationId = "findCohortGroupGaps",
-			summary = "집단 미달 목록 조회 | ⚠️ 사용 불가",
+			summary = "집단 미달 목록 조회 | ✅ 사용 가능",
 			description = """
-					⚠️ **API 테스트를 위한 더미 데이터 없음** — 이 응답의 원천은 발행된 리포트 스냅샷과
-					회차 채점 결과인데 현재 어느 기수에도 그 데이터가 없습니다. 호출하면 200과 함께 빈
-					격자만 돌아오므로 **응답 형태를 확인하는 용도로도 쓸 수 없습니다.** 스펙과 구현은
-					완성돼 있어 시드가 준비되면 그대로 사용 가능으로 바뀝니다.
-
 					기수 전체에서 **반 인원의 절반을 넘는 인원이 한 검증 개념에서 2단 이하**인 조합을 조회합니다.
 					개인 위험 사유가 아니라 반 문제로 분류하며, 시스템은 표시까지만 하고 이후 처리는 기관 판단입니다.
 
@@ -265,13 +255,8 @@ public class AnalyticsController {
 
 	@Operation(
 			operationId = "findCohortRiskTraineeRates",
-			summary = "회차별 기수 전체·반별 위험 교육생 비율 조회 | ⚠️ 사용 불가",
+			summary = "회차별 기수 전체·반별 위험 교육생 비율 조회 | ✅ 사용 가능",
 			description = """
-					⚠️ **API 테스트를 위한 더미 데이터 없음** — 이 응답의 원천은 발행된 리포트 스냅샷과
-					회차 채점 결과인데 현재 어느 기수에도 그 데이터가 없습니다. 호출하면 200과 함께 빈
-					격자만 돌아오므로 **응답 형태를 확인하는 용도로도 쓸 수 없습니다.** 스펙과 구현은
-					완성돼 있어 시드가 준비되면 그대로 사용 가능으로 바뀝니다.
-
 					선택 기수의 **미니프로젝트 회차별**로 기수 전체와 반별 위험 교육생 비율을 계산합니다.
 
 					## 요청 (경로 파라미터)
@@ -399,8 +384,16 @@ public class AnalyticsController {
 					`riskRate`는 0이 아니라 `null`이고 `aggregationStatus`로 원인을 구분합니다.
 
 					⚠️ **`roundNo`는 `(project_id, round_no)` UNIQUE라 프로젝트마다 1부터 다시 시작합니다.**
-					기수에 미니프로젝트가 여러 건이면 같은 회차 번호가 여러 열에 나타나므로, 한 프로젝트의
-					흐름만 보려면 `projectId`로 좁혀야 합니다.
+					미니프로젝트는 프로젝트마다 이해도 확인 회차가 1건뿐이라 모든 열의 `roundNo`가 1입니다.
+					기수의 차수 흐름은 프로젝트 순서에만 남으므로 **격자의 가로축은 `roundNo`가 아니라 프로젝트
+					순서**이며, `fromRoundNo`·`toRoundNo`도 이 프로젝트 순서 범위입니다. 열을 구분해야 하면
+					`roundNo`가 아니라 `assessmentRoundId`나 `projectName`을 쓰십시오.
+
+					⚠️ **`rounds[]`와 각 행의 `cells[]`는 최근 프로젝트부터 내림차순입니다.** 두 배열의 순서와
+					길이는 항상 같으므로 인덱스로 짝지어도 됩니다.
+
+					⚠️ **`exclusionRollup`은 조회 범위 전체 회차를 유형별로 합산한 값입니다.** 특정 회차의
+					미집계는 `cells[].exclusion`에서 봅니다. `EXCLUSION_COUNT` 정렬은 이 합계 기준입니다.
 
 					💡 **`comparisonToCohort`는 서버가 계산해 내려주므로 클라이언트가 다시 계산할 필요가 없습니다.**
 					반 행은 같은 회차의 **기수 전체** 비율과, 팀 행은 **소속 반(`classes[0]`) 전체** 비율과 견준
@@ -436,9 +429,13 @@ public class AnalyticsController {
 			@RequestParam(required = false) UUID projectId,
 			@Parameter(description = "조회할 반 ID 목록이며 생략 시 기수의 모든 반을 조회합니다.")
 			@RequestParam(required = false) List<UUID> classroomId,
-			@Parameter(description = "조회 시작 회차 번호이며 생략 시 1차부터 조회합니다.", example = "1")
+			@Parameter(description = """
+					조회 시작 차수이며 생략 시 1차부터 조회합니다.
+					미니프로젝트는 프로젝트마다 이해도 확인 회차가 1건뿐이라 차수는 회차 번호가 아니라
+					기수 안의 미니프로젝트 순서를 뜻합니다.
+					""", example = "1")
 			@RequestParam(required = false) @Min(1) Integer fromRoundNo,
-			@Parameter(description = "조회 종료 회차 번호이며 생략 시 마지막 회차까지 조회합니다.", example = "4")
+			@Parameter(description = "조회 종료 차수이며 생략 시 마지막 차수까지 조회합니다.", example = "4")
 			@RequestParam(required = false) @Min(1) Integer toRoundNo,
 			@Parameter(description = """
 					행 계층입니다. TEAM이면 projectId와 classroomId 한 건이 모두 필요합니다.
@@ -468,13 +465,8 @@ public class AnalyticsController {
 
 	@Operation(
 			operationId = "findCohortComparison",
-			summary = "두 기수의 검증 개념별 평균 도달 단계 비교 | ⚠️ 사용 불가",
+			summary = "두 기수의 검증 개념별 평균 도달 단계 비교 | ✅ 사용 가능",
 			description = """
-					⚠️ **API 테스트를 위한 더미 데이터 없음** — 이 응답의 원천은 발행된 리포트 스냅샷과
-					회차 채점 결과인데 현재 어느 기수에도 그 데이터가 없습니다. 호출하면 200과 함께 빈
-					격자만 돌아오므로 **응답 형태를 확인하는 용도로도 쓸 수 없습니다.** 스펙과 구현은
-					완성돼 있어 시드가 준비되면 그대로 사용 가능으로 바뀝니다.
-
 					같은 기관의 두 기수를 **검증 개념(`teaches_id`) 단위**로 맞대어 평균 도달 단계를 비교합니다.
 					검증 개념이 기수마다 다르면 같은 프로젝트라도 비교할 수 없으므로 개념 단위로만 맞춥니다.
 

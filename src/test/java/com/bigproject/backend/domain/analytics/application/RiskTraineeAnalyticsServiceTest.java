@@ -200,9 +200,10 @@ class RiskTraineeAnalyticsServiceTest {
 	}
 
 	@Test
-	void rollsUpExclusionsFromTheMostRecentPublishedRound() {
+	void rollsUpExclusionsAcrossEveryRoundInRangeByType() {
 		givenOperator();
-		// 1차는 발행됐고 2차는 미발행이므로 롤업 기준은 1차다.
+		// 발행 여부와 무관하게 조회 범위의 모든 회차를 합산한다. 한 회차만 보면 그 회차에 마침
+		// 미집계가 없던 반이 앞 회차에서 계속 빠졌던 반보다 나아 보이기 때문이다.
 		when(riskTraineeQueryRepository.findRounds(any())).thenReturn(List.of(
 				round(roundId, 1, "COMPLETED", true),
 				round(laterRoundId, 2, "CLOSED", false)
@@ -215,14 +216,14 @@ class RiskTraineeAnalyticsServiceTest {
 
 		RiskTraineeRateResponse.ExclusionBreakdown rollup = findRates().classes().get(0).exclusionRollup();
 
-		assertThat(rollup.notAttendedCount()).isEqualTo(2);
+		assertThat(rollup.notAttendedCount()).isEqualTo(3);
 		assertThat(rollup.sessionIncompleteCount()).isEqualTo(1);
 		assertThat(rollup.invalidAttemptCount()).isEqualTo(3);
-		assertThat(rollup.total()).isEqualTo(6);
+		assertThat(rollup.total()).isEqualTo(7);
 	}
 
 	@Test
-	void returnsZeroRollupWhenNoRoundHasBeenPublished() {
+	void countsExclusionsOfRoundsThatAreNotPublishedYet() {
 		givenOperator();
 		when(riskTraineeQueryRepository.findRounds(any())).thenReturn(List.of(
 				round(roundId, 1, "CLOSED", false)
@@ -232,7 +233,31 @@ class RiskTraineeAnalyticsServiceTest {
 		));
 		givenRoster(25, 0);
 
-		assertThat(findRates().classes().get(0).exclusionRollup().total()).isZero();
+		assertThat(findRates().classes().get(0).exclusionRollup().total()).isEqualTo(6);
+	}
+
+	@Test
+	void sortsByExclusionCountSummedOverEveryRoundNotJustTheRecentOne() {
+		givenOperator();
+		when(riskTraineeQueryRepository.findRounds(any())).thenReturn(List.of(
+				round(roundId, 1, "COMPLETED", true),
+				round(laterRoundId, 2, "COMPLETED", true)
+		));
+		// D반은 최근 회차만 보면 더 나빠 보이지만, 누적으로는 C반이 더 많이 빠졌다.
+		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 4, 5, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, classId, 20, 4, 1, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 4, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, otherClassId, 20, 4, 3, 0, 0)
+		));
+		givenTwoClassRoster();
+
+		RiskTraineeRateResponse response = findRates(RiskTraineeSort.EXCLUSION_COUNT);
+
+		assertThat(response.classes()).extracting(RiskTraineeRateResponse.ClassRiskSummary::className)
+				.containsExactly("C반", "D반");
+		assertThat(response.classes().get(0).exclusionRollup().total()).isEqualTo(6);
+		assertThat(response.classes().get(1).exclusionRollup().total()).isEqualTo(3);
 	}
 
 	@Test

@@ -54,6 +54,15 @@ public record ManagedReportListResponse(
 			@Schema(description = "회차 이름(예: 미프 3차). 회차 행이 없으면 키가 빠진다", nullable = true)
 			@JsonInclude(JsonInclude.Include.NON_NULL)
 			String roundName,
+			@Schema(description = """
+					기수 안 미니프로젝트 차수(1부터). 3이면 그 기수의 세 번째 미니프로젝트다.
+
+					⚠️ `ProjectAssessmentRound.round_no`가 아니다. 그 컬럼은 `(project_id, round_no)`
+					UNIQUE라 프로젝트 안에서만 유일하고, 정의서가 "MINI_PROJECT는 활성 회차 정확히
+					1건, round_no=1"을 요구하므로 실제로는 항상 1이다. 여기서 내는 값은 정의서의
+					`analysis_sequence_no`(삭제되지 않은 MINI_PROJECT를 sequence_no 순으로 재번호화한
+					조회값)이며, 서버가 계산해 내려준다.
+					""")
 			int roundNo,
 			UUID traineeUserId,
 			String traineeName,
