@@ -29,7 +29,7 @@ class ProjectExecutionSchemaTest {
     void saysInTheTypeThatASectionItemDefinitionCanBeNull() {
         OpenAPI openApi = specOf(SectionResponse.class);
 
-        Schema<?> description = openApi.getComponents().getSchemas()
+        Schema<?> description = (Schema<?>) openApi.getComponents().getSchemas()
                 .get("SectionItemResponse").getProperties().get("description");
 
         assertThat(description.getTypes()).containsExactlyInAnyOrder("string", "null");
@@ -43,8 +43,8 @@ class ProjectExecutionSchemaTest {
     void saysTheSameForConceptCandidates() {
         OpenAPI openApi = specOf(ConceptCandidateResponse.class);
 
-        assertThat(openApi.getComponents().getSchemas()
-                .get("ConceptCandidateResponse").getProperties().get("description").getTypes())
+        assertThat(((Schema<?>) openApi.getComponents().getSchemas()
+                .get("ConceptCandidateResponse").getProperties().get("description")).getTypes())
                 .containsExactlyInAnyOrder("string", "null");
     }
 
@@ -75,17 +75,17 @@ class ProjectExecutionSchemaTest {
                 .readAll(new AnnotatedType(CreateProjectRequest.class));
 
         assertThat(response).containsKeys("ProjectCategory", "ProjectStatus");
-        assertThat(response.get("ProjectResponse").getProperties().get("category").get$ref())
+        assertThat(((Schema<?>) response.get("ProjectResponse").getProperties().get("category")).get$ref())
                 .isEqualTo("#/components/schemas/ProjectCategory");
-        assertThat(response.get("ProjectResponse").getProperties().get("status").get$ref())
+        assertThat(((Schema<?>) response.get("ProjectResponse").getProperties().get("status")).get$ref())
                 .isEqualTo("#/components/schemas/ProjectStatus");
 
         // 요청도 같은 정의를 가리킨다 — 폼에서 고른 값을 응답 타입 함수에 그대로 넘길 수 있어야 한다.
-        assertThat(request.get("CreateProjectRequest").getProperties().get("category").get$ref())
+        assertThat(((Schema<?>) request.get("CreateProjectRequest").getProperties().get("category")).get$ref())
                 .isEqualTo("#/components/schemas/ProjectCategory");
 
         // 값 목록은 공유 스키마 한 곳에만 있다.
-        assertThat(response.get("ProjectResponse").getProperties().get("status").getEnum()).isNull();
+        assertThat(((Schema<?>) response.get("ProjectResponse").getProperties().get("status")).getEnum()).isNull();
         assertThat(response.get("ProjectStatus").getEnum()).containsExactly("PLANNED", "RUNNING", "CLOSED");
     }
 
@@ -99,7 +99,7 @@ class ProjectExecutionSchemaTest {
         Map<String, Schema> schemas = ModelConverters.getInstance()
                 .readAll(new AnnotatedType(ProjectResponse.class));
 
-        assertThat(schemas.get("ProjectResponse").getProperties().get("status").get$ref())
+        assertThat(((Schema<?>) schemas.get("ProjectResponse").getProperties().get("status")).get$ref())
                 .isNotEqualTo("#/components/schemas/CohortStatus");
     }
 

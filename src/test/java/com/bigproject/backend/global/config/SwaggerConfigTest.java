@@ -134,8 +134,8 @@ class SwaggerConfigTest {
 
 		customise(openApi);
 
-		assertThat(openApi.getComponents().getSchemas().get("CreateOrganizationRequest")
-				.getProperties().get("dataRetentionDays").getEnum())
+		assertThat(((Schema<Object>) openApi.getComponents().getSchemas().get("CreateOrganizationRequest")
+				.getProperties().get("dataRetentionDays")).getEnum())
 				.containsExactly(90L, 180L, 365L);
 	}
 
@@ -152,8 +152,8 @@ class SwaggerConfigTest {
 
 		customise(openApi);
 
-		assertThat(openApi.getComponents().getSchemas().get("OrganizationResponse")
-				.getProperties().get("status").getEnum())
+		assertThat(((Schema<Object>) openApi.getComponents().getSchemas().get("OrganizationResponse")
+				.getProperties().get("status")).getEnum())
 				.containsExactly("ACTIVE", "SUSPENDED");
 	}
 
