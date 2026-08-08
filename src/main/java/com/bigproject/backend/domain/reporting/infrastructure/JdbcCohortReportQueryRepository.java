@@ -309,15 +309,41 @@ public class JdbcCohortReportQueryRepository implements CohortReportQueryReposit
 		), outcomeSnapshotId);
 	}
 
+	/**
+	 * 우수 교육생이 1위를 한 회차 번호. 화면 {@code miniTopRounds[]}가 `미프 2·4차`처럼 쓴다.
+	 *
+	 * <p><b>{@code round_no}를 그대로 쓰면 안 된다.</b> 그 컬럼은
+	 * {@code uq_project_assessment_round_no_active}가 {@code (project_id, round_no)}라
+	 * 프로젝트 안에서만 유일하고, 정의서가 "MINI_PROJECT는 활성 회차 정확히 1건, round_no=1"을
+	 * 요구하므로 미니프로젝트에서는 전부 1이다 — 그대로 내보내면 {@code [1,1,1]}이 된다.
+	 *
+	 * <p>기수 안 차수는 정의서가 {@code analysis_sequence_no}로 따로 정의해 뒀다
+	 * ("삭제되지 않은 MINI_PROJECT만 sequence_no·project_id 순으로 재번호화한 조회값").
+	 * 그 정의를 DENSE_RANK로 옮긴다.
+	 */
 	@Override
 	public List<TopStudentRoundRow> findTopStudentRounds(UUID outcomeSnapshotId) {
 		String sql = """
+				WITH mini_round_no AS (
+				    SELECT par.assessment_round_id,
+				           DENSE_RANK() OVER (
+				               PARTITION BY pj.cohort_id
+				               ORDER BY pj.sequence_no, pj.project_id
+				           ) AS analysis_sequence_no
+				    FROM project_assessment_round par
+				    JOIN project pj
+				           ON pj.project_id = par.project_id
+				          AND pj.deleted_at IS NULL
+				          AND pj.project_category = 'MINI_PROJECT'
+				    WHERE par.deleted_at IS NULL
+				)
 				SELECT o.user_id,
-				       r.round_no
+				       COALESCE(mrn.analysis_sequence_no, r.round_no) AS round_no
 				FROM operator_cohort_outcome_occurrence_view o
 				JOIN project_assessment_round r ON r.assessment_round_id = o.round_id
+				LEFT JOIN mini_round_no mrn ON mrn.assessment_round_id = o.round_id
 				WHERE o.snapshot_id = ?
-				ORDER BY o.user_id, r.round_no
+				ORDER BY o.user_id, 2
 				""";
 
 		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> new TopStudentRoundRow(

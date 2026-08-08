@@ -94,6 +94,11 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 	/**
 	 * 회차 열을 조회한다.
 	 *
+	 * 격자의 가로축은 project_assessment_round.round_no가 아니라 project.sequence_no다.
+	 * 미니프로젝트는 프로젝트마다 이해도 확인 회차가 1건뿐이라 round_no가 늘 1이고, 기수의
+	 * 차수 흐름은 프로젝트 순서에만 남는다. RoundCriteria의 from/to도 이 sequence_no 범위다.
+	 * 열은 최근 프로젝트부터 내림차순으로 내려 화면이 최신 회차를 왼쪽에 먼저 그리게 한다.
+	 *
 	 * 집계 상태는 회차 생명주기가 아니라 발행된 리포트 유무로 판정한다.
 	 * 화면이 '리포트가 발행되면 채워집니다'로 설명하므로 그 계약에 맞춘다.
 	 * PLANNED만 회차 status에서 직접 읽어 '시작 전'과 '집계 전'을 구분한다.
@@ -121,8 +126,8 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 					AND r.org_id = ?
 					AND r.deleted_at IS NULL
 					AND p.project_category = ?%s
-					AND r.round_no BETWEEN ? AND ?
-				ORDER BY p.sequence_no, r.round_no, r.assessment_round_id
+					AND p.sequence_no BETWEEN ? AND ?
+				ORDER BY p.sequence_no DESC, r.round_no DESC, r.assessment_round_id DESC
 				""".formatted(projectFilter(criteria));
 
 		return jdbcTemplate.query(
@@ -207,7 +212,7 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 						AND r.org_id = ?
 						AND r.deleted_at IS NULL
 						AND p.project_category = ?%s
-						AND r.round_no BETWEEN ? AND ?
+						AND p.sequence_no BETWEEN ? AND ?
 				),
 				attempt_scope AS (
 					SELECT
@@ -304,7 +309,7 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 						AND r.org_id = ?
 						AND r.deleted_at IS NULL
 						AND p.project_category = ?%s
-						AND r.round_no BETWEEN ? AND ?
+						AND p.sequence_no BETWEEN ? AND ?
 				),
 				attempt_scope AS (
 					SELECT

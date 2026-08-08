@@ -56,6 +56,11 @@ public interface ManagedReportQueryRepository {
 			UUID reportId,
 			UUID assessmentRoundId,
 			String roundName,
+			/*
+			 * 기수 안 미니프로젝트 차수(analysis_sequence_no)다.
+			 * ProjectAssessmentRound.round_no가 아니다 — 그쪽은 (project_id, round_no) UNIQUE라
+			 * 프로젝트 안에서만 유일하고 미니프로젝트에서는 항상 1이다.
+			 */
 			int roundNo,
 			UUID traineeUserId,
 			String traineeName,

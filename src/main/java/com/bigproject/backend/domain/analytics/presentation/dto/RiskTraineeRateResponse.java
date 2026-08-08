@@ -117,8 +117,9 @@ public record RiskTraineeRateResponse(
 			@Schema(description = "중도 이탈한 교육생 수", example = "1")
 			long withdrawnCount,
 			@Schema(description = """
-					최근 발행 회차 기준 미집계 합계입니다. 화면의 '채점에서 빠진 사람' 열에 대응합니다.
-					발행된 회차가 없으면 세 값이 모두 0입니다.
+					조회 범위의 모든 회차를 유형별로 합산한 미집계 인원입니다.
+					화면의 '채점에서 빠진 사람' 열에 대응하며 EXCLUSION_COUNT 정렬의 기준값입니다.
+					회차별 내역은 cells[].exclusion에서 봅니다.
 					""")
 			ExclusionBreakdown exclusionRollup,
 			@Schema(description = "기수 전체의 회차별 위험 비율 칸 목록이며 rounds와 같은 순서·길이입니다.")
@@ -136,7 +137,7 @@ public record RiskTraineeRateResponse(
 			long traineeCount,
 			@Schema(description = "중도 이탈한 교육생 수", example = "1")
 			long withdrawnCount,
-			@Schema(description = "최근 발행 회차 기준 미집계 합계입니다.")
+			@Schema(description = "조회 범위의 모든 회차를 유형별로 합산한 미집계 인원입니다.")
 			ExclusionBreakdown exclusionRollup,
 			@Schema(description = """
 					활성 담당 매니저 이름 목록입니다. 한 반에 여러 명이 배정될 수 있습니다.
@@ -167,7 +168,7 @@ public record RiskTraineeRateResponse(
 			String className,
 			@Schema(description = "현재 팀에 속한 인원", example = "5")
 			long memberCount,
-			@Schema(description = "최근 발행 회차 기준 미집계 합계입니다.")
+			@Schema(description = "조회 범위의 모든 회차를 유형별로 합산한 미집계 인원입니다.")
 			ExclusionBreakdown exclusionRollup,
 			@Schema(description = "이 팀의 회차별 위험 비율 칸 목록이며 rounds와 같은 순서·길이입니다.")
 			List<RiskCell> cells

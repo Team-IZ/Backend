@@ -133,7 +133,7 @@ public class RiskTraineeAnalyticsService {
 			// 팀 행은 기수가 아니라 소속 반 전체와 견준다. 그 기준 행을 classes에 함께 내려 화면 상단
 			// '반 전체' 요약과 팀 비교 기준을 같은 값으로 통일한다.
 			RiskTraineeRateResponse.ClassRiskSummary selectedClassSummary = toClassSummary(
-					selectedClassRoster, classTotals, rounds, statusByRound, cohortRateByRound, recentAggregatedRoundId);
+					selectedClassRoster, classTotals, rounds, statusByRound, cohortRateByRound);
 			Map<UUID, BigDecimal> classRateByRound = rateByRound(selectedClassSummary.cells());
 			classSummaries = List.of(selectedClassSummary);
 			teamSummaries = teamSummaries(
@@ -181,7 +181,7 @@ public class RiskTraineeAnalyticsService {
 				new RiskTraineeRateResponse.CohortRiskSummary(
 						cohortRoster.traineeCount(),
 						cohortRoster.withdrawnCount(),
-						exclusionRollup(cohortTotals, recentAggregatedRoundId),
+						exclusionRollup(cohortTotals),
 						cohortCells
 				),
 				classSummaries,
@@ -207,7 +207,7 @@ public class RiskTraineeAnalyticsService {
 				continue;
 			}
 			summaries.add(toClassSummary(
-					roster, classTotals, rounds, statusByRound, cohortRateByRound, recentAggregatedRoundId));
+					roster, classTotals, rounds, statusByRound, cohortRateByRound));
 		}
 		summaries.sort(comparator(
 				appliedSort,
@@ -225,8 +225,7 @@ public class RiskTraineeAnalyticsService {
 			Map<UUID, Map<UUID, RiskTraineeQueryRepository.RiskCellRow>> classTotals,
 			List<RiskTraineeQueryRepository.RoundRow> rounds,
 			Map<UUID, RoundAggregationStatus> statusByRound,
-			Map<UUID, BigDecimal> cohortRateByRound,
-			UUID recentAggregatedRoundId
+			Map<UUID, BigDecimal> cohortRateByRound
 	) {
 		Map<UUID, RiskTraineeQueryRepository.RiskCellRow> totals =
 				classTotals.getOrDefault(roster.classId(), Map.of());
@@ -235,7 +234,7 @@ public class RiskTraineeAnalyticsService {
 				roster.className(),
 				roster.traineeCount(),
 				roster.withdrawnCount(),
-				exclusionRollup(totals, recentAggregatedRoundId),
+				exclusionRollup(totals),
 				roster.managerNames(),
 				toCells(rounds, statusByRound, totals, cohortRateByRound)
 		);
@@ -283,7 +282,7 @@ public class RiskTraineeAnalyticsService {
 					roster.classId(),
 					roster.className(),
 					roster.memberCount(),
-					exclusionRollup(totals, recentAggregatedRoundId),
+					exclusionRollup(totals),
 					toCells(rounds, statusByRound, totals, baselineRateByRound)
 			));
 		}
@@ -378,36 +377,37 @@ public class RiskTraineeAnalyticsService {
 
 	/**
 	 * 화면의 '채점에서 빠진 사람' 열은 회차마다가 아니라 행마다 한 벌이다.
-	 * 기준 회차는 최근 발행 회차로 고정해 기본 정렬(RECENT_ROUND_WORST)이 보는 회차와 일치시킨다.
+	 * 조회 범위의 모든 회차를 유형별로 합산한다. 한 회차만 보면 그 회차에 마침 미집계가 없던 반이
+	 * 앞 회차에서 계속 빠졌던 반보다 나아 보여, EXCLUSION_COUNT 정렬이 누적 이탈을 못 짚는다.
 	 */
 	private RiskTraineeRateResponse.ExclusionBreakdown exclusionRollup(
-			Map<UUID, RiskTraineeQueryRepository.RiskCellRow> totals,
-			UUID recentAggregatedRoundId
+			Map<UUID, RiskTraineeQueryRepository.RiskCellRow> totals
 	) {
-		RiskTraineeQueryRepository.RiskCellRow total =
-				recentAggregatedRoundId == null ? null : totals.get(recentAggregatedRoundId);
-		if (total == null) {
-			return new RiskTraineeRateResponse.ExclusionBreakdown(0, 0, 0);
+		long notAttended = 0;
+		long sessionIncomplete = 0;
+		long invalidAttempt = 0;
+		for (RiskTraineeQueryRepository.RiskCellRow total : totals.values()) {
+			notAttended += total.notAttendedCount();
+			sessionIncomplete += total.sessionIncompleteCount();
+			invalidAttempt += total.invalidAttemptCount();
 		}
-		return new RiskTraineeRateResponse.ExclusionBreakdown(
-				total.notAttendedCount(),
-				total.sessionIncompleteCount(),
-				total.invalidAttemptCount()
-		);
+		return new RiskTraineeRateResponse.ExclusionBreakdown(notAttended, sessionIncomplete, invalidAttempt);
 	}
 
+	/**
+	 * 회차 열은 최근 프로젝트부터 내림차순이므로 목록 앞쪽에서 처음 만나는 발행 회차가 최근 회차다.
+	 */
 	private UUID recentAggregatedRoundId(
 			List<RiskTraineeQueryRepository.RoundRow> rounds,
 			Map<UUID, RoundAggregationStatus> statusByRound
 	) {
-		UUID recent = null;
 		for (RiskTraineeQueryRepository.RoundRow round : rounds) {
 			RoundAggregationStatus status = statusByRound.get(round.assessmentRoundId());
 			if (status != null && status.readable()) {
-				recent = round.assessmentRoundId();
+				return round.assessmentRoundId();
 			}
 		}
-		return recent;
+		return null;
 	}
 
 	/**
