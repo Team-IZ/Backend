@@ -110,6 +110,18 @@ ai:
     poll-interval: ${AI_REPORT_POLL_INTERVAL:PT2S}
     poll-max-attempts: ${AI_REPORT_POLL_MAX_ATTEMPTS:60}
 
+  # 교안 분석 연동. develop 머지 때 파일 아래쪽에 `ai:` 블록이 하나 더 생겨
+  # YAML 중복 키로 기동이 통째로 실패했다(snakeyaml: found duplicate key ai).
+  # 값과 환경변수 이름은 그대로 두고 이 블록 안으로 옮기기만 했다.
+  #
+  # ⚠️ 위 공통 설정과 어긋나는 점이 둘 있다. 의도한 것인지 확인이 필요하다.
+  #   - base-url에 `/api/v0`가 없다(공통은 붙어 있다)
+  #   - 같은 공유 비밀인데 환경변수가 AI_INTERNAL_API_KEY다(공통은 AI_INTERNAL_KEY)
+  #     두 이름을 다 관리하면 한쪽만 채워 넣는 사고가 난다.
+  curriculum:
+    base-url: ${AI_CURRICULUM_BASE_URL:http://localhost:8000}
+    x-internal-key: ${AI_INTERNAL_API_KEY:}
+
 jwt:
   secret: ${JWT_SECRET}
   access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION}
@@ -164,8 +176,3 @@ password-reset:
   base-url: ${PASSWORD_RESET_BASE_URL:http://localhost:5173}
   expiration: ${PASSWORD_RESET_EXPIRATION:PT30M}
   request-cooldown: ${PASSWORD_RESET_REQUEST_COOLDOWN:PT1M}
-
-ai:
-  curriculum:
-    base-url: ${AI_CURRICULUM_BASE_URL:http://localhost:8000}
-    x-internal-key: ${AI_INTERNAL_API_KEY:}
