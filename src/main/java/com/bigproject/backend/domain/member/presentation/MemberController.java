@@ -1,11 +1,13 @@
 package com.bigproject.backend.domain.member.presentation;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.application.MemberProfileService;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerResponse;
 import com.bigproject.backend.domain.member.presentation.dto.MemberProfileResponse;
+import com.bigproject.backend.global.exception.ApiException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -135,5 +137,13 @@ public class MemberController {
 				requestId
 		);
 		return ResponseEntity.created(URI.create("/api/v0/members/" + response.memberId())).body(response);
+	}
+
+	private UUID extractOrganizationId(Authentication authentication) {
+		Object details = authentication.getDetails();
+		if (!(details instanceof UUID organizationId)) {
+			throw new ApiException(AcademicOperationsErrorCode.ORGANIZATION_CONTEXT_MISSING);
+		}
+		return organizationId;
 	}
 }
