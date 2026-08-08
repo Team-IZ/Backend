@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.reporting.presentation.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import java.util.List;
 
 /**
@@ -18,18 +20,21 @@ import java.util.List;
  * @param publishedAt 확정 전이면 {@code null}. 화면이 PDF를 잠그는 근거이기도 하다.
  * @param periodEnd   확정 전이면 아직 안 끝났으므로 {@code null}.
  * @param totalRounds 등록된 전체 회차 수. <b>8 고정이 아니다</b>(OP-02 §4-2).
- * @param excluded    ⚠ 현재 전부 0이다 — 제외 사유별 집계가 {@code report_metric} 어느
- *                    섹션에도 없다. 생성 파이프라인이 {@code report_snapshot.summary_payload}에
- *                    적재하도록 추가한 뒤 여기서 읽는다. {@code measurement_attempt}를 지금
- *                    세는 방법도 있지만 그러면 스냅샷 안에서 이 숫자만 계속 변한다.
+ * @param excluded    {@code report_snapshot.summary_payload}의 {@code excluded} 키에서 읽는다
+ *                    (2026-08-08). 제외 사유별 집계가 {@code report_metric} 어느 섹션에도 없어
+ *                    페이로드 경로를 쓴다. 생성 파이프라인이 아직 이 키를 안 채우면 0이다.
+ *                    {@code measurement_attempt}를 지금 세는 방법도 있지만 그러면 스냅샷 안에서
+ *                    이 숫자만 계속 변한다.
  */
 public record CohortDiagnosisResponse(
 		String status,
 		String cohortName,
+		@Schema(description = "기수 결산 확정 시각. 확정 전이면 null — 화면이 PDF를 잠그는 근거다.", nullable = true)
 		String publishedAt,
 		int completedRounds,
 		int totalRounds,
 		String periodStart,
+		@Schema(description = "집계 종료일. 확정 전이면 아직 끝나지 않았으므로 null", nullable = true)
 		String periodEnd,
 		int traineeCount,
 		int classCount,

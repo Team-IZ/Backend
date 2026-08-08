@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.auth.application;
 
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.auth.domain.PasswordResetRepository;
 import com.bigproject.backend.domain.auth.domain.PasswordResetToken;
 import com.bigproject.backend.domain.auth.infrastructure.PasswordResetAuditLogger;
@@ -74,9 +75,9 @@ class PasswordResetServiceTest {
 		when(repository.findTokenForUpdate(any())).thenReturn(Optional.of(token));
 
 		assertThatThrownBy(() -> service.confirm(request("weak"), REQUEST_ID))
-				.isInstanceOfSatisfying(PasswordResetException.class, exception -> {
-					assertThat(exception.code()).isEqualTo("WEAK_PASSWORD");
-					assertThat(exception.status().value()).isEqualTo(422);
+				.isInstanceOfSatisfying(ApiException.class, exception -> {
+					assertThat(exception.errorCode().name()).isEqualTo("WEAK_PASSWORD");
+					assertThat(exception.errorCode().status().value()).isEqualTo(422);
 				});
 	}
 
@@ -86,8 +87,8 @@ class PasswordResetServiceTest {
 		when(repository.findTokenForUpdate(any())).thenReturn(Optional.of(token));
 
 		assertThatThrownBy(() -> service.confirm(request(CURRENT_PASSWORD), REQUEST_ID))
-				.isInstanceOfSatisfying(PasswordResetException.class,
-						exception -> assertThat(exception.code()).isEqualTo("SAME_AS_CURRENT"));
+				.isInstanceOfSatisfying(ApiException.class,
+						exception -> assertThat(exception.errorCode().name()).isEqualTo("SAME_AS_CURRENT"));
 	}
 
 	@Test
@@ -95,14 +96,14 @@ class PasswordResetServiceTest {
 		PasswordResetToken expired = token(Instant.now().minusSeconds(1), null, null);
 		when(repository.findTokenForUpdate(any())).thenReturn(Optional.of(expired));
 		assertThatThrownBy(() -> service.confirm(request(NEW_PASSWORD), REQUEST_ID))
-				.isInstanceOfSatisfying(PasswordResetException.class,
-						exception -> assertThat(exception.code()).isEqualTo("RESET_TOKEN_EXPIRED"));
+				.isInstanceOfSatisfying(ApiException.class,
+						exception -> assertThat(exception.errorCode().name()).isEqualTo("RESET_TOKEN_EXPIRED"));
 
 		PasswordResetToken used = token(Instant.now().plusSeconds(60), Instant.now(), null);
 		when(repository.findTokenForUpdate(any())).thenReturn(Optional.of(used));
 		assertThatThrownBy(() -> service.confirm(request(NEW_PASSWORD), REQUEST_ID))
-				.isInstanceOfSatisfying(PasswordResetException.class,
-						exception -> assertThat(exception.code()).isEqualTo("RESET_TOKEN_USED"));
+				.isInstanceOfSatisfying(ApiException.class,
+						exception -> assertThat(exception.errorCode().name()).isEqualTo("RESET_TOKEN_USED"));
 	}
 
 	@Test
@@ -110,8 +111,8 @@ class PasswordResetServiceTest {
 		when(repository.findTokenForUpdate(any())).thenReturn(Optional.empty());
 
 		assertThatThrownBy(() -> service.confirm(request(NEW_PASSWORD), REQUEST_ID))
-				.isInstanceOfSatisfying(PasswordResetException.class,
-						exception -> assertThat(exception.code()).isEqualTo("RESET_TOKEN_INVALID"));
+				.isInstanceOfSatisfying(ApiException.class,
+						exception -> assertThat(exception.errorCode().name()).isEqualTo("RESET_TOKEN_INVALID"));
 	}
 
 	private PasswordResetConfirmationRequest request(String password) {

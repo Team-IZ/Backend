@@ -27,10 +27,13 @@ import java.math.BigDecimal;
  *
  * <p>통화(currencyCode)는 플랫폼 공통 USD 고정이라 요청 항목이 아니다(DB CHECK로도 강제된다).
  */
-@Schema(description = "기관 운영 설정 변경 요청 (전체 치환)")
+@Schema(description = """
+		기관 운영 설정 변경 요청 (전체 치환).
+
+		`organizationStatus`는 **ACTIVE 또는 SUSPENDED만** 직접 지정할 수 있다 — 그 외 값은 400이다.
+		삭제 상태를 되돌리는 것은 이 API가 아니라 `POST /organizations/{organizationId}/restore`다.""")
 public record UpdateOperationSettingRequest(
 
-		@Schema(description = "기관 상태. ACTIVE 또는 SUSPENDED만 직접 지정 가능", example = "ACTIVE")
 		@NotNull
 		OrganizationStatus organizationStatus,
 
@@ -40,26 +43,23 @@ public record UpdateOperationSettingRequest(
 
 		@Schema(description = """
 				기관 월 토큰 한도. 넘으면 새 세션이 열리지 않는다. null이면 무제한이다.""",
-				example = "200000000")
+				example = "200000000", nullable = true)
 		@Positive
 		Long monthlyTokenLimit,
 
-		@Schema(description = "저장량 상한(바이트). null이면 무제한이다.", example = "107374182400")
+		@Schema(description = "저장량 상한(바이트). null이면 무제한이다.", example = "107374182400", nullable = true)
 		@PositiveOrZero
 		Long storageLimitBytes,
 
-		@Schema(description = "데이터 보존기간(일)", allowableValues = {"90", "180", "365"}, example = "180")
+		@Schema(description = "데이터 보존기간(일)", allowableValues = {"90", "180", "365"}, example = "180", requiredMode = Schema.RequiredMode.REQUIRED)
 		@AllowedRetentionDays
 		int dataRetentionDays,
 
-		@Schema(description = "신규 기수 공개 범위 기본값", example = "SUMMARY")
 		@NotNull
 		DisclosureScope defaultDisclosureScope,
 
-		@Schema(description = """
-				코드 세션 기능의 모델 티어. v07에서 질문 생성·요약 티어가 이 값 하나로 통합됐다
-				(questionGenerationTierCode·summaryTierCode 대체).""",
-				example = "BALANCED")
+		// 코드 세션 기능의 모델 티어. v07에서 질문 생성·요약 티어가 이 값 하나로 통합됐다
+		// (questionGenerationTierCode·summaryTierCode 대체).
 		@NotNull
 		AiTier codeSessionTierCode,
 

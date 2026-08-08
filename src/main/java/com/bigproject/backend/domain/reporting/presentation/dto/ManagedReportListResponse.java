@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.reporting.presentation.dto;
 
 import com.bigproject.backend.domain.reporting.domain.ManagedReportQueryRepository.ManagedReportRow;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.Instant;
 import java.util.List;
@@ -18,7 +19,11 @@ import java.util.UUID;
  * ({@code CohortListResponse}·{@code EnrollmentListResponse})과 같은 모양을 쓰기 위해서다.
  * 나중에 총 건수·페이지 정보를 붙일 자리도 생긴다.
  */
-public record ManagedReportListResponse(List<Item> reports) {
+@Schema(description = "매니저가 담당하는 반의 리포트 목록")
+public record ManagedReportListResponse(
+		@Schema(description = "담당 반 교육생의 개인 리포트. 담당이 없거나 필터가 좁으면 빈 배열")
+		List<Item> reports
+) {
 
 	public static ManagedReportListResponse from(List<ManagedReportRow> rows) {
 		return new ManagedReportListResponse(rows.stream().map(Item::from).toList());
@@ -33,21 +38,37 @@ public record ManagedReportListResponse(List<Item> reports) {
 	 *                      "정해서 닫았다"는 뜻이라 {@code PRIVATE}을 남긴다 — 미지정과 구분해야 한다.
 	 * @param bodyVisible   교육생이 지금 본문을 읽을 수 있는가. 발행·공개가 모두 갖춰져야 참이다
 	 *                      ({@code ReportDisclosureResponse.bodyVisible}과 같은 규칙).
+	 *
+	 * <p>⚠️ 클래스 단위 {@link JsonInclude}라 {@code ResponseRecordRequiredConverter}가 이 레코드를
+	 * 건너뛴다 — 생성되는 화면 타입에서 <b>모든 필드가 optional</b>이 된다. 형제 DTO인
+	 * {@code ReportDisclosureResponse}·{@code TraineeReportsResponse}가 이미 같은 방식이고,
+	 * 매니저 화면이 그 셋을 함께 읽으므로 여기서만 규칙을 달리하지 않는다.
+	 * 항상 오는 필드까지 optional이 되는 것이 걸리면 세 DTO를 <b>같이</b> 바꿔야 한다.
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record Item(
+			@Schema(description = "리포트 식별자. PUT /reports/{reportId}/disclosure에 그대로 쓴다")
 			UUID reportId,
+			@Schema(description = "회차 식별자. 리포트 id가 아니다")
 			UUID assessmentRoundId,
+			@Schema(description = "회차 이름(예: 미프 3차). 회차 행이 없으면 키가 빠진다", nullable = true)
 			String roundName,
 			int roundNo,
 			UUID traineeUserId,
 			String traineeName,
 			UUID classId,
 			String className,
+			@Schema(description = "발행 시각. 아직 발행 전이면 키가 빠진다", nullable = true)
 			Instant publishedAt,
+			@Schema(description = "공개 상태 판별자", allowableValues = {"NOT_CONFIGURED", "WITHHELD", "RELEASED"},
+					example = "NOT_CONFIGURED")
 			String releaseStatus,
+			@Schema(description = "공개 범위. NOT_CONFIGURED이면 키가 빠진다",
+					allowableValues = {"PRIVATE", "SUMMARY", "FULL"}, nullable = true)
 			String scope,
+			@Schema(description = "공개 처리 시각. RELEASED에서만 있다", nullable = true)
 			Instant releasedAt,
+			@Schema(description = "교육생이 지금 본문을 읽을 수 있는가")
 			boolean bodyVisible
 	) {
 

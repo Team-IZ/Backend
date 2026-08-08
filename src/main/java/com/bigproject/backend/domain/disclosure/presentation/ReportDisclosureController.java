@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,7 +36,7 @@ import java.util.UUID;
 @Tag(name = "Disclosure", description = "리포트 공개 범위 조회·설정 API (v2 IA: TR-04 / MG-08)")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/reports/{reportId}/disclosure")
+@RequestMapping(value = "/reports/{reportId}/disclosure", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class ReportDisclosureController {
 
@@ -43,6 +44,7 @@ public class ReportDisclosureController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
+			operationId = "findMyDisclosure",
 			summary = "내 리포트 공개 상태 조회 | ⚠️ 사용 불가",
 			description = """
 					TR-04에서 **본문이 안 열리는 이유**를 판별한다. `GET /reports`가 회차 상태까지
@@ -107,6 +109,7 @@ public class ReportDisclosureController {
 	}
 
 	@Operation(
+			operationId = "updateDisclosure",
 			summary = "리포트 공개 범위 설정 | ⚠️ 사용 불가",
 			description = """
 					담당 매니저가 회차 결과를 교육생에게 연다. TR-04의 `공개 범위 미지정`을

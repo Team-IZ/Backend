@@ -17,7 +17,7 @@ public record CreateClassroomRequest(
         @NotNull @Min(1) Integer capacity,
 
         @Schema(description = "담당 매니저로 지정할 사용자 ID 목록. ⚠ 지금은 서버가 사용하지 않는다 — " +
-                "담당 매니저 지정은 PATCH .../managers로 별도 호출해야 한다. 생략하거나 빈 배열을 보내도 무방하다.")
+                "담당 매니저 지정은 PATCH .../managers로 별도 호출해야 한다. 생략하거나 빈 배열을 보내도 무방하다.", nullable = true)
         List<UUID> managerIds
 ) {
     public CreateClassroomRequest {

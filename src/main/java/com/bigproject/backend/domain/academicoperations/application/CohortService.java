@@ -1,5 +1,8 @@
 package com.bigproject.backend.domain.academicoperations.application;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.academicoperations.domain.Cohort;
 import com.bigproject.backend.domain.academicoperations.domain.CohortStatus;
 import com.bigproject.backend.domain.academicoperations.infrastructure.CohortRepository;
@@ -8,10 +11,8 @@ import com.bigproject.backend.domain.organization.infrastructure.OrganizationPol
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
 import java.util.UUID;
@@ -34,18 +35,18 @@ public class CohortService {
 
         // 규칙 1: 기관 내 기수명 중복 금지
         if (cohortRepository.existsByOrgIdAndNameAndDeletedAtIsNull(orgId, name)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 존재하는 기수명입니다: " + name);
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NAME_TAKEN, "이미 존재하는 기수명입니다: " + name);
         }
 
         // 규칙 2: 엔티티 생성자가 던지기 전에 먼저 걸러서 400으로 응답 (IllegalArgumentException은 전역에서 안 잡힘)
         if (startDate.isAfter(endDate)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "시작일은 종료일보다 늦을 수 없습니다.");
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_PERIOD_INVALID);
         }
 
         OrganizationPolicy policy = organizationPolicyRepository
                 .findByOrgIdAndStatus(orgId, OrganizationPolicy.Status.ACTIVE)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.CONFLICT, "기관에 활성 운영 정책이 없어 기수를 만들 수 없습니다."));
+                .orElseThrow(() -> new ApiException(
+                        OrganizationErrorCode.ORG_POLICY_NOT_FOUND, "기관에 활성 운영 정책이 없어 기수를 만들 수 없습니다."));
 
         Cohort cohort = Cohort.builder()
                 .orgId(orgId)
@@ -63,7 +64,7 @@ public class CohortService {
     // 기수 단건 조회
     public Cohort findCohort(UUID cohortId, UUID orgId) {
         return cohortRepository.findByCohortIdAndOrgIdAndDeletedAtIsNull(cohortId, orgId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "기수를 찾을 수 없습니다."));
+                .orElseThrow(() -> new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND));
     }
 
     // 기수 종료: 기수 상태 변경 + 소속 반 배정·매니저 배정 일괄 해제
@@ -74,8 +75,8 @@ public class CohortService {
         Cohort cohort = findCohort(cohortId, orgId);
         OrganizationPolicy policy = organizationPolicyRepository
                 .findByOrgIdAndStatus(orgId, OrganizationPolicy.Status.ACTIVE)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.CONFLICT, "기관에 활성 운영 정책이 없어 기수를 종료할 수 없습니다."));
+                .orElseThrow(() -> new ApiException(
+                        OrganizationErrorCode.ORG_POLICY_NOT_FOUND, "기관에 활성 운영 정책이 없어 기수를 종료할 수 없습니다."));
 
         cohort.close(actorUserId, policy.getPolicyId(), policy.getRetentionDays());
         classroomService.releaseAllAssignmentsForCohort(cohortId, orgId, actorUserId);

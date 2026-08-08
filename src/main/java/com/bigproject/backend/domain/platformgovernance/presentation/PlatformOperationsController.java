@@ -19,6 +19,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -43,7 +44,7 @@ import java.util.UUID;
 @PreAuthorize("hasRole('SUPER_ADMIN')")
 @Validated
 @RestController
-@RequestMapping("/platform/operations")
+@RequestMapping(value = "/platform/operations", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class PlatformOperationsController {
 
@@ -53,6 +54,7 @@ public class PlatformOperationsController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
+			operationId = "findModelSettings",
 			summary = "플랫폼 모델·단가 설정 조회 | ✅ 사용 가능",
 			description = """
 					SA-03 ① `모델 · 단가` 탭 **전체를 한 번에** 채운다. 이 화면에서 다른 조회 API 는 필요 없다.
@@ -130,6 +132,7 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
+			operationId = "updateGradingModel",
 			summary = "채점 모델 변경 (전 기관 재캘리브레이션 유발) | ✅ 사용 가능",
 			description = """
 					SA-03 ① `채점 · 고정 · claude-x` 행의 변경 액션.
@@ -200,6 +203,7 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
+			operationId = "updateTierModel",
 			summary = "티어 ↔ 모델 매핑 변경 | ✅ 사용 가능",
 			description = """
 					SA-03 ① `코드 세션 · 정확도 우선 / 균형 / 비용 우선` 3티어 매핑을 바꾼다.
@@ -254,6 +258,7 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
+			operationId = "updateModelPricing",
 			summary = "모델 단가 수정 | ✅ 사용 가능",
 			description = """
 					SA-03 ① `단가 · 모델별 입력·출력 토큰 단가` 행의 `입력`/`수정` 액션.
@@ -319,6 +324,7 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
+			operationId = "findSuperAdmins",
 			summary = "슈퍼어드민 계정 목록 | ✅ 사용 가능",
 			description = """
 					SA-03 ② `슈퍼어드민 계정` 탭의 목록.
@@ -366,6 +372,7 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
+			operationId = "inviteSuperAdmin",
 			summary = "슈퍼어드민 초대 | ✅ 사용 가능",
 			description = """
 					SA-03 ② `+ 계정 초대`. 계정 자리를 만들고 초대 메일을 보낸다.
@@ -435,6 +442,7 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
+			operationId = "updateSuperAdminStatus",
 			summary = "슈퍼어드민 정지 · 재활성 | ✅ 사용 가능",
 			description = """
 					SA-03 ② 표의 행별 액션 `정지` / `재활성`.

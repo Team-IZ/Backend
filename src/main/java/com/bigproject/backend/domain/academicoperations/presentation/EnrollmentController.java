@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.academicoperations.presentation;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.academicoperations.application.CohortService;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.EnrollmentListResponse;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.EnrollmentResponse;
@@ -11,6 +13,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,7 +30,7 @@ import java.util.UUID;
 @Tag(name = "Academic Operations")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/members/me")
+@RequestMapping(value = "/members/me", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class EnrollmentController {
 
@@ -35,6 +38,7 @@ public class EnrollmentController {
     private final CurrentUserResolver currentUserResolver;
 
     @Operation(
+            operationId = "findMyEnrollments",
             summary = "내 소속 기수·반 조회 | ✅ 사용 가능",
             description = """
 					로그인한 사용자가 현재 유효하게(LEFT 아닌) 소속된 기수와, 기수별 현재 반 배정을 조회한다.
@@ -57,7 +61,7 @@ public class EnrollmentController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "조회 성공(소속이 없으면 빈 배열)"),
             @ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-            @ApiResponse(responseCode = "500", description = "인증 정보에서 organizationId를 확인할 수 없음")
+            @ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
     })
     @GetMapping("/enrollments")
     public ResponseEntity<EnrollmentListResponse> findMyEnrollments(Authentication authentication) {
@@ -74,8 +78,7 @@ public class EnrollmentController {
     private UUID extractOrganizationId(Authentication authentication) {
         Object details = authentication.getDetails();
         if (!(details instanceof UUID organizationId)) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "인증 정보에서 organizationId(UUID)를 확인할 수 없습니다.");
+            throw new ApiException(AcademicOperationsErrorCode.ORGANIZATION_CONTEXT_MISSING);
         }
         return organizationId;
     }

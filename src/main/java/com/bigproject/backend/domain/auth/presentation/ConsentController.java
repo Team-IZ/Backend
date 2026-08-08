@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -19,7 +20,7 @@ import java.util.List;
 
 @Tag(name = "Consent", description = "가입 화면 동의 항목 조회 API")
 @RestController
-@RequestMapping("/consents")
+@RequestMapping(value = "/consents", produces = MediaType.APPLICATION_JSON_VALUE)
 public class ConsentController {
 	private final int consentPolicyVersion;
 
@@ -28,6 +29,7 @@ public class ConsentController {
 	}
 
 	@Operation(
+			operationId = "findConsents",
 			summary = "약관 목록 조회 | ✅ 사용 가능",
 			description = """
 					가입 화면이 표시할 동의 항목을 역할별로 받아온다. 인증 없이 호출한다.

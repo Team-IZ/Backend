@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,7 +24,7 @@ import java.util.UUID;
 @Tag(name = "Reporting", description = "리포트 발행 이력·본문·문답 조회 API (v2 IA: TR-04 / OP-05)")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/reports")
+@RequestMapping(value = "/reports", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class ReportController {
 
@@ -32,6 +33,7 @@ public class ReportController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
+			operationId = "findMyReports",
 			summary = "내 리포트 전량 조회 | ⚠️ 사용 불가",
 			description = """
 					TR-04 `내 리포트` 화면 전체를 이 응답 하나로 그린다.
@@ -112,9 +114,13 @@ public class ReportController {
 	}
 
 	@Operation(
-			summary = "담당 반 리포트 목록 조회 (매니저)",
+			operationId = "findManagedReports",
+			summary = "담당 반 리포트 목록 조회 (매니저) | ⚠️ 사용 불가",
 			description = """
 					매니저가 **담당하는 반**의 개인 리포트 목록. 발행 여부와 공개 상태만 준다.
+
+					⚠️ 신설 직후라 **실제 DB로 검증되지 않았다.** SQL이 도는 것을 확인한 뒤
+					`✅ 사용 가능`으로 올린다 — 나머지 Reporting 오퍼레이션과 같은 기준이다.
 
 					## 왜 필요한가
 
@@ -179,6 +185,7 @@ public class ReportController {
 	}
 
 	@Operation(
+			operationId = "findMyReport",
 			summary = "리포트 단건 조회 | ⚠️ 사용 불가",
 			description = """
 					리포트 1건의 본문. `GET /reports` 응답의 `reportsById[id]` 한 덩어리와 **같은 모양**이다.

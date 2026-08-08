@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,13 +26,14 @@ import java.util.UUID;
 @Tag(name = "Reporting", description = "리포트 발행 이력·본문·문답 조회 API (v2 IA: TR-04 / OP-05)")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/reports")
+@RequestMapping(value = "/reports", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class CohortReportController {
 
 	private final CohortReportService cohortReportService;
 
 	@Operation(
+			operationId = "findClassDiagnosis",
 			summary = "수업 진단 리포트 조회 | ⚠️ 사용 불가",
 			description = """
 					OP-05 `리포트` 화면 전체를 이 응답 하나로 그린다. **섹션 5개가 한 문서**다 —
@@ -96,11 +98,11 @@ public class CohortReportController {
 
 					`section` 의 구분자는 하이픈이 아니라 **en-dash(–, U+2013)** 다.
 
-					## 아직 비어 있는 값
+					## 값의 출처와 아직 비어 있는 값
 
 					| 필드 | 상태 |
 					|---|---|
-					| `excluded` | **항상 `{0,0,0}`.** 제외 사유별 집계가 지표에 없다. 생성 파이프라인이 스냅샷에 적재하도록 추가한 뒤 채운다 |
+					| `excluded` | `report_snapshot.summary_payload` 의 `excluded` 키에서 읽는다(2026-08-08). **생성 파이프라인이 아직 이 키를 안 채우면 `{0,0,0}`** 이다 |
 					| `groupShortfalls[].round` | **항상 `""`.** 이 지표의 grain 이 반×개념이라 회차 축이 없다 |
 
 					## 오류

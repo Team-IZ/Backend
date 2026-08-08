@@ -20,7 +20,6 @@ public record UpdateTierModelRequest(
 		@NotNull
 		PlatformAiTierModelPolicy.FeatureCode featureCode,
 
-		@Schema(description = "티어. ACCURACY_FIRST / BALANCED / COST_FIRST", example = "BALANCED")
 		@NotNull
 		AiTier tierCode,
 
@@ -28,7 +27,7 @@ public record UpdateTierModelRequest(
 		@NotNull
 		UUID modelId,
 
-		@Schema(description = "변경 사유", example = "비용 최적화")
+		@Schema(description = "변경 사유", example = "비용 최적화", nullable = true)
 		String changeReason
 ) {
 }

@@ -24,6 +24,7 @@ import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetValidati
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetValidationResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.RefreshTokenResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.TraineeActivationRequest;
+import com.bigproject.backend.global.security.ClientIpResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -35,6 +36,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -46,7 +48,7 @@ import java.util.UUID;
 
 @Tag(name = "Auth", description = "로그인, Access/Refresh Token 재발급·세션 폐기, 비밀번호 재설정, 초대 계정 활성화 API")
 @RestController
-@RequestMapping("/auth")
+@RequestMapping(value = "/auth", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class AuthController {
 	public static final String SWAGGER_CLIENT_ORIGIN_HEADER = "X-Swagger-Client-Origin";
@@ -59,8 +61,10 @@ public class AuthController {
 	private final RefreshTokenCookieManager refreshTokenCookieManager;
 	private final LoginOriginResolver loginOriginResolver;
 	private final PasswordResetService passwordResetService;
+	private final ClientIpResolver clientIpResolver;
 
 	@Operation(
+			operationId = "requestPasswordReset",
 			summary = "비밀번호 재설정 안내 요청 | ✅ 사용 가능",
 			description = """
 					비밀번호 재설정 안내 메일 발송을 요청한다. 인증 없이 호출한다.
@@ -80,7 +84,7 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "202", description = "계정 상태와 무관한 동일 안내 응답"),
-			@ApiResponse(responseCode = "400", description = "이메일 형식 오류")
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 이메일 형식 오류")
 	})
 	@PostMapping("/password-reset/requests")
 	public ResponseEntity<PasswordResetRequestResponse> requestPasswordReset(
@@ -93,6 +97,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "validatePasswordResetToken",
 			summary = "재설정 토큰 사전 검증 | ✅ 사용 가능",
 			description = """
 					비밀번호 재설정 메일 링크로 들어온 화면이 **입력폼을 그리기 전에** 호출한다. 인증 없이 호출한다.
@@ -120,9 +125,9 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "아직 사용할 수 있는 토큰"),
-			@ApiResponse(responseCode = "400", description = "유효하지 않은 토큰 또는 활성 상태가 아닌 계정"),
-			@ApiResponse(responseCode = "409", description = "이미 사용된 토큰"),
-			@ApiResponse(responseCode = "410", description = "만료된 토큰")
+			@ApiResponse(responseCode = "400", description = "RESET_TOKEN_INVALID 유효하지 않은 토큰 또는 활성 상태가 아닌 계정"),
+			@ApiResponse(responseCode = "409", description = "RESET_TOKEN_USED 이미 사용된 토큰"),
+			@ApiResponse(responseCode = "410", description = "RESET_TOKEN_EXPIRED 만료된 토큰")
 	})
 	@PostMapping("/password-reset/validations")
 	public ResponseEntity<PasswordResetValidationResponse> validatePasswordResetToken(
@@ -132,6 +137,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "confirmPasswordReset",
 			summary = "비밀번호 재설정 확정 | ✅ 사용 가능",
 			description = """
 					메일 링크의 1회용 토큰으로 비밀번호를 실제로 바꾼다. 인증 없이 호출한다.
@@ -158,11 +164,11 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "비밀번호 변경 완료"),
-			@ApiResponse(responseCode = "400", description = "유효하지 않은 토큰 또는 요청 형식 오류"),
-			@ApiResponse(responseCode = "409", description = "이미 사용된 토큰"),
-			@ApiResponse(responseCode = "410", description = "만료된 토큰"),
-			@ApiResponse(responseCode = "422", description = "비밀번호 정책 미충족 또는 현재 비밀번호와 동일"),
-			@ApiResponse(responseCode = "500", description = "변경 저장 실패 및 롤백")
+			@ApiResponse(responseCode = "400", description = "RESET_TOKEN_INVALID 유효하지 않은 토큰 · VALIDATION_FAILED 요청 형식 오류"),
+			@ApiResponse(responseCode = "409", description = "RESET_TOKEN_USED 이미 사용된 토큰"),
+			@ApiResponse(responseCode = "410", description = "RESET_TOKEN_EXPIRED 만료된 토큰"),
+			@ApiResponse(responseCode = "422", description = "WEAK_PASSWORD 비밀번호 정책 미충족 · SAME_AS_CURRENT 현재 비밀번호와 동일"),
+			@ApiResponse(responseCode = "500", description = "RESET_FAILED 변경 저장 실패. 비밀번호는 바뀌지 않았다")
 	})
 	@PostMapping("/password-reset/confirmations")
 	public ResponseEntity<PasswordResetConfirmationResponse> confirmPasswordReset(
@@ -174,6 +180,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "login",
 			summary = "통합 로그인 | ✅ 사용 가능",
 			description = """
 					슈퍼어드민·오퍼레이터·매니저·교육생이 **같은 화면에서** 로그인한다. 역할별 로그인 URL이 따로 없다.
@@ -185,23 +192,54 @@ public class AuthController {
 
 					**응답**
 					- memberId / email / name / role / organizationId (슈퍼어드민은 organizationId가 null)
-					- redirectPath: **로그인 후 이동할 경로를 서버가 정해서 내려준다.** 클라이언트가 역할을 보고
-					  분기하지 말고 이 값을 그대로 따라가면 된다 — 접근 범위 판단(담당 기수가 하나뿐인 매니저 등)이
-					  서버에만 있기 때문이다
+					- redirectPath: 로그인 후 이동할 경로 제안. 낼 수 있는 값은 넷뿐이다.
+					  | role | 값 |
+					  |---|---|
+					  | SUPER_ADMIN | `/admin/orgs` |
+					  | OPERATOR | 기관의 최신 기수가 있으면 `/cohorts/{기수명 URL 인코딩}`, 없으면 `/cohorts` |
+					  | MANAGER | 담당 최신 기수가 있으면 `/cohorts/{기수명 URL 인코딩}`, 없으면 `/cohorts` |
+					  | TRAINEE | `/home` |
+
+					  즉 `role` 외에 담기는 정보는 **최신 기수의 이름 하나**이며, 그것도 ID가 아니라 표시명이다.
+					  라우트 구조는 프론트 지식이므로 **이 값을 따르지 않고 `role`로 라우팅해도 된다** —
+					  기수명이 필요하면 기수 목록 API에서 ID와 함께 받는 편이 낫다.
 					- accessToken: 액세스 토큰(Authorization: Bearer)
-					- accessTokenExpiresIn: 만료까지 남은 초
+					- accessTokenExpiresIn: 만료까지 남은 시간 — **단위는 밀리초다**(1시간이면 `3600000`).
+					  `Date.now() + accessTokenExpiresIn`이 만료 시각이며, 만료 전 미리 재발급할 때 이 값을 쓴다
 
 					**리프레시 토큰은 응답 본문에 없다.** `Set-Cookie`로 HttpOnly 쿠키에 담겨 나가므로
 					자바스크립트가 읽을 수 없고, 재발급은 `POST /auth/refresh`가 쿠키를 자동으로 실어 보내 처리한다.
+					쿠키는 `SameSite=None; Secure`라 다른 사이트인 프론트에서 보내는 fetch에도 실린다 —
+					`credentials: 'include'`만 켜면 된다.
 
-					**오류 구분** — 이메일이 없는 경우와 비밀번호가 틀린 경우를 400으로 합쳐 응답한다(계정 존재 여부 비노출).
-					403은 계정·기관이 정지·비활성 상태이거나 허용되지 않은 Origin에서 온 요청이다.
+					**연속 실패는 잠시 지연된다.** 같은 **이메일+IP**로 5회 연속 실패하면 60초,
+					이후 실패마다 2배로 늘어 최대 15분까지 `429 LOGIN_TEMPORARILY_BLOCKED`가 나간다.
+					한 번 성공하면 카운터는 0으로 돌아간다. 계정을 잠그는 것이 아니므로 해제 절차는 없고,
+					다른 자리(다른 IP)에서의 로그인은 영향받지 않는다.
+
+					**오류 구분** — `code`로 분기한다. `message`는 사람이 읽는 문구라 바뀔 수 있다.
+
+					| code | 뜻 | 화면이 할 일 |
+					|---|---|---|
+					| `LOGIN_INVALID` | 이메일이 없거나 비밀번호가 틀림 | 문구만. **둘을 구분해 주지 않는다** — 구분하면 어떤 이메일이 가입돼 있는지 외부에서 확인할 수 있다 |
+					| `LOGIN_TEMPORARILY_BLOCKED` | 이메일+IP 5회 연속 실패 | 응답의 `retryAfter`(**초**)와 `Retry-After` 헤더만큼 버튼을 잠근다 |
+					| `LOGIN_ACCOUNT_INACTIVE` | 정지·퇴사 계정 | 문의 안내. 재시도해도 같다 |
+					| `LOGIN_ORG_SUSPENDED` | 계정은 정상이나 소속 기관이 정지 | 기관 문의 안내 |
+					| `LOGIN_ORIGIN_NOT_ALLOWED` | 허용되지 않은 Origin | 계정 문제가 아니다 |
+					| `LOGIN_NO_ORG_CONTEXT` | 기관 소속이 없는 비-슈퍼어드민 계정 | **계정 데이터 결함**이라 5xx다. 관리자 문의 |
+
+					**아직 활성화하지 않은 계정은 `LOGIN_INVALID`로 온다.** 그 계정은 비밀번호가 아예 없어
+					상태 검사에 도달하지 못한다. 구분해 주려면 비밀번호 검사 앞에서 상태를 봐야 하는데
+					그러면 계정 열거가 가능해지므로 <b>의도적으로 합쳤다.</b>
 					"""
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "로그인 성공 및 토큰 발급"),
-			@ApiResponse(responseCode = "400", description = "요청 형식 오류 또는 로그인 정보 불일치"),
-			@ApiResponse(responseCode = "403", description = "계정·기관 상태 또는 요청 Origin이 허용되지 않음")
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 요청 형식 오류 · LOGIN_INVALID 로그인 정보 불일치"),
+			@ApiResponse(responseCode = "403",
+					description = "LOGIN_ACCOUNT_INACTIVE 정지 계정 · LOGIN_ORG_SUSPENDED 기관 정지 · LOGIN_ORIGIN_NOT_ALLOWED 허용되지 않은 출처"),
+			@ApiResponse(responseCode = "429", description = "LOGIN_TEMPORARILY_BLOCKED 연속 실패로 일시 차단. retryAfter(초) 동봉"),
+			@ApiResponse(responseCode = "500", description = "LOGIN_NO_ORG_CONTEXT 기관 소속이 없는 계정")
 	})
 	@PostMapping("/login")
 	public ResponseEntity<LoginResponse> login(
@@ -226,6 +264,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "refresh",
 			summary = "액세스 토큰 재발급 | ✅ 사용 가능",
 			description = """
 					액세스 토큰이 만료됐을 때 새로 발급받는다. 만료된 액세스 토큰을 보낼 필요는 없다 —
@@ -233,11 +272,17 @@ public class AuthController {
 
 					**요청**
 					- refresh_token (쿠키, 필수): 로그인 시 발급된 HttpOnly 쿠키. 브라우저가 자동으로 실어 보내므로
-					  클라이언트가 직접 다룰 필요가 없다(`credentials: 'include'`만 켜면 된다)
+					  클라이언트가 직접 다룰 필요가 없다(`credentials: 'include'`만 켜면 된다).
+					  쿠키는 `SameSite=None; Secure`이므로 프론트가 백엔드와 다른 사이트여도 실린다
 					- X-Swagger-Client-Origin (헤더, 선택): Swagger UI 테스트 전용
 
 					**응답**
-					- accessToken / accessTokenExpiresIn
+					- accessToken
+					- accessTokenExpiresIn: 만료까지 남은 시간 — **단위는 밀리초다**(1시간이면 `3600000`)
+
+					**역할·이름은 주지 않는다.** 새로고침 후 세션을 복원할 때는 이 호출 뒤에
+					`GET /members/me`를 부른다 — 역할을 브라우저 저장소에 남기지 않아도 되고,
+					정지·역할 변경이 즉시 반영된다.
 
 					**401을 받으면 재시도하지 말고 로그인 화면으로 보내야 한다.** 쿠키가 없거나 만료·위조됐거나,
 					비밀번호 변경 등으로 세션이 폐기된 상태이므로 다시 호출해도 결과가 같다.
@@ -251,8 +296,12 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "액세스 토큰 재발급 성공"),
-			@ApiResponse(responseCode = "401", description = "리프레시 토큰 누락·만료·위조 또는 인증 정보 변경"),
-			@ApiResponse(responseCode = "403", description = "계정·기관 상태 또는 요청 Origin이 허용되지 않음")
+			@ApiResponse(responseCode = "401",
+					description = "REFRESH_TOKEN_INVALID 토큰 누락·만료·위조 · REFRESH_IDENTITY_CHANGED 역할·기관이 바뀌어 재로그인 필요"),
+			@ApiResponse(responseCode = "403",
+					description = "LOGIN_ACCOUNT_INACTIVE 정지 계정 · LOGIN_ORG_SUSPENDED 기관 정지 · LOGIN_ORIGIN_NOT_ALLOWED 허용되지 않은 출처"),
+			@ApiResponse(responseCode = "429", description = "LOGIN_TEMPORARILY_BLOCKED 일시 차단. retryAfter(초) 동봉"),
+			@ApiResponse(responseCode = "500", description = "LOGIN_NO_ORG_CONTEXT 기관 소속이 없는 계정")
 	})
 	@PostMapping("/refresh")
 	public ResponseEntity<RefreshTokenResponse> refresh(
@@ -270,6 +319,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "logout",
 			summary = "로그아웃 | ✅ 사용 가능",
 			description = """
 					서버에서 리프레시 토큰을 폐기하고 인증 쿠키를 만료시킨다.
@@ -293,7 +343,7 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "204", description = "로그아웃 처리 및 인증 쿠키 삭제"),
-			@ApiResponse(responseCode = "403", description = "요청 Origin이 허용되지 않음")
+			@ApiResponse(responseCode = "403", description = "LOGIN_ORIGIN_NOT_ALLOWED 허용되지 않은 요청 출처")
 	})
 	@PostMapping("/logout")
 	public ResponseEntity<Void> logout(
@@ -313,6 +363,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "resolveInvitation",
 			summary = "초대 토큰 해석 | ✅ 사용 가능",
 			description = """
 					초대 메일 링크를 열었을 때 **가장 먼저** 호출한다. 토큰이 아직 쓸 수 있는지 확인하고,
@@ -341,7 +392,7 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "현재 유효한 SUPER_ADMIN·OPERATOR·MANAGER·TRAINEE 초대 대상 해석 성공"),
-			@ApiResponse(responseCode = "400", description = "토큰 누락·위변조·만료·사용 완료·교체 또는 초대 상태가 SENT가 아님")
+			@ApiResponse(responseCode = "400", description = "INVITATION_INVALID 토큰 누락·위변조·사용 완료·교체 또는 초대 상태가 SENT가 아님")
 	})
 	@PostMapping("/invitations/resolve")
 	public ResponseEntity<InvitationResolveResponse> resolveInvitation(
@@ -351,6 +402,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "resendAccountInvitation",
 			summary = "초대 메일 재발송 | ✅ 사용 가능",
 			description = """
 					초대 링크가 만료됐거나 아직 활성화하지 않은 계정이 초대 메일을 다시 받는다. 인증 없이 호출한다.
@@ -377,7 +429,7 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "202", description = "계정 상태와 무관한 동일 안내 응답"),
-			@ApiResponse(responseCode = "400", description = "이메일 형식 오류")
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 이메일 형식 오류")
 	})
 	@PostMapping("/invitations/resend")
 	public ResponseEntity<InvitationResendResponse> resendInvitation(
@@ -390,6 +442,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "signupManager",
 			summary = "초대받은 오퍼레이터·매니저 가입 | ✅ 사용 가능",
 			description = """
 					초대받은 오퍼레이터 또는 매니저가 이름·비밀번호를 정해 계정을 활성화한다(AU-02).
@@ -419,8 +472,10 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "OPERATOR 또는 MANAGER 계정 활성화와 초대 ACCEPTED 전환 성공"),
-			@ApiResponse(responseCode = "400", description = "사용자 ID·비밀번호 확인·필수 동의·현재 초대 토큰 또는 대상 역할이 유효하지 않음"),
-			@ApiResponse(responseCode = "409", description = "동시 요청으로 계정·초대·토큰 상태가 먼저 변경됨")
+			@ApiResponse(responseCode = "400",
+					description = "INVITATION_INVALID 초대 토큰·대상 역할이 유효하지 않음 · PASSWORD_CONFIRMATION_MISMATCH 비밀번호 확인 불일치 · REQUIRED_CONSENT_MISSING 필수 동의 누락"),
+			@ApiResponse(responseCode = "409", description = "ACTIVATION_STATE_CHANGED 동시 요청으로 계정·초대·토큰 상태가 먼저 변경됨"),
+			@ApiResponse(responseCode = "422", description = "WEAK_PASSWORD 비밀번호 정책 미충족")
 	})
 	@PostMapping("/manager-signup")
 	public ResponseEntity<ActivateAccountResponse> signupManager(
@@ -439,6 +494,7 @@ public class AuthController {
 	}
 
 	@Operation(
+			operationId = "activateTrainee",
 			summary = "초대받은 교육생 계정 활성화 | ✅ 사용 가능",
 			description = """
 					초대받은 교육생이 비밀번호를 정해 계정을 활성화한다. 인증 없이 호출하며,
@@ -470,8 +526,10 @@ public class AuthController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "TRAINEE 계정·기수 소속 활성화와 초대 ACCEPTED 전환 성공"),
-			@ApiResponse(responseCode = "400", description = "사용자 ID·비밀번호 확인·필수 동의·현재 교육생 초대 토큰 또는 명단 범위가 유효하지 않음"),
-			@ApiResponse(responseCode = "409", description = "동시 요청으로 계정·기수 소속·초대·토큰 상태가 먼저 변경됨")
+			@ApiResponse(responseCode = "400",
+					description = "INVITATION_INVALID 교육생 초대 토큰·명단 범위가 유효하지 않음 · PASSWORD_CONFIRMATION_MISMATCH 비밀번호 확인 불일치 · REQUIRED_CONSENT_MISSING 필수 동의 누락"),
+			@ApiResponse(responseCode = "409", description = "ACTIVATION_STATE_CHANGED 동시 요청으로 계정·기수 소속·초대·토큰 상태가 먼저 변경됨"),
+			@ApiResponse(responseCode = "422", description = "WEAK_PASSWORD 비밀번호 정책 미충족")
 	})
 	@PostMapping("/trainee-activation")
 	public ResponseEntity<ActivateAccountResponse> activateTrainee(
@@ -498,11 +556,17 @@ public class AuthController {
 		return languageTag.isBlank() || "und".equals(languageTag) ? "ko-KR" : languageTag;
 	}
 
+	/**
+	 * <b>{@code getRemoteAddr()}를 그대로 쓰지 않는다.</b> 이 서비스는 프록시 뒤에 있어서 그 값은
+	 * 브라우저가 아니라 <b>프록시의 주소</b>이고, 프록시가 여러 대라 요청마다 값이 달라진다.
+	 * 그 값이 연속 실패 차단의 키로 들어가면서 <b>카운터가 흩어져 차단이 새어나갔다</b>
+	 * (4차 요청서 Q1). 재발급 토큰의 감사 기록에 남는 IP도 같은 이유로 프록시 주소였다 —
+	 * "어디서 로그인했나"를 남기려던 칼럼이 아무 정보도 담지 못하고 있었다.
+	 */
 	private TokenRequestMetadata requestMetadata(HttpServletRequest request) {
-		String ipAddress = request.getRemoteAddr();
 		String userAgent = request.getHeader(HttpHeaders.USER_AGENT);
 		return new TokenRequestMetadata(
-				ipAddress == null || ipAddress.isBlank() ? "0.0.0.0" : ipAddress,
+				clientIpResolver.resolve(request),
 				userAgent == null ? "" : userAgent
 		);
 	}

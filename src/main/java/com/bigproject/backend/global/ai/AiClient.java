@@ -45,12 +45,23 @@ public class AiClient {
 
 	public static final String TRACE_ID_HEADER = "x-trace-id";
 
-	private final RestClient restClient;
-	private final ObjectMapper objectMapper;
+	/**
+	 * 에러 본문 해석 전용. <b>컨테이너에서 주입받지 않는다.</b>
+	 *
+	 * <p>이 프로젝트에는 {@code ObjectMapper} 빈이 등록돼 있지 않다(지금까지 주입받는 코드가
+	 * 없어 드러나지 않았다). 주입을 선언하면 애플리케이션 기동 자체가 실패한다.
+	 *
+	 * <p>자체 인스턴스를 두는 것이 손해가 아닌 이유: 여기서 하는 일은 에러 봉투에서
+	 * {@code error}·{@code message}·{@code retryable} 세 값을 꺼내는 것뿐이라 매퍼 설정에
+	 * 좌우되지 않는다. 요청·응답 본문의 직렬화는 {@code RestClient}의 메시지 컨버터가
+	 * 따로 처리하므로 이 매퍼를 거치지 않는다.
+	 */
+	private static final ObjectMapper ERROR_BODY_MAPPER = new ObjectMapper();
 
-	public AiClient(@Qualifier(AiClientConfig.AI_REST_CLIENT) RestClient restClient, ObjectMapper objectMapper) {
+	private final RestClient restClient;
+
+	public AiClient(@Qualifier(AiClientConfig.AI_REST_CLIENT) RestClient restClient) {
 		this.restClient = restClient;
-		this.objectMapper = objectMapper;
 	}
 
 	/**
@@ -126,7 +137,7 @@ public class AiClient {
 		Boolean retryable = null;
 
 		try {
-			JsonNode node = objectMapper.readTree(rawBody);
+			JsonNode node = ERROR_BODY_MAPPER.readTree(rawBody);
 			if (node.hasNonNull("failureCode")) {
 				failureCode = node.get("failureCode").asText();
 			} else if (node.hasNonNull("error")) {

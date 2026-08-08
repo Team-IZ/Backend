@@ -15,7 +15,8 @@ public record InviteManagerRequest(
 						담당할 기수 ID. 매니저 초대에서는 필수입니다. \
 						반 배정은 초대 시점에 하지 않으며, 가입 후 반 편성 화면에서 따로 배정합니다.""",
 				type = "string",
-				example = "UUID"
+				example = "UUID",
+				nullable = true
 		)
 		UUID cohortId
 ) {
