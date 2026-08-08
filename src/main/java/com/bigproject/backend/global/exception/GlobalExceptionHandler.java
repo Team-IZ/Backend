@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -44,6 +45,32 @@ public class GlobalExceptionHandler {
 				VALIDATION_FAILED,
 				"요청 값이 올바르지 않습니다.",
 				fieldErrors
+		));
+	}
+
+	/**
+	 * 본문 JSON을 DTO로 만들지 못했다. 형식이 깨졌거나, 허용값이 아닌 enum 문자열이 왔거나,
+	 * 필드 타입이 맞지 않는 경우다.
+	 *
+	 * <p>잡지 않으면 스프링 기본 처리로 넘어가 <b>이 API만 응답 모양이 달라진다</b> — 다른 400은
+	 * {@code code}·{@code fieldErrors}를 담은 ErrorResponse인데 여기만 {timestamp, status, error, path}가
+	 * 나가서 화면이 분기해야 한다. 허용값을 타입으로 좁힌 DTO(예: {@code TraineeStatusUpdate})는
+	 * 잘못된 값이 이 경로로 오므로 형식을 맞춰 둔다.
+	 *
+	 * <p>파싱 실패 원문은 싣지 않는다. 역직렬화 예외 메시지에는 클래스 경로와 입력값이 그대로 들어 있다.
+	 */
+	@ExceptionHandler(HttpMessageNotReadableException.class)
+	public ResponseEntity<ErrorResponse> handleUnreadableBody(
+			HttpMessageNotReadableException exception,
+			HttpServletRequest request
+	) {
+		log.warn("요청 본문을 읽지 못했습니다: method={}, path={}",
+				request.getMethod(), request.getRequestURI(), exception);
+		return ResponseEntity.badRequest().body(ErrorResponse.of(
+				HttpStatus.BAD_REQUEST,
+				VALIDATION_FAILED,
+				"요청 본문을 읽을 수 없습니다. 형식과 허용값을 확인해 주세요.",
+				List.of()
 		));
 	}
 
