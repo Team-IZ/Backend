@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.projectexecution.domain;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,7 +26,20 @@ public interface ClassProgressQueryRepository {
 
 	List<ClassProgressRow> findClassProgress(UUID assessmentRoundId, UUID organizationId);
 
+	/**
+	 * 반별 합산이 아니라 회차 전체를 대상으로 직접 집계한다.
+	 * classes[]는 화면 필터·정렬에 따라 달라질 수 있어 카드 요약은 이 값을 따로 쓴다.
+	 */
+	RoundSummaryRow findRoundSummary(UUID assessmentRoundId, UUID organizationId);
+
 	List<ConceptMatchRow> findConceptMatches(UUID assessmentRoundId, UUID organizationId);
+
+	/**
+	 * 팀별 최신 제출·최신 분석 시도가 FAILED인 팀만 반환한다.
+	 * 대표자는 submission.submitted_by이며, 재시도가 있을 수 있어 팀·회차별 최신 제출과
+	 * 그 제출에 매인 최신 analysis_job만 본다 — assessment_round_attendance 뷰와 같은 선택 기준이다.
+	 */
+	List<FailedTeamRow> findFailedTeams(UUID assessmentRoundId, UUID organizationId);
 
 	record RoundScope(
 			UUID assessmentRoundId,
@@ -33,7 +47,11 @@ public interface ClassProgressQueryRepository {
 			String projectName,
 			int roundNo,
 			String roundName,
-			UUID organizationId
+			UUID organizationId,
+			Instant submissionDueAt,
+			String reportPublishMode,
+			boolean reportPublished,
+			int totalRoundCount
 	) {
 	}
 
@@ -58,6 +76,30 @@ public interface ClassProgressQueryRepository {
 			long sessionIncompleteCount,
 			long invalidAttemptCount,
 			List<String> managerNames
+	) {
+	}
+
+	/**
+	 * 회차 전체 합계. analysisTargetCount는 submittedCount와, assessmentTargetCount는
+	 * analysisSucceededCount와 값이 같다 — 단계별 분모를 이름으로도 명확히 드러내기 위해 따로 둔다.
+	 */
+	record RoundSummaryRow(
+			long targetTraineeCount,
+			long submittedCount,
+			long analysisTargetCount,
+			long analysisSucceededCount,
+			long assessmentTargetCount,
+			long assessedCount
+	) {
+	}
+
+	record FailedTeamRow(
+			UUID classId,
+			UUID teamId,
+			String teamName,
+			UUID representativeUserId,
+			String representativeName,
+			String failureReason
 	) {
 	}
 

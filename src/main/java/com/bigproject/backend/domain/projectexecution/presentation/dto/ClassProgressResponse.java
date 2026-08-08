@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.projectexecution.presentation.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -21,11 +22,44 @@ public record ClassProgressResponse(
 		@Schema(description = "회차 번호이며 프로젝트 안에서만 유일합니다.", example = "1")
 		int roundNo,
 		String roundName,
+		@Schema(description = "이 프로젝트에 속한 전체 회차 수입니다. 화면의 'N차 / M회' 표기에 씁니다.", example = "6")
+		int totalRoundCount,
+		@Schema(description = "제출 마감 시각입니다.")
+		Instant submissionDueAt,
+		@Schema(description = "리포트 발행 방식입니다. 현재는 마감 후 전 반을 한 번에 발행하는 ROUND_BATCH만 존재합니다.", example = "ROUND_BATCH")
+		String reportPublishMode,
+		@Schema(description = "이 회차 리포트가 발행됐는지 여부입니다. false면 화면에 '미발행'을 표시합니다.")
+		boolean reportPublished,
+		@Schema(description = "회차 전체 진행 현황 합계입니다. classes[]를 합산한 것이 아니라 회차 단위로 직접 집계합니다.")
+		Summary summary,
 		@Schema(description = "반 행 목록이며 반 이름 오름차순입니다.")
 		List<ClassProgress> classes,
 		@Schema(description = "검증 개념별 코드 매칭 현황입니다.")
 		List<ConceptMatch> conceptMatches
 ) {
+
+	@Schema(description = """
+			회차 전체 합계.
+
+			analysisTargetCount는 submittedCount와, assessmentTargetCount는 analysisSucceededCount와
+			값이 같습니다 — 단계별 분모를 필드 이름으로도 드러내기 위해 따로 둡니다.
+			제출률은 submittedCount / targetTraineeCount, 응시율은 assessedCount / analysisTargetCount 입니다.
+			""")
+	public record Summary(
+			@Schema(description = "이번 회차 수행 대상 교육생 수(기수 총원)이며 제출률의 분모입니다.", example = "250")
+			long targetTraineeCount,
+			@Schema(description = "제출을 마친 교육생 수", example = "231")
+			long submittedCount,
+			@Schema(description = "분석 대상 교육생 수이며 submittedCount와 같습니다.", example = "231")
+			long analysisTargetCount,
+			@Schema(description = "분석이 성공한 교육생 수", example = "223")
+			long analysisSucceededCount,
+			@Schema(description = "응시 대상 교육생 수이며 analysisSucceededCount와 같습니다.", example = "223")
+			long assessmentTargetCount,
+			@Schema(description = "응시(INITIAL 완료)를 마친 교육생 수", example = "198")
+			long assessedCount
+	) {
+	}
 
 	@Schema(description = """
 			반 한 행.
@@ -68,7 +102,29 @@ public record ClassProgressResponse(
 					활성 담당 매니저 이름 목록입니다. 한 반에 여러 명이 배정될 수 있습니다.
 					비어 있으면 화면의 '담당 없음'이며 대시보드의 미배정 경보와 같은 조건입니다.
 					""")
-			List<String> managerNames
+			List<String> managerNames,
+			@Schema(description = """
+					분석이 실패한 팀 목록입니다. 크기는 analysisFailedCount와 같지 않을 수 있습니다 —
+					analysisFailedCount는 인원 기준이고 이 목록은 팀 기준입니다(한 팀에 여러 팀원).
+					""")
+			List<FailedTeam> failedTeams
+	) {
+	}
+
+	@Schema(description = """
+			분석이 실패한 팀 한 건.
+
+			대표자는 그 팀·회차의 최신 제출(submission.submitted_by)을 실행한 사용자이며,
+			실패 판정은 그 제출에 매인 최신 분석 시도(analysis_job) 기준입니다.
+			""")
+	public record FailedTeam(
+			UUID teamId,
+			String teamName,
+			UUID representativeUserId,
+			@Schema(description = "대표자(제출을 실행한 사용자) 이름")
+			String representativeName,
+			@Schema(description = "analysis_job.failure_reason 그대로입니다. null일 수 있습니다.")
+			String failureReason
 	) {
 	}
 

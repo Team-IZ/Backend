@@ -44,7 +44,10 @@ class ClassProgressServiceTest {
 				"ACTIVE", true, null, Role.OPERATOR, "ACTIVE")));
 		when(classProgressQueryRepository.findRound(projectId, 1)).thenReturn(Optional.of(
 				new ClassProgressQueryRepository.RoundScope(
-						roundId, projectId, "미프 3차", 1, "RAG 파이프라인", organizationId)));
+						roundId, projectId, "미프 3차", 1, "RAG 파이프라인", organizationId,
+						java.time.Instant.parse("2026-08-06T09:00:00Z"), "ROUND_BATCH", false, 6)));
+		when(classProgressQueryRepository.findRoundSummary(roundId, organizationId)).thenReturn(
+				new ClassProgressQueryRepository.RoundSummaryRow(250, 231, 231, 223, 223, 198));
 	}
 
 	@Test
@@ -109,10 +112,71 @@ class ClassProgressServiceTest {
 	}
 
 	@Test
+	void carriesRoundScheduleAndReportPublishState() {
+		givenClass(25, 24, 23, 1, 0, 0, 20);
+
+		ClassProgressResponse response = service.findClassProgress(projectId, 1, ACTOR_EMAIL);
+
+		assertThat(response.totalRoundCount()).isEqualTo(6);
+		assertThat(response.submissionDueAt()).isEqualTo(java.time.Instant.parse("2026-08-06T09:00:00Z"));
+		assertThat(response.reportPublishMode()).isEqualTo("ROUND_BATCH");
+		assertThat(response.reportPublished()).isFalse();
+	}
+
+	@Test
+	void carriesRoundWideSummaryIndependentlyOfClasses() {
+		givenClass(25, 24, 23, 1, 0, 0, 20);
+
+		ClassProgressResponse.Summary summary =
+				service.findClassProgress(projectId, 1, ACTOR_EMAIL).summary();
+
+		assertThat(summary.targetTraineeCount()).isEqualTo(250);
+		assertThat(summary.submittedCount()).isEqualTo(231);
+		assertThat(summary.analysisTargetCount()).isEqualTo(summary.submittedCount());
+		assertThat(summary.analysisSucceededCount()).isEqualTo(223);
+		assertThat(summary.assessmentTargetCount()).isEqualTo(summary.analysisSucceededCount());
+		assertThat(summary.assessedCount()).isEqualTo(198);
+	}
+
+	@Test
+	void attachesFailedTeamsToTheirOwnClassAndLeavesOthersEmpty() {
+		UUID otherClassId = UUID.randomUUID();
+		UUID representativeUserId = UUID.randomUUID();
+		UUID failedTeamId = UUID.randomUUID();
+		when(classProgressQueryRepository.findClassProgress(roundId, organizationId)).thenReturn(List.of(
+				new ClassProgressQueryRepository.ClassProgressRow(
+						classId, "B반", 25, 24, 23, 1, 0, 0, 20, 2, 1, 0, List.of("이도윤")),
+				new ClassProgressQueryRepository.ClassProgressRow(
+						otherClassId, "C반", 25, 25, 25, 0, 0, 0, 25, 0, 0, 0, List.of("박서준"))
+		));
+		when(classProgressQueryRepository.findFailedTeams(roundId, organizationId)).thenReturn(List.of(
+				new ClassProgressQueryRepository.FailedTeamRow(
+						classId, failedTeamId, "3팀", representativeUserId, "김민준", "REPOSITORY_ACCESS_DENIED")
+		));
+
+		List<ClassProgressResponse.ClassProgress> rows =
+				service.findClassProgress(projectId, 1, ACTOR_EMAIL).classes();
+		ClassProgressResponse.ClassProgress failedClassRow =
+				rows.stream().filter(row -> row.classId().equals(classId)).findFirst().orElseThrow();
+		ClassProgressResponse.ClassProgress cleanClassRow =
+				rows.stream().filter(row -> row.classId().equals(otherClassId)).findFirst().orElseThrow();
+
+		assertThat(failedClassRow.failedTeams()).hasSize(1);
+		ClassProgressResponse.FailedTeam failedTeam = failedClassRow.failedTeams().get(0);
+		assertThat(failedTeam.teamId()).isEqualTo(failedTeamId);
+		assertThat(failedTeam.teamName()).isEqualTo("3팀");
+		assertThat(failedTeam.representativeUserId()).isEqualTo(representativeUserId);
+		assertThat(failedTeam.representativeName()).isEqualTo("김민준");
+		assertThat(failedTeam.failureReason()).isEqualTo("REPOSITORY_ACCESS_DENIED");
+		assertThat(cleanClassRow.failedTeams()).isEmpty();
+	}
+
+	@Test
 	void rejectsProjectOwnedByAnotherOrganization() {
 		when(classProgressQueryRepository.findRound(projectId, 1)).thenReturn(Optional.of(
 				new ClassProgressQueryRepository.RoundScope(
-						roundId, projectId, "미프 3차", 1, "RAG 파이프라인", UUID.randomUUID())));
+						roundId, projectId, "미프 3차", 1, "RAG 파이프라인", UUID.randomUUID(),
+						java.time.Instant.parse("2026-08-06T09:00:00Z"), "ROUND_BATCH", false, 6)));
 
 		assertThatThrownBy(() -> service.findClassProgress(projectId, 1, ACTOR_EMAIL))
 				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->

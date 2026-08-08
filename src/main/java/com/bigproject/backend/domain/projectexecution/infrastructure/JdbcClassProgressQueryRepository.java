@@ -8,6 +8,8 @@ import org.springframework.stereotype.Repository;
 import java.sql.Array;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -29,7 +31,22 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 					p.name AS project_name,
 					r.round_no,
 					r.round_name,
-					p.org_id
+					p.org_id,
+					r.submission_due_at,
+					r.report_publish_mode,
+					EXISTS (
+						SELECT 1
+						FROM report rpt
+						WHERE rpt.assessment_round_id = r.assessment_round_id
+							AND rpt.lifecycle_status = 'ACTIVE'
+							AND rpt.published_at IS NOT NULL
+					) AS report_published,
+					(
+						SELECT COUNT(*)
+						FROM project_assessment_round r2
+						WHERE r2.project_id = r.project_id
+							AND r2.deleted_at IS NULL
+					) AS total_round_count
 				FROM project_assessment_round r
 				JOIN project p ON p.project_id = r.project_id AND p.deleted_at IS NULL
 				WHERE r.project_id = ?
@@ -42,7 +59,11 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 						rs.getString("project_name"),
 						rs.getInt("round_no"),
 						rs.getString("round_name"),
-						rs.getObject("org_id", UUID.class)
+						rs.getObject("org_id", UUID.class),
+						instant(rs, "submission_due_at"),
+						rs.getString("report_publish_mode"),
+						rs.getBoolean("report_published"),
+						rs.getInt("total_round_count")
 				),
 				projectId,
 				roundNo
@@ -109,6 +130,40 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 		);
 	}
 
+	/**
+	 * 반별 GROUP BY 없이 회차 전체를 바로 집계한다. classes[] 합산 값과 항상 같아야 하지만
+	 * 화면 카드가 classes[]의 필터·정렬에 얽매이지 않도록 별도 질의로 낸다.
+	 */
+	@Override
+	public RoundSummaryRow findRoundSummary(UUID assessmentRoundId, UUID organizationId) {
+		return jdbcTemplate.queryForObject(
+				"""
+				SELECT
+					COUNT(*) AS target_trainee_count,
+					COUNT(*) FILTER (WHERE a.source_submission_id IS NOT NULL) AS submitted_count,
+					COUNT(*) FILTER (WHERE a.analysis_status = 'SUCCEEDED') AS analysis_succeeded_count,
+					COUNT(*) FILTER (WHERE a.completion_status = 'COMPLETED') AS assessed_count
+				FROM assessment_round_attendance a
+				WHERE a.assessment_round_id = ?
+					AND a.org_id = ?
+				""",
+				(rs, rowNum) -> {
+					long submittedCount = rs.getLong("submitted_count");
+					long analysisSucceededCount = rs.getLong("analysis_succeeded_count");
+					return new RoundSummaryRow(
+							rs.getLong("target_trainee_count"),
+							submittedCount,
+							submittedCount,
+							analysisSucceededCount,
+							analysisSucceededCount,
+							rs.getLong("assessed_count")
+					);
+				},
+				assessmentRoundId,
+				organizationId
+		);
+	}
+
 	@Override
 	public List<ConceptMatchRow> findConceptMatches(UUID assessmentRoundId, UUID organizationId) {
 		return jdbcTemplate.query(
@@ -158,11 +213,65 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 		);
 	}
 
+	/**
+	 * 팀·회차별 최신 제출(is_current DESC, submitted_at DESC)과 그 제출에 매인 최신 분석 시도
+	 * (execution_no DESC, started_at DESC)만 본다 — assessment_round_attendance 뷰가 analysis_status를
+	 * 고르는 것과 같은 기준이라 classes[].analysisFailedCount와 팀 목록이 어긋나지 않는다.
+	 */
+	@Override
+	public List<FailedTeamRow> findFailedTeams(UUID assessmentRoundId, UUID organizationId) {
+		return jdbcTemplate.query(
+				"""
+				SELECT
+					t.class_id,
+					t.team_id,
+					t.name AS team_name,
+					u.user_id AS representative_user_id,
+					u.name AS representative_name,
+					aj.failure_reason
+				FROM team t
+				JOIN LATERAL (
+					SELECT x.* FROM submission x
+					WHERE x.team_id = t.team_id AND x.assessment_round_id = ?
+					ORDER BY x.is_current DESC, x.submitted_at DESC LIMIT 1
+				) sub ON TRUE
+				JOIN LATERAL (
+					SELECT x.* FROM analysis_job x
+					WHERE x.assessment_round_id = ? AND x.team_id = t.team_id
+						AND x.submission_id = sub.submission_id
+					ORDER BY x.execution_no DESC, x.started_at DESC NULLS LAST, x.job_id DESC LIMIT 1
+				) aj ON TRUE
+				JOIN app_user u ON u.user_id = sub.submitted_by
+				WHERE t.org_id = ?
+					AND t.deleted_at IS NULL
+					AND aj.status = 'FAILED'
+				ORDER BY t.name
+				""",
+				(rs, rowNum) -> new FailedTeamRow(
+						rs.getObject("class_id", UUID.class),
+						rs.getObject("team_id", UUID.class),
+						rs.getString("team_name"),
+						rs.getObject("representative_user_id", UUID.class),
+						rs.getString("representative_name"),
+						rs.getString("failure_reason")
+				),
+				assessmentRoundId,
+				assessmentRoundId,
+				organizationId
+		);
+	}
+
 	private List<String> textArray(ResultSet rs, String column) throws SQLException {
 		Array array = rs.getArray(column);
 		if (array == null) {
 			return List.of();
 		}
 		return Arrays.stream((String[]) array.getArray()).filter(java.util.Objects::nonNull).toList();
+	}
+
+	/** TIMESTAMPTZ → Instant. null 컬럼을 0 epoch로 만들지 않으려면 getTimestamp를 거쳐야 한다. */
+	private static Instant instant(ResultSet rs, String column) throws SQLException {
+		Timestamp timestamp = rs.getTimestamp(column);
+		return timestamp == null ? null : timestamp.toInstant();
 	}
 }

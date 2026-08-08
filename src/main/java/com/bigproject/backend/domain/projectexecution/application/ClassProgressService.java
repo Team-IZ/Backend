@@ -11,7 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 프로젝트 상세 '현황' 화면.
@@ -38,6 +40,31 @@ public class ClassProgressService {
 			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "다른 기관의 프로젝트는 조회할 수 없습니다.");
 		}
 
+		ClassProgressQueryRepository.RoundSummaryRow summaryRow = classProgressQueryRepository
+				.findRoundSummary(round.assessmentRoundId(), round.organizationId());
+		ClassProgressResponse.Summary summary = new ClassProgressResponse.Summary(
+				summaryRow.targetTraineeCount(),
+				summaryRow.submittedCount(),
+				summaryRow.analysisTargetCount(),
+				summaryRow.analysisSucceededCount(),
+				summaryRow.assessmentTargetCount(),
+				summaryRow.assessedCount()
+		);
+
+		Map<UUID, List<ClassProgressResponse.FailedTeam>> failedTeamsByClass = classProgressQueryRepository
+				.findFailedTeams(round.assessmentRoundId(), round.organizationId())
+				.stream()
+				.collect(Collectors.groupingBy(
+						ClassProgressQueryRepository.FailedTeamRow::classId,
+						Collectors.mapping(row -> new ClassProgressResponse.FailedTeam(
+								row.teamId(),
+								row.teamName(),
+								row.representativeUserId(),
+								row.representativeName(),
+								row.failureReason()
+						), Collectors.toList())
+				));
+
 		List<ClassProgressResponse.ClassProgress> classes = classProgressQueryRepository
 				.findClassProgress(round.assessmentRoundId(), round.organizationId())
 				.stream()
@@ -54,7 +81,8 @@ public class ClassProgressService {
 						row.notAttendedCount(),
 						row.sessionIncompleteCount(),
 						row.invalidAttemptCount(),
-						row.managerNames()
+						row.managerNames(),
+						failedTeamsByClass.getOrDefault(row.classId(), List.of())
 				))
 				.toList();
 
@@ -76,6 +104,11 @@ public class ClassProgressService {
 				round.assessmentRoundId(),
 				round.roundNo(),
 				round.roundName(),
+				round.totalRoundCount(),
+				round.submissionDueAt(),
+				round.reportPublishMode(),
+				round.reportPublished(),
+				summary,
 				classes,
 				conceptMatches
 		);
