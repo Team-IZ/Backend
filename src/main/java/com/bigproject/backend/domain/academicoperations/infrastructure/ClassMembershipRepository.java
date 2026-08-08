@@ -13,6 +13,9 @@ public interface ClassMembershipRepository extends JpaRepository<ClassMembership
 	// 주어진 cohort_member들의 현재 활성(미해제) 배정 조회. 반을 새로 배정하기 전에 기존 배정을 해제하는 데 사용
 	List<ClassMembership> findByCohortMemberIdInAndOrgIdAndUnassignedAtIsNull(List<UUID> cohortMemberIds, UUID orgId);
 
+	// GET /members/me/enrollments — cohort_member 한 명의 현재 반 배정(있으면 1건)
+	java.util.Optional<ClassMembership> findByCohortMemberIdAndOrgIdAndUnassignedAtIsNull(UUID cohortMemberId, UUID orgId);
+
 	// 여러 반의 활성 배정 인원수를 반 ID별로 한 번에 집계 (목록 조회에서 반마다 따로 COUNT 쿼리를 날리지 않도록)
 	@Query("""
 			SELECT cm.classId AS classId, COUNT(cm) AS count

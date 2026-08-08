@@ -23,4 +23,6 @@ public interface CurriculumAnalysisRepository extends JpaRepository<CurriculumAn
     Optional<CurriculumAnalysis> findFirstByVersionIdOrderByRequestedAtDesc(UUID versionId);
 
     Optional<CurriculumAnalysis> findByVersionIdAndIdempotencyKey(UUID versionId, UUID idempotencyKey);
+
+    long countByVersionId(java.util.UUID versionId);
 }

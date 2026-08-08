@@ -7,6 +7,8 @@ import com.bigproject.backend.domain.curriculum.presentation.dto.SectionResponse
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -33,13 +35,32 @@ public class CurriculumMaterialController {
     private final CurrentUserResolver currentUserResolver;
 
     @Operation(
-            summary = "교안 섹션·개념 조회 | ✅ 사용 가능",
+            summary = "교안 섹션·개념 조회",
             description = """
-                    materialId(교안 자체의 고정 식별자)를 받아 그 교안의 최신 버전으로 해석한 뒤,
-                    그 버전의 최근 성공한 분석이 만든 섹션 전체를 하위 항목(★ 검증 개념 표시 포함)까지
-                    트리로 내려준다.
-                    """
+					materialId(교안 자체의 고정 식별자)를 받아 그 교안의 최신 버전으로 해석한 뒤,
+					그 버전의 최근 성공한 분석이 만든 섹션 전체를 하위 항목(★ 검증 개념 표시 포함)까지
+					트리로 내려준다.
+
+					**요청**
+					- materialId (경로): 교안 ID(버전이 바뀌어도 유지되는 고정 식별자)
+
+					**응답 (200)**
+					- sections[].sectionId / title / pageStart / pageEnd: 섹션 기본 정보
+					- sections[].items[]: 섹션 안 항목(가르친 것) 목록
+					  - mappingId / extractedName: 항목 ID / 이름
+					  - description: 정의문. definitionMissing=true면 null
+					  - definitionMissing: 정의문 미추출 여부
+					  - usedAsVerificationConcept: ★ 표시(검증개념으로 확정된 적 있는지)
+					  - usedRoundLabels: 검증개념으로 쓰인 회차 라벨 목록
+
+					⚠ 이 교안의 최신 버전에 "성공한 분석"이 한 번도 없으면 404를 반환한다.
+					"""
     )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "섹션 조회 성공"),
+            @ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "교안을 찾을 수 없거나, 분석 완료된 버전이 없음"),
+    })
     @GetMapping("/sections")
     public ResponseEntity<List<SectionResponse>> findSections(
             @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId

@@ -13,7 +13,7 @@ import java.util.UUID;
  *
  * <pre>
  * 채점        고정 · claude-x         ← 전 기관 공통. 바꾸면 재캘리브레이션
- * 질문 생성   정확도 우선 / 균형 / 비용 우선   3티어 ↔ 모델 매핑
+ * 코드 세션   정확도 우선 / 균형 / 비용 우선   3티어 ↔ 모델 매핑
  * 단가        모델별 입력·출력 토큰 단가
  * </pre>
  */
@@ -46,15 +46,15 @@ public record PlatformModelSettingResponse(
 
 			Instant effectiveFrom,
 
-			@Schema(description = "변경 사유")
+			@Schema(description = "변경 사유", nullable = true)
 			String changeReason,
 
 			@Schema(description = """
 					현재 결과 비교의 기준이 되는 캘리브레이션 버전. 재캘리브레이션이 진행 중이면
-					activeCalibration은 이전 버전이고 runningCalibration에 진행 중 버전이 담긴다.""")
+					activeCalibration은 이전 버전이고 runningCalibration에 진행 중 버전이 담긴다.""", nullable = true)
 			CalibrationSummary activeCalibration,
 
-			@Schema(description = "진행 중인 재캘리브레이션. 없으면 null")
+			@Schema(description = "진행 중인 재캘리브레이션. 없으면 null", nullable = true)
 			CalibrationSummary runningCalibration
 	) {
 	}
@@ -63,11 +63,10 @@ public record PlatformModelSettingResponse(
 	public record TierMapping(
 			UUID tierPolicyId,
 
-			@Schema(description = "적용 기능. QUESTION_GENERATION(질문 생성) / SUMMARY_DRAFT(요약)",
-					example = "QUESTION_GENERATION")
+			@Schema(description = "적용 기능. v07 기준 티어 선택 대상은 CODE_SESSION(코드 세션) 하나뿐이다.",
+					example = "CODE_SESSION")
 			String featureCode,
 
-			@Schema(description = "티어. ACCURACY_FIRST(정확도 우선) / BALANCED(균형) / COST_FIRST(비용 우선)")
 			AiTier tierCode,
 
 			UUID modelId,
@@ -88,13 +87,13 @@ public record PlatformModelSettingResponse(
 			@Schema(description = "모델 사용 가능 상태. ACTIVE / INACTIVE")
 			String status,
 
-			@Schema(description = "100만 토큰당 입력 단가. 미설정이면 null", example = "5.000000")
+			@Schema(description = "100만 토큰당 입력 단가. 미설정이면 null", example = "5.000000", nullable = true)
 			BigDecimal inputPricePerMillionTokens,
 
-			@Schema(description = "100만 토큰당 출력 단가. 미설정이면 null", example = "25.000000")
+			@Schema(description = "100만 토큰당 출력 단가. 미설정이면 null", example = "25.000000", nullable = true)
 			BigDecimal outputPricePerMillionTokens,
 
-			@Schema(description = "100만 토큰당 캐시 입력 단가. 미설정이면 null")
+			@Schema(description = "100만 토큰당 캐시 입력 단가. 미설정이면 null", nullable = true)
 			BigDecimal cachedInputPricePerMillionTokens,
 
 			@Schema(description = "단가 통화. 플랫폼 공통 USD", example = "USD")
@@ -106,7 +105,10 @@ public record PlatformModelSettingResponse(
 					(목업: "0으로 합산하면 청구액이 실제보다 작아 보인다").""")
 			boolean pricingMissing,
 
+			@Schema(description = "단가 적용 시작 시각. 단가 미설정이면 null", nullable = true)
 			Instant priceEffectiveFrom,
+
+			@Schema(description = "단가 최종 수정 시각. 단가 미설정이면 null", nullable = true)
 			Instant priceUpdatedAt
 	) {
 	}
@@ -121,10 +123,13 @@ public record PlatformModelSettingResponse(
 			@Schema(description = "PENDING / RUNNING / ACTIVE / FAILED / SUPERSEDED")
 			String status,
 
+			@Schema(description = "재캘리브레이션 시작 시각. PENDING이면 null", nullable = true)
 			Instant startedAt,
+
+			@Schema(description = "재캘리브레이션 완료 시각. 끝나지 않았으면 null", nullable = true)
 			Instant completedAt,
 
-			@Schema(description = "기관별 진행 현황. 목업 확인 모달의 `전 기관 재캘리브레이션` 진행률에 쓴다.")
+			@Schema(description = "기관별 진행 현황. 목업 확인 모달의 `전 기관 재캘리브레이션` 진행률에 쓴다.", nullable = true)
 			CalibrationProgress progress
 	) {
 	}
@@ -137,7 +142,7 @@ public record PlatformModelSettingResponse(
 			int succeeded,
 			int failed,
 
-			@Schema(description = "완료율(0~1). 대상 기관이 0이면 null", example = "0.75")
+			@Schema(description = "완료율(0~1). 대상 기관이 0이면 null", example = "0.75", nullable = true)
 			BigDecimal completionRate
 	) {
 	}

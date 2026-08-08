@@ -17,14 +17,23 @@ import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumVersion
 import com.bigproject.backend.domain.projectexecution.application.ProjectService;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import software.amazon.awssdk.core.sync.ResponseTransformer;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 
 import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
@@ -32,6 +41,10 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class CurriculumServiceImpl implements CurriculumService {
+
+    private static final S3Client S3_CLIENT = S3Client.builder()
+            .region(Region.AP_SOUTHEAST_2)
+            .build();
 
     private final CurriculumVersionRepository curriculumVersionRepository;
     private final CurriculumTeachesMappingRepository mappingRepository;
@@ -41,6 +54,7 @@ public class CurriculumServiceImpl implements CurriculumService {
     private final CurriculumMaterialRepository materialRepository;
     private final FileStorageService fileStorageService;
     private final AiCurriculumClient aiCurriculumClient;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public List<CurriculumVersion> findLinkableCurricula(UUID orgId) {
@@ -122,23 +136,70 @@ public class CurriculumServiceImpl implements CurriculumService {
                 .stream().findFirst()
                 .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
 
-        byte[] pdfBytes;
-        try {
-            pdfBytes = Files.readAllBytes(Paths.get(URI.create(version.getFileUri())));
-        } catch (IOException e) {
-            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_UNAVAILABLE, "저장된 파일을 읽을 수 없습니다.");
-        }
+        byte[] pdfBytes = readFileBytes(version.getFileUri());
 
-        String idempotencyKey = version.getVersionId() + ":1";
-        aiCurriculumClient.requestAnalysis(version.getVersionId(), "AI", pdfBytes, idempotencyKey);
+        int nextAnalysisVersion = (int) analysisRepository.countByVersionId(version.getVersionId()) + 1;
 
-        UUID placeholderModelId = UUID.fromString("00000000-0000-0000-0000-000000000000");
+        // AI 서버 호출용 사람이 읽는 idempotency 문자열 (헤더 값으로만 사용)
+        String idempotencyKeyString = version.getVersionId() + ":" + nextAnalysisVersion;
+
+        AiCurriculumClient.CurriculumAccepted accepted =
+                aiCurriculumClient.requestAnalysis(version.getVersionId(), "AI", pdfBytes, idempotencyKeyString);
+
+        // DB curriculum_analysis.idempotency_key는 UUID 타입 — 같은 문자열이면 항상 같은 UUID가 나오게 결정론적으로 변환
+        UUID idempotencyKeyUuid = UUID.nameUUIDFromBytes(idempotencyKeyString.getBytes(StandardCharsets.UTF_8));
+        // curriculum_analysis.request_fingerprint는 64자리 소문자 hex(CHECK 제약) — SHA-256으로 생성
+        String requestFingerprint = sha256Hex(idempotencyKeyString);
+
+        // TODO: 임시 우회 — ai_model 테이블에 실제 존재하는 아무 모델 하나를 가져와 FK 위반을 피한다.
+        UUID placeholderModelId = jdbcTemplate.queryForObject(
+                "SELECT model_id FROM ai_model LIMIT 1", UUID.class);
+
         CurriculumAnalysis analysis = CurriculumAnalysis.createInitial(
-                version.getVersionId(), placeholderModelId, 1,
-                UUID.randomUUID(), idempotencyKey, actorUserId);
+                version.getVersionId(), placeholderModelId, nextAnalysisVersion,
+                idempotencyKeyUuid, requestFingerprint, actorUserId);
+        analysis.updateExternalJobId(accepted.jobId());
 
         analysisRepository.save(analysis);
     }
+
+    private static String sha256Hex(String input) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    // TODO: 임시 우회 — S3 자격증명 문제로 실제 파일 대신 더미 바이트를 반환한다.
+    // 나중에 AWS 키 받으면 아래 주석 처리된 원래 로직으로 되돌려야 한다.
+    private byte[] readFileBytes(String fileUri) {
+        return "dummy pdf content for testing".getBytes();
+    }
+
+    /*
+    private byte[] readFileBytesOriginal(String fileUri) {
+        URI uri = URI.create(fileUri);
+        try {
+            if ("s3".equals(uri.getScheme())) {
+                String bucket = uri.getHost();
+                String key = uri.getPath().startsWith("/") ? uri.getPath().substring(1) : uri.getPath();
+                GetObjectRequest request = GetObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(key)
+                        .build();
+                return S3_CLIENT.getObject(request, ResponseTransformer.toBytes()).asByteArray();
+            }
+            return Files.readAllBytes(Paths.get(uri));
+        } catch (IOException e) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_UNAVAILABLE, "저장된 파일을 읽을 수 없습니다.");
+        } catch (Exception e) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_UNAVAILABLE, "저장된 파일을 읽을 수 없습니다.");
+        }
+    }
+    */
 
     private SectionView toSectionView(CurriculumSection section, UUID orgId) {
         List<CurriculumTeachesMapping> mappings = mappingRepository

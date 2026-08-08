@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.auth.application;
 
 import com.bigproject.backend.domain.auth.domain.AccountActivationRepository;
+import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
 import com.bigproject.backend.domain.auth.domain.AccountActivationTarget;
 import com.bigproject.backend.domain.auth.domain.ConsentCode;
 import com.bigproject.backend.domain.auth.domain.ConsentRecord;
@@ -11,16 +12,16 @@ import com.bigproject.backend.domain.auth.presentation.dto.TraineeActivationRequ
 import com.bigproject.backend.domain.member.application.OneTimeTokenHasher;
 import com.bigproject.backend.domain.member.domain.InvitationPurpose;
 import com.bigproject.backend.domain.member.domain.Role;
+import com.bigproject.backend.global.exception.ApiException;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -55,14 +56,7 @@ public class AccountActivationService {
 	) {
 		validatePassword(request.password(), request.passwordConfirmation());
 		validateRequiredConsents(request.serviceTermsAgreed(), request.privacyCollectionAgreed());
-		AccountActivationTarget target = findTarget(
-				request.invitationToken(),
-				request.userId(),
-				InvitationPurpose.INVITE_OPERATOR_MANAGER
-		);
-		if (target.role() != Role.OPERATOR && target.role() != Role.MANAGER) {
-			throw invalidInvitation();
-		}
+		AccountActivationTarget target = findInvitedStaff(request.invitationToken(), request.userId());
 		return activate(
 				target,
 				request.name().trim(),
@@ -118,13 +112,48 @@ public class AccountActivationService {
 		);
 	}
 
-	private AccountActivationTarget findTarget(
+	/**
+	 * 초대받은 운영 계정(슈퍼어드민·오퍼레이터·매니저)의 활성화 대상을 찾는다.
+	 *
+	 * <p><b>토큰 목적으로 허용 역할을 가른다.</b> INVITE_SUPER_ADMIN 토큰은 SUPER_ADMIN만,
+	 * INVITE_OPERATOR_MANAGER 토큰은 OPERATOR·MANAGER만 통과시킨다. 목적과 역할을 교차 허용하면
+	 * 오퍼레이터 초대 토큰으로 슈퍼어드민이 되는 권한 상승 경로가 열린다.
+	 */
+	private AccountActivationTarget findInvitedStaff(String invitationToken, UUID userId) {
+		AccountActivationTarget superAdmin = findTargetOrEmpty(
+				invitationToken, userId, InvitationPurpose.INVITE_SUPER_ADMIN
+		).orElse(null);
+		if (superAdmin != null) {
+			if (superAdmin.role() != Role.SUPER_ADMIN) {
+				throw invalidInvitation();
+			}
+			return superAdmin;
+		}
+
+		AccountActivationTarget target = findTarget(
+				invitationToken, userId, InvitationPurpose.INVITE_OPERATOR_MANAGER
+		);
+		if (target.role() != Role.OPERATOR && target.role() != Role.MANAGER) {
+			throw invalidInvitation();
+		}
+		return target;
+	}
+
+	private Optional<AccountActivationTarget> findTargetOrEmpty(
 			String invitationToken,
 			UUID userId,
 			InvitationPurpose purpose
 	) {
 		String tokenHash = tokenHasher.hash(invitationToken.trim());
-		return accountActivationRepository.findTargetForUpdate(tokenHash, userId, purpose, Instant.now())
+		return accountActivationRepository.findTargetForUpdate(tokenHash, userId, purpose, Instant.now());
+	}
+
+	private AccountActivationTarget findTarget(
+			String invitationToken,
+			UUID userId,
+			InvitationPurpose purpose
+	) {
+		return findTargetOrEmpty(invitationToken, userId, purpose)
 				.orElseThrow(this::invalidInvitation);
 	}
 
@@ -213,32 +242,40 @@ public class AccountActivationService {
 		return List.copyOf(records);
 	}
 
+	/**
+	 * 비밀번호 입력을 검사한다.
+	 *
+	 * <p>"확인 값 불일치"와 "정책 미충족"은 화면이 다른 칸에 다른 문구를 붙여야 하므로 코드를 가른다.
+	 * 정책 미충족은 비밀번호 재설정 흐름과 <b>같은</b> {@code WEAK_PASSWORD}를 쓴다 — 같은 개념에
+	 * 흐름별로 다른 코드를 주면 프론트가 규칙 안내 문구를 두 벌 관리하게 된다.
+	 */
 	private void validatePassword(String password, String passwordConfirmation) {
 		if (password == null || !password.equals(passwordConfirmation)) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "비밀번호 확인이 일치하지 않습니다.");
+			throw new ApiException(AuthErrorCode.PASSWORD_CONFIRMATION_MISMATCH);
 		}
 		if (!passwordPolicy.isStrong(password)) {
-			throw new ResponseStatusException(
-					HttpStatus.BAD_REQUEST,
-					"비밀번호는 8~64자이며 영문, 숫자, 특수문자를 포함해야 합니다."
-			);
+			throw new ApiException(AuthErrorCode.WEAK_PASSWORD);
 		}
 	}
 
 	private void validateRequiredConsents(boolean... requiredConsents) {
 		for (boolean agreed : requiredConsents) {
 			if (!agreed) {
-				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "필수 동의 항목에 모두 동의해야 합니다.");
+				throw new ApiException(AuthErrorCode.REQUIRED_CONSENT_MISSING);
 			}
 		}
 	}
 
-	private ResponseStatusException invalidInvitation() {
-		return new ResponseStatusException(HttpStatus.BAD_REQUEST, INVALID_INVITATION_MESSAGE);
+	private ApiException invalidInvitation() {
+		return new ApiException(AuthErrorCode.INVITATION_INVALID, INVALID_INVITATION_MESSAGE);
 	}
 
-	private ResponseStatusException activationConflict() {
-		return new ResponseStatusException(HttpStatus.CONFLICT, "계정 활성화 상태가 변경되었습니다. 다시 시도해 주세요.");
+	/**
+	 * 동시 요청으로 계정·초대 상태가 먼저 바뀐 경우. <b>입력이 틀린 것이 아니므로</b> 화면은
+	 * 입력칸에 오류를 붙이지 말고 새로고침 후 재시도를 안내해야 한다 — 코드를 갈라 두는 이유다.
+	 */
+	private ApiException activationConflict() {
+		return new ApiException(AuthErrorCode.ACTIVATION_STATE_CHANGED);
 	}
 
 	private record ConsentChoice(ConsentCode code, boolean agreed) {

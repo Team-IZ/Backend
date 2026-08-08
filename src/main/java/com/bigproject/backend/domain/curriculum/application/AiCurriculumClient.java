@@ -15,9 +15,14 @@ import java.util.UUID;
 public class AiCurriculumClient {
 
     private final RestClient restClient;
+    private final String internalKey;
 
-    public AiCurriculumClient(@Value("${ai.curriculum.base-url:http://localhost:8000}") String baseUrl) {
+    public AiCurriculumClient(
+            @Value("${ai.curriculum.base-url:http://localhost:8000}") String baseUrl,
+            @Value("${ai.curriculum.x-internal-key:}") String internalKey) {
         this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+        this.internalKey = internalKey;
+        System.out.println("### DEBUG baseUrl=[" + baseUrl + "] internalKey length=" + internalKey.length() + " value=[" + internalKey + "]");
     }
 
     public record CurriculumAccepted(String jobId, String status) {
@@ -40,6 +45,7 @@ public class AiCurriculumClient {
                 .uri("/api/v0/curricula")
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .header("Idempotency-Key", idempotencyKey)
+                .header("X-Internal-Key", internalKey)
                 .body(body)
                 .retrieve()
                 .body(CurriculumAccepted.class);

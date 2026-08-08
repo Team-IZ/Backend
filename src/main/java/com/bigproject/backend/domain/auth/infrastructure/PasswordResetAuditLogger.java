@@ -36,6 +36,20 @@ public class PasswordResetAuditLogger {
 	}
 
 	@Transactional
+	public void recordResendSuccess(PasswordResetAccount account, String requestId) {
+		insert(
+				account == null ? null : account.organizationId(),
+				"AUTH.INVITATION_RESEND_REQUEST",
+				"초대 메일 재발송 요청 처리",
+				account == null ? "PASSWORD_RESET_REQUEST" : "APP_USER",
+				account == null ? requestUuid(requestId).toString() : account.userId().toString(),
+				"SUCCESS",
+				null,
+				requestId
+		);
+	}
+
+	@Transactional
 	public void recordConfirmationSuccess(PasswordResetToken token, String requestId) {
 		insert(
 				token.organizationId(),

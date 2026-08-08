@@ -13,4 +13,8 @@ public interface ProjectCurriculumRepository extends JpaRepository<ProjectCurric
 
     // concept-candidates 조회용 — 이 프로젝트가 연결한 교안 버전 전체
     List<ProjectCurriculum> findAllByProjectIdAndOrgId(UUID projectId, UUID orgId);
+
+    boolean existsByProjectIdAndCurriculumVersionId(UUID projectId, UUID curriculumVersionId);
+
+    List<ProjectCurriculum> findAllByProjectIdOrderBySequenceNoDesc(UUID projectId);
 }

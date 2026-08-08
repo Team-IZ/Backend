@@ -1,6 +1,27 @@
 server:
   port: ${PORT:8080}
+  # X-Forwarded-Proto를 읽어 https를 인식하게 한다(Swagger UI가 서버 URL을 요청에서 만든다).
   forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      # 클라이언트 IP는 애플리케이션(ClientIpResolver)이 직접 뽑는다. 그래서 톰캣이
+      # remoteAddr를 덮어쓰는 경로는 꺼 둔다 — 존재하지 않는 헤더를 가리키게 하는 방식이다.
+      #
+      # 왜 톰캣에 맡기지 않나: RemoteIpValve는 "직전 홉이 internal-proxies 정규식과 맞을 때만"
+      # 동작한다. 그 기본 정규식은 사설 IPv4 대역만 담고 있어 Railway처럼 다른 대역을 쓰는
+      # 환경에서는 조용히 아무것도 하지 않는다. 켜졌는지 꺼졌는지가 배포 환경에 따라 갈리는
+      # 상태로 두면, 지금 고치는 종류의 버그가 "어디서는 되고 어디서는 안 되는" 모습으로 돌아온다.
+      # 여기서 명시적으로 꺼 두면 어느 환경이든 클라이언트 IP를 뽑는 곳이 한 군데뿐이다.
+      remote-ip-header: x-client-ip-handled-by-application
+      protocol-header: x-forwarded-proto
+  error:
+    # 오류 응답에 내부 정보를 싣지 않는다. 켜 두면 스택트레이스·실행 SQL·실패한 DB 행이 그대로 나가는데,
+    # 실제로 초대 취소 실패 500 응답에 사용자 이메일과 초대 토큰 해시까지 노출된 적이 있다.
+    # 원인은 서버 로그로 확인한다.
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+    include-exception: false
 
 spring:
   config:
@@ -22,6 +43,8 @@ spring:
       validation-timeout: 5000
       idle-timeout: 600000
       max-lifetime: 1800000
+      data-source-properties:
+        prepareThreshold: 0
 
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
@@ -37,6 +60,22 @@ spring:
           batch_size: 50
         order_inserts: true
         order_updates: true
+
+web:
+  client-ip:
+    # 클라이언트 IP를 담아 오는 프록시 헤더.
+    header: ${CLIENT_IP_HEADER:X-Forwarded-For}
+    # 우리 앞에 있는 프록시(신뢰하는 홉)의 개수. Railway 하나만 앞에 있으면 1이다.
+    #
+    # X-Forwarded-For는 홉마다 자기가 본 상대의 주소를 뒤에 붙인다. 그래서 오른쪽에서
+    # 이 개수만큼 센 자리가 "가장 바깥 프록시가 직접 관측한 주소" = 진짜 클라이언트다.
+    # 왼쪽 끝을 쓰면 클라이언트가 적어 보낸 값을 그대로 믿게 되어 차단을 무한히 우회할 수 있고,
+    # 남의 IP를 적어 그 사람을 막을 수도 있다.
+    #
+    # 앞단에 CDN을 추가하는 등 홉이 늘면 이 값도 함께 올려야 한다. 값이 실제보다 크면
+    # 헤더가 모자라 프록시 주소로 떨어지고(차단이 다시 새기 시작한다), 작으면 프록시 자신의
+    # 주소를 클라이언트로 읽는다. 배포 직후 "client-ip 첫 관측" 로그 한 줄로 확인할 수 있다.
+    trusted-proxy-count: ${CLIENT_IP_TRUSTED_PROXY_COUNT:1}
 
 springdoc:
   api-docs:
@@ -59,14 +98,36 @@ jwt:
 
 auth:
   login:
-    allowed-origins: ${AUTH_LOGIN_ALLOWED_ORIGINS}
+    # 로그인·재발급·로그아웃에서 서버가 직접 검사하는 Origin 허용 목록. CORS 설정도 같은 값을 쓴다.
+    # 목록에 없으면 브라우저가 아니라 서버가 403 LOGIN_ORIGIN_NOT_ALLOWED로 거절하므로,
+    # 배포 도메인이 빠지면 로그인 자체가 되지 않는다.
+    #
+    # 로컬 오리진을 여러 개 여는 것은 위험하지 않다 — http://localhost:*는 그 사람의 자기 컴퓨터에서
+    # 띄운 것만 해당하고, 공격자가 그 오리진을 쓸 수 있는 시점이면 이미 피해자 PC에서 코드를 돌리는
+    # 중이라 CORS가 막을 수 있는 것이 없다. 5173 하나만 열어 두면 Vite가 포트를 말없이 밀거나
+    # (5174·5175) 127.0.0.1로 열거나 vite preview(4173)를 쓸 때마다 "로그인이 갑자기 안 된다"가 된다.
+    allowed-origins: ${AUTH_LOGIN_ALLOWED_ORIGINS:https://frontend-eight-neon-73.vercel.app,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:5173,http://localhost:4173}
+    # 호스트에 * 와일드카드를 쓴 항목(예: https://*.vercel.app)을 허용할지. Vercel 프리뷰 배포는 PR마다
+    # URL이 바뀌어 고정 등록이 안 되므로 그때 켠다. 기본은 꺼 둔다 — *.vercel.app은 남의 프로젝트까지
+    # 포함하는 범위라 상시로 열어 둘 값이 아니다.
+    allow-origin-wildcards: ${AUTH_LOGIN_ALLOW_ORIGIN_WILDCARDS:false}
     swagger-origin-override-enabled: ${AUTH_SWAGGER_ORIGIN_OVERRIDE_ENABLED}
     swagger-ui-origin: ${AUTH_SWAGGER_UI_ORIGIN}
+    # 연속 실패 차단(A1). 기준 잠금이 지날 때마다 다음 잠금이 2배로 늘고 상한에서 멈춘다.
+    # 성공하면 카운터를 버린다. 임계값이 낮거나 지속이 길면 그 자체가 남을 막는 공격 수단이 되므로
+    # 5회·60초로 잡았다 — 오타 반복은 넘기고 자동화만 실질적으로 막는 선이다.
+    throttle:
+      max-attempts: ${AUTH_LOGIN_THROTTLE_MAX_ATTEMPTS:5}
+      initial-block: ${AUTH_LOGIN_THROTTLE_INITIAL_BLOCK:PT1M}
+      max-block: ${AUTH_LOGIN_THROTTLE_MAX_BLOCK:PT15M}
   refresh-cookie:
-    name: ${REFRESH_TOKEN_COOKIE_NAME}
-    path: ${REFRESH_TOKEN_COOKIE_PATH}
-    secure: ${REFRESH_TOKEN_COOKIE_SECURE}
-    same-site: ${REFRESH_TOKEN_COOKIE_SAME_SITE}
+    name: ${REFRESH_TOKEN_COOKIE_NAME:refresh_token}
+    path: ${REFRESH_TOKEN_COOKIE_PATH:/api/v0/auth}
+    # SameSite=None에는 Secure가 필수다(브라우저가 Secure 없는 None 쿠키를 조용히 버린다).
+    # Lax로 두면 다른 사이트에서 보내는 fetch/XHR에 쿠키가 실리지 않아 재발급이 전면 불가해진다 —
+    # 프론트(Vercel·localhost)와 백엔드(railway.app)는 서로 다른 사이트다.
+    secure: ${REFRESH_TOKEN_COOKIE_SECURE:true}
+    same-site: ${REFRESH_TOKEN_COOKIE_SAME_SITE:None}
 
 invitation:
   base-url: ${INVITATION_BASE_URL}
@@ -84,3 +145,8 @@ password-reset:
   base-url: ${PASSWORD_RESET_BASE_URL:http://localhost:5173}
   expiration: ${PASSWORD_RESET_EXPIRATION:PT30M}
   request-cooldown: ${PASSWORD_RESET_REQUEST_COOLDOWN:PT1M}
+
+ai:
+  curriculum:
+    base-url: ${AI_CURRICULUM_BASE_URL:http://localhost:8000}
+    x-internal-key: ${AI_INTERNAL_API_KEY:}

@@ -1,16 +1,19 @@
 package com.bigproject.backend.domain.auth.application;
 
+import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
 import com.bigproject.backend.domain.auth.domain.PasswordResetRepository;
 import com.bigproject.backend.domain.auth.domain.PasswordResetToken;
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetConfirmationRequest;
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetConfirmationResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetRequestResponse;
+import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetValidationRequest;
+import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetValidationResponse;
 import com.bigproject.backend.domain.auth.infrastructure.PasswordResetAuditLogger;
 import com.bigproject.backend.domain.member.application.EmailNormalizer;
 import com.bigproject.backend.domain.member.application.OneTimeTokenHasher;
+import com.bigproject.backend.global.exception.ApiException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,6 +59,14 @@ public class PasswordResetService {
 		return new PasswordResetRequestResponse(ACCEPTED_MESSAGE);
 	}
 
+	@Transactional(readOnly = true)
+	public PasswordResetValidationResponse validate(PasswordResetValidationRequest request) {
+		PasswordResetToken token = repository.findToken(tokenHasher.hash(request.token().trim()))
+				.orElseThrow(this::invalidToken);
+		validateToken(token);
+		return new PasswordResetValidationResponse(token.email(), token.expiresAt());
+	}
+
 	@Transactional
 	public PasswordResetConfirmationResponse confirm(PasswordResetConfirmationRequest request, String requestId) {
 		PasswordResetToken token = null;
@@ -77,12 +88,12 @@ public class PasswordResetService {
 					"COMPLETED",
 					"비밀번호가 바뀌었습니다. 새 비밀번호로 다시 로그인해 주세요."
 			);
-		} catch (PasswordResetException exception) {
-			auditLogger.recordFailure(token, requestId, exception.code());
+		} catch (ApiException exception) {
+			auditLogger.recordFailure(token, requestId, exception.errorCode().name());
 			throw exception;
 		} catch (DataAccessException | IllegalStateException exception) {
-			PasswordResetException resetFailed = resetFailed(exception);
-			auditLogger.recordFailure(token, requestId, resetFailed.code());
+			ApiException resetFailed = resetFailed(exception);
+			auditLogger.recordFailure(token, requestId, resetFailed.errorCode().name());
 			throw resetFailed;
 		}
 	}
@@ -95,52 +106,27 @@ public class PasswordResetService {
 			throw invalidToken();
 		}
 		if (token.usedAt() != null) {
-			throw new PasswordResetException(
-					HttpStatus.CONFLICT,
-					"RESET_TOKEN_USED",
-					"이미 사용된 비밀번호 재설정 링크입니다."
-			);
+			throw new ApiException(AuthErrorCode.RESET_TOKEN_USED);
 		}
 		if (!token.expiresAt().isAfter(Instant.now())) {
-			throw new PasswordResetException(
-					HttpStatus.GONE,
-					"RESET_TOKEN_EXPIRED",
-					"비밀번호 재설정 링크가 만료되었습니다."
-			);
+			throw new ApiException(AuthErrorCode.RESET_TOKEN_EXPIRED);
 		}
 	}
 
 	private void validatePassword(String newPassword, String currentPasswordHash) {
 		if (!passwordPolicy.isStrong(newPassword)) {
-			throw new PasswordResetException(
-					HttpStatus.UNPROCESSABLE_CONTENT,
-					"WEAK_PASSWORD",
-					"비밀번호는 8~64자이며 영문, 숫자, 특수문자를 포함해야 합니다."
-			);
+			throw new ApiException(AuthErrorCode.WEAK_PASSWORD);
 		}
 		if (currentPasswordHash != null && passwordEncoder.matches(newPassword, currentPasswordHash)) {
-			throw new PasswordResetException(
-					HttpStatus.UNPROCESSABLE_CONTENT,
-					"SAME_AS_CURRENT",
-					"지금 쓰는 비밀번호와 달라야 합니다."
-			);
+			throw new ApiException(AuthErrorCode.SAME_AS_CURRENT);
 		}
 	}
 
-	private PasswordResetException invalidToken() {
-		return new PasswordResetException(
-				HttpStatus.BAD_REQUEST,
-				"RESET_TOKEN_INVALID",
-				"유효하지 않은 비밀번호 재설정 링크입니다."
-		);
+	private ApiException invalidToken() {
+		return new ApiException(AuthErrorCode.RESET_TOKEN_INVALID);
 	}
 
-	private PasswordResetException resetFailed(Throwable cause) {
-		return new PasswordResetException(
-				HttpStatus.INTERNAL_SERVER_ERROR,
-				"RESET_FAILED",
-				"비밀번호는 아직 바뀌지 않았습니다. 잠시 후 다시 시도해 주세요.",
-				cause
-		);
+	private ApiException resetFailed(Throwable cause) {
+		return new ApiException(AuthErrorCode.RESET_FAILED, cause);
 	}
 }

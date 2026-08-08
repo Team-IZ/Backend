@@ -65,7 +65,7 @@ public record OrganizationUsageResponse(
 			@Schema(description = "리포트 · 내보내기 PDF")
 			long reportBytes,
 
-			@Schema(description = "전월 대비 증감률. 전월 값이 0이거나 없으면 null", example = "0.08")
+			@Schema(description = "전월 대비 증감률. 전월 값이 0이거나 없으면 null", example = "0.08", nullable = true)
 			BigDecimal changeRateVsPrevMonth
 	) {
 	}
@@ -74,13 +74,15 @@ public record OrganizationUsageResponse(
 	public record ActivityUsage(
 			int activeTrainees,
 
-			@Schema(description = "⚠ 세션 테이블(06_MEAS)이 아직 없어 스냅샷에 값이 없으면 0입니다.")
+			@Schema(description = "기간 내 완료된 세션 수. LIVE 경로에서는 세션이 끝난 시각(ended_at) 기준으로 센다.")
 			long completedSessions,
 
-			@Schema(description = "⚠ 채점 테이블(06_MEAS)이 아직 없어 스냅샷에 값이 없으면 0입니다.")
+			@Schema(description = """
+					기간 내 채점 회차 수. LIVE 경로에서는 채점 실행 시각 컬럼이 없어 \
+					제출 마감(submission_due_at)이 기간에 들어온 회차를 센다.""")
 			long gradingRounds,
 
-			@Schema(description = "⚠ 리포트 테이블(10_RPT)이 아직 없어 스냅샷에 값이 없으면 0입니다.")
+			@Schema(description = "기간 내 발행된 리포트 수. 발행 시각(published_at) 기준이며, 이후 대체(SUPERSEDED)된 리포트도 포함한다.")
 			long generatedReports
 	) {
 	}
@@ -92,13 +94,13 @@ public record OrganizationUsageResponse(
 
 			BigDecimal monthlyBudget,
 
-			@Schema(description = "예산 소진율(0~1). 예산이 0이면 null", example = "0.6867")
+			@Schema(description = "예산 소진율(0~1). 예산이 0이면 null", example = "0.6867", nullable = true)
 			BigDecimal budgetUsageRate,
 
 			@Schema(description = "예산 초과 여부. 초과해도 서비스 중단은 아니며 `예산 초과` 배지만 붙는다.")
 			boolean budgetExceeded,
 
-			@Schema(description = "전월 대비 증감률. 전월 값이 0이거나 없으면 null", example = "0.12")
+			@Schema(description = "전월 대비 증감률. 전월 값이 0이거나 없으면 null", example = "0.12", nullable = true)
 			BigDecimal changeRateVsPrevMonth,
 
 			@Schema(description = """
@@ -120,14 +122,15 @@ public record OrganizationUsageResponse(
 	@Schema(description = "모델별 사용 내역 한 줄")
 	public record ModelUsage(
 			@Schema(description = """
-					용도. ANSWER_GRADING(답변 채점) / QUESTION_GENERATION(질문 생성) / SUMMARY_DRAFT(요약) /
+					용도. ANSWER_EVALUATION(답변 채점) / CODE_SESSION(코드 세션) /
+					INTERVIEW_BRIEF_GENERATION(인터뷰 브리프 생성) / REPORT_GENERATION(리포트 생성) /
 					CURRICULUM_ANALYSIS(교안 분석) / CODE_ANALYSIS(코드 분석)""",
-					example = "ANSWER_GRADING")
+					example = "ANSWER_EVALUATION")
 			String usageType,
 
 			@Schema(description = """
 					호출 시점에 기관이 선택했던 모델 티어 스냅샷. 목업 `정확도 우선` / `균형` / `비용 우선`.
-					채점처럼 플랫폼이 모델을 고정하는 기능은 티어가 없어 null이다(화면 `플랫폼 고정`).""")
+					채점처럼 플랫폼이 모델을 고정하는 기능은 티어가 없어 null이다(화면 `플랫폼 고정`).""", nullable = true)
 			AiTier tier,
 
 			@Schema(description = "모델 표시명", example = "claude-opus-5")
@@ -137,10 +140,10 @@ public record OrganizationUsageResponse(
 			long inputTokens,
 			long outputTokens,
 
-			@Schema(description = "100만 토큰당 입력 단가. 단가 미설정이면 null")
+			@Schema(description = "100만 토큰당 입력 단가. 단가 미설정이면 null", nullable = true)
 			BigDecimal inputPricePerMillionTokens,
 
-			@Schema(description = "100만 토큰당 출력 단가. 단가 미설정이면 null")
+			@Schema(description = "100만 토큰당 출력 단가. 단가 미설정이면 null", nullable = true)
 			BigDecimal outputPricePerMillionTokens,
 
 			@Schema(description = """
@@ -148,7 +151,7 @@ public record OrganizationUsageResponse(
 					(목업: "0으로 계산하면 청구액이 실제보다 작아 보인다").""")
 			boolean pricingMissing,
 
-			@Schema(description = "이 행의 비용. 단가 미설정이면 null")
+			@Schema(description = "이 행의 비용. 단가 미설정이면 null", nullable = true)
 			BigDecimal cost
 	) {
 	}
@@ -169,7 +172,7 @@ public record OrganizationUsageResponse(
 			int traineeCount,
 			BigDecimal cost,
 
-			@Schema(description = "교육생 1인당 비용. 교육생이 0명이면 null")
+			@Schema(description = "교육생 1인당 비용. 교육생이 0명이면 null", nullable = true)
 			BigDecimal costPerTrainee,
 
 			@Schema(description = "단가 미설정이라 이 기수 비용에서 빠진 호출 수")
@@ -182,12 +185,12 @@ public record OrganizationUsageResponse(
 			UUID classId,
 			String name,
 
-			@Schema(description = "반 담당 매니저 이름. 담당이 없으면 null(목업 `담당 없음`)")
+			@Schema(description = "반 담당 매니저 이름. 담당이 없으면 null(목업 `담당 없음`)", nullable = true)
 			String managerName,
 
 			int traineeCount,
 
-			@Schema(description = "⚠ 세션 테이블(06_MEAS)이 아직 없어 항상 0입니다.")
+			@Schema(description = "이 반 교육생의 기간 내 완료 세션 수. 반 배정이 해제된 교육생의 세션은 제외한다.")
 			long sessionCount,
 
 			BigDecimal cost,

@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.projectexecution.application;
 import com.bigproject.backend.domain.projectexecution.domain.Project;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectCategory;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectRequirement;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectCurriculum;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -42,4 +43,7 @@ public interface ProjectService {
 
     /** 주어진 curriculum_version_id들 중 하나라도 연결한 다른 기수들의 cohortId(자기 자신 제외, 중복 제거). */
     List<UUID> findCohortsSharingAnyCurriculum(List<UUID> curriculumVersionIds, UUID excludeCohortId, UUID orgId);
+
+    ProjectCurriculum linkCurriculum(UUID projectId, UUID orgId, UUID curriculumVersionId, UUID actorUserId);
+
 }

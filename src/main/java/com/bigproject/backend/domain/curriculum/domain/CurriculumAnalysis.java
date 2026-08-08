@@ -161,4 +161,8 @@ public class CurriculumAnalysis {
         this.isRetryable = retryable;
         this.recoveryAction = recoveryAction;
     }
+
+    public void updateExternalJobId(String externalJobId) {
+        this.externalJobId = UUID.fromString(externalJobId);
+    }
 }

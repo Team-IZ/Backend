@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.platformgovernance.domain;
 
+import com.bigproject.backend.domain.organization.domain.AccountInactivationReason;
 import com.bigproject.backend.domain.organization.domain.OperatorAccountStatus;
 
 import java.time.Instant;
@@ -26,7 +27,20 @@ public interface PlatformSuperAdminRepository {
 	int countActiveSuperAdmins();
 
 	/** 계정 상태 변경. 영향받은 행 수를 반환한다. */
-	int updateStatus(UUID memberId, OperatorAccountStatus status);
+	/**
+	 * 계정 상태를 변경한다.
+	 *
+	 * <p>{@code ck_app_user_status_3}이 status='INACTIVE'일 때 {@code inactivated_at}·
+	 * {@code inactivated_by}·{@code inactivated_reason_code}를 <b>한 세트로</b> 요구하므로
+	 * 정지 정보를 함께 받는다. ACTIVE로 되돌릴 때는 비운다.
+	 */
+	int updateStatus(
+			UUID memberId,
+			OperatorAccountStatus status,
+			UUID inactivatedBy,
+			AccountInactivationReason reasonCode,
+			String reason
+	);
 
 	record SuperAdminAccount(
 			UUID memberId,

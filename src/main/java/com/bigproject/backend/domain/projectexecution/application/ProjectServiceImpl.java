@@ -1,8 +1,12 @@
 package com.bigproject.backend.domain.projectexecution.application;
 
+import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumTeachesMapping;
+import com.bigproject.backend.domain.curriculum.domain.CurriculumVersion;
 import com.bigproject.backend.domain.curriculum.domain.MappingStatus;
+import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumAnalysisRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumTeachesMappingRepository;
+import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumVersionRepository;
 import com.bigproject.backend.domain.projectexecution.domain.ConceptSetStatus;
 import com.bigproject.backend.domain.projectexecution.domain.Project;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectCategory;
@@ -39,6 +43,8 @@ public class ProjectServiceImpl implements ProjectService {
     private final ProjectVerificationConceptSetRepository verificationConceptSetRepository;
     private final ProjectCurriculumRepository projectCurriculumRepository;
     private final CurriculumTeachesMappingRepository mappingRepository;
+    private final CurriculumVersionRepository curriculumVersionRepository;
+    private final CurriculumAnalysisRepository curriculumAnalysisRepository;
 
     @Override
     @Transactional
@@ -264,5 +270,46 @@ public class ProjectServiceImpl implements ProjectService {
                     newSet.getConceptSetId(), orgId, mapping.getTeachesId(), mappingId, sequenceNo++);
             verificationConceptRepository.save(concept);
         }
+    }
+
+    /**
+     * 프로젝트-교안 연결. project_curriculum 테이블 DDL 제약을 그대로 코드로 옮긴 것:
+     * - MINI_PROJECT에만 생성 가능 (BIG_PROJECT는 curriculum_not_applicable=TRUE 정책)
+     * - Project·CurriculumVersion·Organization 경로 일치 (orgId로 양쪽 조회 시 이미 강제됨)
+     * - 연결 대상 버전은 유효한 성공 분석 + 승인된(ACTIVE) 개념 매핑을 최소 1건 가져야 함
+     * - UNIQUE(project_id, curriculum_version_id) 사전 체크로 409 명확히 반환
+     * - sequence_no는 프로젝트 내 기존 최대값 + 1로 자동 채번 (UNIQUE(project_id, sequence_no) 대응)
+     */
+    @Override
+    @Transactional
+    public ProjectCurriculum linkCurriculum(UUID projectId, UUID orgId, UUID curriculumVersionId, UUID actorUserId) {
+        Project project = findProject(projectId, orgId);
+
+        if (project.getProjectCategory() != ProjectCategory.MINI_PROJECT) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "빅프로젝트에는 교안을 연결할 수 없습니다.");
+        }
+
+        CurriculumVersion version = curriculumVersionRepository.findByVersionIdAndOrgId(curriculumVersionId, orgId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "교안 버전을 찾을 수 없습니다."));
+
+        curriculumAnalysisRepository
+                .findFirstByVersionIdAndStatusOrderByCompletedAtDesc(curriculumVersionId, CurriculumAnalysisStatus.SUCCEEDED)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "성공한 분석이 없는 교안 버전입니다."));
+
+        List<CurriculumTeachesMapping> approvedMappings =
+                mappingRepository.findActiveCandidatesByVersion(curriculumVersionId, orgId, MappingStatus.ACTIVE);
+        if (approvedMappings.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "승인된 개념 매핑이 없는 교안 버전입니다.");
+        }
+
+        if (projectCurriculumRepository.existsByProjectIdAndCurriculumVersionId(projectId, curriculumVersionId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 연결된 교안 버전입니다.");
+        }
+
+        int nextSequenceNo = projectCurriculumRepository.findAllByProjectIdOrderBySequenceNoDesc(projectId)
+                .stream().findFirst().map(pc -> pc.getSequenceNo() + 1).orElse(1);
+
+        ProjectCurriculum link = ProjectCurriculum.link(orgId, projectId, curriculumVersionId, nextSequenceNo, actorUserId);
+        return projectCurriculumRepository.save(link);
     }
 }

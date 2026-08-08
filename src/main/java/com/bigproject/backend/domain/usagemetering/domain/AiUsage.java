@@ -1,15 +1,11 @@
 package com.bigproject.backend.domain.usagemetering.domain;
 
-import com.bigproject.backend.domain.platformgovernance.domain.AiModel;
 import com.bigproject.backend.domain.platformgovernance.domain.AiTier;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -40,19 +36,13 @@ public class AiUsage {
 	@Column(name = "org_id", nullable = false, updatable = false)
 	private UUID orgId;
 
-	// 같은 operations 도메인 소속이라 AiModel과는 실제 연관관계로 매핑해, 사용량 집계 시 모델 표시명 등을 조인해 가져온다.
-	@ManyToOne(fetch = FetchType.LAZY)
-	@JoinColumn(name = "model_code", referencedColumnName = "model_code", nullable = false, updatable = false)
-	private AiModel model;
-
-  
-//	/**
-//	 * 실제 호출에 사용된 모델 인스턴스(ai_model_instance). v06 신규 NOT NULL FK다.
-//	 * 이 도메인은 조회 전용이라 인스턴스 엔티티까지 만들지 않고 원시 UUID만 보관한다.
-//	 */
-//	@Column(name = "model_instance_id", nullable = false, updatable = false)
-//	private UUID modelInstanceId;
-
+	/*
+	 * v07에서 model_id FK가 model_code 문자열로 대체됐다. 사용 원장이 모델 마스터에 의존하지 않도록
+	 * 호출 시점의 모델 코드를 그대로 복사해 두는 방식이며, 모델이 마스터에서 사라져도 이력이 끊기지 않는다.
+	 * 표시명이 필요한 화면은 이 코드로 ai_model을 따로 조회한다(OperationsServiceImpl).
+	 */
+	@Column(name = "model_code", nullable = false, updatable = false, length = 100)
+	private String modelCode;
 
 	@Column(name = "actor_user_id", updatable = false)
 	private UUID actorUserId;
@@ -71,7 +61,7 @@ public class AiUsage {
 	@Column(name = "project_id", updatable = false)
 	private UUID projectId;
 
-	// DB CHECK: feature_code IN ('CODE_ANALYSIS','CURRICULUM_ANALYSIS','QUESTION_GENERATION','ANSWER_GRADING','SUMMARY_DRAFT')
+	// DB CHECK: feature_code IN ('CODE_ANALYSIS','CURRICULUM_ANALYSIS','CODE_SESSION','ANSWER_EVALUATION','INTERVIEW_BRIEF_GENERATION','REPORT_GENERATION')
 	@Enumerated(EnumType.STRING)
 	@Column(name = "feature_code", nullable = false, updatable = false, length = 100)
 	private FeatureCode featureCode;
@@ -92,14 +82,14 @@ public class AiUsage {
 	@Column(name = "trigger_type", nullable = false, updatable = false, length = 30)
 	private TriggerType triggerType;
 
-	/** 질문 생성·요약 실행 시 기관이 선택한 티어 스냅샷. 그 외 기능은 NULL이라 화면에서 `플랫폼 고정`으로 표시한다. */
+	/** 코드 세션 실행 시 기관이 선택한 티어 스냅샷. 그 외 기능은 NULL이라 화면에서 `플랫폼 고정`으로 표시한다. */
 	@Enumerated(EnumType.STRING)
 	@Column(name = "tier_code", updatable = false, length = 30)
 	private AiTier tierCode;
 
 	/*
 	 * 실행 당시 적용된 플랫폼 정책 스냅샷. 나중에 정책이 바뀌어도 이 호출이 어떤 기준으로 실행됐는지 재현할 수 있다.
-	 * 질문 생성·요약은 티어 정책을, 답변 채점은 채점 모델 정책과 캘리브레이션 버전을 남긴다(해당 없으면 NULL).
+	 * 코드 세션은 티어 정책을, 답변 채점은 채점 모델 정책과 캘리브레이션 버전을 남긴다(해당 없으면 NULL).
 	 */
 	@Column(name = "tier_policy_id", updatable = false)
 	private UUID tierPolicyId;
@@ -209,15 +199,23 @@ public class AiUsage {
 		return pricingStatus == PricingStatus.UNPRICED;
 	}
 
-	/** AI가 무슨 기능을 수행했는지. v06에서 GRADING→ANSWER_GRADING, SESSION_DIALOG→QUESTION_GENERATION으로 바뀌고 CODE_ANALYSIS가 추가됐다. */
+	/**
+	 * AI가 무슨 기능을 수행했는지.
+	 * v07에서 QUESTION_GENERATION→CODE_SESSION, ANSWER_GRADING→ANSWER_EVALUATION으로 바뀌고
+	 * SUMMARY_DRAFT가 INTERVIEW_BRIEF_GENERATION·REPORT_GENERATION으로 분리됐다.
+	 * 티어 선택 대상은 CODE_SESSION 하나뿐이다(DB CHECK: CODE_SESSION은 tier_code·tier_policy_id 필수,
+	 * INTERVIEW_BRIEF_GENERATION·REPORT_GENERATION은 둘 다 NULL이어야 한다).
+	 */
 	public enum FeatureCode {
-		CODE_ANALYSIS, CURRICULUM_ANALYSIS, QUESTION_GENERATION, ANSWER_GRADING, SUMMARY_DRAFT
+		CODE_ANALYSIS, CURRICULUM_ANALYSIS, CODE_SESSION,
+		ANSWER_EVALUATION, INTERVIEW_BRIEF_GENERATION, REPORT_GENERATION
 	}
 
-	/** 호출의 처리 대상 업무 엔터티 유형. */
+	/** 호출의 처리 대상 업무 엔터티 유형. v07에서 값이 전면 개편됐다. */
 	public enum ContextType {
-		CODE_SNAPSHOT, CURRICULUM_VERSION, ASSESSMENT_SESSION, ASSESSMENT_PROBLEM,
-		STAGE_ANSWER_ATTEMPT, REPORT_SNAPSHOT, INTERVENTION
+		SUBMISSION, CURRICULUM_VERSION, CURRICULUM_ANALYSIS, ANALYSIS_JOB, CODE_ANALYSIS,
+		ASSESSMENT_SESSION, ASSESSMENT_PROBLEM, PROBLEM_STAGE, INTERVIEW_BRIEF,
+		REPORT_GENERATION_ITEM, REPORT_SNAPSHOT, INTERVENTION
 	}
 
 	/** 이번 실행을 직접 시작한 방식. */

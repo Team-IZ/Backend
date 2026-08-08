@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.organization.domain;
 
+import com.bigproject.backend.global.exception.ApiErrorCode;
 import org.springframework.http.HttpStatus;
 
 /**
@@ -11,7 +12,7 @@ import org.springframework.http.HttpStatus;
  * <p>member 도메인에서 올라오는 초대 관련 실패({@link #ALREADY_INVITED}, {@link #INVITE_MAIL_FAILED})는
  * organization 도메인이 잡아서 이 코드로 다시 던진다 — 목업 계약이 오퍼레이터 탭 기준이기 때문이다.
  */
-public enum OrganizationErrorCode {
+public enum OrganizationErrorCode implements ApiErrorCode {
 
 	// ── SA-01 기관 목록 ──
 	/** case 1 · 중복 기관명. 제출 전 실시간 확인으로 막지만 최종 방어도 필요하다. */
@@ -87,6 +88,7 @@ public enum OrganizationErrorCode {
 		return status;
 	}
 
+	@Override
 	public String defaultMessage() {
 		return defaultMessage;
 	}
