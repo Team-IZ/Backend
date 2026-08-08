@@ -73,7 +73,7 @@ public class ProjectController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "프로젝트 목록 조회 성공"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
 	})
 	@GetMapping("/cohorts/{cohortId}/projects")
 	public ResponseEntity<List<ProjectResponse>> findProjects(
@@ -109,9 +109,9 @@ public class ProjectController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "201", description = "프로젝트 생성 성공"),
-			@ApiResponse(responseCode = "400", description = "필수값 누락"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "409", description = "같은 기수에 이미 존재하는 프로젝트명"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 필수값 누락·형식 오류(fieldErrors 동봉)"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "409", description = "PROJECT_NAME_DUPLICATED 같은 기수에 이미 존재하는 프로젝트명 — 이름 입력란에 인라인 오류"),
 	})
 	@PostMapping("/cohorts/{cohortId}/projects")
 	public ResponseEntity<ProjectResponse> createProject(
@@ -143,8 +143,8 @@ public class ProjectController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "프로젝트 상세 조회 성공"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "404", description = "프로젝트를 찾을 수 없음"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "PROJECT_NOT_FOUND 프로젝트를 찾을 수 없음(다른 기관의 프로젝트도 여기로 온다)"),
 	})
 	@GetMapping("/projects/{projectId}")
 	public ResponseEntity<ProjectResponse> findProject(
@@ -169,9 +169,9 @@ public class ProjectController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "프로젝트 일정 수정 성공"),
-			@ApiResponse(responseCode = "400", description = "필수값 누락 또는 종료일이 시작일보다 빠름"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "404", description = "프로젝트를 찾을 수 없음"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 필수값 누락 또는 종료일이 시작일보다 빠름(fieldErrors 동봉)"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "PROJECT_NOT_FOUND 프로젝트를 찾을 수 없음"),
 	})
 	@PatchMapping("/projects/{projectId}")
 	public ResponseEntity<ProjectResponse> updateSchedule(
@@ -201,8 +201,9 @@ public class ProjectController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "요구사항 교체 성공"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "404", description = "프로젝트를 찾을 수 없음"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED requirementTitles 키가 없음 — 전부 지우려면 빈 배열을 보낸다"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "PROJECT_NOT_FOUND 프로젝트를 찾을 수 없음"),
 	})
 	@PutMapping("/projects/{projectId}/requirements")
 	public ResponseEntity<Void> replaceRequirements(
@@ -234,10 +235,10 @@ public class ProjectController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "201", description = "교안 연결 성공"),
-			@ApiResponse(responseCode = "400", description = "빅프로젝트이거나, 성공한 분석/승인된 매핑이 없는 버전"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "404", description = "프로젝트 또는 교안 버전을 찾을 수 없음"),
-			@ApiResponse(responseCode = "409", description = "이미 연결된 교안 버전"),
+			@ApiResponse(responseCode = "400", description = "CURRICULUM_NOT_APPLICABLE_TO_BIG_PROJECT 빅프로젝트다(연결 UI를 감춘다) · CURRICULUM_ANALYSIS_NOT_SUCCEEDED 성공한 분석이 없다(재분석 안내) · CURRICULUM_MAPPING_NOT_APPROVED 승인된 개념 매핑이 없다(개념 승인 화면으로) · VALIDATION_FAILED curriculumVersionId 누락"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "PROJECT_NOT_FOUND 프로젝트가 없음 · CURRICULUM_VERSION_NOT_FOUND 교안 버전이 없음"),
+			@ApiResponse(responseCode = "409", description = "CURRICULUM_ALREADY_LINKED 이미 연결된 교안 버전 — 새로고침이 아니라 그 항목을 비활성화한다"),
 	})
 	@PostMapping("/projects/{projectId}/curricula")
 	public ResponseEntity<LinkCurriculumResponse> linkCurriculum(
@@ -269,8 +270,8 @@ public class ProjectController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "검증개념 후보 조회 성공"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "404", description = "프로젝트를 찾을 수 없음"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "PROJECT_NOT_FOUND 프로젝트를 찾을 수 없음"),
 	})
 	@GetMapping("/projects/{projectId}/concept-candidates")
 	public ResponseEntity<List<ConceptCandidateResponse>> findConceptCandidates(
@@ -299,9 +300,9 @@ public class ProjectController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "검증개념 확정 성공"),
-			@ApiResponse(responseCode = "400", description = "존재하지 않는 매핑 ID가 포함됨"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "404", description = "프로젝트를 찾을 수 없음"),
+			@ApiResponse(responseCode = "400", description = "CONCEPT_MAPPING_NOT_FOUND 존재하지 않는 매핑 ID가 포함됨(후보 목록이 낡았다 — 다시 읽는다) · VALIDATION_FAILED mappingIds가 비었음"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "PROJECT_NOT_FOUND 프로젝트를 찾을 수 없음"),
 	})
 	@PutMapping("/projects/{projectId}/concepts")
 	public ResponseEntity<Void> confirmConcepts(
@@ -329,8 +330,8 @@ public class ProjectController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "회차 목록 조회 성공"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "404", description = "기준 프로젝트를 찾을 수 없음"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "PROJECT_NOT_FOUND 기준 프로젝트를 찾을 수 없음"),
 	})
 	@GetMapping("/projects/{projectId}/rounds")
 	public ResponseEntity<List<ProjectResponse>> findRounds(
@@ -362,9 +363,9 @@ public class ProjectController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "회차 일정 수정 성공"),
-			@ApiResponse(responseCode = "400", description = "필수값 누락 또는 종료일이 시작일보다 빠름"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "404", description = "회차(프로젝트)를 찾을 수 없음"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 필수값 누락 또는 종료일이 시작일보다 빠름(fieldErrors 동봉)"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "PROJECT_NOT_FOUND 회차(프로젝트)를 찾을 수 없음"),
 	})
 	@PatchMapping("/projects/{projectId}/rounds/{roundId}")
 	public ResponseEntity<ProjectResponse> updateRoundSchedule(

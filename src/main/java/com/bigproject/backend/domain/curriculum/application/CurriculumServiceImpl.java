@@ -79,7 +79,7 @@ public class CurriculumServiceImpl implements CurriculumService {
     public List<SectionView> findSections(UUID versionId, UUID orgId) {
         CurriculumAnalysis latestSuccess = analysisRepository
                 .findFirstByVersionIdAndStatusOrderByCompletedAtDesc(versionId, CurriculumAnalysisStatus.SUCCEEDED)
-                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_UNAVAILABLE, "분석 완료된 버전이 아닙니다."));
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_ANALYSIS_NOT_COMPLETED));
 
         List<CurriculumSection> sections = sectionRepository
                 .findAllBySourceAnalysisIdOrderBySequenceNoAsc(latestSuccess.getAnalysisId());
@@ -107,7 +107,7 @@ public class CurriculumServiceImpl implements CurriculumService {
     @Transactional
     public CurriculumVersion registerCurriculum(UUID orgId, String title, String topic, MultipartFile file, UUID actorUserId) {
         if (file == null || file.isEmpty()) {
-            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_UNAVAILABLE, "업로드할 파일이 없습니다.");
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILE_REQUIRED);
         }
 
         String normalizedTitle = title.trim().replaceAll("\\s+", " ").toLowerCase();
@@ -194,9 +194,9 @@ public class CurriculumServiceImpl implements CurriculumService {
             }
             return Files.readAllBytes(Paths.get(uri));
         } catch (IOException e) {
-            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_UNAVAILABLE, "저장된 파일을 읽을 수 없습니다.");
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILE_UNREADABLE);
         } catch (Exception e) {
-            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_UNAVAILABLE, "저장된 파일을 읽을 수 없습니다.");
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILE_UNREADABLE);
         }
     }
     */
