@@ -8,6 +8,8 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
@@ -21,10 +23,26 @@ import java.util.UUID;
  * ai_usage 테이블 매핑 엔티티. 기관별 AI 호출 1건마다 남는 토큰 사용량·비용 원장(append-only 로그).
  * 이 도메인에서는 월별 AI 비용 사용량 집계(findUsage) 조회 전용으로 사용하며,
  * 실제 사용량 적재는 AI 호출을 수행하는 다른 도메인(채점/세션 등)의 책임이다.
+ *
+ * <h2>적재 경로가 생겼다 (2026-08-08)</h2>
+ *
+ * <p>지금까지 이 엔티티는 <b>읽기 전용</b>이었다 — AI를 부르는 코드가 저장소에 없었으므로
+ * 행을 만드는 주체도 없었다. {@code global.ai.AiUsageRecorder}가 그 주체가 되면서 생성 경로가
+ * 필요해졌고, 그래서 {@link Builder}를 연다.
+ *
+ * <p><b>setter가 아니라 builder인 이유.</b> 이 테이블은 append-only 원장이라 거의 모든 컬럼이
+ * {@code updatable = false}다. 필드를 하나씩 채우는 경로를 열면 DB CHECK 조합
+ * (예: {@code CODE_SESSION}만 {@code tier_code} 필수, {@code REPORT_GENERATION}은 NULL이어야 함)을
+ * 어긴 상태가 만들어질 수 있다. 한 번에 완성해서 넣는 편이 원장의 성격과 맞는다.
+ *
+ * <p>{@link AllArgsConstructor}를 {@code PRIVATE}으로 함께 두는 이유는 Lombok 규칙 때문이다 —
+ * {@link NoArgsConstructor}가 이미 있으면 {@link Builder}가 전 인자 생성자를 스스로 만들지 않는다.
  */
 @Getter
 @Entity
+@Builder
 @Table(name = "ai_usage")
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class AiUsage {
 

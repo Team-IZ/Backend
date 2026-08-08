@@ -1,6 +1,9 @@
 package com.bigproject.backend.domain.reporting.presentation;
 
+import com.bigproject.backend.domain.auth.domain.AuthUser;
+import com.bigproject.backend.domain.reporting.application.ManagedReportService;
 import com.bigproject.backend.domain.reporting.application.TraineeReportService;
+import com.bigproject.backend.domain.reporting.presentation.dto.ManagedReportListResponse;
 import com.bigproject.backend.domain.reporting.presentation.dto.TraineeReportsResponse;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
@@ -12,6 +15,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
@@ -24,6 +28,7 @@ import java.util.UUID;
 public class ReportController {
 
 	private final TraineeReportService traineeReportService;
+	private final ManagedReportService managedReportService;
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
@@ -104,6 +109,73 @@ public class ReportController {
 	public ResponseEntity<TraineeReportsResponse> findMyReports() {
 		UUID userId = currentUserResolver.resolveCurrentMemberId();
 		return ResponseEntity.ok(traineeReportService.findMyReports(userId));
+	}
+
+	@Operation(
+			summary = "담당 반 리포트 목록 조회 (매니저)",
+			description = """
+					매니저가 **담당하는 반**의 개인 리포트 목록. 발행 여부와 공개 상태만 준다.
+
+					## 왜 필요한가
+
+					매니저에게 열린 리포트 API는 `PUT /reports/{reportId}/disclosure` 하나뿐이었다.
+					공개 범위를 정할 수는 있는데 **정할 대상을 찾을 방법이 없었다** —
+					상태를 확인하려면 상태를 바꿔야 하는 모순이라 이 API로 메운다.
+
+					## 본문은 들어 있지 않다
+
+					개념·서술·문답은 나가지 않는다. 개인 리포트 본문 열람은 별개 정책이고,
+					이 API는 "어느 리포트가 발행됐고 지금 어떤 공개 상태인가"에만 답한다.
+
+					## 권한 범위 — 담당 반 전체
+
+					요청 매니저가 **지금** 배정된 반의 교육생만 나온다.
+					해제된 배정(`manager_assignment.unassigned_at`)과 이탈한 교육생
+					(`cohort_member.left_at`)은 빠진다. 조인 경로가 `PUT .../disclosure`의
+					담당 판정과 **같아서**, 목록에 보이는 리포트는 반드시 수정도 된다.
+
+					면담 대상으로 좁히지 않는다 — 공개 범위 지정은 면담과 무관하게 회차마다
+					생기는 일이라, 면담 대상만 보이면 나머지 교육생 리포트가 영원히 미지정으로 남는다.
+
+					## 요청
+
+					| 파라미터 | 필수 | 타입 | 설명 |
+					|---|---|---|---|
+					| `cohortId` | 선택 | UUID | 기수로 좁힌다 |
+					| `roundId` | 선택 | UUID | 회차로 좁힌다(`assessmentRoundId`) |
+					| `classId` | 선택 | UUID | 담당 반이 여럿일 때 하나만 |
+
+					## 응답
+
+					| 필드 | 설명 |
+					|---|---|
+					| `releaseStatus` | `NOT_CONFIGURED` · `WITHHELD` · `RELEASED` — **판별자** |
+					| `scope` | `PRIVATE` · `SUMMARY` · `FULL`. 미지정이면 **키가 빠진다** |
+					| `publishedAt` | 발행 시각. 발행 전이면 키가 빠진다 |
+					| `bodyVisible` | 교육생이 지금 본문을 읽을 수 있는가 |
+
+					⚠️ **`NOT_CONFIGURED`를 "비공개"로 그리면 안 된다.** 아직 아무도 정하지 않은
+					초기 상태이고, `WITHHELD`(정해서 닫았다)와 구분해야 한다.
+
+					## 담당하지 않는 리포트
+
+					목록에서 **빠질 뿐** 404가 아니다. 목록 조회에서 404는 "그런 반이 없다"는
+					뜻이 되어 실제로 담당이 없는 경우와 구분되지 않는다.
+					빈 목록도 정상이다 — 담당 반이 없거나, 회차가 아직 안 끝났거나, 필터가 좁은 경우다.
+					"""
+	)
+	@PreAuthorize("hasRole('MANAGER')")
+	// `/{reportId}`보다 구체적인 리터럴이라 스프링이 이 경로를 먼저 고른다 — `managed`가
+	// UUID로 파싱되는 일은 없다. CohortReportController의 `/reports/class-diagnosis`도 같은 구조다.
+	@GetMapping("/managed")
+	public ResponseEntity<ManagedReportListResponse> findManagedReports(
+			@RequestParam(required = false) UUID cohortId,
+			@RequestParam(required = false) UUID roundId,
+			@RequestParam(required = false) UUID classId
+	) {
+		AuthUser manager = currentUserResolver.resolveCurrentUser();
+		return ResponseEntity.ok(managedReportService.findManagedReports(
+				manager.userId(), manager.organizationId(), cohortId, roundId, classId));
 	}
 
 	@Operation(

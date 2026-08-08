@@ -54,6 +54,14 @@ public class CohortReportController {
 
 					필터·드릴다운이 없는 고정 스냅샷이라 파라미터가 이것 하나뿐이다(정의서 §4).
 
+					🔴 **프론트엔드 경로 수정 필요.** Frontend `operator/report/_/api/api.ts`의
+					주석은 `GET /reports/{cohortId}`인데 실제 경로는
+					`GET /api/v0/reports/class-diagnosis?cohortId=` 다.
+					`GET /reports`는 이미 `hasRole('TRAINEE')`가 점유하고 있어 `/{cohortId}` 형태를
+					쓸 수 없다 — 같은 경로에 역할별로 다른 응답을 주면 안 되기 때문이다.
+					현재 프론트는 목(`loadReport()`) 단계라 연동 시 주석 처리된 `http<Report>()`
+					줄을 이 경로로 고쳐야 한다.
+
 					## `status` 가 응답의 절반을 결정한다
 
 					| 값 | 뜻 | 함께 오는 것 |

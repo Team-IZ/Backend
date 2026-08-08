@@ -69,6 +69,23 @@ public record TraineeReportsResponse(
 	 * @param qa    문답 원문. <b>공개 범위 FULL일 때만</b> 채워진다.
 	 * @param explain 막힌 이유 해설. 다시 보기 대상일 때만.
 	 * @param comparedReach 다시 보기 전/후 비교. 다시 보기를 마쳤을 때만.
+	 *
+	 * <h2>🔴 프론트엔드 수정 필요 — 선택 필드가 화면 타입에서 필수다</h2>
+	 *
+	 * <p>이 레코드는 {@link JsonInclude}로 <b>키 자체를 뺀다</b>(null을 싣지 않는다).
+	 * 그런데 Frontend {@code trainee/report/types.ts}의 {@code ConceptReport}는
+	 * {@code said: string}과 {@code qa: QaEntry[]}를 <b>필수</b>로 선언한다
+	 * ({@code curriculumRef?}만 선택이다).
+	 *
+	 * <p>그래서 공개 범위가 {@code PRIVATE}·{@code SUMMARY}인 리포트에서 화면이
+	 * {@code concept.qa.map(...)}을 무조건 부르면 {@code TypeError}가 난다.
+	 *
+	 * <p><b>백엔드 계약은 바꾸지 않는다.</b> 빈 값({@code ""}·{@code []})을 채워 보내면
+	 * "빈 배열"과 "공개 범위상 안 열림"을 구분할 수 없게 되고, 화면은 문답이 없는 개념과
+	 * 볼 권한이 없는 개념을 같은 모양으로 그리게 된다.
+	 *
+	 * <p>프론트에서 {@code said?}·{@code qa?}로 바꾸고 {@code ConceptCard.tsx}·{@code QaList.tsx}에
+	 * 미존재 분기를 두면 된다.
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record ConceptReportResponse(
