@@ -36,6 +36,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -47,6 +48,10 @@ import java.util.UUID;
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController
+// 경로는 메서드마다 다르지만 응답 형식은 전부 JSON이다. 클래스 단위로 한 번 걸면
+// 새 엔드포인트가 생겨도 따라온다 — 안 걸면 스펙에 content-type이 `*/*`로 나가고,
+// 생성기가 응답 타입을 좁히지 못해 프론트가 any를 받는다(OpenApiDocumentTest가 잡는다).
+@RequestMapping(produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class ProjectController {
 
@@ -180,7 +185,7 @@ public class ProjectController {
 	}
 
 	@Operation(
-			summary = "프로젝트 요구사항 전체 교체",
+			summary = "프로젝트 요구사항 전체 교체 | ✅ 사용 가능",
 			description = """
 					요구사항 문구 목록을 전체 교체한다. 보낸 목록이 그대로 최종 상태가 된다 —
 					기존에 있었는데 이번 목록에 없는 문구는 자동 폐기(retire)되고, 새 문구는 추가된다.
@@ -279,7 +284,7 @@ public class ProjectController {
 	}
 
 	@Operation(
-			summary = "검증개념 확정",
+			summary = "검증개념 확정 | ✅ 사용 가능",
 			description = """
 					선택한 매핑들을 이 프로젝트의 검증개념으로 확정한다. 기존 활성 세트는 자동으로 교체(supersede)되며,
 					과거 세트는 지워지지 않고 이력으로 남는다.

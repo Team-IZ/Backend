@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -26,7 +27,9 @@ import java.util.UUID;
 @Tag(name = "Curriculum", description = "교안 조회 API (MG-09/OP-06)")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/curricula/{materialId}")
+// produces를 걸지 않으면 스펙의 content-type이 `*/*`로 나가 생성기가 응답 타입을 좁히지
+// 못한다(OpenApiDocumentTest가 잡는다).
+@RequestMapping(value = "/curricula/{materialId}", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class CurriculumMaterialController {
 
@@ -35,7 +38,7 @@ public class CurriculumMaterialController {
     private final CurrentUserResolver currentUserResolver;
 
     @Operation(
-            summary = "교안 섹션·개념 조회",
+            summary = "교안 섹션·개념 조회 | ✅ 사용 가능",
             description = """
 					materialId(교안 자체의 고정 식별자)를 받아 그 교안의 최신 버전으로 해석한 뒤,
 					그 버전의 최근 성공한 분석이 만든 섹션 전체를 하위 항목(★ 검증 개념 표시 포함)까지

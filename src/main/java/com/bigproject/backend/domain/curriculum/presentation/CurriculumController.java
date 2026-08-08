@@ -12,9 +12,11 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -25,6 +27,10 @@ import java.util.UUID;
 @Tag(name = "Curriculum", description = "교안 조회 API (MG-09/OP-06)")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
+// 응답은 전부 JSON이다. 안 걸면 스펙의 content-type이 `*/*`로 나가 생성기가 응답 타입을
+// 좁히지 못한다(OpenApiDocumentTest가 잡는다). 요청이 multipart인 registerCurriculum도
+// consumes와 produces는 별개라 영향이 없다.
+@RequestMapping(produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class CurriculumController {
 
