@@ -99,6 +99,17 @@ class MemberQueryControllerTest {
 				.andExpect(jsonPath("$.status").value("ACTIVE"));
 	}
 
+	/**
+	 * 매니저 목록은 {@code GET /managers}로 옮겼다. 이 슬라이스가 MemberController를 실제로 올리므로
+	 * 여기서의 404는 '컨트롤러가 없어서'가 아니라 '이 컨트롤러가 더는 그 경로를 받지 않아서'다.
+	 */
+	@Test
+	@WithMockUser(roles = "OPERATOR")
+	void noLongerServesTheManagerRosterOnTheMembersPath() throws Exception {
+		mockMvc.perform(get("/api/v0/members").param("role", "MANAGER"))
+				.andExpect(status().isNotFound());
+	}
+
 	@Test
 	@WithMockUser(username = "lead@example.com", roles = "OPERATOR")
 	void uploadsTraineeCsvAtCanonicalCohortPath() throws Exception {
