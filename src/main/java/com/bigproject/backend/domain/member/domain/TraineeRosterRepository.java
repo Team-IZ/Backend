@@ -36,6 +36,21 @@ public interface TraineeRosterRepository {
 	/** @return 실제로 바뀐 행 수(0이면 대상 없음 또는 이미 같은 상태) */
 	int updateStatus(UUID traineeId, String rawStatus, UUID actorUserId, String reasonCode, String reason);
 
+	/**
+	 * 기수 소속(cohort_member)의 이탈 여부를 계정 상태에 맞춘다.
+	 *
+	 * <p>테이블정의서는 {@code AppUser.status}와 {@code CohortMember.status}를 서로 다른 생명주기로
+	 * 규정하지만, 화면은 한 행에 '계정 비활성'과 '중도 이탈 {날짜}'를 함께 보여주므로 상태 변경 API가
+	 * 둘을 함께 움직인다.
+	 *
+	 * <p>{@code left}가 true면 {@code status='LEFT'}와 {@code left_at}을 함께 채우고, false면 둘 다 되돌린다.
+	 * COMMENT의 불변식이 <b>ACTIVE면 left_at IS NULL, LEFT면 left_at 필수</b>라 한쪽만 바꾸면 안 된다 —
+	 * DB CHECK가 없어 어긋나도 저장은 되기 때문에 여기서 지켜야 한다.
+	 *
+	 * @return 실제로 바뀐 행 수
+	 */
+	int updateCohortMembership(UUID traineeId, UUID cohortId, UUID orgId, boolean left);
+
 	record CohortScope(UUID cohortId, UUID orgId) {
 	}
 
@@ -53,6 +68,13 @@ public interface TraineeRosterRepository {
 	/**
 	 * 명단 한 행. {@code classroomId}·{@code className}은 현재 유효한(unassigned_at IS NULL) 반 배정이
 	 * 없으면 둘 다 null이다. {@code leftAt}은 cohort_member.status가 LEFT일 때만 값이 있다.
+	 *
+	 * <p>{@code inactivatedReasonCode}·{@code inactivatedAt}·{@code inactivatedById}는 계정이 INACTIVE일
+	 * 때만 값이 있다 — {@code ck_app_user_status_3}이 INACTIVE인 행에 대해 셋을 NOT NULL로 강제하므로,
+	 * 비활성 교육생이면 반드시 채워져 있다. {@code inactivatedReason}(상세 사유)만 NULL일 수 있다.
+	 *
+	 * <p>{@code inactivatedByName}은 {@code inactivatedById}가 가리키는 계정의 이름이다.
+	 * {@code app_user.inactivated_by}가 {@code app_user(user_id)} FK라 조인해서 채운다.
 	 */
 	record RosterRow(
 			UUID traineeId,
@@ -62,7 +84,12 @@ public interface TraineeRosterRepository {
 			UUID classroomId,
 			String className,
 			OffsetDateTime joinedAt,
-			OffsetDateTime leftAt
+			OffsetDateTime leftAt,
+			String inactivatedReasonCode,
+			String inactivatedReason,
+			OffsetDateTime inactivatedAt,
+			UUID inactivatedById,
+			String inactivatedByName
 	) {
 	}
 }

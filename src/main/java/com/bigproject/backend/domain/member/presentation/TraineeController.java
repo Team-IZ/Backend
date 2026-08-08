@@ -223,6 +223,21 @@ public class TraineeController {
 					| `className` | string? | 현재 소속 반 이름. 배정이 없으면 `null` |
 					| `joinedAt` | date-time | 기수 등록일 |
 					| `leftAt` | date-time? | 중도 이탈일. 이탈하지 않았으면 `null` |
+					| `inactivatedReasonCode` | enum? | 비활성화 사유 코드. 활성이면 `null` |
+					| `inactivatedReason` | string? | 비활성화 상세 사유. **INACTIVE여도 `null`일 수 있다** |
+					| `inactivatedById` | UUID? | 비활성화한 사용자 ID. 활성이면 `null` |
+					| `inactivatedByName` | string? | 비활성화한 사용자 이름. 화면 표시용 |
+					| `inactivatedAt` | date-time? | 비활성화 시각. 활성이면 `null` |
+
+					#### inactivatedReasonCode 값
+
+					| 값 | 설명 |
+					| --- | --- |
+					| `RESIGNED` | 퇴사 |
+					| `ADMIN_SUSPENDED` | 운영자 조치. 이 화면의 `비활성` 버튼이 넣는 값 |
+					| `CONTRACT_ENDED` | 계약 종료 |
+					| `SECURITY_ACTION` | 보안 조치 |
+					| `OTHER` | 기타 |
 
 					⚠️ **`unassignedCount`·`cohortTotal`은 필터와 무관한 기수 전체 기준**이라 `totalElements`와 다르다.
 					검색 결과가 없을 때의 `7기 393명에서 찾았습니다`도 `cohortTotal`이며, 두 값이 같은 모집단이라
@@ -232,6 +247,13 @@ public class TraineeController {
 
 					⚠️ **`leftAt`은 중도 이탈(`cohort_member.status=LEFT`)한 경우에만 값이 있다.**
 					화면의 `중도 이탈 {날짜}` 비고가 이 값이다.
+
+					💡 **비활성 교육생은 `inactivatedReasonCode`·`inactivatedById`·`inactivatedAt`이 반드시 있다.**
+					`ck_app_user_status_3`이 INACTIVE인 행에 이 셋을 NOT NULL로 강제하기 때문이다. 다만 상세 사유
+					(`inactivatedReason`)는 상태 변경 요청에서 생략할 수 있어 `null`일 수 있다.
+
+					💡 **`inactivatedByName`은 `inactivatedById`가 가리키는 계정의 이름이다.** 화면은 이 값을
+					그대로 쓰면 되고 ID로 다시 조회할 필요가 없다.
 					"""
 	)
 	@ApiResponses({
@@ -321,11 +343,43 @@ public class TraineeController {
 					| `className` | string? | 현재 소속 반 이름. 배정이 없으면 `null` |
 					| `joinedAt` | date-time | 기수 등록일 |
 					| `leftAt` | date-time? | 중도 이탈일. 이탈하지 않았으면 `null` |
+					| `inactivatedReasonCode` | enum? | 비활성화 사유 코드. 활성이면 `null` |
+					| `inactivatedReason` | string? | 비활성화 상세 사유. **INACTIVE여도 `null`일 수 있다** |
+					| `inactivatedById` | UUID? | 비활성화한 사용자 ID. 활성이면 `null` |
+					| `inactivatedByName` | string? | 비활성화한 사용자 이름. 화면 표시용 |
+					| `inactivatedAt` | date-time? | 비활성화 시각. 활성이면 `null` |
+
+					#### inactivatedReasonCode 값
+
+					| 값 | 설명 |
+					| --- | --- |
+					| `RESIGNED` | 퇴사 |
+					| `ADMIN_SUSPENDED` | 운영자 조치. 이 화면의 `비활성` 버튼이 넣는 값 |
+					| `CONTRACT_ENDED` | 계약 종료 |
+					| `SECURITY_ACTION` | 보안 조치 |
+					| `OTHER` | 기타 |
+
+					⚠️ **계정 상태와 기수 소속을 함께 바꾼다.** 화면이 한 행에 `계정 비활성`과
+					`중도 이탈 {날짜}`를 같이 보여주기 때문이다.
+
+					| 요청 `status` | `app_user.status` | `cohort_member.status` | `cohort_member.left_at` |
+					| --- | --- | --- | --- |
+					| `INACTIVE` | `INACTIVE` | `LEFT` | **현재 시각으로 기록** |
+					| `ACTIVE` | `ACTIVE` | `ACTIVE` | `NULL`로 되돌림 |
+
+					`left_at`을 되돌리는 것은 선택이 아니다 — 테이블정의서가 **ACTIVE면 `left_at IS NULL`,
+					LEFT면 `left_at` 필수**를 요구하는데 DB CHECK는 status 값만 보고 둘의 정합성은 보지 않아,
+					한쪽만 바꾸면 어긋난 채로 저장된다.
+
+					⚠️ **비활성화하면 `inactivatedReasonCode`가 `ADMIN_SUSPENDED`로 기록된다.**
+					이 화면에서 오는 정지는 전부 운영자 조치이기 때문이며, 요청의 `reason`은
+					상세 사유(`inactivatedReason`)로 따로 남는다.
 
 					⚠️ **초대 대기(`INVITED`) 교육생은 대상이 아니다.** 아직 계정이 활성화되지 않아 정지·재활성
 					개념이 성립하지 않는다. 시도하면 409이며, 화면이 할 일은 초대 재발송이다.
 
-					💡 **멱등이다.** 이미 같은 상태면 아무 것도 바꾸지 않고 현재 값을 그대로 돌려준다.
+					💡 **멱등이다.** 이미 같은 상태면 아무 것도 바꾸지 않고 현재 값을 그대로 돌려준다 —
+					`left_at`도 다시 찍히지 않으므로 최초 이탈 시각이 보존된다.
 					"""
 	)
 	@ApiResponses({

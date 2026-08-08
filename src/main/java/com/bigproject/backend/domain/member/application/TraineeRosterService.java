@@ -73,13 +73,16 @@ public class TraineeRosterService {
 
 		String targetRawStatus = status == AccountStatus.INACTIVE ? RAW_INACTIVE : RAW_ACTIVE;
 		if (!targetRawStatus.equals(current.rawAccountStatus())) {
+			boolean inactivating = RAW_INACTIVE.equals(targetRawStatus);
 			traineeRosterRepository.updateStatus(
 					traineeId,
 					targetRawStatus,
 					actorUserId,
-					RAW_INACTIVE.equals(targetRawStatus) ? INACTIVATE_REASON_CODE : null,
+					inactivating ? INACTIVATE_REASON_CODE : null,
 					reason
 			);
+			// 화면이 '계정 비활성'과 '중도 이탈 {날짜}'를 한 행에 함께 보여주므로 기수 소속도 같이 움직인다.
+			traineeRosterRepository.updateCohortMembership(traineeId, cohortId, orgId, inactivating);
 		}
 
 		return traineeRosterRepository.findTrainee(traineeId, cohortId, orgId).orElseThrow();

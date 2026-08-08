@@ -41,7 +41,31 @@ public record TraineeRosterResponse(
 			@Schema(description = "현재 소속 반 ID. 반 배정이 없으면 null", nullable = true) UUID classroomId,
 			@Schema(description = "현재 소속 반 이름. 반 배정이 없으면 null", nullable = true) String className,
 			@Schema(description = "기수 등록일") OffsetDateTime joinedAt,
-			@Schema(description = "중도 이탈일. 이탈하지 않았으면 null", nullable = true) OffsetDateTime leftAt
+			@Schema(description = "중도 이탈일. 이탈하지 않았으면 null", nullable = true) OffsetDateTime leftAt,
+			@Schema(description = """
+					계정 비활성화 사유 코드입니다. RESIGNED(퇴사) · ADMIN_SUSPENDED(운영자 조치) ·
+					CONTRACT_ENDED(계약 종료) · SECURITY_ACTION(보안 조치) · OTHER(기타).
+					계정이 INACTIVE일 때만 값이 있으며 그때는 **항상 채워져 있습니다** —
+					ck_app_user_status_3이 INACTIVE인 행에 이 값을 NOT NULL로 강제하기 때문입니다.
+					""", example = "ADMIN_SUSPENDED", nullable = true)
+			String inactivatedReasonCode,
+			@Schema(description = """
+					비활성화 상세 사유이며 상태 변경 요청의 reason이 그대로 들어갑니다.
+					사유 코드와 달리 **INACTIVE여도 null일 수 있습니다**(요청에서 생략 가능).
+					""", example = "중도 이탈 처리", nullable = true)
+			String inactivatedReason,
+			@Schema(description = """
+					계정을 비활성화한 사용자 ID이며 계정이 INACTIVE일 때만 값이 있습니다.
+					ck_app_user_status_3이 INACTIVE인 행에 이 값을 NOT NULL로 강제하므로 그때는 항상 채워집니다.
+					""", nullable = true)
+			UUID inactivatedById,
+			@Schema(description = """
+					계정을 비활성화한 사용자의 이름이며 화면에 그대로 표시하는 값입니다.
+					`inactivatedById`가 가리키는 계정에서 읽어 오고, 활성이면 null입니다.
+					""", example = "김오퍼레이터", nullable = true)
+			String inactivatedByName,
+			@Schema(description = "계정이 비활성화된 시각. 활성이면 null", nullable = true)
+			OffsetDateTime inactivatedAt
 	) {
 		public static Trainee from(TraineeRosterRepository.RosterRow row) {
 			return new Trainee(
@@ -52,7 +76,12 @@ public record TraineeRosterResponse(
 					row.classroomId(),
 					row.className(),
 					row.joinedAt(),
-					row.leftAt()
+					row.leftAt(),
+					row.inactivatedReasonCode(),
+					row.inactivatedReason(),
+					row.inactivatedById(),
+					row.inactivatedByName(),
+					row.inactivatedAt()
 			);
 		}
 

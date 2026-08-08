@@ -27,11 +27,14 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 	private static final String ROSTER_SELECT = """
 			SELECT cm.user_id AS trainee_id, u.name, u.email, u.status AS account_status,
 			       c.class_id AS classroom_id, c.name AS class_name,
-			       cm.joined_at, cm.left_at
+			       cm.joined_at, cm.left_at,
+			       u.inactivated_reason_code, u.inactivated_reason, u.inactivated_at,
+			       u.inactivated_by AS inactivated_by_id, actor.name AS inactivated_by_name
 			FROM cohort_member cm
 			JOIN app_user u ON u.user_id = cm.user_id AND u.deleted_at IS NULL
 			LEFT JOIN class_membership csm ON csm.cohort_member_id = cm.cohort_member_id AND csm.unassigned_at IS NULL
 			LEFT JOIN class c ON c.class_id = csm.class_id
+			LEFT JOIN app_user actor ON actor.user_id = u.inactivated_by
 			""";
 
 	@Override
@@ -153,6 +156,27 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 		);
 	}
 
+	/**
+	 * COMMENT의 불변식(ACTIVE면 left_at IS NULL, LEFT면 left_at 필수)을 한 문장으로 지킨다.
+	 * DB CHECK가 status 값만 보고 left_at과의 정합성은 보지 않아, 여기서 두 컬럼을 한 세트로 움직인다.
+	 *
+	 * <p>이탈 시각은 {@code left_at > joined_at}이어야 하므로 등록 직후 같은 시각에 이탈 처리되는
+	 * 경우까지 대비해 joined_at보다 뒤가 되도록 보정한다.
+	 */
+	@Override
+	public int updateCohortMembership(UUID traineeId, UUID cohortId, UUID orgId, boolean left) {
+		String sql = """
+				UPDATE cohort_member
+				SET status = CASE WHEN ? THEN 'LEFT' ELSE 'ACTIVE' END,
+				    left_at = CASE
+				                  WHEN ? THEN GREATEST(CURRENT_TIMESTAMP, joined_at + INTERVAL '1 microsecond')
+				                  ELSE NULL
+				              END
+				WHERE user_id = ? AND cohort_id = ? AND org_id = ?
+				""";
+		return jdbcTemplate.update(sql, left, left, traineeId, cohortId, orgId);
+	}
+
 	private String orderBy(TraineeRosterSort sort) {
 		if (sort == TraineeRosterSort.RECENT_ENROLLED) {
 			return " ORDER BY cm.joined_at DESC, u.name ASC, u.email ASC";
@@ -169,7 +193,12 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				rs.getObject("classroom_id", UUID.class),
 				rs.getString("class_name"),
 				toOffsetDateTime(rs.getTimestamp("joined_at")),
-				toOffsetDateTime(rs.getTimestamp("left_at"))
+				toOffsetDateTime(rs.getTimestamp("left_at")),
+				rs.getString("inactivated_reason_code"),
+				rs.getString("inactivated_reason"),
+				toOffsetDateTime(rs.getTimestamp("inactivated_at")),
+				rs.getObject("inactivated_by_id", UUID.class),
+				rs.getString("inactivated_by_name")
 		);
 	}
 
