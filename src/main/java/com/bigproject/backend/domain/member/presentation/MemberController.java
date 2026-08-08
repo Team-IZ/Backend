@@ -1,16 +1,19 @@
 package com.bigproject.backend.domain.member.presentation;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.domain.member.application.ManagerRosterService;
 import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.application.MemberProfileService;
 import com.bigproject.backend.domain.member.domain.AccountStatus;
 import com.bigproject.backend.domain.member.domain.ManagerRosterRepository;
+import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.member.domain.ManagerRosterSort;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerResponse;
 import com.bigproject.backend.domain.member.presentation.dto.MemberProfileResponse;
 import com.bigproject.backend.domain.member.presentation.dto.ManagerRosterResponse;
+import com.bigproject.backend.global.exception.ApiException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -22,7 +25,6 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -36,7 +38,6 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URI;
 import java.util.UUID;
@@ -170,6 +171,10 @@ public class MemberController {
 					**응답 (200)**
 					- content[]: 매니저 목록(이름·이메일·계정 상태·담당 기수·담당 반·담당 인원·최근 접속·초대일)
 					- page / size / totalElements / totalPages
+					- statusCounts: 계정 상태별 인원. **필터와 무관한 기관 전체 모집단**이라 totalElements와 다르다.
+					  화면 상단 `매니저 9명 · 활성 7 · 초대 대기 1 · 정지 1`이 이 값이며, 상태 칩이 자기 자신을
+					  필터링하면 안 되므로 목록 한 페이지로는 만들 수 없다.
+					  INVITED·ACTIVE·INACTIVE 세 키가 **항상 모두 있고** 0명인 상태는 0으로 온다
 
 					**content[].cohortId·cohortName은 가장 최근 매니저 초대의 담당 기수다.** 매니저 초대는
 					`POST /organizations/{organizationId}/manager-invitations`에서 기수를 필수로 지정하므로
@@ -181,9 +186,10 @@ public class MemberController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "매니저 목록 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "role이 MANAGER가 아니거나 page·size·status 값이 올바르지 않음"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "500", description = "인증 정보에서 organizationId를 확인할 수 없음")
+			@ApiResponse(responseCode = "400", description = "ROSTER_ROLE_NOT_SUPPORTED role이 MANAGER가 아님 · ACCOUNT_STATUS_FILTER_NOT_SUPPORTED 이 화면이 쓰지 않는 계정 상태(LOCKED) · VALIDATION_FAILED page·size 값이 올바르지 않음"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 만료됨"),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터 권한이 아님"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 기관을 확인할 수 없음")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@GetMapping
@@ -203,19 +209,21 @@ public class MemberController {
 			Authentication authentication
 	) {
 		if (role != Role.MANAGER) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "role은 현재 MANAGER만 지원합니다.");
+			throw new ApiException(MemberErrorCode.ROSTER_ROLE_NOT_SUPPORTED, "role은 현재 MANAGER만 지원합니다.");
 		}
 		UUID organizationId = extractOrganizationId(authentication);
 
-		Page<ManagerRosterRepository.ManagerRosterRow> managerPage = managerRosterService.findManagers(
+		ManagerRosterService.RosterResult result = managerRosterService.findManagers(
 				organizationId, status, query, sort, PageRequest.of(page, size));
 
+		Page<ManagerRosterRepository.ManagerRosterRow> managerPage = result.page();
 		ManagerRosterResponse response = new ManagerRosterResponse(
 				managerPage.getContent().stream().map(ManagerRosterResponse.Manager::from).toList(),
 				managerPage.getNumber(),
 				managerPage.getSize(),
 				managerPage.getTotalElements(),
-				managerPage.getTotalPages()
+				managerPage.getTotalPages(),
+				result.statusCounts()
 		);
 		return ResponseEntity.ok(response);
 	}
@@ -223,8 +231,7 @@ public class MemberController {
 	private UUID extractOrganizationId(Authentication authentication) {
 		Object details = authentication.getDetails();
 		if (!(details instanceof UUID organizationId)) {
-			throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-					"인증 정보에서 organizationId(UUID)를 확인할 수 없습니다.");
+			throw new ApiException(AcademicOperationsErrorCode.ORGANIZATION_CONTEXT_MISSING);
 		}
 		return organizationId;
 	}

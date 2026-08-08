@@ -1,15 +1,18 @@
 package com.bigproject.backend.domain.member.presentation;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.application.TraineeCsvParser;
 import com.bigproject.backend.domain.member.application.TraineeRosterService;
 import com.bigproject.backend.domain.member.domain.AccountStatus;
+import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.member.domain.TraineeRosterRepository;
 import com.bigproject.backend.domain.member.domain.TraineeRosterSort;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import com.bigproject.backend.domain.member.presentation.dto.TraineeRosterResponse;
 import com.bigproject.backend.domain.member.presentation.dto.UpdateTraineeStatusRequest;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -40,7 +43,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.UUID;
 
@@ -188,6 +190,9 @@ public class TraineeController {
 					- page / size / totalElements / totalPages: 필터 적용 후 페이지 정보
 					- unassignedCount: 반 배정이 없는 교육생 수. **필터와 무관하게 기수 전체 기준**이며
 					  화면 상단 `미배정 N` 배지에 그대로 쓴다
+					- cohortTotal: 기수 전체 교육생 수. **필터와 무관한 모집단**이라 totalElements와 다르다.
+					  화면 상단 `명단 393명`과 검색 결과가 없을 때의 `7기 393명에서 찾았습니다`가 이 값이며,
+					  unassignedCount와 같은 모집단이라 `393명 중 미배정 12`가 그대로 성립한다
 
 					**content[].classroomId·className은 반 배정이 없으면 둘 다 null이다.**
 					**content[].leftAt은 중도 이탈(cohort_member.status=LEFT)한 경우에만 값이 있으며,
@@ -196,10 +201,11 @@ public class TraineeController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "명단 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "classroomId와 unassignedOnly를 함께 지정했거나 page·size·accountStatus 값이 올바르지 않음"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "403", description = "오퍼레이터·매니저 권한 또는 기관 범위가 허용되지 않음"),
-			@ApiResponse(responseCode = "404", description = "조회할 기수를 찾을 수 없음(다른 기관의 기수 포함)")
+			@ApiResponse(responseCode = "400", description = "ROSTER_FILTER_CONFLICT classroomId와 unassignedOnly를 함께 지정함 · ACCOUNT_STATUS_FILTER_NOT_SUPPORTED 이 화면이 쓰지 않는 계정 상태(LOCKED) · VALIDATION_FAILED page·size 값이 올바르지 않음"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 만료됨"),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터·매니저 권한이 아님"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 조회할 기수를 찾을 수 없음. 다른 기관의 기수도 존재를 알리지 않고 여기로 묶는다"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 기관을 확인할 수 없음")
 	})
 	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
 	@GetMapping
@@ -235,7 +241,8 @@ public class TraineeController {
 				rosterPage.getSize(),
 				rosterPage.getTotalElements(),
 				rosterPage.getTotalPages(),
-				result.unassignedCount()
+				result.unassignedCount(),
+				result.cohortTotal()
 		);
 		return ResponseEntity.ok(response);
 	}
@@ -265,11 +272,12 @@ public class TraineeController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "상태 변경 성공"),
-			@ApiResponse(responseCode = "400", description = "ACTIVE/INACTIVE 외의 상태를 지정함"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한 또는 기관 범위가 허용되지 않음"),
-			@ApiResponse(responseCode = "404", description = "교육생을 찾을 수 없음(다른 기수·다른 기관 포함)"),
-			@ApiResponse(responseCode = "409", description = "초대 대기 상태인 교육생의 상태를 직접 변경하려 함")
+			@ApiResponse(responseCode = "400", description = "TRAINEE_STATUS_NOT_ALLOWED ACTIVE·INACTIVE 외의 상태를 지정함"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 만료됨"),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터 권한이 아님"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음 · TRAINEE_NOT_FOUND 그 기수에 그 교육생이 없음(다른 기수·다른 기관 포함)"),
+			@ApiResponse(responseCode = "409", description = "TRAINEE_STATUS_NOT_MUTABLE 초대 대기(INVITED) 교육생이라 상태를 직접 바꿀 수 없음. 화면이 할 일은 초대 재발송이다"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 기관을 확인할 수 없음")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/{traineeId}/status")
@@ -282,7 +290,7 @@ public class TraineeController {
 			Authentication authentication
 	) {
 		if (!request.isMutableStatus()) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "교육생 계정 상태는 활성 또는 비활성만 직접 설정할 수 있습니다.");
+			throw new ApiException(MemberErrorCode.TRAINEE_STATUS_NOT_ALLOWED);
 		}
 		UUID organizationId = extractOrganizationId(authentication);
 		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
@@ -295,8 +303,7 @@ public class TraineeController {
 	private UUID extractOrganizationId(Authentication authentication) {
 		Object details = authentication.getDetails();
 		if (!(details instanceof UUID organizationId)) {
-			throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-					"인증 정보에서 organizationId(UUID)를 확인할 수 없습니다.");
+			throw new ApiException(AcademicOperationsErrorCode.ORGANIZATION_CONTEXT_MISSING);
 		}
 		return organizationId;
 	}

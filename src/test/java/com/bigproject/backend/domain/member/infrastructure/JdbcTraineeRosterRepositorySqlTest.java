@@ -9,6 +9,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -21,6 +22,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *     -e POSTGRES_PASSWORD=devcheck -e POSTGRES_DB=checkdb postgres:16
  *   docker exec pg-verify psql -U postgres -d checkdb \
  *     -f docs/table-definition/테이블정의서_v07_교육생홈_DDL.sql
+ *   docker exec pg-verify psql -U postgres -d checkdb \
+ *     -f docs/table-definition/테이블정의서_v07_교육생홈_View.sql
  */
 class JdbcTraineeRosterRepositorySqlTest {
 	private static final String URL = "jdbc:postgresql://localhost:55440/checkdb";
@@ -62,6 +65,17 @@ class JdbcTraineeRosterRepositorySqlTest {
 				new TraineeRosterRepository.RosterCriteria(
 						cohortId, organizationId, null, true, "PENDING", null, TraineeRosterSort.RECENT_ENROLLED),
 				PageRequest.of(1, 10))).doesNotThrowAnyException();
+	}
+
+	@Test
+	void cohortWideCountsParseAndShareTheSamePopulation() {
+		JdbcTraineeRosterRepository repository = repositoryOrSkip();
+
+		assertThatCode(() -> repository.countCohortTotal(cohortId, organizationId)).doesNotThrowAnyException();
+		assertThatCode(() -> repository.countUnassigned(cohortId, organizationId)).doesNotThrowAnyException();
+		// 미배정은 기수 전체의 부분집합이라 어떤 데이터에서도 총원을 넘을 수 없다.
+		assertThat(repository.countUnassigned(cohortId, organizationId))
+				.isLessThanOrEqualTo(repository.countCohortTotal(cohortId, organizationId));
 	}
 
 	private JdbcTraineeRosterRepository repositoryOrSkip() {

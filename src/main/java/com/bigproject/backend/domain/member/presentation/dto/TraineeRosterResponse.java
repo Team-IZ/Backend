@@ -16,10 +16,23 @@ public record TraineeRosterResponse(
 		@Schema(description = "필터 적용 후 전체 교육생 수") long totalElements,
 		@Schema(description = "필터 적용 후 전체 페이지 수") int totalPages,
 		@Schema(description = "반 배정이 없는 교육생 수. 필터와 무관하게 기수 전체 기준(화면 상단 '미배정 N')")
-		int unassignedCount
+		int unassignedCount,
+		@Schema(description = """
+				기수 전체 교육생 수이며 **필터를 적용하지 않은 모집단**이라 totalElements와 다릅니다.
+				화면 상단의 '명단 393명'과 검색 결과가 없을 때의 '7기 393명에서 찾았습니다'가 이 값이며,
+				둘 다 필터와 무관하게 같은 수를 보여줘야 해서 목록 한 페이지로는 만들 수 없습니다.
+				unassignedCount와 같은 모집단이라 '393명 중 미배정 12'가 그대로 성립합니다.
+				""", example = "393")
+		int cohortTotal
 ) {
 
-	@Schema(description = "교육생 명단 한 행")
+	/**
+	 * springdoc은 스키마를 <b>단순 클래스 이름</b>으로 키잉하므로 이름을 명시하지 않으면
+	 * {@code RegisterTraineesRequest.Trainee}(이름·이메일 2개짜리 요청 DTO)와 같은 {@code Trainee} 키를
+	 * 놓고 충돌해 <b>먼저 등록된 쪽이 이긴다</b>. 실제로 이 목록이 {@code {name, email}}만 돌려준다고
+	 * 선언되어 traineeId·status·소속 반이 생성 타입에서 통째로 사라졌다.
+	 */
+	@Schema(name = "TraineeRosterEntry", description = "교육생 명단 한 행")
 	public record Trainee(
 			@Schema(description = "교육생 사용자 ID. 상태 변경 시 이 값을 경로에 쓴다") UUID traineeId,
 			String name,

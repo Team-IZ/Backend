@@ -15,7 +15,9 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Repository
@@ -56,6 +58,26 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 			FROM app_user u
 			JOIN "role" r ON r.role_id = u.role_id AND r.code = 'MANAGER'
 			""";
+
+	/**
+	 * 상태별 인원은 목록과 <b>같은 모집단</b>(삭제되지 않은 이 기관의 MANAGER)을 쓰되 검색·상태
+	 * 필터만 걸지 않는다. 필터를 함께 걸면 상태 칩이 자기 자신을 필터링해 항상 자기 개수만 남는다.
+	 */
+	@Override
+	public Map<String, Long> countByStatus(UUID orgId) {
+		String sql = """
+				SELECT u.status AS account_status, COUNT(*) AS member_count
+				FROM app_user u
+				JOIN "role" r ON r.role_id = u.role_id AND r.code = 'MANAGER'
+				WHERE u.deleted_at IS NULL AND u.org_id = ?
+				GROUP BY u.status
+				""";
+		Map<String, Long> counts = new LinkedHashMap<>();
+		jdbcTemplate.query(sql, rs -> {
+			counts.put(rs.getString("account_status"), rs.getLong("member_count"));
+		}, orgId);
+		return counts;
+	}
 
 	@Override
 	public Page<ManagerRosterRow> findManagers(ManagerRosterCriteria criteria, Pageable pageable) {

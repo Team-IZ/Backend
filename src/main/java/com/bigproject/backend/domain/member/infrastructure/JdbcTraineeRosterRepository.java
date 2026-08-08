@@ -101,6 +101,20 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 		return count == null ? 0 : count;
 	}
 
+	/**
+	 * {@link #countUnassigned}와 <b>같은 모집단</b>(그 기수의 cohort_member 전체)을 센다.
+	 * 두 값이 같은 분모 위에 있어야 화면의 '393명 중 미배정 12'가 성립한다.
+	 */
+	@Override
+	public int countCohortTotal(UUID cohortId, UUID orgId) {
+		String sql = """
+				SELECT COUNT(*) FROM cohort_member cm
+				WHERE cm.cohort_id = ? AND cm.org_id = ?
+				""";
+		Integer count = jdbcTemplate.queryForObject(sql, Integer.class, cohortId, orgId);
+		return count == null ? 0 : count;
+	}
+
 	@Override
 	public Optional<RosterRow> findTrainee(UUID traineeId, UUID cohortId, UUID orgId) {
 		String sql = ROSTER_SELECT + " WHERE cm.user_id = ? AND cm.cohort_id = ? AND cm.org_id = ?";
