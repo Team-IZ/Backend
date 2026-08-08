@@ -10,7 +10,10 @@ import java.util.UUID;
 public record SectionItemResponse(
         @Schema(description = "매핑 ID") UUID mappingId,
         @Schema(description = "항목 이름", example = "HITL Trigger 조건 함수") String extractedName,
-        @Schema(description = "정의문. definitionMissing이 true면 null") String description,
+        // 값이 null일 수 있다는 사실은 설명문이 아니라 타입에 있어야 한다. 설명에만 적으면
+        // 생성 타입이 `description: string`이 되어 컴파일러가 null 검사를 요구하지 않고,
+        // `description.trim()` 한 줄에서 런타임에 터진다(8차 R2).
+        @Schema(description = "정의문. definitionMissing이 true면 null", nullable = true) String description,
         @Schema(description = "정의문이 아직 추출되지 않았으면 true") boolean definitionMissing,
         @Schema(description = "시작 페이지") Integer pageStart,
         @Schema(description = "끝 페이지") Integer pageEnd,

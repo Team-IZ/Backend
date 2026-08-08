@@ -54,7 +54,7 @@ public class CurriculumController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "교안 목록 조회 성공"),
-            @ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
     })
     @GetMapping("/cohorts/{cohortId}/curricula")
     public ResponseEntity<List<CurriculumVersionResponse>> findLinkableCurricula(
@@ -81,7 +81,9 @@ public class CurriculumController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "쓰인 회차 조회 성공"),
-            @ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "400", description = "BIG_PROJECT_HAS_NO_ROUND_LABEL 연결된 프로젝트가 빅프로젝트라 회차 라벨이 없음"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "PROJECT_NOT_FOUND 연결된 프로젝트를 찾을 수 없음"),
     })
     @GetMapping("/curricula/{materialId}/projects")
     public ResponseEntity<List<String>> findUsedProjects(
@@ -105,7 +107,7 @@ public class CurriculumController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "비교 가능한 기수 목록 조회 성공"),
-            @ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
     })
     @GetMapping("/curricula/comparable-cohorts")
     public ResponseEntity<List<UUID>> findComparableCohorts(
@@ -134,8 +136,8 @@ public class CurriculumController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "교안 등록 성공"),
-            @ApiResponse(responseCode = "400", description = "파일이 없거나 필수값 누락"),
-            @ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "400", description = "CURRICULUM_FILE_REQUIRED 업로드할 파일이 없음 · VALIDATION_FAILED title 등 필수값 누락"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
     })
     @PostMapping(value = "/curricula", consumes = "multipart/form-data")
     public ResponseEntity<CurriculumVersionResponse> registerCurriculum(
@@ -164,8 +166,8 @@ public class CurriculumController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "202", description = "재분석 요청 접수됨"),
-            @ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-            @ApiResponse(responseCode = "404", description = "교안을 찾을 수 없음"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 교안 원장이 없거나 그 교안에 버전이 하나도 없음"),
     })
     @PostMapping("/curricula/{materialId}/analyses")
     public ResponseEntity<Void> requestAnalysis(

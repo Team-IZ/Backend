@@ -14,8 +14,10 @@ public record ProjectResponse(
         @Schema(description = "소속 기수 ID") UUID cohortId,
         @Schema(description = "프로젝트명") String name,
         @Schema(description = "기수 내 순번") Integer sequenceNo,
-        @Schema(description = "MINI_PROJECT / BIG_PROJECT") ProjectCategory category,
-        @Schema(description = "PLANNED / RUNNING / CLOSED") ProjectLifecycleStatus status,
+        // 값 목록은 공유 스키마(ProjectCategory·ProjectStatus)에 한 곳만 둔다. 여기에 description을
+        // 적으면 $ref 형제 키가 되어 어차피 버려지므로, 설명도 enum 쪽에 적었다.
+        ProjectCategory category,
+        ProjectLifecycleStatus status,
         @Schema(description = "시작일") LocalDate startDate,
         @Schema(description = "종료일") LocalDate endDate
 ) {

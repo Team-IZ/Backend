@@ -3,8 +3,10 @@ package com.bigproject.backend.global.config;
 import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
+import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
 import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectExecutionErrorCode;
 import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
 import com.bigproject.backend.global.exception.ApiErrorCode;
 import com.bigproject.backend.global.exception.ErrorResponse;
@@ -27,6 +29,7 @@ import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -74,7 +77,8 @@ public class SwaggerConfig {
 	/** 도메인 에러 코드 카탈로그. 새 도메인이 {@link ApiErrorCode} enum을 만들면 여기 등록한다. */
 	private static final Map<String, String> ERROR_CODE_CATALOG = Stream.<ApiErrorCode[]>of(
 					OrganizationErrorCode.values(), ReportErrorCode.values(), AuthErrorCode.values(),
-					AcademicOperationsErrorCode.values(), MemberErrorCode.values(), AnalyticsErrorCode.values())
+					AcademicOperationsErrorCode.values(), MemberErrorCode.values(), AnalyticsErrorCode.values(),
+					ProjectExecutionErrorCode.values(), CurriculumErrorCode.values())
 			.flatMap(Arrays::stream)
 			.collect(LinkedHashMap::new, (map, code) -> map.put(code.name(), code.defaultMessage()), Map::putAll);
 
@@ -115,6 +119,10 @@ public class SwaggerConfig {
 	 *       프론트가 준비된 오퍼레이션만 실서버에 붙이고 나머지는 목으로 두는 전환을 스크립트로 처리한다.</li>
 	 *   <li><b>null이 온다는 사실이 사라진다.</b> {@code @Schema(nullable = true)}는 3.0 전용 필드에 담기는데
 	 *       스펙을 3.1로 직렬화하면 그 필드가 그냥 없어진다. 3.1 표기로 옮겨 적는다.</li>
+	 *   <li><b>숫자 필드의 값 목록이 문자열로 나간다.</b> {@code @Schema(allowableValues)}는 String[]이라
+	 *       {@code int} 필드에 붙여도 {@code "type": "integer"} 옆에 {@code "enum": ["90","180","365"]}이
+	 *       실린다 — 타입과 값이 서로 다른 말을 하고, 생성기는 값 쪽을 믿어
+	 *       {@code '90' | '180' | '365'}를 만들어 호출부마다 캐스팅을 강요한다. 숫자로 되돌린다.</li>
 	 * </ol>
 	 *
 	 * <p>컨트롤러마다 애너테이션을 99번 적지 않고 여기서 한 번에 거는 이유는, 응답 하나를 빠뜨려도
@@ -182,7 +190,53 @@ public class SwaggerConfig {
 			return null;
 		}
 		normalizeMembers(schema);
+		coerceNumericEnum(schema);
 		return toNullableIn31(schema);
+	}
+
+	/**
+	 * 숫자 타입 스키마의 {@code enum} 값을 숫자로 되돌린다.
+	 *
+	 * <p>{@code @Schema(allowableValues = {"90", "180", "365"})}는 애너테이션 문법상 String[]밖에 될 수 없어,
+	 * {@code int dataRetentionDays}에 붙여도 문자열 세 개가 그대로 스펙에 실린다. 그러면 한 스키마 안에서
+	 * {@code type}은 정수라 하고 {@code enum}은 문자열이라 하는 상태가 되고, 생성기는 {@code enum} 쪽을 믿는다 —
+	 * 프론트 타입이 {@code '90' | '180' | '365'}로 나와 숫자를 보내는 호출부마다 캐스팅이 한 줄씩 붙었다.
+	 *
+	 * <p>고치는 자리를 여기로 잡은 이유는, DTO에 손을 대면 <b>와이어 포맷이 바뀌기 때문</b>이다.
+	 * 필드를 enum으로 올리면 JSON이 문자열로 바뀌어 역직렬화가 깨진다({@code AllowedRetentionDays} 주석 참고).
+	 * 서버가 받는 형식은 그대로 두고 <b>문서만</b> 사실에 맞춘다. 특정 필드를 이름으로 집지 않으므로
+	 * 같은 실수가 다음 DTO에서 반복돼도 자동으로 걸린다.
+	 */
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private void coerceNumericEnum(Schema schema) {
+		List<?> values = schema.getEnum();
+		if (values == null || values.isEmpty() || !isNumericType(schema)) {
+			return;
+		}
+		boolean integral = hasType(schema, "integer");
+		List<Object> converted = new ArrayList<>();
+		for (Object value : values) {
+			converted.add(value instanceof String text ? parseNumber(text, integral) : value);
+		}
+		schema.setEnum(converted);
+	}
+
+	/** 파싱에 실패하면 원문을 그대로 둔다 — 문서를 고치려다 값을 잃는 것이 더 나쁘다. */
+	private Object parseNumber(String text, boolean integral) {
+		try {
+			return integral ? Long.valueOf(text.trim()) : new BigDecimal(text.trim());
+		} catch (NumberFormatException exception) {
+			return text;
+		}
+	}
+
+	private boolean isNumericType(Schema schema) {
+		return hasType(schema, "integer") || hasType(schema, "number");
+	}
+
+	private boolean hasType(Schema schema, String type) {
+		return type.equals(schema.getType())
+				|| (schema.getTypes() != null && schema.getTypes().contains(type));
 	}
 
 	/**

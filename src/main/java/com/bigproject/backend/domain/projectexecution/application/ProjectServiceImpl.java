@@ -20,11 +20,14 @@ import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectRequ
 import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectVerificationConceptRepository;
 import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectVerificationConceptSetRepository;
 
+import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
+import com.bigproject.backend.domain.curriculum.domain.CurriculumException;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectExecutionErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
+
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
@@ -50,7 +53,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Transactional
     public void markRunning(UUID projectId, UUID orgId, UUID actorUserId) {
         Project project = projectRepository.findByProjectIdAndOrgId(projectId, orgId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다."));
+                .orElseThrow(() -> new ApiException(ProjectExecutionErrorCode.PROJECT_NOT_FOUND));
         project.start(actorUserId);
     }
 
@@ -60,7 +63,7 @@ public class ProjectServiceImpl implements ProjectService {
             UUID projectId, UUID orgId, List<String> requirementTitles, UUID actorUserId) {
 
         if (!projectRepository.existsByProjectIdAndOrgId(projectId, orgId)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다.");
+            throw new ApiException(ProjectExecutionErrorCode.PROJECT_NOT_FOUND);
         }
 
         List<ProjectRequirement> existing = requirementRepository
@@ -113,10 +116,10 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public String resolveMiniProjectRoundLabel(UUID projectId, UUID orgId) {
         Project project = projectRepository.findByProjectIdAndOrgId(projectId, orgId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다."));
+                .orElseThrow(() -> new ApiException(ProjectExecutionErrorCode.PROJECT_NOT_FOUND));
 
         if (project.getProjectCategory() != ProjectCategory.MINI_PROJECT) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "빅프로젝트에는 회차 라벨이 없습니다.");
+            throw new ApiException(ProjectExecutionErrorCode.BIG_PROJECT_HAS_NO_ROUND_LABEL);
         }
 
         List<Project> miniProjectsInOrder = projectRepository
@@ -131,7 +134,7 @@ public class ProjectServiceImpl implements ProjectService {
             }
         }
         if (roundNo == -1) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "회차 번호를 계산할 수 없습니다.");
+            throw new ApiException(ProjectExecutionErrorCode.ROUND_NUMBER_UNRESOLVED);
         }
         return "미프 " + roundNo + "차";
     }
@@ -166,7 +169,8 @@ public class ProjectServiceImpl implements ProjectService {
     public Project createProject(UUID orgId, UUID cohortId, String name, ProjectCategory category,
                                  LocalDate startDate, LocalDate endDate, UUID actorUserId) {
         if (projectRepository.existsByCohortIdAndOrgIdAndNameAndDeletedAtIsNull(cohortId, orgId, name)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 존재하는 프로젝트명입니다: " + name);
+            throw new ApiException(ProjectExecutionErrorCode.PROJECT_NAME_DUPLICATED,
+                    "이미 존재하는 프로젝트명입니다: " + name);
         }
         int nextSequenceNo = projectRepository.findByCohortIdAndOrgIdOrderByCreatedAtDesc(cohortId, orgId).size() + 1;
 
@@ -185,7 +189,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public Project findProject(UUID projectId, UUID orgId) {
         return projectRepository.findByProjectIdAndOrgId(projectId, orgId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다."));
+                .orElseThrow(() -> new ApiException(ProjectExecutionErrorCode.PROJECT_NOT_FOUND));
     }
 
     @Override
@@ -265,7 +269,8 @@ public class ProjectServiceImpl implements ProjectService {
         int sequenceNo = 1;
         for (UUID mappingId : mappingIds) {
             CurriculumTeachesMapping mapping = mappingRepository.findById(mappingId)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "존재하지 않는 매핑입니다: " + mappingId));
+                    .orElseThrow(() -> new ApiException(ProjectExecutionErrorCode.CONCEPT_MAPPING_NOT_FOUND,
+                            "존재하지 않는 매핑입니다: " + mappingId));
             ProjectVerificationConcept concept = ProjectVerificationConcept.of(
                     newSet.getConceptSetId(), orgId, mapping.getTeachesId(), mappingId, sequenceNo++);
             verificationConceptRepository.save(concept);
@@ -286,24 +291,25 @@ public class ProjectServiceImpl implements ProjectService {
         Project project = findProject(projectId, orgId);
 
         if (project.getProjectCategory() != ProjectCategory.MINI_PROJECT) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "빅프로젝트에는 교안을 연결할 수 없습니다.");
+            throw new ApiException(ProjectExecutionErrorCode.CURRICULUM_NOT_APPLICABLE_TO_BIG_PROJECT);
         }
 
         CurriculumVersion version = curriculumVersionRepository.findByVersionIdAndOrgId(curriculumVersionId, orgId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "교안 버전을 찾을 수 없습니다."));
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_VERSION_NOT_FOUND,
+                        "교안 버전을 찾을 수 없습니다."));
 
         curriculumAnalysisRepository
                 .findFirstByVersionIdAndStatusOrderByCompletedAtDesc(curriculumVersionId, CurriculumAnalysisStatus.SUCCEEDED)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "성공한 분석이 없는 교안 버전입니다."));
+                .orElseThrow(() -> new ApiException(ProjectExecutionErrorCode.CURRICULUM_ANALYSIS_NOT_SUCCEEDED));
 
         List<CurriculumTeachesMapping> approvedMappings =
                 mappingRepository.findActiveCandidatesByVersion(curriculumVersionId, orgId, MappingStatus.ACTIVE);
         if (approvedMappings.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "승인된 개념 매핑이 없는 교안 버전입니다.");
+            throw new ApiException(ProjectExecutionErrorCode.CURRICULUM_MAPPING_NOT_APPROVED);
         }
 
         if (projectCurriculumRepository.existsByProjectIdAndCurriculumVersionId(projectId, curriculumVersionId)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 연결된 교안 버전입니다.");
+            throw new ApiException(ProjectExecutionErrorCode.CURRICULUM_ALREADY_LINKED);
         }
 
         int nextSequenceNo = projectCurriculumRepository.findAllByProjectIdOrderBySequenceNoDesc(projectId)

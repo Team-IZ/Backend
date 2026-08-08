@@ -1,6 +1,8 @@
 package com.bigproject.backend.domain.curriculum.presentation;
 
 import com.bigproject.backend.domain.curriculum.application.CurriculumService;
+import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
+import com.bigproject.backend.domain.curriculum.domain.CurriculumException;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumVersion;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumVersionRepository;
 import com.bigproject.backend.domain.curriculum.presentation.dto.SectionResponse;
@@ -12,14 +14,12 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
@@ -61,8 +61,9 @@ public class CurriculumMaterialController {
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "섹션 조회 성공"),
-            @ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-            @ApiResponse(responseCode = "404", description = "교안을 찾을 수 없거나, 분석 완료된 버전이 없음"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 그 기관에 그 교안이 없음(영구적)"),
+            @ApiResponse(responseCode = "503", description = "CURRICULUM_ANALYSIS_NOT_COMPLETED 최신 버전에 성공한 분석이 아직 없음(일시적 — 화면은 재시도를 안내한다)"),
     })
     @GetMapping("/sections")
     public ResponseEntity<List<SectionResponse>> findSections(
@@ -74,7 +75,7 @@ public class CurriculumMaterialController {
                 .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId)
                 .stream().findFirst()
                 .map(CurriculumVersion::getVersionId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "교안을 찾을 수 없습니다."));
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
 
         List<SectionResponse> response = curriculumService.findSections(latestVersionId, orgId).stream()
                 .map(SectionResponse::from)
