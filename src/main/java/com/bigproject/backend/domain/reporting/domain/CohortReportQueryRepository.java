@@ -30,6 +30,19 @@ public interface CohortReportQueryRepository {
 	/** 교안별 대상·평가·결측 요약. 수업 진단 스냅샷. */
 	List<CurriculumSummaryRow> findCurriculumSummaries(UUID diagnosisSnapshotId);
 
+	/**
+	 * 모수에서 빠진 인원을 사유별로. 수업 진단 스냅샷의 {@code summary_payload}에서 읽는다.
+	 *
+	 * <p><b>왜 {@code measurement_attempt}를 지금 세지 않는가.</b> 리포트는 발행 시점에 얼린
+	 * 스냅샷이다. 이 세 숫자만 실시간으로 세면 같은 문서를 두 번 열 때 값이 달라지고,
+	 * 화면의 `전체 응시 − 미응시 − 무효 − 중단 = 채점` 뺄셈이 어제와 오늘 다르게 맞는다.
+	 * 다른 모든 값이 스냅샷인데 이 셋만 살아 있으면 문서가 아니게 된다.
+	 *
+	 * <p>페이로드에 {@code excluded}가 없으면 0으로 돌려준다 — 생성 파이프라인이 아직 이 키를
+	 * 안 쓰는 스냅샷이 남아 있을 수 있고, 옛 스냅샷 때문에 조회가 깨지면 안 된다.
+	 */
+	ExcludedRow findExcluded(UUID diagnosisSnapshotId);
+
 	/** 개념 × 도달 단계 분포. 수업 진단 스냅샷. 한 개념이 단계 수만큼 행으로 나온다. */
 	List<ConceptDistributionRow> findConceptDistribution(UUID diagnosisSnapshotId);
 
@@ -71,6 +84,29 @@ public interface CohortReportQueryRepository {
 	}
 
 	record CohortScale(int traineeCount, int classCount) {
+	}
+
+	/**
+	 * 채점 모수에서 제외된 인원. 화면 요약 탭의 `채점 범위` 줄이 이 셋을 뺄셈으로 보여준다.
+	 *
+	 * <h2>생성 파이프라인이 채워야 하는 계약</h2>
+	 *
+	 * <p>{@code report_snapshot.summary_payload}에 아래 모양으로 넣는다. 키 이름이 화면 계약
+	 * (Frontend {@code operator/report/_/api/types.ts}의 {@code excluded})과 같아야 한다.
+	 *
+	 * <pre>
+	 * { "excluded": { "notTaken": 12, "invalid": 3, "interrupted": 5 } }
+	 * </pre>
+	 *
+	 * @param notTaken    미응시. 응시 기록 자체가 없다.
+	 * @param invalid     무효 응시. 검토 중이거나 무효로 확정됐다.
+	 * @param interrupted 중단. 세션을 시작했지만 끝내지 못했다.
+	 */
+	record ExcludedRow(int notTaken, int invalid, int interrupted) {
+
+		public static ExcludedRow zero() {
+			return new ExcludedRow(0, 0, 0);
+		}
 	}
 
 	/**
