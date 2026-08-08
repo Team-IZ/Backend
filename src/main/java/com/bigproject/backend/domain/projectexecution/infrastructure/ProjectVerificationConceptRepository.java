@@ -10,4 +10,12 @@ public interface ProjectVerificationConceptRepository extends JpaRepository<Proj
 
     // "쓰인 회차" 조회용 — 이 teachesId가 검증 개념으로 쓰인 모든 세트를 찾는다
     List<ProjectVerificationConcept> findByTeachesId(UUID teachesId);
+
+    /**
+     * 확정된 검증 개념 되읽기용(9차 R1). 활성 세트 하나 안의 개념을 확정할 때의 순서 그대로 준다 —
+     * 화면이 개념을 칩으로 나열하는 순서가 저장 순서와 어긋나면 안 된다.
+     */
+    List<ProjectVerificationConcept> findByConceptSetIdOrderBySequenceNoAsc(UUID conceptSetId);
+
+    long countByConceptSetId(UUID conceptSetId);
 }

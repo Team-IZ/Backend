@@ -34,6 +34,21 @@ public interface CurriculumTeachesMappingRepository extends JpaRepository<Curric
             @Param("status") MappingStatus status);
 
     /**
+     * 위 조회의 개수만 필요한 자리(목록 화면의 `후보 12건에서 3건`)에서 쓴다.
+     * 항목마다 매핑 전량을 받아 세면 목록 하나에 교안 전량이 따라 올라온다(9차 R1).
+     */
+    @Query("""
+            select count(tm) from CurriculumTeachesMapping tm
+            where tm.versionId = :versionId
+              and tm.orgId = :orgId
+              and tm.mappingStatus = :status
+            """)
+    long countActiveCandidatesByVersion(
+            @Param("versionId") UUID versionId,
+            @Param("orgId") UUID orgId,
+            @Param("status") MappingStatus status);
+
+    /**
      * project_verification_concept 생성 시 검증용:
      * source_mapping_id가 가리키는 teaches_id가 실제로 이 매핑의 teaches_id와 일치하는지,
      * 그리고 이 매핑이 프로젝트에 연결된 정확한 curriculum_version_id 범위 안에 있는지 확인한다.

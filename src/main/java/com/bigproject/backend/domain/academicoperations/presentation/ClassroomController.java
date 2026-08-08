@@ -11,6 +11,7 @@ import com.bigproject.backend.domain.academicoperations.presentation.dto.CreateC
 import com.bigproject.backend.domain.academicoperations.presentation.dto.RollbackAssignmentRequest;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.RollbackAssignmentResponse;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.UpdateClassroomManagersRequest;
+import com.bigproject.backend.domain.academicoperations.presentation.dto.UpdateClassroomRequest;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -25,6 +26,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -60,12 +62,17 @@ public class ClassroomController {
 					- classrooms[].classroomId: 반 ID
 					- classrooms[].cohortId: 소속 기수 ID
 					- classrooms[].name: 반 이름
-					- classrooms[].managers[]: 담당 매니저 목록(memberId, name)
+					- classrooms[].capacity: 정원. 반 카드의 `24 / 30명`에서 분모(9차 R6)
+					- classrooms[].managers[]: 담당 매니저 목록(memberId, name, email)
 					- classrooms[].traineeCount: 현재 그 반에 소속된 교육생 수
 					- classrooms[].managerAssignmentRequired: 담당 매니저가 없으면 true — 화면의 `매니저 미배정` 표시 근거
 
-					**아직 채워지지 않는 값** — managers[].name은 항상 빈 문자열이다.
-					매니저 이름은 app_user 조인이 필요해 member 도메인 의존이 생기므로 memberId만 내려준다.
+					**managers[].memberId는 UUID다.** `GET /managers`의 `managerId`,
+					`PATCH …/managers`의 `managerIds[]`와 같은 값·같은 타입이라, 여기서 읽은 현재 담당을
+					그대로 다시 보낼 수 있다(9차 R5).
+
+					**managers[].name은 초대만 받고 아직 가입하지 않은 매니저에서 null이다.** 이름은 수락할 때
+					본인이 넣는 값이라 그 전에는 비어 있다. `email`은 항상 온다 — 동명이인을 화면에서 가르는 값이다.
 					"""
 	)
 	@ApiResponses({
@@ -130,6 +137,121 @@ public class ClassroomController {
 		ClassroomService.ClassroomView view = classroomService.createClassroom(
 				organizationId, cohortId, request.name(), request.capacity(), request.managerIds(), actorUserId);
 		return ResponseEntity.status(HttpStatus.CREATED).body(ClassroomResponse.from(view));
+	}
+
+	@Operation(
+			operationId = "updateClassroom",
+			summary = "반 수정 | ✅ 사용 가능",
+			description = """
+					반의 이름·정원을 고친다. **부분 수정이라 보낸 필드만 바뀐다.**
+
+					**요청**
+					- cohortId / classroomId (경로): 대상 반. classroomId가 그 기수 소속이 아니면 404
+					- name (선택): 새 반 이름
+					- capacity (선택): 새 정원. 1 이상
+
+					**둘 다 생략하면 400** `CLASSROOM_UPDATE_EMPTY`다 — 아무 일도 하지 않는 요청이 200으로
+					돌아오면 화면은 저장됐다고 오해한다. `name`에 공백만 보내는 것은 "안 바꾼다"와 같게 본다.
+
+					**응답 (200)**
+					- 변경 후의 반 정보(응답 필드는 "기수 반 목록 조회"의 classrooms[] 항목과 동일)
+
+					## 이름 중복은 자기 자신을 빼고 본다
+
+					생성과 같은 규칙(같은 기수 안에서 중복이면 409 `CLASSROOM_NAME_TAKEN`)이되
+					**자기 자신은 제외**한다 — 이름은 그대로 두고 정원만 고치는 경우가 흔한데,
+					자기 자신을 세면 그때마다 409가 난다.
+
+					## 정원을 현재 인원보다 작게 두는 것을 막지 않는다
+
+					정원 초과는 배정 경로(`PATCH …/trainee-assignments`)가 이미 허용하는 상태라
+					(중도 합류·반 통폐합) 여기서만 막으면 규칙이 두 벌이 된다.
+
+					⚠️ **개강 이후에도 수정은 열려 있다.** 오타 정정처럼 되돌릴 수 없는 값이 아니기 때문이다.
+					화면이 `rules.ts`의 `canEditClasses`로 개강 전에만 여는 것은 그대로 두셔도 되고,
+					서버는 그 시점을 이유로 거절하지 않는다. 되돌릴 수 없는 조작인 **삭제**만 서버가 판정한다.
+					"""
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "반 수정 성공"),
+			@ApiResponse(responseCode = "400", description = "CLASSROOM_UPDATE_EMPTY 바꿀 값이 하나도 없음 · VALIDATION_FAILED 정원이 1 미만"),
+			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한이 없음"),
+			@ApiResponse(responseCode = "404", description = "CLASSROOM_NOT_FOUND 반을 찾을 수 없거나 지정한 기수에 속하지 않음"),
+			@ApiResponse(responseCode = "409", description = "CLASSROOM_NAME_TAKEN 같은 기수에 이미 있는 반 이름(자기 자신은 제외하고 판정한다)")
+	})
+	@PreAuthorize("hasRole('OPERATOR')")
+	@PatchMapping("/{classroomId}")
+	public ResponseEntity<ClassroomResponse> updateClassroom(
+			@Parameter(description = "대상 반이 속한 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID cohortId,
+			@Parameter(description = "수정할 반 ID. cohortId 소속이 아니면 404", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID classroomId,
+			@Valid @RequestBody UpdateClassroomRequest request,
+			Authentication authentication
+	) {
+		UUID organizationId = extractOrganizationId(authentication);
+		ClassroomService.ClassroomView view = classroomService.updateClassroom(
+				cohortId, classroomId, organizationId, request.name(), request.capacity());
+		return ResponseEntity.ok(ClassroomResponse.from(view));
+	}
+
+	@Operation(
+			operationId = "deleteClassroom",
+			summary = "반 삭제 | ✅ 사용 가능",
+			description = """
+					반을 삭제한다. 데이터를 지우지 않고 삭제 시각만 기록하는 **소프트 삭제**이며,
+					목록·조회에서 곧바로 빠진다.
+
+					**요청**
+					- cohortId / classroomId (경로): 대상 반. classroomId가 그 기수 소속이 아니면 404
+
+					**응답 (204)** — 본문 없음
+
+					## 안에 있던 교육생은 지우지 않는다
+
+					**미배정으로 되돌린다**(사유 `ADMIN_CORRECTION`). 명단에서 지우면 그 사람의 등록 이력이
+					끊긴다. 담당 매니저 배정도 함께 해제한다(사유 `CLASS_CLOSED`) — 없어진 반의 담당으로
+					남아 있으면 매니저 목록의 `classroomNames`에 계속 잡힌다.
+
+					해제된 배정은 지워지지 않고 종료 시각·사유와 함께 이력으로 남는다.
+
+					## 삭제 가능 조건은 서버가 판정한다
+
+					| 막는 조건 | 왜 |
+					|---|---|
+					| 반에 편성된 팀이 있다 | 팀이 붙었다는 것은 회차가 돌기 시작했다는 뜻이다. 제출·분석·응시가 그 팀에 매여 있다 |
+					| 반을 대상으로 만들어진 리포트가 있다 | 발행된 리포트가 가리키는 반이 사라진다 |
+
+					둘 다 409 `CLASSROOM_NOT_DELETABLE`이고, **무엇이 붙어 있는지는 `message`에 담는다** —
+					어느 쪽이든 화면이 할 일은 "지울 수 없습니다"를 보여주고 버튼을 잠그는 하나라서 코드를 쪼개지 않았다.
+
+					💡 **"개강했는가"를 기수 상태로 묻지 않는다.** 상태는 운영자가 손으로 바꾸는 값이라
+					개강 전으로 되돌려 두고 지우면 데이터가 끊긴다. 팀·리포트는 되돌릴 수 없는 사실이라
+					그쪽을 본다. 화면의 `canEditClasses`(개강 전에만 열기)는 이 판정보다 **더 좁으므로**
+					그대로 두셔도 충돌하지 않는다.
+					"""
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "204", description = "반 삭제 성공(본문 없음)"),
+			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한이 없음"),
+			@ApiResponse(responseCode = "404", description = "CLASSROOM_NOT_FOUND 반을 찾을 수 없거나 지정한 기수에 속하지 않음"),
+			@ApiResponse(responseCode = "409", description = "CLASSROOM_NOT_DELETABLE 팀이 편성됐거나 리포트가 있는 반 — 무엇이 붙어 있는지는 message에 있다")
+	})
+	@PreAuthorize("hasRole('OPERATOR')")
+	@DeleteMapping("/{classroomId}")
+	public ResponseEntity<Void> deleteClassroom(
+			@Parameter(description = "대상 반이 속한 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID cohortId,
+			@Parameter(description = "삭제할 반 ID. cohortId 소속이 아니면 404", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID classroomId,
+			Authentication authentication
+	) {
+		UUID organizationId = extractOrganizationId(authentication);
+		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
+		classroomService.deleteClassroom(cohortId, classroomId, organizationId, actorUserId);
+		return ResponseEntity.noContent().build();
 	}
 
 	@Operation(

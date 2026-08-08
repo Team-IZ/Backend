@@ -73,13 +73,11 @@ class TraineeRosterServiceTest {
 						assertThat(exception.errorCode()).isEqualTo(MemberErrorCode.ROSTER_FILTER_CONFLICT));
 	}
 
+	/** 9차 Q3-② — 명단 필터도 같은 {@code AccountStatus}를 쓰므로 세 값뿐이다. */
 	@Test
-	void rejectsLockedAsAnAccountStatusFilter() {
-		assertThatThrownBy(() -> service.findRoster(
-				cohortId, orgId, null, false, AccountStatus.LOCKED, null, TraineeRosterSort.NAME,
-				PageRequest.of(0, 20)))
-				.isInstanceOfSatisfying(ApiException.class, exception ->
-						assertThat(exception.errorCode()).isEqualTo(MemberErrorCode.ACCOUNT_STATUS_FILTER_NOT_SUPPORTED));
+	void offersOnlyTheThreeAccountStatusesThatCanActuallyOccur() {
+		assertThat(AccountStatus.values())
+				.containsExactly(AccountStatus.INVITED, AccountStatus.ACTIVE, AccountStatus.INACTIVE);
 	}
 
 	@Test

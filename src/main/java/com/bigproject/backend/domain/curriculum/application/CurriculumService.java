@@ -28,6 +28,29 @@ public interface CurriculumService {
 
     void requestAnalysis(UUID materialId, UUID orgId, UUID actorUserId);
 
+    // ── 9차 R8: 기관 전체 교안 목록 · 단건 상세 ────────────────────────────────
+
+    /** 교안 탭이 보는 기관 전체 목록 한 페이지. */
+    CurriculumCatalogPage findCatalog(
+            UUID orgId,
+            String query,
+            com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus status,
+            com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogSort sort,
+            int page,
+            int size);
+
+    /** 교안 하나. 목록과 같은 조회를 쓰므로 필드가 어긋나지 않는다. */
+    com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogRepository.CurriculumCatalogRow
+    findCatalogItem(UUID materialId, UUID orgId);
+
+    record CurriculumCatalogPage(
+            List<com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogRepository.CurriculumCatalogRow> content,
+            int page,
+            int size,
+            long totalElements,
+            int totalPages) {
+    }
+
     record SectionItemView(
             UUID mappingId,
             String extractedName,

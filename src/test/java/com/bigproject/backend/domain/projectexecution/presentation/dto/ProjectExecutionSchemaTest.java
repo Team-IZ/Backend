@@ -10,6 +10,7 @@ import io.swagger.v3.oas.models.Paths;
 import io.swagger.v3.oas.models.media.Schema;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -101,6 +102,61 @@ class ProjectExecutionSchemaTest {
 
         assertThat(((Schema<?>) schemas.get("ProjectResponse").getProperties().get("status")).get$ref())
                 .isNotEqualTo("#/components/schemas/CohortStatus");
+    }
+
+    /**
+     * 9차 R2 — 후보 항목이 섹션 항목과 <b>같은 값들을 담는지</b> 못 박는다. 같은 원장에서 나오는데
+     * 한쪽만 좁으면 후보를 교안·섹션별로 묶는 화면이 묶을 기준을 잃는다.
+     */
+    @Test
+    void givesConceptCandidatesTheSameShapeAsSectionItems() {
+        Map<String, Schema> candidate = ModelConverters.getInstance()
+                .readAll(new AnnotatedType(ConceptCandidateResponse.class));
+        Map<String, Schema> sectionItem = ModelConverters.getInstance()
+                .readAll(new AnnotatedType(SectionResponse.class));
+
+        Map<String, Schema> candidateProperties = candidate.get("ConceptCandidateResponse").getProperties();
+        assertThat(candidateProperties).containsKeys(
+                "curriculumVersionId", "sectionId", "sectionTitle", "pageStart", "pageEnd", "definitionMissing");
+
+        // 겹치는 필드는 타입까지 같아야 화면이 두 응답을 한 함수로 다룰 수 있다.
+        Map<String, Schema> sectionItemProperties = sectionItem.get("SectionItemResponse").getProperties();
+        for (String shared : List.of("extractedName", "description", "definitionMissing", "pageStart", "pageEnd")) {
+            assertThat(((Schema<?>) candidateProperties.get(shared)).getType())
+                    .as("공유 필드 %s의 타입", shared)
+                    .isEqualTo(((Schema<?>) sectionItemProperties.get(shared)).getType());
+        }
+    }
+
+    /**
+     * 9차 R1 — 저장한 것을 되읽는 자리가 상세 응답 하나에 모여 있는지 본다.
+     * 셋으로 나누면 상세 화면 진입에 조회가 4건이 된다.
+     */
+    @Test
+    void letsTheDetailResponseReadBackWhatWasSaved() {
+        Map<String, Schema> schemas = ModelConverters.getInstance()
+                .readAll(new AnnotatedType(ProjectDetailResponse.class));
+
+        Map<String, Schema> properties = schemas.get("ProjectDetailResponse").getProperties();
+        assertThat(properties).containsKeys("curricula", "concepts", "requirementTitles",
+                "curriculumCount", "conceptCount", "conceptCandidateCount");
+
+        // 확정 개념은 출처를 달고 다녀야 한다 — 리포트·면담 브리프가 이 값으로 교안 위치를 가리킨다.
+        assertThat(schemas.get("ProjectConfirmedConcept").getProperties())
+                .containsKeys("curriculumVersionId", "pageStart", "pageEnd");
+
+        // 목록 항목 스키마는 전역 이름 공간에서 부딪히지 않게 무엇의 항목인지 이름으로 드러난다.
+        assertThat(schemas).containsKeys("ProjectLinkedCurriculum", "ProjectConfirmedConcept");
+    }
+
+    /** 목록은 회차마다 조회를 부를 수 없으므로 셀에 그릴 숫자 셋을 항목에 싣는다. */
+    @Test
+    void countsWhatTheListCannotCountForItself() {
+        Map<String, Schema> schemas = ModelConverters.getInstance()
+                .readAll(new AnnotatedType(ProjectResponse.class));
+
+        assertThat(schemas.get("ProjectResponse").getProperties())
+                .containsKeys("curriculumCount", "conceptCount", "conceptCandidateCount");
     }
 
     /** {@code @Schema(nullable = true)}는 3.0 필드라 스펙 후처리를 거쳐야 3.1 타입 배열이 된다. */

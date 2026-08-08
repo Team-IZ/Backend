@@ -2,6 +2,8 @@ package com.bigproject.backend.domain.curriculum.application;
 
 import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysis;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus;
+import com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogRepository;
+import com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogSort;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumException;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumMaterial;
@@ -54,6 +56,7 @@ public class CurriculumServiceImpl implements CurriculumService {
     private final CurriculumMaterialRepository materialRepository;
     private final FileStorageService fileStorageService;
     private final AiCurriculumClient aiCurriculumClient;
+    private final CurriculumCatalogRepository catalogRepository;
     private final JdbcTemplate jdbcTemplate;
 
     @Override
@@ -161,6 +164,31 @@ public class CurriculumServiceImpl implements CurriculumService {
         analysis.updateExternalJobId(accepted.jobId());
 
         analysisRepository.save(analysis);
+    }
+
+    // ── 9차 R8: 기관 전체 교안 목록 · 단건 상세 ────────────────────────────────
+
+    @Override
+    public CurriculumCatalogPage findCatalog(UUID orgId, String query, CurriculumAnalysisStatus status,
+                                             CurriculumCatalogSort sort, int page, int size) {
+        CurriculumCatalogRepository.CurriculumCatalogCriteria criteria =
+                new CurriculumCatalogRepository.CurriculumCatalogCriteria(
+                        orgId, query, status, sort == null ? CurriculumCatalogSort.RECENT : sort);
+
+        long totalElements = catalogRepository.count(criteria);
+        List<CurriculumCatalogRepository.CurriculumCatalogRow> content =
+                catalogRepository.findPage(criteria, size, (long) page * size);
+
+        // 0건일 때 totalPages를 1로 만들지 않는다 — 빈 목록에 페이지가 하나 있다고 하면
+        // 화면의 페이저가 존재하지 않는 페이지를 그린다.
+        int totalPages = (int) ((totalElements + size - 1) / size);
+        return new CurriculumCatalogPage(content, page, size, totalElements, totalPages);
+    }
+
+    @Override
+    public CurriculumCatalogRepository.CurriculumCatalogRow findCatalogItem(UUID materialId, UUID orgId) {
+        return catalogRepository.findOne(orgId, materialId)
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
     }
 
     private static String sha256Hex(String input) {

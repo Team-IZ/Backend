@@ -78,7 +78,7 @@ class ManagerControllerTest {
 	private void stubEmptyRoster() {
 		Page<ManagerRosterRepository.ManagerRosterRow> emptyPage = new PageImpl<>(List.of());
 		when(managerRosterService.findManagers(any(), any(), any(), any(), any(), any()))
-				.thenReturn(new ManagerRosterService.RosterResult(emptyPage, Map.of()));
+				.thenReturn(new ManagerRosterService.RosterResult(emptyPage, Map.of(), 0));
 	}
 
 	@Test

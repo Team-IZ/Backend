@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
@@ -32,7 +33,7 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 
 	/**
 	 * 플레이스홀더 순서가 곧 인자 순서라 {@link #selectArgs(UUID)}와 <b>반드시 짝을 맞춰야 한다</b>.
-	 * 목적 4개 뒤에 기수 4개(담당 반·담당 인원 서브쿼리가 각각 2개씩)가 온다.
+	 * 목적 4개 뒤에 기수 4개(담당 반·담당 인원 서브쿼리가 각각 2개씩), 마지막에 목적 1개(대기 토큰)가 온다.
 	 *
 	 * <p>담당 반·담당 인원은 {@code ?::uuid IS NULL} 관용구로 기수를 건다. 기수를 안 넘기면 기관 전체가
 	 * 되도록 인자 개수를 항상 고정해, 조건부로 인자를 넣고 빼다 순서가 밀리는 일을 없앤다.
@@ -72,7 +73,17 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 			         JOIN cohort_member cm ON cm.cohort_member_id = csm.cohort_member_id AND cm.status = 'ACTIVE'
 			         WHERE ma.manager_user_id = u.user_id AND ma.status = 'ACTIVE' AND ma.unassigned_at IS NULL
 			           AND (?::uuid IS NULL OR c.cohort_id = ?::uuid)
-			       ), 0) AS assigned_trainee_count
+			       ), 0) AS assigned_trainee_count,
+			       /*
+			        * 대기 중 초대 토큰. 재발송·취소가 토큰 단위라 목록에 없으면 화면이 버튼을 켤 수 없다(9차 R7).
+			        * 토큰을 조인하면 계정 한 명이 토큰 수만큼 중복 행으로 늘어나므로 상관 서브쿼리로 둔다 —
+			        * JdbcOrganizationOperatorRepository의 pending_token_id와 같은 방식이다.
+			        */
+			       (SELECT t.token_id FROM one_time_token t
+			         WHERE t.user_id = u.user_id AND t.purpose = ?
+			           AND t.used_at IS NULL AND t.invalidated_at IS NULL
+			         ORDER BY t.issued_at DESC
+			         LIMIT 1) AS pending_invitation_token_id
 			FROM app_user u
 			JOIN "role" r ON r.role_id = u.role_id AND r.code = 'MANAGER'
 			""";
@@ -142,6 +153,36 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 	}
 
 	/**
+	 * 계정 조작 응답이 돌려줄 한 행. 목록과 <b>같은 SELECT</b>를 쓰되 기수 범위는 걸지 않는다 —
+	 * 조작은 기관 단위이고 대상은 이미 ID로 특정돼 있다. 기수 자리에 null을 넘기면 담당 반·담당 인원이
+	 * 기관 전체 기준으로 채워진다.
+	 */
+	@Override
+	public Optional<ManagerRosterRow> findManager(UUID orgId, UUID managerId) {
+		List<Object> args = new ArrayList<>(selectArgs(null));
+		args.add(orgId);
+		args.add(managerId);
+
+		List<ManagerRosterRow> found = jdbcTemplate.query(
+				MANAGER_SELECT + " WHERE u.deleted_at IS NULL AND u.org_id = ? AND u.user_id = ?",
+				(ResultSet rs, int rowNum) -> mapRow(rs),
+				args.toArray());
+		return found.stream().findFirst();
+	}
+
+	@Override
+	public int countActiveManagers(UUID orgId) {
+		String sql = """
+				SELECT COUNT(*)
+				FROM app_user u
+				JOIN "role" r ON r.role_id = u.role_id AND r.code = 'MANAGER'
+				WHERE u.deleted_at IS NULL AND u.org_id = ? AND u.status = 'ACTIVE'
+				""";
+		Integer count = jdbcTemplate.queryForObject(sql, Integer.class, orgId);
+		return count == null ? 0 : count;
+	}
+
+	/**
 	 * {@link #MANAGER_SELECT}의 플레이스홀더 순서와 짝을 맞춘 SELECT 절 인자.
 	 * {@code cohortId}가 null이면 그대로 NULL로 바인딩되어 {@code ?::uuid IS NULL} 쪽이 참이 된다.
 	 * null을 담아야 해서 {@code List.of}가 아니라 {@link Arrays#asList}를 쓴다.
@@ -153,7 +194,8 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 				MANAGER_INVITE_PURPOSE,
 				MANAGER_INVITE_PURPOSE,
 				cohortId, cohortId,
-				cohortId, cohortId);
+				cohortId, cohortId,
+				MANAGER_INVITE_PURPOSE);
 	}
 
 	/**
@@ -220,7 +262,8 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 				rs.getLong("assigned_trainee_count"),
 				toInstant(rs.getTimestamp("last_login_at")),
 				toInstant(rs.getTimestamp("invited_at")),
-				rs.getString("invited_by_name")
+				rs.getString("invited_by_name"),
+				rs.getObject("pending_invitation_token_id", UUID.class)
 		);
 	}
 

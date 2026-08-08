@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.member.application;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.member.domain.AccountStatus;
 import com.bigproject.backend.domain.member.domain.MemberErrorCode;
+import com.bigproject.backend.domain.member.domain.OrganizationEmailDomainRepository;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.MemberProfileResponse;
 import com.bigproject.backend.global.exception.ApiException;
@@ -20,7 +21,10 @@ import static org.mockito.Mockito.when;
 
 class MemberProfileServiceTest {
 	private final CurrentUserResolver currentUserResolver = mock(CurrentUserResolver.class);
-	private final MemberProfileService service = new MemberProfileService(currentUserResolver);
+	private final OrganizationEmailDomainRepository organizationEmailDomainRepository =
+			mock(OrganizationEmailDomainRepository.class);
+	private final MemberProfileService service =
+			new MemberProfileService(currentUserResolver, organizationEmailDomainRepository);
 
 	@Test
 	void 로그인_응답과_같은_값을_서버에서_다시_읽어_준다() {
