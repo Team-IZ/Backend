@@ -110,8 +110,15 @@ public class ResponseRecordRequiredConverter implements ModelConverter {
 		return omits(raw.getAnnotation(JsonInclude.class));
 	}
 
+	/**
+	 * record 컴포넌트에 적은 {@code @JsonInclude}는 <b>컴포넌트 자신에는 남지 않는다</b> —
+	 * {@link JsonInclude}의 {@code @Target}에 {@code RECORD_COMPONENT}가 없어 필드·접근자·생성자
+	 * 파라미터로만 전파된다. Jackson은 그 접근자를 보고 키를 빼므로 여기서도 같은 자리를 봐야 한다.
+	 * 컴포넌트만 보면 "키가 빠지는데 required"라고 적힌 스펙이 나간다.
+	 */
 	private boolean omitsKey(RecordComponent component) {
-		return omits(component.getAnnotation(JsonInclude.class));
+		return omits(component.getAnnotation(JsonInclude.class))
+				|| omits(component.getAccessor().getAnnotation(JsonInclude.class));
 	}
 
 	private boolean omits(JsonInclude include) {

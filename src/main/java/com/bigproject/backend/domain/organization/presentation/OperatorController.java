@@ -120,7 +120,7 @@ public class OperatorController {
 
 	@Operation(
 			operationId = "inviteOperator",
-			summary = "오퍼레이터 초대 | ⚠️ 사용 보류",
+			summary = "오퍼레이터 초대 | ✅ 사용 가능",
 			description = """
 					SA-02 ② `오퍼레이터 초대` 모달. 계정 자리를 만들고 초대 메일을 보낸다.
 
@@ -262,7 +262,7 @@ public class OperatorController {
 
 	@Operation(
 			operationId = "cancelInvitation",
-			summary = "오퍼레이터 초대 취소 | ⚠️ 사용 보류",
+			summary = "오퍼레이터 초대 취소 | ✅ 사용 가능",
 			description = """
 					SA-02 ② 표의 `취소` 액션. 아직 수락되지 않은 초대를 무효화한다.
 
@@ -327,7 +327,7 @@ public class OperatorController {
 
 	@Operation(
 			operationId = "resendOperatorInvitation",
-			summary = "오퍼레이터 초대 재발송 | ⚠️ 사용 보류",
+			summary = "오퍼레이터 초대 재발송 | ✅ 사용 가능",
 			description = """
 					SA-02 ② case 4·5 의 [재발송] 액션. 초대 메일을 다시 보낸다.
 

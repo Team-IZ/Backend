@@ -1,6 +1,8 @@
 package com.bigproject.backend.domain.reporting.presentation.dto;
 
+import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
 import com.bigproject.backend.domain.reporting.domain.ManagedReportQueryRepository.ManagedReportRow;
+import com.bigproject.backend.domain.reporting.domain.TraineeReleaseStatus;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -32,7 +34,7 @@ class ManagedReportListResponseTest {
 
 		assertThat(response.reports().get(0).bodyVisible()).isFalse();
 		// 미지정은 "비공개"가 아니다. 화면이 `공개 범위 미지정`으로 그릴 근거가 남아야 한다.
-		assertThat(response.reports().get(0).releaseStatus()).isEqualTo("NOT_CONFIGURED");
+		assertThat(response.reports().get(0).releaseStatus()).isEqualTo(TraineeReleaseStatus.NOT_CONFIGURED);
 		assertThat(response.reports().get(0).scope()).isNull();
 	}
 
@@ -59,7 +61,20 @@ class ManagedReportListResponseTest {
 
 		assertThat(response.reports().get(0).bodyVisible()).isFalse();
 		// WITHHELD는 "정해서 닫았다"라 미지정(NOT_CONFIGURED)과 구분돼야 한다.
-		assertThat(response.reports().get(0).scope()).isEqualTo("PRIVATE");
+		assertThat(response.reports().get(0).scope()).isEqualTo(DisclosureScope.PRIVATE);
+	}
+
+	/**
+	 * 값 자체는 행이 그대로 들고 오지만, 나가는 타입은 공용 enum이어야 한다 —
+	 * 인라인 문자열로 두면 같은 개념이 생성 타입에서 {@code DisclosureScope}와 별개 타입이 된다.
+	 */
+	@Test
+	void 상태와_공개범위를_공용_enum으로_옮긴다() {
+		ManagedReportListResponse response = ManagedReportListResponse.from(List.of(
+				row("ACTIVE", PUBLISHED, "RELEASED", "FULL")));
+
+		assertThat(response.reports().get(0).releaseStatus()).isEqualTo(TraineeReleaseStatus.RELEASED);
+		assertThat(response.reports().get(0).scope()).isEqualTo(DisclosureScope.FULL);
 	}
 
 	private static ManagedReportRow row(String lifecycle, Instant publishedAt, String releaseStatus, String scope) {

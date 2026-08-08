@@ -160,6 +160,32 @@ class OpenApiDocumentTest {
 		assertThat(schemas.path("DisclosureScope").path("description").asString())
 				.isEqualTo("리포트 공개 범위. SUMMARY(요약만) · PRIVATE(비공개) · FULL(전문)");
 		assertThat(schemas.path("DisclosureScope").has("nullable")).isFalse();
+
+		// 목록 항목도 같은 정의를 가리킨다. 값을 복사해 두면 순서만 달라도 사람 눈에는 같아 보여
+		// 한쪽에 값이 추가된 것을 아무도 눈치채지 못한다.
+		JsonNode item = schemas.path("ManagedReportItem").path("properties");
+		assertThat(item.path("releaseStatus").path("$ref").asString())
+				.isEqualTo("#/components/schemas/TraineeReleaseStatus");
+		assertThat(item.path("scope").path("oneOf").toString())
+				.contains("#/components/schemas/DisclosureScope");
+	}
+
+	/**
+	 * 목록 항목 스키마는 <b>무엇의 항목인지</b> 이름으로 드러나야 한다. {@code Item} 같은 이름은
+	 * 전역 이름 공간에서 다음 목록 응답과 부딪히고, 먼저 등록된 쪽이 조용히 덮인다.
+	 */
+	@Test
+	void namesNestedListItemsAfterWhatTheyContain() throws Exception {
+		JsonNode schemas = spec().path("components").path("schemas");
+
+		assertThat(schemas.has("Item")).isFalse();
+		assertThat(schemas.has("ManagedReportItem")).isTrue();
+		// 항상 오는 필드가 required로 나가야 화면 타입이 `?`·`!` 없이 쓰인다.
+		// 상태에 따라 키가 빠지는 넷은 그 반대다 — required로 적으면 스펙이 거짓말을 한다.
+		assertThat(schemas.path("ManagedReportItem").path("required").toString())
+				.contains("reportId", "assessmentRoundId", "traineeUserId", "className",
+						"releaseStatus", "bodyVisible")
+				.doesNotContain("roundName", "publishedAt", "scope", "releasedAt");
 	}
 
 	@Test
