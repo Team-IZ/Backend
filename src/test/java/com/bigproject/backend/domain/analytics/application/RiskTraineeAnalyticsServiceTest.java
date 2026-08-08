@@ -1,6 +1,8 @@
 package com.bigproject.backend.domain.analytics.application;
 
+import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.analytics.domain.CohortRiskComparison;
+import com.bigproject.backend.domain.analytics.domain.RiskTraineeLevel;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeQueryRepository;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeSort;
 import com.bigproject.backend.domain.analytics.domain.RoundAggregationStatus;
@@ -8,18 +10,18 @@ import com.bigproject.backend.domain.analytics.presentation.dto.RiskTraineeRateR
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
 import com.bigproject.backend.domain.member.domain.Role;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
-
+import com.bigproject.backend.global.exception.ApiException;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.Test;
+
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -291,6 +293,51 @@ class RiskTraineeAnalyticsServiceTest {
 	}
 
 	@Test
+	void comparesTeamCellsAgainstTheirOwnClassRatherThanTheCohort() {
+		givenOperator();
+		givenPublishedRound();
+		// C반 50%(10/20), D반 10%(2/20) → 기수 전체는 30%(12/40)이지만 팀은 소속 반(C반 50%)과 견줘야 한다.
+		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 10, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 2, 0, 0, 0)
+		));
+		givenTwoClassRoster();
+		UUID teamAId = UUID.randomUUID();
+		UUID teamBId = UUID.randomUUID();
+		when(riskTraineeQueryRepository.classroomBelongsToCohort(classId, cohortId, organizationId))
+				.thenReturn(true);
+		when(riskTraineeQueryRepository.projectBelongsToCohort(projectId, cohortId, organizationId, "MINI_PROJECT"))
+				.thenReturn(true);
+		when(riskTraineeQueryRepository.findTeamRosters(projectId, classId, organizationId)).thenReturn(List.of(
+				new RiskTraineeQueryRepository.TeamRosterRow(teamAId, "1", "1팀", classId, "C반", 5),
+				new RiskTraineeQueryRepository.TeamRosterRow(teamBId, "2", "2팀", classId, "C반", 5)
+		));
+		// 2팀은 30%라 기수 전체(30%) 기준이면 SAME, 소속 반(C반 50%) 기준이면 BETTER다.
+		when(riskTraineeQueryRepository.aggregateTeamRiskCells(any(), eq(classId)))
+				.thenReturn(List.of(
+						new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamAId, 10, 7, 0, 0, 0),
+						new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamBId, 10, 3, 0, 0, 0)
+				));
+
+		RiskTraineeRateResponse response = service.findRiskTraineeRates(
+				cohortId, projectId, List.of(classId), null, null,
+				RiskTraineeLevel.TEAM, RiskTraineeSort.NAME, ACTOR_EMAIL);
+
+		assertThat(response.classes()).hasSize(1);
+		assertThat(response.classes().get(0).className()).isEqualTo("C반");
+		assertThat(response.classes().get(0).cells().get(0).riskRate()).isEqualByComparingTo("0.5000");
+
+		RiskTraineeRateResponse.RiskCell teamBCell = response.teams().stream()
+				.filter(team -> team.teamNumber().equals("2"))
+				.findFirst()
+				.orElseThrow()
+				.cells()
+				.get(0);
+		assertThat(teamBCell.riskRate()).isEqualByComparingTo("0.3000");
+		assertThat(teamBCell.comparisonToCohort()).isEqualTo(CohortRiskComparison.BETTER);
+	}
+
+	@Test
 	void reportsRegisteredRoundCountBeforeRangeFilter() {
 		givenOperator();
 		givenPublishedRound();
@@ -327,8 +374,8 @@ class RiskTraineeAnalyticsServiceTest {
 
 		assertThatThrownBy(() ->
 				service.findRiskTraineeRates(cohortId, projectId, null, null, null, null, null, ACTOR_EMAIL))
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.PROJECT_NOT_IN_COHORT));
 		verify(riskTraineeQueryRepository, never()).aggregateRiskCells(any());
 	}
 
@@ -351,8 +398,8 @@ class RiskTraineeAnalyticsServiceTest {
 				.thenReturn(Optional.of(new RiskTraineeQueryRepository.CohortScope(cohortId, UUID.randomUUID())));
 
 		assertThatThrownBy(this::findRates)
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.ANALYTICS_COHORT_CROSS_ORGANIZATION));
 		verify(riskTraineeQueryRepository, never()).aggregateRiskCells(any());
 	}
 
@@ -364,8 +411,8 @@ class RiskTraineeAnalyticsServiceTest {
 
 		assertThatThrownBy(() ->
 				service.findRiskTraineeRates(cohortId, null, null, 4, 2, null, null, ACTOR_EMAIL))
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.ROUND_RANGE_INVALID));
 		verify(riskTraineeQueryRepository, never()).aggregateRiskCells(any());
 	}
 
@@ -423,7 +470,7 @@ class RiskTraineeAnalyticsServiceTest {
 		when(riskTraineeQueryRepository.findCohortRoster(cohortId, organizationId))
 				.thenReturn(new RiskTraineeQueryRepository.RosterCount(traineeCount, withdrawnCount));
 		when(riskTraineeQueryRepository.findClassRosters(cohortId, organizationId)).thenReturn(List.of(
-				new RiskTraineeQueryRepository.ClassRosterRow(classId, "C반", traineeCount, withdrawnCount)
+				new RiskTraineeQueryRepository.ClassRosterRow(classId, "C반", traineeCount, withdrawnCount, List.of())
 		));
 	}
 
@@ -431,8 +478,8 @@ class RiskTraineeAnalyticsServiceTest {
 		when(riskTraineeQueryRepository.findCohortRoster(cohortId, organizationId))
 				.thenReturn(new RiskTraineeQueryRepository.RosterCount(50, 0));
 		when(riskTraineeQueryRepository.findClassRosters(cohortId, organizationId)).thenReturn(List.of(
-				new RiskTraineeQueryRepository.ClassRosterRow(classId, "C반", 25, 0),
-				new RiskTraineeQueryRepository.ClassRosterRow(otherClassId, "D반", 25, 0)
+				new RiskTraineeQueryRepository.ClassRosterRow(classId, "C반", 25, 0, List.of()),
+				new RiskTraineeQueryRepository.ClassRosterRow(otherClassId, "D반", 25, 0, List.of())
 		));
 	}
 }

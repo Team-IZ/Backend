@@ -22,6 +22,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *     -e POSTGRES_PASSWORD=devcheck -e POSTGRES_DB=checkdb postgres:16
  *   docker exec pg-verify psql -U postgres -d checkdb \
  *     -f docs/table-definition/테이블정의서_v07_교육생홈_DDL.sql
+ *   docker exec pg-verify psql -U postgres -d checkdb \
+ *     -f docs/table-definition/테이블정의서_v07_교육생홈_View.sql
  */
 class JdbcRiskTraineeQueryRepositorySqlTest {
 	private static final String URL = "jdbc:postgresql://localhost:55440/checkdb";

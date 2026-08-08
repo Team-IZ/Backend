@@ -57,17 +57,17 @@ public record CohortComparisonResponse(
 	}
 
 	@Schema(description = """
-			절대 색 눈금이며 MG-02 히트맵과 같은 값입니다.
-			0~4 정수 다섯 단계에 다섯 색을 대응시키되 평균은 연속값이므로
-			각 정수를 중심으로 폭 1(양 끝은 0.5)의 구간을 두고 반올림으로 배정합니다.
+			절대 색 눈금이며 분석 › 기수 간 비교 목업의 색상표와 같은 값입니다.
+			1~4 정수 네 단계(1단·2단·3단·4단)에 네 색을 대응시키며 평균은 연속값이므로
+			정수 경계 미만을 버림(floor)해 밴드를 배정합니다.
 			levelBand는 서버가 미리 계산해 내려주므로 클라이언트가 다시 계산할 필요는 없습니다.
 			""")
 	public record LevelScale(
-			@Schema(description = "최소 도달 단계이며 1단도 통과하지 못한 응시가 있어 0을 포함합니다.", example = "0")
+			@Schema(description = "최소 도달 단계이며 목업 색상 눈금이 1단부터 시작합니다.", example = "1")
 			int min,
 			@Schema(description = "최대 도달 단계", example = "4")
 			int max,
-			@Schema(description = "밴드 경계값이며 경계에 걸친 값은 위쪽 밴드로 올립니다.", example = "[0.5, 1.5, 2.5, 3.5]")
+			@Schema(description = "밴드 경계값이며 경계에 걸친 값은 위쪽 밴드로 올립니다.", example = "[2, 3, 4]")
 			List<BigDecimal> bandThresholds
 	) {
 	}
@@ -125,10 +125,10 @@ public record CohortComparisonResponse(
 	public record CohortConceptValue(
 			@Schema(description = """
 					평균 도달 단계이며 Σ(도달 단계 × 인원) / Σ인원입니다.
-					개념이 없거나 분모가 0이면 0단이 아니라 null입니다.
+					개념이 없거나 분모가 0이면 값이 아니라 null입니다.
 					""", example = "2.50", nullable = true)
 			BigDecimal averageReachedLevel,
-			@Schema(description = "평균이 속한 색 밴드(0~4)이며 값이 없으면 null입니다.", example = "3", nullable = true)
+			@Schema(description = "평균이 속한 색 밴드(1~4)이며 값이 없으면 null입니다.", example = "3", nullable = true)
 			Integer levelBand,
 			@Schema(description = "평균의 분모가 된 인원", example = "24")
 			long participantCount,

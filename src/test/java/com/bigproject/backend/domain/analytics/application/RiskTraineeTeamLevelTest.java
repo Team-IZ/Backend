@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.analytics.application;
 
+import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.analytics.domain.CohortRiskComparison;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeLevel;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeQueryRepository;
@@ -8,15 +9,14 @@ import com.bigproject.backend.domain.analytics.presentation.dto.RiskTraineeRateR
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
 import com.bigproject.backend.domain.member.domain.Role;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
-
+import com.bigproject.backend.global.exception.ApiException;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -65,26 +65,26 @@ class RiskTraineeTeamLevelTest {
 	@Test
 	void requiresAProjectBecauseTeamsDoNotCarryAcrossThem() {
 		assertThatThrownBy(() -> findTeamRates(null, List.of(classId), null))
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.TEAM_LEVEL_PROJECT_REQUIRED));
 		verify(riskTraineeQueryRepository, never()).aggregateTeamRiskCells(any(), any());
 	}
 
 	@Test
 	void requiresExactlyOneClassBecauseTeamNumbersRepeatAcrossClasses() {
 		assertThatThrownBy(() -> findTeamRates(projectId, null, null))
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.TEAM_LEVEL_SINGLE_CLASSROOM_REQUIRED));
 
 		when(riskTraineeQueryRepository.classroomBelongsToCohort(any(), any(), any())).thenReturn(true);
 		assertThatThrownBy(() -> findTeamRates(projectId, List.of(classId, UUID.randomUUID()), null))
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.TEAM_LEVEL_SINGLE_CLASSROOM_REQUIRED));
 		verify(riskTraineeQueryRepository, never()).aggregateTeamRiskCells(any(), any());
 	}
 
 	@Test
-	void buildsTeamRowsAndLeavesTheClassListEmpty() {
+	void buildsTeamRowsAndIncludesTheSelectedClassAsTheComparisonBaseline() {
 		givenTeamRoster();
 		when(riskTraineeQueryRepository.aggregateTeamRiskCells(any(), eq(classId))).thenReturn(List.of(
 				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamA, 5, 2, 0, 0, 0)
@@ -96,7 +96,9 @@ class RiskTraineeTeamLevelTest {
 		RiskTraineeRateResponse response = findTeamRates(projectId, List.of(classId), null);
 
 		assertThat(response.level()).isEqualTo(RiskTraineeLevel.TEAM);
-		assertThat(response.classes()).isEmpty();
+		// classes에는 팀 비교 기준이 되는 선택된 반(C반) 1건만 담긴다.
+		assertThat(response.classes()).hasSize(1);
+		assertThat(response.classes().get(0).className()).isEqualTo("C반");
 		assertThat(response.teams()).hasSize(2);
 		assertThat(response.cohortSummary().cells().get(0).riskRate())
 				.isEqualByComparingTo(new BigDecimal("0.2000"));
@@ -120,9 +122,10 @@ class RiskTraineeTeamLevelTest {
 	}
 
 	@Test
-	void comparesEachTeamAgainstTheCohortRateNotTheClassRate() {
+	void comparesEachTeamAgainstItsOwnClassRateNotTheCohortRate() {
 		givenTeamRoster();
-		// 기수 전체 5/25 = 20%. 1팀 2/5 = 40% 는 나쁨, 2팀 0/5 = 0% 는 좋음.
+		// 반(C반)에 이 반 데이터만 있어 반 비율도 기수 비율과 같은 5/25 = 20%다.
+		// 1팀 2/5 = 40% 는 나쁨, 2팀 0/5 = 0% 는 좋음 — 기준이 C반이라도 값은 같다.
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
 				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 25, 5, 0, 0, 0)
 		));
@@ -176,6 +179,9 @@ class RiskTraineeTeamLevelTest {
 		when(riskTraineeQueryRepository.findTeamRosters(projectId, classId, organizationId)).thenReturn(List.of(
 				new RiskTraineeQueryRepository.TeamRosterRow(teamA, "1", "알파", classId, "C반", 5),
 				new RiskTraineeQueryRepository.TeamRosterRow(teamB, "2", "브라보", classId, "C반", 5)
+		));
+		when(riskTraineeQueryRepository.findClassRosters(cohortId, organizationId)).thenReturn(List.of(
+				new RiskTraineeQueryRepository.ClassRosterRow(classId, "C반", 25, 0, List.of())
 		));
 	}
 

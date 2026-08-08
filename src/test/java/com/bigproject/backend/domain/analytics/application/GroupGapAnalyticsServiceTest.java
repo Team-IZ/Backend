@@ -1,20 +1,20 @@
 package com.bigproject.backend.domain.analytics.application;
 
+import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.analytics.domain.OperationalActionQueryRepository;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeQueryRepository;
 import com.bigproject.backend.domain.analytics.presentation.dto.GroupGapResponse;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
 import com.bigproject.backend.domain.member.domain.Role;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
-
+import com.bigproject.backend.global.exception.ApiException;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -126,8 +126,8 @@ class GroupGapAnalyticsServiceTest {
 				.thenReturn(Optional.of(new RiskTraineeQueryRepository.CohortScope(cohortId, UUID.randomUUID())));
 
 		assertThatThrownBy(() -> service.findGroupGaps(cohortId, ACTOR_EMAIL))
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.ANALYTICS_COHORT_CROSS_ORGANIZATION));
 	}
 
 	private OperationalActionQueryRepository.GroupGapRow gap(

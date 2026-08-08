@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.analytics.application;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.analytics.domain.ChangeDirection;
 import com.bigproject.backend.domain.analytics.domain.CohortComparisonQueryRepository;
 import com.bigproject.backend.domain.analytics.domain.ComparisonEmptyState;
@@ -10,16 +12,15 @@ import com.bigproject.backend.domain.analytics.presentation.dto.CohortComparison
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
 import com.bigproject.backend.domain.member.domain.Role;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
-
+import com.bigproject.backend.global.exception.ApiException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -68,7 +69,7 @@ class CohortComparisonAnalyticsServiceTest {
 
 	@Test
 	void reportsNullAverageWhenNobodyWasMeasured() {
-		// 응시 인원이 없는 개념은 0단이 아니라 값 없음이다. 0단은 1단도 통과하지 못했다는 측정 결과다.
+		// 응시 인원이 없는 개념은 값이 0인 것이 아니라 값 없음이다.
 		givenConcept(targetCohortId, "Graph 구성", "0", 0);
 		givenConcept(baselineCohortId, "Graph 구성", "69.6", 24);
 
@@ -82,14 +83,15 @@ class CohortComparisonAnalyticsServiceTest {
 	}
 
 	@Test
-	void assignsColourBandByRoundingToTheNearestLevel() {
-		// 밴드 경계 0.5·1.5·2.5·3.5 는 위쪽 밴드로 올린다.
-		assertThat(bandOf("0.49")).isEqualTo(0);
-		assertThat(bandOf("0.50")).isEqualTo(1);
-		assertThat(bandOf("1.49")).isEqualTo(1);
-		assertThat(bandOf("1.50")).isEqualTo(2);
-		assertThat(bandOf("2.50")).isEqualTo(3);
-		assertThat(bandOf("3.50")).isEqualTo(4);
+	void assignsColourBandByFlooringToTheStartOfTheLevel() {
+		// 목업은 1~4단 네 밴드만 쓴다. 정수 경계 2.0·3.0·4.0 은 위쪽 밴드로 올린다(floor).
+		assertThat(bandOf("0.50")).isEqualTo(1); // 밴드 하한 미만은 1단으로 붙인다.
+		assertThat(bandOf("1.00")).isEqualTo(1);
+		assertThat(bandOf("1.99")).isEqualTo(1);
+		assertThat(bandOf("2.00")).isEqualTo(2);
+		assertThat(bandOf("2.99")).isEqualTo(2);
+		assertThat(bandOf("3.00")).isEqualTo(3);
+		assertThat(bandOf("3.99")).isEqualTo(3);
 		assertThat(bandOf("4.00")).isEqualTo(4);
 	}
 
@@ -283,12 +285,11 @@ class CohortComparisonAnalyticsServiceTest {
 
 		CohortComparisonResponse response = compare();
 
-		assertThat(response.levelScale().min()).isZero();
+		assertThat(response.levelScale().min()).isEqualTo(1);
 		assertThat(response.levelScale().max()).isEqualTo(4);
 		assertThat(response.levelScale().bandThresholds())
 				.containsExactly(
-						new BigDecimal("0.5"), new BigDecimal("1.5"),
-						new BigDecimal("2.5"), new BigDecimal("3.5"));
+						new BigDecimal("2"), new BigDecimal("3"), new BigDecimal("4"));
 		assertThat(response.changeThreshold().worsened()).isEqualByComparingTo(new BigDecimal("-0.3"));
 		assertThat(response.changeThreshold().improved()).isEqualByComparingTo(new BigDecimal("0.3"));
 	}
@@ -299,8 +300,8 @@ class CohortComparisonAnalyticsServiceTest {
 
 		assertThatThrownBy(() -> service.findCohortComparison(
 				targetCohortId, UUID.randomUUID(), ComparisonSort.WORSENED, false, ACTOR_EMAIL))
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.BASELINE_COHORT_INVALID));
 		verify(queryRepository, never()).aggregateConceptLevels(any(), anyList());
 	}
 
@@ -310,8 +311,8 @@ class CohortComparisonAnalyticsServiceTest {
 				new CohortComparisonQueryRepository.CohortRow(targetCohortId, "7기", UUID.randomUUID())));
 
 		assertThatThrownBy(this::compare)
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.ANALYTICS_COHORT_CROSS_ORGANIZATION));
 		verify(queryRepository, never()).aggregateConceptLevels(any(), anyList());
 	}
 
@@ -320,8 +321,8 @@ class CohortComparisonAnalyticsServiceTest {
 		when(queryRepository.findCohort(targetCohortId)).thenReturn(Optional.empty());
 
 		assertThatThrownBy(this::compare)
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AcademicOperationsErrorCode.COHORT_NOT_FOUND));
 	}
 
 	@Test
@@ -329,8 +330,8 @@ class CohortComparisonAnalyticsServiceTest {
 		givenActor(Role.TRAINEE);
 
 		assertThatThrownBy(this::compare)
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.ANALYTICS_ROLE_NOT_ALLOWED));
 	}
 
 	private CohortComparisonResponse compare() {
