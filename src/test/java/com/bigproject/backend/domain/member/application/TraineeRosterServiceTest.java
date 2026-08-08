@@ -20,6 +20,7 @@ import org.springframework.data.domain.PageRequest;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -145,6 +146,30 @@ class TraineeRosterServiceTest {
 				traineeId, "INACTIVE", actorUserId, "ADMIN_SUSPENDED", "중도 이탈");
 	}
 
+	/** 화면이 '계정 비활성'과 '중도 이탈 {날짜}'를 한 행에 보여주므로 기수 소속도 함께 이탈 처리된다. */
+	@Test
+	void marksTheCohortMembershipAsLeftWhenSuspending() {
+		when(traineeRosterRepository.findTrainee(traineeId, cohortId, orgId))
+				.thenReturn(Optional.of(rosterRow("ACTIVE")))
+				.thenReturn(Optional.of(rosterRow("INACTIVE")));
+
+		service.updateStatus(cohortId, orgId, traineeId, AccountStatus.INACTIVE, "중도 이탈", actorUserId);
+
+		verify(traineeRosterRepository).updateCohortMembership(traineeId, cohortId, orgId, true);
+	}
+
+	/** ACTIVE면 left_at IS NULL이어야 하므로 재활성화는 이탈 표시를 되돌린다. */
+	@Test
+	void clearsTheLeftMarkWhenReactivating() {
+		when(traineeRosterRepository.findTrainee(traineeId, cohortId, orgId))
+				.thenReturn(Optional.of(rosterRow("INACTIVE")))
+				.thenReturn(Optional.of(rosterRow("ACTIVE")));
+
+		service.updateStatus(cohortId, orgId, traineeId, AccountStatus.ACTIVE, null, actorUserId);
+
+		verify(traineeRosterRepository).updateCohortMembership(traineeId, cohortId, orgId, false);
+	}
+
 	@Test
 	void isIdempotentWhenTheStatusAlreadyMatches() {
 		TraineeRosterRepository.RosterRow alreadyActive = rosterRow("ACTIVE");
@@ -154,12 +179,17 @@ class TraineeRosterServiceTest {
 		service.updateStatus(cohortId, orgId, traineeId, AccountStatus.ACTIVE, null, actorUserId);
 
 		verify(traineeRosterRepository, never()).updateStatus(any(), any(), any(), any(), any());
+		// left_at을 다시 찍지 않아야 최초 이탈 시각이 보존된다.
+		verify(traineeRosterRepository, never()).updateCohortMembership(any(), any(), any(), anyBoolean());
 		verify(traineeRosterRepository, times(2)).findTrainee(traineeId, cohortId, orgId);
 	}
 
 	private TraineeRosterRepository.RosterRow rosterRow(String rawStatus) {
+		boolean inactive = "INACTIVE".equals(rawStatus);
 		return new TraineeRosterRepository.RosterRow(
 				traineeId, "교육생", "trainee@example.com", rawStatus,
-				null, null, OffsetDateTime.now(), null);
+				null, null, OffsetDateTime.now(), inactive ? OffsetDateTime.now() : null,
+				inactive ? "ADMIN_SUSPENDED" : null, null, inactive ? OffsetDateTime.now() : null,
+				inactive ? actorUserId : null, inactive ? "김오퍼레이터" : null);
 	}
 }

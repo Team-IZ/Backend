@@ -43,6 +43,11 @@ class JdbcTraineeRosterRepositorySqlTest {
 				.doesNotThrowAnyException();
 		assertThatCode(() -> repository.updateStatus(traineeId, "INACTIVE", UUID.randomUUID(),
 				"ADMIN_SUSPENDED", "테스트 사유")).doesNotThrowAnyException();
+		// GREATEST(now, joined_at + interval)와 CASE 분기가 실제 타입에 맞는지 양방향으로 확인한다.
+		assertThatCode(() -> repository.updateCohortMembership(traineeId, cohortId, organizationId, true))
+				.doesNotThrowAnyException();
+		assertThatCode(() -> repository.updateCohortMembership(traineeId, cohortId, organizationId, false))
+				.doesNotThrowAnyException();
 
 		for (TraineeRosterSort sort : TraineeRosterSort.values()) {
 			assertThatCode(() -> repository.findRoster(
