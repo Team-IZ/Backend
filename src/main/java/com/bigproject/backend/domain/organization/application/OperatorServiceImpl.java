@@ -272,8 +272,8 @@ public class OperatorServiceImpl implements OperatorService {
 				.filter(operator -> operator.status() == OperatorAccountStatus.ACTIVE)
 				.count();
 
-		List<OperatorListResponse.Operator> content = operators.stream()
-				.map(operator -> new OperatorListResponse.Operator(
+		List<OperatorListResponse.OperatorListItem> content = operators.stream()
+				.map(operator -> new OperatorListResponse.OperatorListItem(
 						operator.memberId(),
 						operator.name(),
 						operator.email(),
