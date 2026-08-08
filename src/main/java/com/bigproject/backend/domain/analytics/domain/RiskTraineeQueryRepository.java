@@ -106,7 +106,8 @@ public interface RiskTraineeQueryRepository {
 			UUID classId,
 			String className,
 			long traineeCount,
-			long withdrawnCount
+			long withdrawnCount,
+			List<String> managerNames
 	) {
 	}
 

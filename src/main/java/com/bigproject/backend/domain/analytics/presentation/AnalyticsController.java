@@ -47,8 +47,14 @@ public class AnalyticsController {
 	private final GroupGapAnalyticsService groupGapAnalyticsService;
 
 	@Operation(
-			summary = "조치 필요 경보 조회 | ✅ 사용 가능",
+			operationId = "findCohortActionsRequired",
+			summary = "조치 필요 경보 조회 | ⚠️ 사용 불가",
 			description = """
+					⚠️ **API 테스트를 위한 더미 데이터 없음** — 이 응답의 원천은 발행된 리포트 스냅샷과
+					회차 채점 결과인데 현재 어느 기수에도 그 데이터가 없습니다. 호출하면 200과 함께 빈
+					격자만 돌아오므로 **응답 형태를 확인하는 용도로도 쓸 수 없습니다.** 스펙과 구현은
+					완성돼 있어 시드가 준비되면 그대로 사용 가능으로 바뀝니다.
+
 					오퍼레이터 대시보드의 '조치 필요' 네 경보를 한 번에 조회합니다.
 
 					담당 매니저 미배정, 검증 개념 공백, 집단 미달, 면담 적체이며 유형별로 가장 나쁜 한 건씩
@@ -64,9 +70,9 @@ public class AnalyticsController {
 	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "조치 필요 경보 조회 성공"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "403", description = "역할·계정·기관 상태 또는 기수 접근 범위가 허용되지 않음"),
-			@ApiResponse(responseCode = "404", description = "조회할 기수를 찾을 수 없음")
+			@ApiResponse(responseCode = "401", description = "ANALYTICS_VIEWER_NOT_FOUND 토큰은 유효하지만 계정을 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "ANALYTICS_VIEWER_NOT_ACTIVE 활성 계정 아님 · ANALYTICS_ORGANIZATION_NOT_ACTIVE 소속 기관이 활성 아님 · ANALYTICS_ROLE_NOT_ALLOWED 오퍼레이터·매니저가 아님 · ANALYTICS_COHORT_CROSS_ORGANIZATION 다른 기관의 기수"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 조회할 기수를 찾을 수 없음")
 	})
 	@GetMapping("/actions")
 	public ResponseEntity<ActionRequiredResponse> findActionsRequired(
@@ -80,8 +86,14 @@ public class AnalyticsController {
 	}
 
 	@Operation(
-			summary = "집단 미달 목록 조회 | ✅ 사용 가능",
+			operationId = "findCohortGroupGaps",
+			summary = "집단 미달 목록 조회 | ⚠️ 사용 불가",
 			description = """
+					⚠️ **API 테스트를 위한 더미 데이터 없음** — 이 응답의 원천은 발행된 리포트 스냅샷과
+					회차 채점 결과인데 현재 어느 기수에도 그 데이터가 없습니다. 호출하면 200과 함께 빈
+					격자만 돌아오므로 **응답 형태를 확인하는 용도로도 쓸 수 없습니다.** 스펙과 구현은
+					완성돼 있어 시드가 준비되면 그대로 사용 가능으로 바뀝니다.
+
 					기수 전체에서 반 인원의 절반을 넘는 인원이 한 검증 개념에서 2단 이하인 조합을 조회합니다.
 
 					개인 위험 사유가 아니라 반 문제로 분류하며, 시스템은 표시까지만 하고 이후 처리는
@@ -98,9 +110,9 @@ public class AnalyticsController {
 	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "집단 미달 목록 조회 성공"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "403", description = "역할·계정·기관 상태 또는 기수 접근 범위가 허용되지 않음"),
-			@ApiResponse(responseCode = "404", description = "조회할 기수를 찾을 수 없음")
+			@ApiResponse(responseCode = "401", description = "ANALYTICS_VIEWER_NOT_FOUND 토큰은 유효하지만 계정을 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "ANALYTICS_VIEWER_NOT_ACTIVE 활성 계정 아님 · ANALYTICS_ORGANIZATION_NOT_ACTIVE 소속 기관이 활성 아님 · ANALYTICS_ROLE_NOT_ALLOWED 오퍼레이터·매니저가 아님 · ANALYTICS_COHORT_CROSS_ORGANIZATION 다른 기관의 기수"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 조회할 기수를 찾을 수 없음")
 	})
 	@GetMapping("/group-gaps")
 	public ResponseEntity<GroupGapResponse> findGroupGaps(
@@ -113,8 +125,14 @@ public class AnalyticsController {
 	}
 
 	@Operation(
-			summary = "회차별 기수 전체·반별 위험 교육생 비율 조회 | ✅ 사용 가능",
+			operationId = "findCohortRiskTraineeRates",
+			summary = "회차별 기수 전체·반별 위험 교육생 비율 조회 | ⚠️ 사용 불가",
 			description = """
+					⚠️ **API 테스트를 위한 더미 데이터 없음** — 이 응답의 원천은 발행된 리포트 스냅샷과
+					회차 채점 결과인데 현재 어느 기수에도 그 데이터가 없습니다. 호출하면 200과 함께 빈
+					격자만 돌아오므로 **응답 형태를 확인하는 용도로도 쓸 수 없습니다.** 스펙과 구현은
+					완성돼 있어 시드가 준비되면 그대로 사용 가능으로 바뀝니다.
+
 					선택 기수의 미니프로젝트 회차별로 기수 전체와 반별 위험 교육생 비율을 계산합니다.
 
 					분모는 회차의 INITIAL 수행 대상 교육생에서 미집계 3종을 뺀 인원입니다.
@@ -130,7 +148,9 @@ public class AnalyticsController {
 					빅프로젝트는 위험 판정식이 달라 이 격자에 포함하지 않습니다.
 
 					반 행의 comparisonToCohort는 같은 회차의 기수 전체 비율과 견준 방향이며
-					임계 구간 없이 단순 비교합니다. 클라이언트가 다시 계산할 필요는 없습니다.
+					임계 구간 없이 단순 비교합니다. 팀 행은 기수 전체가 아니라 소속 반 전체
+					비율과 비교하며, 그 반 행은 classes에 함께 내려갑니다. 클라이언트가 다시
+					계산할 필요는 없습니다.
 
 					round_no는 (project_id, round_no) UNIQUE라 프로젝트마다 1부터 다시 시작합니다.
 					기수에 미니프로젝트가 여러 건이면 같은 회차 번호가 여러 열에 나타나므로
@@ -140,10 +160,10 @@ public class AnalyticsController {
 	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "위험 교육생 비율 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "반 또는 회차 범위 값이 올바르지 않음"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "403", description = "역할·계정·기관 상태 또는 기수 접근 범위가 허용되지 않음"),
-			@ApiResponse(responseCode = "404", description = "조회할 기수를 찾을 수 없음")
+			@ApiResponse(responseCode = "400", description = "CLASSROOM_NOT_IN_COHORT 기수에 속하지 않은 반 · PROJECT_NOT_IN_COHORT 기수의 미니프로젝트가 아님 · ROUND_RANGE_INVALID 회차 범위 오류 · TEAM_LEVEL_PROJECT_REQUIRED 팀 계층인데 프로젝트 미지정 · TEAM_LEVEL_SINGLE_CLASSROOM_REQUIRED 팀 계층인데 반이 하나가 아님"),
+			@ApiResponse(responseCode = "401", description = "ANALYTICS_VIEWER_NOT_FOUND 토큰은 유효하지만 계정을 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "ANALYTICS_VIEWER_NOT_ACTIVE 활성 계정 아님 · ANALYTICS_ORGANIZATION_NOT_ACTIVE 소속 기관이 활성 아님 · ANALYTICS_ROLE_NOT_ALLOWED 오퍼레이터·매니저가 아님 · ANALYTICS_COHORT_CROSS_ORGANIZATION 다른 기관의 기수"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 조회할 기수를 찾을 수 없음 · CLASSROOM_NOT_FOUND 팀 계층에서 지정한 반을 찾을 수 없음")
 	})
 	@GetMapping("/risk-trainees")
 	public ResponseEntity<RiskTraineeRateResponse> findRiskTraineeRates(
@@ -188,16 +208,24 @@ public class AnalyticsController {
 	}
 
 	@Operation(
-			summary = "두 기수의 검증 개념별 평균 도달 단계 비교 | ✅ 사용 가능",
+			operationId = "findCohortComparison",
+			summary = "두 기수의 검증 개념별 평균 도달 단계 비교 | ⚠️ 사용 불가",
 			description = """
+					⚠️ **API 테스트를 위한 더미 데이터 없음** — 이 응답의 원천은 발행된 리포트 스냅샷과
+					회차 채점 결과인데 현재 어느 기수에도 그 데이터가 없습니다. 호출하면 200과 함께 빈
+					격자만 돌아오므로 **응답 형태를 확인하는 용도로도 쓸 수 없습니다.** 스펙과 구현은
+					완성돼 있어 시드가 준비되면 그대로 사용 가능으로 바뀝니다.
+
 					같은 기관의 두 기수를 검증 개념(teaches_id) 단위로 맞대어 평균 도달 단계를 비교합니다.
 
 					평균은 발행된 수업 진단 리포트의 활성 스냅샷에서 개념별 도달 단계 분포를 읽어
-					Σ(도달 단계 × 인원) / Σ인원으로 계산합니다. 1단도 통과하지 못한 응시가 있으므로 척도는 0~4단입니다.
-					응시 인원이 없으면 0단이 아니라 null이며, 0단은 측정 결과이고 null은 측정 자체가 없다는 뜻입니다.
+					Σ(도달 단계 × 인원) / Σ인원으로 계산합니다.
+					응시 인원이 없으면 값이 0인 것이 아니라 null이며, 낮은 평균은 측정 결과이고 null은 측정 자체가 없다는 뜻입니다.
 
-					색 눈금은 회차별 위험 비율과 달리 절대 눈금이며 MG-02 히트맵과 같은 값입니다.
-					0~4 정수 다섯 단계에 다섯 색을 대응시키되 평균은 연속값이므로 반올림으로 밴드를 배정하고,
+					색 눈금은 회차별 위험 비율과 달리 절대 눈금이며 목업 색상표와 같은 값입니다.
+					1~4 정수 네 단계(1단·2단·3단·4단)에 네 색을 대응시키며, 평균은 연속값이므로 정수 경계 미만을
+					버림(floor)해 밴드를 배정합니다 — 1단은 0 이상 2단 미만, 2단은 2 이상 3단 미만,
+					3단은 3 이상 4단 미만, 4단은 4단입니다.
 					서버가 levelBand와 밴드 경계를 함께 내려주므로 클라이언트가 다시 계산할 필요는 없습니다.
 
 					변화는 이번 기수 평균에서 지난 기수 평균을 뺀 값이며 -0.3단 이하가 나빠짐, +0.3단 이상이 좋아짐입니다.
@@ -211,10 +239,10 @@ public class AnalyticsController {
 	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "기수 간 비교 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "비교 대상 기수가 같은 기관의 다른 기수가 아님"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "403", description = "역할·계정·기관 상태 또는 기수 접근 범위가 허용되지 않음"),
-			@ApiResponse(responseCode = "404", description = "조회할 기수를 찾을 수 없음")
+			@ApiResponse(responseCode = "400", description = "BASELINE_COHORT_INVALID 비교 대상이 같은 기관의 다른 기수가 아님"),
+			@ApiResponse(responseCode = "401", description = "ANALYTICS_VIEWER_NOT_FOUND 토큰은 유효하지만 계정을 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "ANALYTICS_VIEWER_NOT_ACTIVE 활성 계정 아님 · ANALYTICS_ORGANIZATION_NOT_ACTIVE 소속 기관이 활성 아님 · ANALYTICS_ROLE_NOT_ALLOWED 오퍼레이터·매니저가 아님 · ANALYTICS_COHORT_CROSS_ORGANIZATION 다른 기관의 기수"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 조회할 기수를 찾을 수 없음")
 	})
 	@GetMapping("/cohort-comparison")
 	public ResponseEntity<CohortComparisonResponse> findCohortComparison(

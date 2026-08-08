@@ -15,6 +15,7 @@ import java.util.UUID;
 		actionCount는 null이 아닌 경보 수입니다.
 		""")
 public record ActionRequiredResponse(
+		@Schema(description = "조회한 기수 ID이며 경로 변수 cohortId를 그대로 반영합니다.")
 		UUID cohortId,
 		@Schema(description = "실제로 발생한 경보 수이며 화면의 '조치 필요 · N건'입니다.", example = "4")
 		int actionCount,
@@ -30,10 +31,13 @@ public record ActionRequiredResponse(
 
 	@Schema(description = "경보가 가리키는 프로젝트 회차")
 	public record RoundRef(
+			@Schema(description = "회차 ID이며 ProjectAssessmentRound.assessment_round_id입니다.")
 			UUID assessmentRoundId,
 			@Schema(description = "회차 번호이며 프로젝트 안에서만 유일합니다.", example = "3")
 			int roundNo,
+			@Schema(description = "회차 이름", example = "K8s 배포 실습")
 			String roundName,
+			@Schema(description = "회차가 속한 프로젝트 ID입니다.")
 			UUID projectId,
 			@Schema(description = "화면의 '미프 3차'에 해당합니다.", example = "미프 3차")
 			String projectName
@@ -52,7 +56,15 @@ public record ActionRequiredResponse(
 	) {
 	}
 
-	public record UnassignedClass(UUID classId, String className, long traineeCount) {
+	@Schema(description = "담당 매니저가 없는 반 한 건")
+	public record UnassignedClass(
+			@Schema(description = "반 ID")
+			UUID classId,
+			@Schema(description = "반 이름", example = "F반")
+			String className,
+			@Schema(description = "이 반의 재학(중도 이탈하지 않은) 교육생 수", example = "25")
+			long traineeCount
+	) {
 	}
 
 	@Schema(description = """
@@ -63,7 +75,9 @@ public record ActionRequiredResponse(
 			분모는 이해도 검증 세션이 실제 발생한 팀 수입니다.
 			""")
 	public record ConceptGapAlert(
+			@Schema(description = "경보가 발생한 회차입니다.")
 			RoundRef round,
+			@Schema(description = "검증 개념 ID이며 teaches.teaches_id입니다.")
 			UUID teachesId,
 			@Schema(description = "검증 개념 이름", example = "State 관리")
 			String conceptName,
@@ -84,9 +98,13 @@ public record ActionRequiredResponse(
 			치환하지 않으므로 분자에서 빠지고 분모(반 인원 전체)에만 남습니다.
 			""")
 	public record GroupGapAlert(
+			@Schema(description = "경보가 발생한 회차입니다.")
 			RoundRef round,
+			@Schema(description = "미달이 발생한 반 ID")
 			UUID classId,
+			@Schema(description = "미달이 발생한 반 이름", example = "C반")
 			String className,
+			@Schema(description = "검증 개념 ID이며 teaches.teaches_id입니다.")
 			UUID teachesId,
 			@Schema(description = "검증 개념 이름", example = "Graph 구성")
 			String conceptName,
@@ -104,8 +122,11 @@ public record ActionRequiredResponse(
 			pendingInterviewCount는 진행 중을 포함한 미종결 전체라 두 값의 모집단이 다릅니다.
 			""")
 	public record InterviewBacklogAlert(
+			@Schema(description = "경보가 발생한 회차입니다. 면담 적체만 빅프로젝트 회차도 포함할 수 있습니다.")
 			RoundRef round,
+			@Schema(description = "면담이 적체된 반 ID")
 			UUID classId,
+			@Schema(description = "면담이 적체된 반 이름", example = "D반")
 			String className,
 			@Schema(description = "가장 오래 밀린 면담의 지연일", example = "11")
 			int maxDelayDays,

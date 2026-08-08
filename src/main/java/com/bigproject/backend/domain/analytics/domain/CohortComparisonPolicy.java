@@ -8,25 +8,32 @@ import java.util.Set;
 /**
  * 기수 간 비교의 눈금·경계값 단일 지점.
  *
- * 색 눈금은 회차 흐름(위험 비율)과 달리 절대 눈금이며 MG-02 히트맵과 같은 값이어야 하므로
- * 클라이언트가 각자 계산하지 않도록 서버가 임계치와 밴드 경계를 함께 내려준다.
+ * 색 눈금은 회차 흐름(위험 비율)과 달리 절대 눈금이며 목업 화면(분석 › 기수 간 비교)의
+ * 색상표와 같은 값이어야 하므로 클라이언트가 각자 계산하지 않도록 서버가 임계치와
+ * 밴드 경계를 함께 내려준다. 목업은 1~4단 네 밴드만 쓰며(범례: 1단·2단·3단·4단),
+ * 도달 단계를 다시 나눠 0단을 만들지 않는다.
  */
 public final class CohortComparisonPolicy {
 
-	/** 도달 단계 최소값. 1단도 통과하지 못한 응시가 존재하므로 0을 포함한다. */
-	public static final int MIN_LEVEL = 0;
+	/** 도달 단계 최소값. 목업 색상 눈금이 1단부터 시작하므로 0을 포함하지 않는다. */
+	public static final int MIN_LEVEL = 1;
 	public static final int MAX_LEVEL = 4;
 
 	/**
-	 * 색 밴드 경계. 0~4 정수 5개에 5색을 대응시키되 평균은 연속값이므로
-	 * 각 정수를 중심으로 폭 1(양 끝은 0.5)의 구간을 두고 반올림으로 배정한다.
-	 * band = round(value)와 같으며 경계값은 위쪽 밴드로 올린다.
+	 * 색 밴드 경계. 1~4 정수 네 밴드에 네 색을 대응시키며 평균은 연속값이므로
+	 * 정수 경계에서 밴드가 바뀌는 구간(band = floor(value))으로 나눈다.
+	 * 경계값(2.0·3.0·4.0)에 걸치면 위쪽 밴드로 올린다.
+	 *
+	 * 목업이 확정한 구간은 다음과 같다.
+	 * - 1단: 0 이상 2단 미만
+	 * - 2단: 2 이상 3단 미만
+	 * - 3단: 3 이상 4단 미만
+	 * - 4단: 4단(도달 단계 최댓값이라 그 자체가 상한이다)
 	 */
 	public static final List<BigDecimal> BAND_THRESHOLDS = List.of(
-			new BigDecimal("0.5"),
-			new BigDecimal("1.5"),
-			new BigDecimal("2.5"),
-			new BigDecimal("3.5")
+			new BigDecimal("2"),
+			new BigDecimal("3"),
+			new BigDecimal("4")
 	);
 
 	/** 나빠짐 경계. 좋아짐과 대칭이다. */
@@ -50,14 +57,15 @@ public final class CohortComparisonPolicy {
 	}
 
 	/**
-	 * 평균 도달 단계가 속한 색 밴드(0~4)를 돌려준다.
-	 * 값이 없으면 밴드도 없다. 0단과 값 없음은 서로 다른 칸이기 때문이다.
+	 * 평균 도달 단계가 속한 색 밴드(1~4)를 돌려준다.
+	 * 값이 없으면 밴드도 없다. 측정값과 값 없음은 서로 다른 칸이기 때문이다.
+	 * 정수 경계 미만은 아래 밴드로 버림(floor)하고, 범위를 벗어나는 값은 양 끝 밴드로 붙인다.
 	 */
 	public static Integer bandOf(BigDecimal averageLevel) {
 		if (averageLevel == null) {
 			return null;
 		}
-		int band = averageLevel.setScale(0, RoundingMode.HALF_UP).intValue();
+		int band = averageLevel.setScale(0, RoundingMode.FLOOR).intValue();
 		return Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, band));
 	}
 

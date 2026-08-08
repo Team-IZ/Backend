@@ -5,9 +5,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.Array;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -414,6 +418,10 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 		);
 	}
 
+	/**
+	 * 담당 매니저는 LATERAL로 먼저 배열로 접어 넣는다.
+	 * 한 반에 매니저가 여럿이면 그냥 조인할 때 반 행이 매니저 수만큼 불어나 인원 집계가 부풀려진다.
+	 */
 	@Override
 	public List<ClassRosterRow> findClassRosters(UUID cohortId, UUID organizationId) {
 		// 반을 옮긴 교육생이 두 반에 중복 계상되지 않도록 최근 배정 한 건만 남긴다.
@@ -437,26 +445,44 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 					cl.class_id,
 					cl.name AS class_name,
 					COUNT(mc.cohort_member_id) FILTER (WHERE mc.left_at IS NULL) AS trainee_count,
-					COUNT(mc.cohort_member_id) FILTER (WHERE mc.left_at IS NOT NULL) AS withdrawn_count
+					COUNT(mc.cohort_member_id) FILTER (WHERE mc.left_at IS NOT NULL) AS withdrawn_count,
+					COALESCE(mgr.manager_names, ARRAY[]::text[]) AS manager_names
 				FROM "class" cl
 				LEFT JOIN member_class mc ON mc.class_id = cl.class_id
+				LEFT JOIN LATERAL (
+					SELECT ARRAY_AGG(u.name ORDER BY u.name) AS manager_names
+					FROM manager_assignment m
+					JOIN app_user u ON u.user_id = m.manager_user_id
+					WHERE m.class_id = cl.class_id
+						AND m.status = 'ACTIVE'
+						AND m.unassigned_at IS NULL
+				) mgr ON TRUE
 				WHERE cl.cohort_id = ?
 					AND cl.org_id = ?
 					AND cl.deleted_at IS NULL
-				GROUP BY cl.class_id, cl.name
+				GROUP BY cl.class_id, cl.name, mgr.manager_names
 				ORDER BY cl.name, cl.class_id
 				""",
 				(rs, rowNum) -> new ClassRosterRow(
 						rs.getObject("class_id", UUID.class),
 						rs.getString("class_name"),
 						rs.getLong("trainee_count"),
-						rs.getLong("withdrawn_count")
+						rs.getLong("withdrawn_count"),
+						textArray(rs, "manager_names")
 				),
 				cohortId,
 				organizationId,
 				cohortId,
 				organizationId
 		);
+	}
+
+	private List<String> textArray(ResultSet rs, String column) throws SQLException {
+		Array array = rs.getArray(column);
+		if (array == null) {
+			return List.of();
+		}
+		return Arrays.stream((String[]) array.getArray()).filter(Objects::nonNull).toList();
 	}
 
 	@Override
