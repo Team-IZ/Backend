@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.analytics.application;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.analytics.domain.ChangeDirection;
 import com.bigproject.backend.domain.analytics.domain.CohortComparisonPolicy;
 import com.bigproject.backend.domain.analytics.domain.CohortComparisonQueryRepository;
@@ -9,11 +11,10 @@ import com.bigproject.backend.domain.analytics.domain.ConceptPresence;
 import com.bigproject.backend.domain.analytics.domain.NotComparableReason;
 import com.bigproject.backend.domain.analytics.presentation.dto.CohortComparisonResponse;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
+import com.bigproject.backend.global.exception.ApiException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -46,7 +47,7 @@ public class CohortComparisonAnalyticsService {
 	) {
 		AuthUser actor = analyticsActorGuard.operatorOrManager(actorEmail, "매니저만 기수 간 비교를 조회할 수 있습니다.");
 		CohortComparisonQueryRepository.CohortRow target = cohortComparisonQueryRepository.findCohort(cohortId)
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "기수를 찾을 수 없습니다."));
+				.orElseThrow(() -> new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND));
 		analyticsActorGuard.requireSameOrganization(target.organizationId(), actor);
 
 		UUID organizationId = target.organizationId();
@@ -71,8 +72,7 @@ public class CohortComparisonAnalyticsService {
 		CohortComparisonQueryRepository.BaselineCandidateRow baseline = candidates.stream()
 				.filter(candidate -> candidate.cohortId().equals(baselineCohortId))
 				.findFirst()
-				.orElseThrow(() -> new ResponseStatusException(
-						HttpStatus.BAD_REQUEST, "같은 기관의 다른 기수만 비교 대상으로 지정할 수 있습니다."));
+				.orElseThrow(() -> new ApiException(AnalyticsErrorCode.BASELINE_COHORT_INVALID));
 		CohortComparisonResponse.CohortRef baselineRef =
 				new CohortComparisonResponse.CohortRef(baseline.cohortId(), baseline.cohortName());
 
@@ -198,8 +198,8 @@ public class CohortComparisonAnalyticsService {
 	/**
 	 * 분포에서 평균 도달 단계를 유도한다.
 	 *
-	 * 응시자가 한 명도 없는 개념은 0단이 아니라 값 없음이다.
-	 * 0단은 '1단도 통과하지 못했다'는 측정 결과이고 값 없음은 측정 자체가 없다는 뜻이라 서로 다르다.
+	 * 응시자가 한 명도 없는 개념은 값이 0인 것이 아니라 값 없음이다.
+	 * 측정된 낮은 평균과 측정 자체가 없는 것은 서로 다른 뜻이라 구분한다.
 	 */
 	private BigDecimal averageReachedLevel(CohortComparisonQueryRepository.ConceptLevelRow row) {
 		if (row.levelSum() == null || row.participantCount() == 0) {

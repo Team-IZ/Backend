@@ -1,15 +1,15 @@
 package com.bigproject.backend.domain.analytics.application;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.domain.analytics.domain.GroupGapPolicy;
 import com.bigproject.backend.domain.analytics.domain.OperationalActionQueryRepository;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeQueryRepository;
 import com.bigproject.backend.domain.analytics.presentation.dto.ActionRequiredResponse;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
+import com.bigproject.backend.global.exception.ApiException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
@@ -32,7 +32,7 @@ public class ActionRequiredAnalyticsService {
 	public ActionRequiredResponse findActionsRequired(UUID cohortId, String actorEmail) {
 		AuthUser actor = analyticsActorGuard.operatorOrManager(actorEmail, "매니저만 조치 필요 목록을 조회할 수 있습니다.");
 		RiskTraineeQueryRepository.CohortScope cohort = riskTraineeQueryRepository.findCohortScope(cohortId)
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "기수를 찾을 수 없습니다."));
+				.orElseThrow(() -> new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND));
 		analyticsActorGuard.requireSameOrganization(cohort.organizationId(), actor);
 		UUID organizationId = cohort.organizationId();
 

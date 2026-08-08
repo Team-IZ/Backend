@@ -1,13 +1,13 @@
 package com.bigproject.backend.domain.analytics.application;
 
+import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
 import com.bigproject.backend.domain.member.application.EmailNormalizer;
 import com.bigproject.backend.domain.member.domain.Role;
+import com.bigproject.backend.global.exception.ApiException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.UUID;
 
@@ -29,22 +29,22 @@ public class AnalyticsActorGuard {
 	 */
 	public AuthUser operatorOrManager(String actorEmail, String deniedMessage) {
 		AuthUser actor = authUserRepository.findByNormalizedEmail(EmailNormalizer.normalize(actorEmail))
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "인증 사용자를 찾을 수 없습니다."));
+				.orElseThrow(() -> new ApiException(AnalyticsErrorCode.ANALYTICS_VIEWER_NOT_FOUND));
 		if (!ACTIVE.equals(actor.status()) || !actor.emailVerified()) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "활성 사용자만 분석 정보를 조회할 수 있습니다.");
+			throw new ApiException(AnalyticsErrorCode.ANALYTICS_VIEWER_NOT_ACTIVE);
 		}
 		if (actor.role() != Role.SUPER_ADMIN && !ACTIVE.equals(actor.organizationStatus())) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "활성 기관의 사용자만 분석 정보를 조회할 수 있습니다.");
+			throw new ApiException(AnalyticsErrorCode.ANALYTICS_ORGANIZATION_NOT_ACTIVE);
 		}
 		if (actor.role() != Role.OPERATOR && actor.role() != Role.MANAGER) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, deniedMessage);
+			throw new ApiException(AnalyticsErrorCode.ANALYTICS_ROLE_NOT_ALLOWED, deniedMessage);
 		}
 		return actor;
 	}
 
 	public void requireSameOrganization(UUID cohortOrganizationId, AuthUser actor) {
 		if (!cohortOrganizationId.equals(actor.organizationId())) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "다른 기관의 기수는 조회할 수 없습니다.");
+			throw new ApiException(AnalyticsErrorCode.ANALYTICS_COHORT_CROSS_ORGANIZATION);
 		}
 	}
 }
