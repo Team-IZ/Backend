@@ -5,7 +5,6 @@ import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.application.TraineeCsvParser;
 import com.bigproject.backend.domain.member.application.TraineeRosterService;
 import com.bigproject.backend.domain.member.domain.AccountStatus;
-import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.member.domain.TraineeRosterRepository;
 import com.bigproject.backend.domain.member.domain.TraineeRosterSort;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
@@ -326,8 +325,16 @@ public class TraineeController {
 					| `status` | 필수 | enum | `ACTIVE`(활성화) · `INACTIVE`(비활성화) |
 					| `reason` | 선택 | string | 변경 사유. 감사 로그에 남는다 |
 
-					⚠️ **`status`는 `ACTIVE`·`INACTIVE`만 받는다.** `INVITED`는 초대 흐름이 설정하는 값이라
-					이 API의 대상이 아니며, 지정하면 400이다.
+					```json
+					{
+					  "status": "INACTIVE",
+					  "reason": "중도 이탈"
+					}
+					```
+
+					⚠️ **`status`는 `ACTIVE`·`INACTIVE` 두 값만 받는다.** `INVITED`·`LOCKED`는 초대·인증 흐름이
+					설정하는 값이라 이 API의 대상이 아니다. 요청 타입 자체가 두 값만 받으므로 그 외 문자열은
+					역직렬화 단계에서 `VALIDATION_FAILED`(400)로 거절된다.
 
 					## 응답 (200)
 
@@ -384,7 +391,7 @@ public class TraineeController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "상태 변경 성공"),
-			@ApiResponse(responseCode = "400", description = "TRAINEE_STATUS_NOT_ALLOWED ACTIVE·INACTIVE 외의 상태를 지정함"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED status가 비었거나 ACTIVE·INACTIVE 외의 값임"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 만료됨"),
 			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터 권한이 아님"),
 			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음 · TRAINEE_NOT_FOUND 그 기수에 그 교육생이 없음(다른 기수·다른 기관 포함)"),
@@ -401,14 +408,13 @@ public class TraineeController {
 			@Valid @RequestBody UpdateTraineeStatusRequest request,
 			Authentication authentication
 	) {
-		if (!request.isMutableStatus()) {
-			throw new ApiException(MemberErrorCode.TRAINEE_STATUS_NOT_ALLOWED);
-		}
 		UUID organizationId = extractOrganizationId(authentication);
 		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
 
+		// 허용값 검사는 TraineeStatusUpdate 타입이 역직렬화 단계에서 대신한다.
 		TraineeRosterRepository.RosterRow updated = traineeRosterService.updateStatus(
-				cohortId, organizationId, traineeId, request.status(), request.reason(), actorUserId);
+				cohortId, organizationId, traineeId, request.status().toAccountStatus(),
+				request.reason(), actorUserId);
 		return ResponseEntity.ok(TraineeRosterResponse.Trainee.from(updated));
 	}
 
