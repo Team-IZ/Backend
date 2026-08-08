@@ -1,19 +1,19 @@
 package com.bigproject.backend.domain.projectexecution.application;
 
 import com.bigproject.backend.domain.analytics.application.AnalyticsActorGuard;
+import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.projectexecution.domain.ClassProgressQueryRepository;
 import com.bigproject.backend.domain.projectexecution.presentation.dto.ClassProgressResponse;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
-
+import com.bigproject.backend.global.exception.ApiException;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -179,8 +179,8 @@ class ClassProgressServiceTest {
 						java.time.Instant.parse("2026-08-06T09:00:00Z"), "ROUND_BATCH", false, 6)));
 
 		assertThatThrownBy(() -> service.findClassProgress(projectId, 1, ACTOR_EMAIL))
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.PROJECT_CROSS_ORGANIZATION));
 		verify(classProgressQueryRepository, never()).findClassProgress(any(), any());
 	}
 
@@ -189,8 +189,8 @@ class ClassProgressServiceTest {
 		when(classProgressQueryRepository.findRound(projectId, 9)).thenReturn(Optional.empty());
 
 		assertThatThrownBy(() -> service.findClassProgress(projectId, 9, ACTOR_EMAIL))
-				.isInstanceOfSatisfying(ResponseStatusException.class, exception ->
-						assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.PROJECT_ROUND_NOT_FOUND));
 	}
 
 	private void givenClass(

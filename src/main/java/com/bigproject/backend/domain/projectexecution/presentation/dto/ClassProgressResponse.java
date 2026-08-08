@@ -123,7 +123,7 @@ public record ClassProgressResponse(
 			UUID representativeUserId,
 			@Schema(description = "대표자(제출을 실행한 사용자) 이름")
 			String representativeName,
-			@Schema(description = "analysis_job.failure_reason 그대로입니다. null일 수 있습니다.")
+			@Schema(description = "analysis_job.failure_reason 그대로이며 사유가 기록되지 않았으면 null입니다.", nullable = true)
 			String failureReason
 	) {
 	}

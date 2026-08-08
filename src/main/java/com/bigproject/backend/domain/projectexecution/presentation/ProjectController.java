@@ -34,6 +34,7 @@ public class ProjectController {
 	private final ClassProgressService classProgressService;
 
 	@Operation(
+			operationId = "findProjectClassProgress",
 			summary = "반별 제출·분석·응시 현황 조회 | ✅ 사용 가능",
 			description = """
 					프로젝트 회차의 반별 진행을 제출 → 분석 → 응시 순으로 한 번에 조회합니다.
@@ -132,10 +133,10 @@ public class ProjectController {
 	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "반별 현황 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "회차 번호가 올바르지 않음"),
-			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 인증 사용자를 찾을 수 없음"),
-			@ApiResponse(responseCode = "403", description = "역할·계정·기관 상태 또는 프로젝트 접근 범위가 허용되지 않음"),
-			@ApiResponse(responseCode = "404", description = "조회할 프로젝트 회차를 찾을 수 없음")
+			@ApiResponse(responseCode = "400", description = "ROUND_NO_INVALID 회차 번호가 1 미만"),
+			@ApiResponse(responseCode = "401", description = "ANALYTICS_VIEWER_NOT_FOUND 토큰은 유효하지만 계정을 찾을 수 없음"),
+			@ApiResponse(responseCode = "403", description = "ANALYTICS_VIEWER_NOT_ACTIVE 활성 계정 아님 · ANALYTICS_ORGANIZATION_NOT_ACTIVE 소속 기관이 활성 아님 · ANALYTICS_ROLE_NOT_ALLOWED 오퍼레이터·매니저가 아님 · PROJECT_CROSS_ORGANIZATION 다른 기관의 프로젝트"),
+			@ApiResponse(responseCode = "404", description = "PROJECT_ROUND_NOT_FOUND 그 프로젝트에 그 번호의 회차가 없음")
 	})
 	@GetMapping("/class-progress")
 	public ResponseEntity<ClassProgressResponse> findClassProgress(

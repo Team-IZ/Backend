@@ -1,14 +1,14 @@
 package com.bigproject.backend.domain.projectexecution.application;
 
 import com.bigproject.backend.domain.analytics.application.AnalyticsActorGuard;
+import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.projectexecution.domain.ClassProgressQueryRepository;
 import com.bigproject.backend.domain.projectexecution.presentation.dto.ClassProgressResponse;
+import com.bigproject.backend.global.exception.ApiException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -32,12 +32,12 @@ public class ClassProgressService {
 	public ClassProgressResponse findClassProgress(UUID projectId, int roundNo, String actorEmail) {
 		AuthUser actor = analyticsActorGuard.operatorOrManager(actorEmail, "매니저만 프로젝트 현황을 조회할 수 있습니다.");
 		if (roundNo < 1) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "회차 번호가 올바르지 않습니다.");
+			throw new ApiException(AnalyticsErrorCode.ROUND_NO_INVALID);
 		}
 		ClassProgressQueryRepository.RoundScope round = classProgressQueryRepository.findRound(projectId, roundNo)
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "프로젝트 회차를 찾을 수 없습니다."));
+				.orElseThrow(() -> new ApiException(AnalyticsErrorCode.PROJECT_ROUND_NOT_FOUND));
 		if (!round.organizationId().equals(actor.organizationId())) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "다른 기관의 프로젝트는 조회할 수 없습니다.");
+			throw new ApiException(AnalyticsErrorCode.PROJECT_CROSS_ORGANIZATION);
 		}
 
 		ClassProgressQueryRepository.RoundSummaryRow summaryRow = classProgressQueryRepository
