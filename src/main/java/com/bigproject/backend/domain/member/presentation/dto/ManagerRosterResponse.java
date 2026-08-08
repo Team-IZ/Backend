@@ -49,7 +49,13 @@ public record ManagerRosterResponse(
 			@Schema(description = "최근 로그인 시각. 한 번도 로그인하지 않았으면 null(화면에서는 `—`)", nullable = true)
 			Instant lastLoginAt,
 			@Schema(description = "최초 초대 시각. 초대 이력이 없으면 null", nullable = true)
-			Instant invitedAt
+			Instant invitedAt,
+			@Schema(description = """
+					초대한 사람의 이름이며 `invitedAt`과 **같은 초대 행**에서 읽습니다.
+					화면 비고의 '2026-07-24 초대 · 김오퍼레이터'에서 뒷부분이 이 값이라, 날짜와 사람이
+					서로 다른 초대에서 오면 안 됩니다. 초대 이력이 없거나 초대한 계정이 지워졌으면 null입니다.
+					""", example = "김오퍼레이터", nullable = true)
+			String invitedByName
 	) {
 		public static Manager from(ManagerRosterRepository.ManagerRosterRow row) {
 			return new Manager(
@@ -62,7 +68,8 @@ public record ManagerRosterResponse(
 					row.classroomNames(),
 					row.assignedTraineeCount(),
 					row.lastLoginAt(),
-					row.invitedAt()
+					row.invitedAt(),
+					row.invitedByName()
 			);
 		}
 

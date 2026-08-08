@@ -155,33 +155,82 @@ public class MemberController {
 			operationId = "findMembers",
 			summary = "회원 목록 조회 | ✅ 사용 가능",
 			description = """
-					운영 관리 `매니저` 탭의 매니저 목록 표를 채운다. `role=MANAGER`만 지원한다 —
-					다른 역할 목록은 각자의 화면 전용 API(SA-02 오퍼레이터 목록 등)를 쓴다.
-					계정 상태로 필터링하고 이름·이메일로 검색하며 페이지네이션한다. 조회 범위인 기관은
-					액세스 토큰에서 가져온다.
+					운영 관리 `매니저` 탭의 매니저 목록 표를 채운다. 상태 필터·이름 검색·정렬·페이지네이션을
+					**모두 서버가 처리**하므로 화면은 파라미터만 넘기면 된다. 조회 범위인 기관은 액세스 토큰에서
+					가져온다. `role=MANAGER`만 지원하며, 다른 역할 목록은 각자의 화면 전용 API(SA-02 오퍼레이터
+					목록 등)를 쓴다.
 
-					**요청**
-					- role (쿼리, **필수**): 현재 MANAGER만 지원. 다른 값은 400
-					- status (쿼리, 선택): INVITED(초대 대기) / ACTIVE(활성) / INACTIVE(정지). 생략하면 전체.
-					  LOCKED는 이 화면에서 쓰지 않는 값이라 지정하면 400
-					- query (쿼리, 선택): 이름·이메일 부분검색
-					- sort (쿼리, 선택, 기본 NAME): NAME(이름순) / ASSIGNED_TRAINEE_COUNT(담당 인원순)
-					- page (쿼리, 선택, 기본 0) / size (쿼리, 선택, 기본 20, 최대 100)
+					## 요청 (쿼리 파라미터)
 
-					**응답 (200)**
-					- content[]: 매니저 목록(이름·이메일·계정 상태·담당 기수·담당 반·담당 인원·최근 접속·초대일)
-					- page / size / totalElements / totalPages
-					- statusCounts: 계정 상태별 인원. **필터와 무관한 기관 전체 모집단**이라 totalElements와 다르다.
-					  화면 상단 `매니저 9명 · 활성 7 · 초대 대기 1 · 정지 1`이 이 값이며, 상태 칩이 자기 자신을
-					  필터링하면 안 되므로 목록 한 페이지로는 만들 수 없다.
-					  INVITED·ACTIVE·INACTIVE 세 키가 **항상 모두 있고** 0명인 상태는 0으로 온다
+					| 파라미터 | 필수 | 타입 | 설명 |
+					| --- | --- | --- | --- |
+					| `role` | **필수** | enum | 현재 `MANAGER`만 지원. 다른 값은 400 |
+					| `cohortId` | 선택 | UUID | 담당 기수로 좁힌다. 화면 상단 기수 선택기에 대응. 비우면 기관 전체 |
+					| `status` | 선택 | enum | `INVITED`(초대 대기) · `ACTIVE`(활성) · `INACTIVE`(정지). 비우면 전체(화면의 `상태 · 전체`) |
+					| `query` | 선택 | string | 이름·이메일 부분검색. 비우면 전체 |
+					| `sort` | 선택 | enum | `NAME`(이름순, 기본) · `ASSIGNED_TRAINEE_COUNT`(담당 인원순) |
+					| `page` | 선택 | int | 0부터 시작. 기본 `0` |
+					| `size` | 선택 | int | 페이지당 개수. 기본 `20`, 최대 `100` |
 
-					**content[].cohortId·cohortName은 가장 최근 매니저 초대의 담당 기수다.** 매니저 초대는
+					⚠️ **`status`에 `LOCKED`는 쓸 수 없다.** 이 화면이 쓰지 않는 값이라 지정하면 400이다.
+
+					## 응답 (200)
+
+					| 필드 | 타입 | 설명 |
+					| --- | --- | --- |
+					| `content[]` | array | 매니저 목록. 각 항목 구조는 아래 |
+					| `page` | int | 현재 페이지(0부터) |
+					| `size` | int | 페이지당 개수 |
+					| `totalElements` | long | **필터 적용 후** 전체 건수 |
+					| `totalPages` | int | 전체 페이지 수 |
+					| `statusCounts` | object | 계정 상태별 인원. 화면 상단 `활성 7 · 초대 대기 1 · 정지 0` |
+
+					### statusCounts (object)
+
+					키는 계정 상태, 값은 인원 수입니다. 예: `{"INVITED": 1, "ACTIVE": 7, "INACTIVE": 0}`
+
+					| 키 | 타입 | 설명 |
+					| --- | --- | --- |
+					| `INVITED` | long | 초대 대기 인원 |
+					| `ACTIVE` | long | 활성 인원 |
+					| `INACTIVE` | long | 정지 인원 |
+
+					### content[] 각 항목
+
+					| 필드 | 타입 | 설명 |
+					| --- | --- | --- |
+					| `managerId` | UUID | 매니저 사용자 ID |
+					| `name` | string? | 이름. 초대만 되고 미활성이면 `null`(화면에서는 `가입 대기`) |
+					| `email` | string | 이메일 |
+					| `status` | enum | `INVITED` · `ACTIVE` · `INACTIVE` |
+					| `cohortId` | UUID? | 담당 기수 ID |
+					| `cohortName` | string? | 담당 기수명 |
+					| `classroomNames` | string[] | 현재 담당 반 이름 목록. 없으면 `[]`(화면의 `미배정`) |
+					| `assignedTraineeCount` | long | 담당 반의 재학(ACTIVE) 교육생 합계. 없으면 `0` |
+					| `lastLoginAt` | date-time? | 최근 로그인. 이력이 없으면 `null`(화면에서는 `—`) |
+					| `invitedAt` | date-time? | 최초 초대 시각 |
+					| `invitedByName` | string? | 초대한 사람 이름 |
+
+					⚠️ **`statusCounts`는 상태·검색 필터와 무관한 모집단**이라 `totalElements`와 다르다.
+					상태 칩이 자기 자신을 필터링하면 안 되므로 목록 한 페이지로는 만들 수 없다.
+					`INVITED`·`ACTIVE`·`INACTIVE` 세 키가 **항상 모두 있고**, 0명인 상태는 `0`으로 온다 —
+					키가 빠지는 것과 0명인 것은 다르다.
+
+					⚠️ **단 `cohortId`는 필터가 아니라 조회 범위라 `statusCounts`에도 똑같이 걸린다.**
+					여기만 기관 전체로 세면 칩 합계가 목록 건수와 어긋난다.
+
+					💡 **`cohortId`를 넘기면 그 기수를 담당하는 매니저만 나온다.** 판정 기준은
+					**그 기수 반에 활성 배정이 있거나, 그 기수를 대상으로 한 매니저 초대가 있는 것**이다.
+					초대만 되고 아직 반이 없는 매니저(화면의 `가입 대기 · 미배정`)도 나와야 해서 OR로 본다.
+					이때 `classroomNames`·`assignedTraineeCount`도 그 기수 것만 세므로, 과거 기수를 담당했던
+					매니저의 이전 반이 현재 기수 화면에 섞이지 않는다.
+
+					💡 **`cohortId`·`cohortName`은 가장 최근 매니저 초대의 담당 기수다.** 매니저 초대는
 					`POST /organizations/{organizationId}/manager-invitations`에서 기수를 필수로 지정하므로
 					초대 이력이 있는 매니저라면 항상 값이 있다.
 
-					**content[].classroomNames·assignedTraineeCount는 현재 활성 담당 배정 기준이다.**
-					담당 반이 없으면 classroomNames는 빈 배열, assignedTraineeCount는 0이다(화면의 `미배정`).
+					💡 **`invitedAt`·`invitedByName`은 같은 초대 행에서 읽는다.** 화면 비고가
+					`2026-07-24 초대 · 김오퍼레이터`처럼 둘을 한 문장으로 쓰기 때문이다.
 					"""
 	)
 	@ApiResponses({
@@ -196,6 +245,9 @@ public class MemberController {
 	public ResponseEntity<ManagerRosterResponse> findMembers(
 			@Parameter(description = "조회할 역할. 현재 MANAGER만 지원한다", example = "MANAGER")
 			@RequestParam Role role,
+			@Parameter(description = "담당 기수로 좁힌다. 생략하면 기관 전체",
+					example = "123e4567-e89b-12d3-a456-426614174000")
+			@RequestParam(required = false) UUID cohortId,
 			@Parameter(description = "계정 상태 필터. INVITED/ACTIVE/INACTIVE만 지원하며 생략하면 전체")
 			@RequestParam(required = false) AccountStatus status,
 			@Parameter(description = "이름·이메일 부분검색", example = "강민서")
@@ -214,7 +266,7 @@ public class MemberController {
 		UUID organizationId = extractOrganizationId(authentication);
 
 		ManagerRosterService.RosterResult result = managerRosterService.findManagers(
-				organizationId, status, query, sort, PageRequest.of(page, size));
+				organizationId, cohortId, status, query, sort, PageRequest.of(page, size));
 
 		Page<ManagerRosterRepository.ManagerRosterRow> managerPage = result.page();
 		ManagerRosterResponse response = new ManagerRosterResponse(

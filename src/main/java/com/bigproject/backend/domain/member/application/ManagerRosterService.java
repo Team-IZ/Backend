@@ -23,17 +23,23 @@ public class ManagerRosterService {
 	private final ManagerRosterRepository managerRosterRepository;
 
 	public RosterResult findManagers(
-			UUID orgId, AccountStatus accountStatus, String query, ManagerRosterSort sort, Pageable pageable
+			UUID orgId,
+			UUID cohortId,
+			AccountStatus accountStatus,
+			String query,
+			ManagerRosterSort sort,
+			Pageable pageable
 	) {
 		ManagerRosterRepository.ManagerRosterCriteria criteria = new ManagerRosterRepository.ManagerRosterCriteria(
 				orgId,
+				cohortId,
 				toRawStatus(accountStatus),
 				query,
 				sort == null ? ManagerRosterSort.NAME : sort
 		);
 		return new RosterResult(
 				managerRosterRepository.findManagers(criteria, pageable),
-				toStatusCounts(managerRosterRepository.countByStatus(orgId))
+				toStatusCounts(managerRosterRepository.countByStatus(orgId, cohortId))
 		);
 	}
 
@@ -64,7 +70,7 @@ public class ManagerRosterService {
 		};
 	}
 
-	/** 한 페이지와, 그 페이지의 필터와 무관한 기관 전체 상태별 인원. */
+	/** 한 페이지와, 상태·검색 필터와 무관한 같은 조회 범위(기관 또는 그 기수)의 상태별 인원. */
 	public record RosterResult(
 			Page<ManagerRosterRepository.ManagerRosterRow> page,
 			Map<AccountStatus, Long> statusCounts
