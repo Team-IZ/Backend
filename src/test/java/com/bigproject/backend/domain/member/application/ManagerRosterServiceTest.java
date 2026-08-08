@@ -6,6 +6,7 @@ import com.bigproject.backend.domain.member.domain.ManagerRosterSort;
 import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.global.exception.ApiException;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Page;
@@ -27,11 +28,12 @@ class ManagerRosterServiceTest {
 	private final ManagerRosterService service = new ManagerRosterService(managerRosterRepository);
 
 	private final UUID orgId = UUID.randomUUID();
+	private final UUID cohortId = UUID.randomUUID();
 
 	@Test
 	void rejectsLockedAsAnAccountStatusFilter() {
 		assertThatThrownBy(() -> service.findManagers(
-				orgId, AccountStatus.LOCKED, null, ManagerRosterSort.NAME, PageRequest.of(0, 20)))
+				orgId, null, AccountStatus.LOCKED, null, ManagerRosterSort.NAME, PageRequest.of(0, 20)))
 				.isInstanceOfSatisfying(ApiException.class, exception ->
 						assertThat(exception.errorCode()).isEqualTo(MemberErrorCode.ACCOUNT_STATUS_FILTER_NOT_SUPPORTED));
 	}
@@ -41,12 +43,12 @@ class ManagerRosterServiceTest {
 		Page<ManagerRosterRepository.ManagerRosterRow> emptyPage = new PageImpl<>(List.of());
 		when(managerRosterRepository.findManagers(any(), any())).thenReturn(emptyPage);
 
-		service.findManagers(orgId, AccountStatus.INVITED, "강", ManagerRosterSort.ASSIGNED_TRAINEE_COUNT,
+		service.findManagers(orgId, null, AccountStatus.INVITED, "강", ManagerRosterSort.ASSIGNED_TRAINEE_COUNT,
 				PageRequest.of(0, 20));
 
 		verify(managerRosterRepository).findManagers(
 				eq(new ManagerRosterRepository.ManagerRosterCriteria(
-						orgId, "PENDING", "강", ManagerRosterSort.ASSIGNED_TRAINEE_COUNT)),
+						orgId, null, "PENDING", "강", ManagerRosterSort.ASSIGNED_TRAINEE_COUNT)),
 				any());
 	}
 
@@ -55,11 +57,54 @@ class ManagerRosterServiceTest {
 		Page<ManagerRosterRepository.ManagerRosterRow> emptyPage = new PageImpl<>(List.of());
 		when(managerRosterRepository.findManagers(any(), any())).thenReturn(emptyPage);
 
-		service.findManagers(orgId, null, null, null, PageRequest.of(0, 20));
+		service.findManagers(orgId, null, null, null, null, PageRequest.of(0, 20));
 
 		verify(managerRosterRepository).findManagers(
 				eq(new ManagerRosterRepository.ManagerRosterCriteria(
-						orgId, null, null, ManagerRosterSort.NAME)),
+						orgId, null, null, null, ManagerRosterSort.NAME)),
 				any());
+	}
+
+	@Test
+	void passesTheCohortScopeToTheListQuery() {
+		Page<ManagerRosterRepository.ManagerRosterRow> emptyPage = new PageImpl<>(List.of());
+		when(managerRosterRepository.findManagers(any(), any())).thenReturn(emptyPage);
+
+		service.findManagers(orgId, cohortId, null, null, ManagerRosterSort.NAME, PageRequest.of(0, 20));
+
+		verify(managerRosterRepository).findManagers(
+				eq(new ManagerRosterRepository.ManagerRosterCriteria(
+						orgId, cohortId, null, null, ManagerRosterSort.NAME)),
+				any());
+	}
+
+	/**
+	 * 상태 칩은 목록과 같은 모집단을 세야 한다. 기수를 목록에만 걸고 집계를 기관 전체로 두면
+	 * '활성 7 · 초대 대기 1'의 합이 목록 건수와 어긋난다.
+	 */
+	@Test
+	void countsStatusesWithinTheSameCohortScopeAsTheList() {
+		Page<ManagerRosterRepository.ManagerRosterRow> emptyPage = new PageImpl<>(List.of());
+		when(managerRosterRepository.findManagers(any(), any())).thenReturn(emptyPage);
+
+		service.findManagers(orgId, cohortId, AccountStatus.ACTIVE, null, ManagerRosterSort.NAME,
+				PageRequest.of(0, 20));
+
+		verify(managerRosterRepository).countByStatus(orgId, cohortId);
+	}
+
+	@Test
+	void alwaysReportsAllThreeStatusKeysEvenWhenNobodyHasThatStatus() {
+		Page<ManagerRosterRepository.ManagerRosterRow> emptyPage = new PageImpl<>(List.of());
+		when(managerRosterRepository.findManagers(any(), any())).thenReturn(emptyPage);
+		when(managerRosterRepository.countByStatus(orgId, cohortId)).thenReturn(Map.of("ACTIVE", 7L));
+
+		ManagerRosterService.RosterResult result = service.findManagers(
+				orgId, cohortId, null, null, ManagerRosterSort.NAME, PageRequest.of(0, 20));
+
+		assertThat(result.statusCounts())
+				.containsEntry(AccountStatus.ACTIVE, 7L)
+				.containsEntry(AccountStatus.INVITED, 0L)
+				.containsEntry(AccountStatus.INACTIVE, 0L);
 	}
 }

@@ -27,6 +27,7 @@ class JdbcManagerRosterRepositorySqlTest {
 	private static final String URL = "jdbc:postgresql://localhost:55440/checkdb";
 
 	private final UUID organizationId = UUID.randomUUID();
+	private final UUID cohortId = UUID.randomUUID();
 
 	@Test
 	void everyStatementParsesAndRunsAgainstTheRealSchema() {
@@ -34,7 +35,7 @@ class JdbcManagerRosterRepositorySqlTest {
 
 		for (ManagerRosterSort sort : ManagerRosterSort.values()) {
 			assertThatCode(() -> repository.findManagers(
-					new ManagerRosterRepository.ManagerRosterCriteria(organizationId, null, null, sort),
+					new ManagerRosterRepository.ManagerRosterCriteria(organizationId, null, null, null, sort),
 					PageRequest.of(0, 20))).doesNotThrowAnyException();
 		}
 	}
@@ -45,12 +46,32 @@ class JdbcManagerRosterRepositorySqlTest {
 
 		assertThatCode(() -> repository.findManagers(
 				new ManagerRosterRepository.ManagerRosterCriteria(
-						organizationId, "ACTIVE", "강민서", ManagerRosterSort.ASSIGNED_TRAINEE_COUNT),
+						organizationId, null, "ACTIVE", "강민서", ManagerRosterSort.ASSIGNED_TRAINEE_COUNT),
 				PageRequest.of(0, 20))).doesNotThrowAnyException();
 
 		assertThatCode(() -> repository.findManagers(
 				new ManagerRosterRepository.ManagerRosterCriteria(
-						organizationId, "PENDING", null, ManagerRosterSort.NAME),
+						organizationId, null, "PENDING", null, ManagerRosterSort.NAME),
+				PageRequest.of(1, 10))).doesNotThrowAnyException();
+	}
+
+	/**
+	 * 기수를 걸면 SELECT 절 서브쿼리와 WHERE 절 양쪽에 인자가 늘어난다. 위치 인자라 순서가 밀리면
+	 * 조용히 엉뚱한 값이 바인딩되는 게 아니라 타입 불일치로 여기서 터진다.
+	 */
+	@Test
+	void findManagersParsesWithTheCohortScopeApplied() {
+		JdbcManagerRosterRepository repository = repositoryOrSkip();
+
+		for (ManagerRosterSort sort : ManagerRosterSort.values()) {
+			assertThatCode(() -> repository.findManagers(
+					new ManagerRosterRepository.ManagerRosterCriteria(organizationId, cohortId, null, null, sort),
+					PageRequest.of(0, 20))).doesNotThrowAnyException();
+		}
+
+		assertThatCode(() -> repository.findManagers(
+				new ManagerRosterRepository.ManagerRosterCriteria(
+						organizationId, cohortId, "PENDING", "강민서", ManagerRosterSort.ASSIGNED_TRAINEE_COUNT),
 				PageRequest.of(1, 10))).doesNotThrowAnyException();
 	}
 
@@ -58,7 +79,8 @@ class JdbcManagerRosterRepositorySqlTest {
 	void countByStatusParsesAndGroupsByTheRawAccountStatus() {
 		JdbcManagerRosterRepository repository = repositoryOrSkip();
 
-		assertThatCode(() -> repository.countByStatus(organizationId)).doesNotThrowAnyException();
+		assertThatCode(() -> repository.countByStatus(organizationId, null)).doesNotThrowAnyException();
+		assertThatCode(() -> repository.countByStatus(organizationId, cohortId)).doesNotThrowAnyException();
 	}
 
 	private JdbcManagerRosterRepository repositoryOrSkip() {
