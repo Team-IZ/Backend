@@ -51,6 +51,28 @@ public enum MemberErrorCode implements ApiErrorCode {
 	/** 일반 매니저는 담당 기수를 정확히 하나 지정해야 한다. */
 	MANAGER_COHORT_REQUIRED(HttpStatus.BAD_REQUEST, "일반 매니저는 하나의 기수를 반드시 지정해야 합니다."),
 
+	// ── 명단 조회·상태 변경 ──
+
+	/**
+	 * 반 필터와 "미배정만" 필터를 함께 걸었다. 교집합이 항상 비어 있어 화면이 빈 표를 보고
+	 * 데이터가 없다고 오해하게 되므로 값을 돌려주는 대신 거절한다.
+	 */
+	ROSTER_FILTER_CONFLICT(HttpStatus.BAD_REQUEST, "반 필터와 미배정 필터는 함께 지정할 수 없습니다."),
+	/** 이 화면이 쓰지 않는 계정 상태로 필터를 걸었다(LOCKED 등). */
+	ACCOUNT_STATUS_FILTER_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "지원하지 않는 계정 상태 필터입니다."),
+	/** 이 목록이 지원하지 않는 역할을 요청했다. 역할별 목록은 각자의 화면 전용 API가 따로 있다. */
+	ROSTER_ROLE_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "지원하지 않는 역할입니다."),
+	/** 그 기수·기관에 그 교육생이 없다. 다른 기수·다른 기관인 경우도 존재를 알리지 않고 여기로 묶는다. */
+	TRAINEE_NOT_FOUND(HttpStatus.NOT_FOUND, "교육생을 찾을 수 없습니다."),
+	/** ACTIVE·INACTIVE 외의 상태를 직접 지정했다. 입력 오류라 화면은 버튼을 다시 그린다. */
+	TRAINEE_STATUS_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "교육생 계정 상태는 활성 또는 비활성만 직접 설정할 수 있습니다."),
+	/**
+	 * 초대 대기(INVITED) 교육생의 상태를 바꾸려 했다. 아직 계정이 활성화되지 않아 정지·재활성
+	 * 개념이 성립하지 않는다 — 화면이 할 일은 상태 변경이 아니라 <b>초대 재발송</b>이라 입력
+	 * 오류(400)가 아니라 상태 충돌(409)로 갈라 준다.
+	 */
+	TRAINEE_STATUS_NOT_MUTABLE(HttpStatus.CONFLICT, "초대 대기 상태인 교육생은 상태를 직접 변경할 수 없습니다."),
+
 	/** 인증 사용자를 찾을 수 없다. 토큰은 유효한데 계정이 사라진 경우다. */
 	INVITER_NOT_FOUND(HttpStatus.UNAUTHORIZED, "인증 사용자를 찾을 수 없습니다."),
 

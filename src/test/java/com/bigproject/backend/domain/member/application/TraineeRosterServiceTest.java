@@ -1,20 +1,21 @@
 package com.bigproject.backend.domain.member.application;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.domain.member.domain.AccountStatus;
+import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.member.domain.TraineeRosterRepository;
 import com.bigproject.backend.domain.member.domain.TraineeRosterSort;
+import com.bigproject.backend.global.exception.ApiException;
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
 
-import java.time.OffsetDateTime;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -48,8 +49,8 @@ class TraineeRosterServiceTest {
 
 		assertThatThrownBy(() -> service.findRoster(
 				cohortId, orgId, null, false, null, null, TraineeRosterSort.NAME, PageRequest.of(0, 20)))
-				.isInstanceOf(ResponseStatusException.class)
-				.hasFieldOrPropertyWithValue("statusCode", HttpStatus.NOT_FOUND);
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AcademicOperationsErrorCode.COHORT_NOT_FOUND));
 	}
 
 	@Test
@@ -58,8 +59,8 @@ class TraineeRosterServiceTest {
 
 		assertThatThrownBy(() -> service.findRoster(
 				cohortId, otherOrgId, null, false, null, null, TraineeRosterSort.NAME, PageRequest.of(0, 20)))
-				.isInstanceOf(ResponseStatusException.class)
-				.hasFieldOrPropertyWithValue("statusCode", HttpStatus.NOT_FOUND);
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AcademicOperationsErrorCode.COHORT_NOT_FOUND));
 	}
 
 	@Test
@@ -67,8 +68,8 @@ class TraineeRosterServiceTest {
 		assertThatThrownBy(() -> service.findRoster(
 				cohortId, orgId, UUID.randomUUID(), true, null, null, TraineeRosterSort.NAME,
 				PageRequest.of(0, 20)))
-				.isInstanceOf(ResponseStatusException.class)
-				.hasFieldOrPropertyWithValue("statusCode", HttpStatus.BAD_REQUEST);
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(MemberErrorCode.ROSTER_FILTER_CONFLICT));
 	}
 
 	@Test
@@ -76,8 +77,8 @@ class TraineeRosterServiceTest {
 		assertThatThrownBy(() -> service.findRoster(
 				cohortId, orgId, null, false, AccountStatus.LOCKED, null, TraineeRosterSort.NAME,
 				PageRequest.of(0, 20)))
-				.isInstanceOf(ResponseStatusException.class)
-				.hasFieldOrPropertyWithValue("statusCode", HttpStatus.BAD_REQUEST);
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(MemberErrorCode.ACCOUNT_STATUS_FILTER_NOT_SUPPORTED));
 	}
 
 	@Test
@@ -115,8 +116,8 @@ class TraineeRosterServiceTest {
 
 		assertThatThrownBy(() -> service.updateStatus(
 				cohortId, orgId, traineeId, AccountStatus.INACTIVE, "사유", actorUserId))
-				.isInstanceOf(ResponseStatusException.class)
-				.hasFieldOrPropertyWithValue("statusCode", HttpStatus.CONFLICT);
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(MemberErrorCode.TRAINEE_STATUS_NOT_MUTABLE));
 
 		verify(traineeRosterRepository, never()).updateStatus(any(), any(), any(), any(), any());
 	}
@@ -127,8 +128,8 @@ class TraineeRosterServiceTest {
 
 		assertThatThrownBy(() -> service.updateStatus(
 				cohortId, orgId, traineeId, AccountStatus.INACTIVE, null, actorUserId))
-				.isInstanceOf(ResponseStatusException.class)
-				.hasFieldOrPropertyWithValue("statusCode", HttpStatus.NOT_FOUND);
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(MemberErrorCode.TRAINEE_NOT_FOUND));
 	}
 
 	@Test

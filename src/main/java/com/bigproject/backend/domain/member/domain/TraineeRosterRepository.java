@@ -24,6 +24,13 @@ public interface TraineeRosterRepository {
 	/** 반 배정이 없는(class_membership 활성 행이 없는) 교육생 수. 필터와 무관하게 기수 전체 기준. */
 	int countUnassigned(UUID cohortId, UUID orgId);
 
+	/**
+	 * 기수 전체 교육생 수. <b>필터를 적용하지 않은</b> 모집단이라 페이지의 {@code totalElements}와 다르다.
+	 * 화면 상단이 '명단 393명'과 '7기 393명에서 찾았습니다'를 필터와 무관하게 보여주는데, 그 값을
+	 * 목록 한 페이지에서는 만들 수 없어 따로 센다.
+	 */
+	int countCohortTotal(UUID cohortId, UUID orgId);
+
 	Optional<RosterRow> findTrainee(UUID traineeId, UUID cohortId, UUID orgId);
 
 	/** @return 실제로 바뀐 행 수(0이면 대상 없음 또는 이미 같은 상태) */

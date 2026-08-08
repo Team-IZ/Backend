@@ -5,6 +5,7 @@ import org.springframework.data.domain.Pageable;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -20,6 +21,15 @@ import java.util.UUID;
 public interface ManagerRosterRepository {
 
 	Page<ManagerRosterRow> findManagers(ManagerRosterCriteria criteria, Pageable pageable);
+
+	/**
+	 * 계정 상태별 매니저 수. <b>필터를 적용하지 않은</b> 기관 전체 모집단이라 페이지의
+	 * {@code totalElements}와 다르다. 화면 상단이 '매니저 9명 · 활성 7 · 초대 대기 1 · 정지 1'을
+	 * 필터와 무관하게 보여주는데, 그 내역을 목록 한 페이지에서는 만들 수 없어 따로 센다.
+	 *
+	 * @return {@code app_user.status} 원문(PENDING·ACTIVE·INACTIVE)별 인원. 0인 상태는 키가 없다
+	 */
+	Map<String, Long> countByStatus(UUID orgId);
 
 	record ManagerRosterCriteria(
 			UUID orgId,

@@ -3,16 +3,17 @@ package com.bigproject.backend.domain.member.application;
 import com.bigproject.backend.domain.member.domain.AccountStatus;
 import com.bigproject.backend.domain.member.domain.ManagerRosterRepository;
 import com.bigproject.backend.domain.member.domain.ManagerRosterSort;
+import com.bigproject.backend.domain.member.domain.MemberErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
+import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
 
-import java.util.List;
-import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -31,8 +32,8 @@ class ManagerRosterServiceTest {
 	void rejectsLockedAsAnAccountStatusFilter() {
 		assertThatThrownBy(() -> service.findManagers(
 				orgId, AccountStatus.LOCKED, null, ManagerRosterSort.NAME, PageRequest.of(0, 20)))
-				.isInstanceOf(ResponseStatusException.class)
-				.hasFieldOrPropertyWithValue("statusCode", HttpStatus.BAD_REQUEST);
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(MemberErrorCode.ACCOUNT_STATUS_FILTER_NOT_SUPPORTED));
 	}
 
 	@Test
