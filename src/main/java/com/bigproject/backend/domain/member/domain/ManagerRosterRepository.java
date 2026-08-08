@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 기관 매니저 목록(GET /members?role=MANAGER) 원천 조회 포트.
+ * 기관 매니저 목록(GET /managers) 원천 조회 포트.
  *
  * <p>{@code app_user}(role=MANAGER)를 기준으로 한다. {@code MemberInvitationService.inviteManager}가
  * 초대 시점에 이미 {@code app_user} 행을 PENDING으로 만들어 두므로(operator 초대와 같은 방식),

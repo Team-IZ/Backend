@@ -60,8 +60,6 @@ public enum MemberErrorCode implements ApiErrorCode {
 	ROSTER_FILTER_CONFLICT(HttpStatus.BAD_REQUEST, "반 필터와 미배정 필터는 함께 지정할 수 없습니다."),
 	/** 이 화면이 쓰지 않는 계정 상태로 필터를 걸었다(LOCKED 등). */
 	ACCOUNT_STATUS_FILTER_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "지원하지 않는 계정 상태 필터입니다."),
-	/** 이 목록이 지원하지 않는 역할을 요청했다. 역할별 목록은 각자의 화면 전용 API가 따로 있다. */
-	ROSTER_ROLE_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "지원하지 않는 역할입니다."),
 	/** 그 기수·기관에 그 교육생이 없다. 다른 기수·다른 기관인 경우도 존재를 알리지 않고 여기로 묶는다. */
 	TRAINEE_NOT_FOUND(HttpStatus.NOT_FOUND, "교육생을 찾을 수 없습니다."),
 	/** ACTIVE·INACTIVE 외의 상태를 직접 지정했다. 입력 오류라 화면은 버튼을 다시 그린다. */
