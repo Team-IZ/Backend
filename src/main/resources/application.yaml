@@ -90,6 +90,25 @@ springdoc:
     disable-swagger-default-url: true
     persist-authorization: true
 
+# AI(FastAPI) 연동. AI 저장소 app/config.py의 API_V0_PREFIX가 /api/v0라 base-url에 붙여 둔다.
+ai:
+  base-url: ${AI_BASE_URL:http://localhost:8000/api/v0}
+  # AI의 require_internal_key가 읽는 공유 비밀(X-Internal-Key).
+  # 비워 두면 헤더를 아예 붙이지 않는다 — AI 쪽도 "키 미설정 = 로컬 개발"로 검증을 건너뛴다.
+  internal-key: ${AI_INTERNAL_KEY:}
+  connect-timeout: ${AI_CONNECT_TIMEOUT:PT5S}
+  # 🔴 짧게 잡으면 안 된다. AI는 LLM 호출 1회에 20초(SESSION_TIMEOUT_S)를 쓰고 최대 6회
+  # (SESSION_MAX_ATTEMPTS) 재시도하므로 최악의 경우 2분 가까이 걸린다. 그 전에 끊으면
+  # AI는 계속 작업 중인데 백엔드만 재시도해서 같은 요청에 LLM 비용이 두 번 나간다.
+  read-timeout: ${AI_READ_TIMEOUT:PT150S}
+
+  report:
+    # AI의 POST /reports는 202 + jobId만 주고 생성은 백그라운드에서 돈다.
+    # 아래 둘의 곱(2초 x 60회 = 2분)이 한 리포트를 기다리는 상한이고,
+    # AI의 최악 소요 시간(20초 x 6회 재시도)에 맞춰 잡았다.
+    poll-interval: ${AI_REPORT_POLL_INTERVAL:PT2S}
+    poll-max-attempts: ${AI_REPORT_POLL_MAX_ATTEMPTS:60}
+
 jwt:
   secret: ${JWT_SECRET}
   access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION}

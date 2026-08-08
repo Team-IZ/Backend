@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.reporting.infrastructure;
 
 import com.bigproject.backend.domain.reporting.domain.CohortReportQueryRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -22,6 +23,7 @@ import java.util.UUID;
  * 값이고 뷰가 그것을 꺼내 준다. 여기서 다시 계산하지 않는다 — 발행 시점에 얼린 값이라
  * 지금 세면 스냅샷이 아니게 된다.
  */
+@Slf4j
 @Repository
 @RequiredArgsConstructor
 public class JdbcCohortReportQueryRepository implements CohortReportQueryRepository {
@@ -110,6 +112,30 @@ public class JdbcCohortReportQueryRepository implements CohortReportQueryReposit
 				rs.getInt("assessed_count"),
 				rs.getInt("missing_count")
 		), diagnosisSnapshotId);
+	}
+
+	@Override
+	public ExcludedRow findExcluded(UUID diagnosisSnapshotId) {
+		/*
+		 * `->>`로 텍스트를 꺼내 자바에서 파싱한다. SQL에서 `::int`로 캐스팅하면 페이로드에
+		 * 숫자가 아닌 값이 하나만 들어 있어도 쿼리 전체가 에러로 죽는데, 그러면 제외 인원
+		 * 하나 때문에 리포트 화면이 통째로 안 열린다. 키가 없으면 `->>`는 NULL을 준다.
+		 */
+		String sql = """
+				SELECT s.summary_payload -> 'excluded' ->> 'notTaken'    AS not_taken,
+				       s.summary_payload -> 'excluded' ->> 'invalid'     AS invalid,
+				       s.summary_payload -> 'excluded' ->> 'interrupted' AS interrupted
+				FROM report_snapshot s
+				WHERE s.snapshot_id = ?
+				""";
+
+		List<ExcludedRow> rows = jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> new ExcludedRow(
+				parseCount(rs.getString("not_taken")),
+				parseCount(rs.getString("invalid")),
+				parseCount(rs.getString("interrupted"))
+		), diagnosisSnapshotId);
+
+		return rows.stream().findFirst().orElseGet(ExcludedRow::zero);
 	}
 
 	@Override
@@ -308,6 +334,25 @@ public class JdbcCohortReportQueryRepository implements CohortReportQueryReposit
 	private static LocalDate localDate(ResultSet rs, String column) throws SQLException {
 		Date date = rs.getDate(column);
 		return date == null ? null : date.toLocalDate();
+	}
+
+	/**
+	 * 페이로드의 제외 인원 하나. 키가 없거나(NULL) 숫자가 아니면 0이다.
+	 *
+	 * <p>여기서는 결측과 0을 구분하지 않는다 — 화면이 뺄셈 한 줄로 보여주는 값이라
+	 * 표시할 자리가 없고, 파이프라인이 아직 이 키를 안 쓰는 옛 스냅샷도 열려야 한다.
+	 * 값이 이상하면 조회를 깨뜨리는 대신 0으로 두고 로그로 알린다.
+	 */
+	private static int parseCount(String value) {
+		if (value == null || value.isBlank()) {
+			return 0;
+		}
+		try {
+			return Integer.parseInt(value.trim());
+		} catch (NumberFormatException exception) {
+			log.warn("summary_payload.excluded 값이 숫자가 아닙니다: {}", value);
+			return 0;
+		}
 	}
 
 	/** NULL 정수를 0으로 만들지 않기 위해 getObject를 거친다. 결측과 0은 다르다. */
