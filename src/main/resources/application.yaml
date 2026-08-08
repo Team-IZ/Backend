@@ -102,6 +102,13 @@ ai:
   # AI는 계속 작업 중인데 백엔드만 재시도해서 같은 요청에 LLM 비용이 두 번 나간다.
   read-timeout: ${AI_READ_TIMEOUT:PT150S}
 
+  report:
+    # AI의 POST /reports는 202 + jobId만 주고 생성은 백그라운드에서 돈다.
+    # 아래 둘의 곱(2초 x 60회 = 2분)이 한 리포트를 기다리는 상한이고,
+    # AI의 최악 소요 시간(20초 x 6회 재시도)에 맞춰 잡았다.
+    poll-interval: ${AI_REPORT_POLL_INTERVAL:PT2S}
+    poll-max-attempts: ${AI_REPORT_POLL_MAX_ATTEMPTS:60}
+
 jwt:
   secret: ${JWT_SECRET}
   access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION}
