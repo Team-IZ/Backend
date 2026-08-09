@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.curriculum.application;
 
 import com.bigproject.backend.domain.curriculum.domain.CurriculumVersion;
+import com.bigproject.backend.domain.projectexecution.application.ProjectService;
 
 import java.util.List;
 import java.util.UUID;
@@ -15,7 +16,11 @@ public interface CurriculumService {
 
     List<SectionView> findSections(UUID versionId, UUID orgId);
 
-    List<String> findUsedProjects(UUID versionId, UUID orgId);
+    /**
+     * 이 교안을 쓰는 회차들(11차 R3). 이름 배열이던 것을 회차 객체로 바꿨다 —
+     * 화면이 재분석 경고를 <b>응시가 시작된 회차만</b>으로 좁힐 수 있어야 한다.
+     */
+    List<ProjectService.CurriculumUsingProject> findUsedProjects(UUID versionId, UUID orgId);
 
     /**
      * GET /curricula/comparable-cohorts?cohortId= — 이 기수가 쓴 교안들과 겹치는 교안을 쓴
@@ -43,12 +48,18 @@ public interface CurriculumService {
     com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogRepository.CurriculumCatalogRow
     findCatalogItem(UUID materialId, UUID orgId);
 
+    /**
+     * @param statusCounts 분석 상태별 교안 수(11차 R7). <b>필터를 적용하지 않은 기관 전체</b> 기준이라
+     *                     {@code totalElements}와 다르다. 한 번도 분석하지 않은 교안은 키가 {@code null}이다
+     */
     record CurriculumCatalogPage(
             List<com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogRepository.CurriculumCatalogRow> content,
             int page,
             int size,
             long totalElements,
-            int totalPages) {
+            int totalPages,
+            java.util.Map<com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus, Long> statusCounts,
+            long notAnalyzedCount) {
     }
 
     record SectionItemView(

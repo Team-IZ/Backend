@@ -25,6 +25,26 @@ public enum AcademicOperationsErrorCode implements ApiErrorCode {
 	/** 요청한 기수가 이 기관 소속이 아니다. 존재 여부는 알려 주지 않는다. */
 	COHORT_NOT_IN_ORGANIZATION(HttpStatus.BAD_REQUEST, "기관에 속하지 않은 기수입니다."),
 
+	/**
+	 * 개강한(또는 종료된) 기수라 이름·기간을 고칠 수 없다(11차 Q2).
+	 *
+	 * <p>개강 후에 기간을 바꾸면 이미 그 기간을 기준으로 발행된 리포트·회차 일정과 어긋난다.
+	 * 화면은 {@code PLANNED}에서만 수정 버튼을 연다.
+	 */
+	COHORT_NOT_MUTABLE(HttpStatus.CONFLICT, "개강한 기수는 수정할 수 없습니다."),
+
+	/**
+	 * 지울 수 없는 기수다(11차 Q2). 개강했거나, 명단·반·회차가 이미 붙어 있다.
+	 *
+	 * <p>반 삭제({@code CLASSROOM_NOT_DELETABLE})와 같이 <b>사유를 코드로 쪼개지 않는다</b> —
+	 * 어느 쪽이든 화면이 할 일은 "지울 수 없습니다"를 보여주고 버튼을 잠그는 것 하나다.
+	 * 무엇이 붙어 있는지는 {@code message}에 담는다.
+	 */
+	COHORT_NOT_DELETABLE(HttpStatus.CONFLICT, "이미 사용 중인 기수는 삭제할 수 없습니다."),
+
+	/** 수정 요청에 바꿀 값이 하나도 없다. 빈 PATCH는 아무 일도 하지 않으므로 입력 오류로 돌려준다. */
+	COHORT_UPDATE_EMPTY(HttpStatus.BAD_REQUEST, "수정할 값이 없습니다."),
+
 	// ── 반 ──
 
 	CLASSROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "반을 찾을 수 없습니다."),
