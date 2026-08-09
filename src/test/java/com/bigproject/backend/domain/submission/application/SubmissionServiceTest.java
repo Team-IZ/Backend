@@ -1,11 +1,13 @@
 package com.bigproject.backend.domain.submission.application;
 
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepository;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisResultQueryRepository;
 import com.bigproject.backend.domain.submission.domain.Repository;
 import com.bigproject.backend.domain.submission.domain.RepositoryStatus;
 import com.bigproject.backend.domain.submission.domain.Submission;
 import com.bigproject.backend.domain.submission.domain.SubmissionAcceptedEvent;
 import com.bigproject.backend.domain.submission.infrastructure.GithubRepositoryRepository;
+import com.bigproject.backend.domain.submission.infrastructure.JdbcMeasurementAttemptOpener;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionArtifactRepository;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionContextRepository;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionContextRepository.SubmissionContext;
@@ -15,6 +17,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
+import com.bigproject.backend.domain.submission.domain.SubmissionStatus;
+import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
@@ -45,6 +50,8 @@ class SubmissionServiceTest {
 	private SubmissionRepository submissionRepository;
 	private GithubRepositoryRepository githubRepositoryRepository;
 	private SubmissionContextRepository submissionContextRepository;
+	private SubmissionArtifactRepository submissionArtifactRepository;
+	private SubmissionArtifactStorage artifactStorage;
 	private ApplicationEventPublisher eventPublisher;
 	private SubmissionService service;
 
@@ -52,15 +59,16 @@ class SubmissionServiceTest {
 	void setUp() {
 		submissionRepository = mock(SubmissionRepository.class);
 		githubRepositoryRepository = mock(GithubRepositoryRepository.class);
-		SubmissionArtifactRepository submissionArtifactRepository = mock(SubmissionArtifactRepository.class);
+		submissionArtifactRepository = mock(SubmissionArtifactRepository.class);
 		submissionContextRepository = mock(SubmissionContextRepository.class);
 		AnalysisJobRepository analysisJobRepository = mock(AnalysisJobRepository.class);
-		SubmissionArtifactStorage artifactStorage = mock(SubmissionArtifactStorage.class);
+		artifactStorage = mock(SubmissionArtifactStorage.class);
 		eventPublisher = mock(ApplicationEventPublisher.class);
 
 		service = new SubmissionService(submissionRepository, githubRepositoryRepository,
 				submissionArtifactRepository, submissionContextRepository, analysisJobRepository,
-				artifactStorage, eventPublisher);
+				artifactStorage, mock(JdbcAnalysisResultQueryRepository.class),
+				mock(JdbcMeasurementAttemptOpener.class), eventPublisher);
 		ReflectionTestUtils.setField(service, "maxZipBytes", 52428800L);
 	}
 
@@ -140,6 +148,48 @@ class SubmissionServiceTest {
 
 		// 재제출로 팀 저장소 주소를 갱신하는 케이스다. 새 repository 행을 만들지는 않지만
 		// 이벤트는 여전히 발행돼야 분석이 새 제출을 대상으로 다시 걸린다.
+		verify(eventPublisher).publishEvent(any(SubmissionAcceptedEvent.class));
+	}
+
+	/** 접수 검증이 확장자가 아니라 실제 엔트리를 읽으므로 진짜 ZIP 이 필요하다. */
+	private static byte[] zipWithOneEntry() {
+		java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+		try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(buffer)) {
+			zip.putNextEntry(new java.util.zip.ZipEntry("main.py"));
+			zip.write("print('hi')".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+			zip.closeEntry();
+		} catch (java.io.IOException exception) {
+			throw new IllegalStateException(exception);
+		}
+		return buffer.toByteArray();
+	}
+
+	@Test
+	void acceptsZipUploadsAndTriggersAnalysisLikeTheGithubPath() {
+		SubmissionContext context = openRoundContext();
+		when(context.getAllowZipSubmission()).thenReturn(true);
+		when(submissionContextRepository.findSubmissionContext(USER_ID, ROUND_ID))
+				.thenReturn(Optional.of(context));
+		when(submissionRepository.findByRequestIdempotencyKey(any())).thenReturn(Optional.empty());
+		when(submissionRepository.findByTeamIdAndAssessmentRoundIdAndCurrentIsTrue(TEAM_ID, ROUND_ID))
+				.thenReturn(Optional.empty());
+		when(submissionRepository.save(any())).thenAnswer(invocation -> {
+			Submission submission = invocation.getArgument(0);
+			ReflectionTestUtils.setField(submission, "submissionId", UUID.randomUUID());
+			return submission;
+		});
+		when(artifactStorage.store(any(), any(), any(), any()))
+				.thenReturn(new SubmissionArtifactStorage.StoredArtifact(
+						"file:///var/submissions/x.zip", "a".repeat(64), 3L));
+		when(submissionArtifactRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+		SubmissionResponse response = service.submitZip(USER_ID, ROUND_ID,
+				new MockMultipartFile("file", "project.zip", "application/zip", zipWithOneEntry()),
+				UUID.randomUUID());
+
+		// VALIDATING 으로 두면 분석 대상 조회(status='ACCEPTED')에 걸리지 않아 ZIP 은 영원히 분석되지 않는다.
+		assertThat(response.status()).isEqualTo(SubmissionStatus.ACCEPTED);
+		// 보류가 풀린 뒤로 ZIP 도 GitHub 과 같은 트리거를 쓴다.
 		verify(eventPublisher).publishEvent(any(SubmissionAcceptedEvent.class));
 	}
 }

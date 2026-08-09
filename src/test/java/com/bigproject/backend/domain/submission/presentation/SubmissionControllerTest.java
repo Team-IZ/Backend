@@ -120,7 +120,7 @@ class SubmissionControllerTest {
 				.thenReturn(new SubmissionResponse(
 						submissionId,
 						SubmissionMethod.ZIP_WITH_GITLOG,
-						SubmissionStatus.VALIDATING,
+						SubmissionStatus.ACCEPTED,
 						Instant.parse("2026-08-06T09:00:00Z"),
 						true,
 						null,
@@ -134,8 +134,9 @@ class SubmissionControllerTest {
 						.header("Idempotency-Key", UUID.randomUUID())
 						.with(csrf()))
 				.andExpect(status().isAccepted())
-				// 내용 검증과 안전 추출이 남아 있어 접수는 VALIDATING에서 끝난다.
-				.andExpect(jsonPath("$.status").value("VALIDATING"))
+				// 2026-08-09부터 ZIP 도 접수 즉시 ACCEPTED 다. 내용 검증(EMPTY_CODE·GIT_LOG_MISSING)의
+				// 주체가 AI 로 확정돼 백엔드가 더 볼 것이 없다.
+				.andExpect(jsonPath("$.status").value("ACCEPTED"))
 				.andExpect(jsonPath("$.artifactId").value(artifactId.toString()));
 	}
 

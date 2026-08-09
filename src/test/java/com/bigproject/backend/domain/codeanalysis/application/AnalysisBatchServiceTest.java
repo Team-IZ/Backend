@@ -8,6 +8,11 @@ import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJobStatus;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisDispatchRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisDispatchRepository.DispatchTarget;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepository;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository.AnalysisModel;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAiUsageRecorder;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAssessmentSessionPreparer;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisResultRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -31,8 +36,17 @@ class AnalysisBatchServiceTest {
 
 	private static final Instant NOW = Instant.parse("2026-08-07T10:00:00Z");
 
+	private static final String MODEL_CODE = "nvidia/nemotron-3-ultra-550b-a55b";
+	private static final String PROVIDER_MODEL_CODE = "nemotron-3-ultra-550b-a55b";
+	private static final UUID MODEL_ID = UUID.randomUUID();
+	private static final int MAX_ATTEMPTS = 3;
+
 	private AnalysisDispatchRepository dispatchRepository;
 	private AnalysisJobRepository jobRepository;
+	private AnalysisModelRepository modelRepository;
+	private JdbcAnalysisResultRepository resultRepository;
+	private JdbcAiUsageRecorder usageRecorder;
+	private JdbcAssessmentSessionPreparer sessionPreparer;
 	private AnalysisServerClient client;
 	private AnalysisBatchService service;
 
@@ -40,8 +54,21 @@ class AnalysisBatchServiceTest {
 	void setUp() {
 		dispatchRepository = mock(AnalysisDispatchRepository.class);
 		jobRepository = mock(AnalysisJobRepository.class);
+		modelRepository = mock(AnalysisModelRepository.class);
+		resultRepository = mock(JdbcAnalysisResultRepository.class);
+		usageRecorder = mock(JdbcAiUsageRecorder.class);
+		sessionPreparer = mock(JdbcAssessmentSessionPreparer.class);
 		client = mock(AnalysisServerClient.class);
-		service = new AnalysisBatchService(dispatchRepository, jobRepository, client);
+		service = new AnalysisBatchService(dispatchRepository, jobRepository, modelRepository,
+				resultRepository, usageRecorder, sessionPreparer, client, MODEL_CODE, MAX_ATTEMPTS);
+	}
+
+	/** 카탈로그에 설정된 모델이 있는 정상 상태. */
+	private void catalogHasTheConfiguredModel() {
+		AnalysisModel model = mock(AnalysisModel.class);
+		when(model.getModelId()).thenReturn(MODEL_ID);
+		when(model.getProviderModelCode()).thenReturn(PROVIDER_MODEL_CODE);
+		when(modelRepository.findActiveByModelCode(MODEL_CODE)).thenReturn(Optional.of(model));
 	}
 
 	private AnalysisJob jobWithExternalId() {
@@ -72,7 +99,7 @@ class AnalysisBatchServiceTest {
 		AnalysisJob job = jobWithExternalId();
 		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
 		when(client.fetchProgress(any())).thenReturn(Optional.of(new AnalysisProgress(
-				AnalysisJobStatus.FAILED, NOW, NOW, AnalysisFailureCode.REPO_NOT_FOUND, "저장소 없음")));
+				AnalysisJobStatus.FAILED, NOW, NOW, AnalysisFailureCode.REPO_NOT_FOUND, "저장소 없음", null, null)));
 
 		service.pollActiveJobs();
 
@@ -87,7 +114,7 @@ class AnalysisBatchServiceTest {
 		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
 		// 값 집합 밖의 코드는 AnalysisFailureCode.parse 가 비워서 넘긴다.
 		when(client.fetchProgress(any())).thenReturn(Optional.of(new AnalysisProgress(
-				AnalysisJobStatus.FAILED, NOW, NOW, null, null)));
+				AnalysisJobStatus.FAILED, NOW, NOW, null, null, null, null)));
 
 		service.pollActiveJobs();
 
@@ -103,7 +130,7 @@ class AnalysisBatchServiceTest {
 		AnalysisJob job = jobWithExternalId();
 		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
 		when(client.fetchProgress(any())).thenReturn(Optional.of(new AnalysisProgress(
-				AnalysisJobStatus.QUEUED, null, null, null, null)));
+				AnalysisJobStatus.QUEUED, null, null, null, null, null, null)));
 
 		assertThat(service.pollActiveJobs()).isZero();
 		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.QUEUED);
@@ -134,7 +161,8 @@ class AnalysisBatchServiceTest {
 	@Test
 	void dispatchSubmissionSendsTheRepositoryUrlAndBranchFromTheTarget() {
 		DispatchTarget target = target();
-		when(dispatchRepository.findDispatchTarget(target.getSubmissionId())).thenReturn(Optional.of(target));
+		catalogHasTheConfiguredModel();
+		when(dispatchRepository.findDispatchTarget(target.getSubmissionId(), MAX_ATTEMPTS)).thenReturn(Optional.of(target));
 		when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 		when(client.requestAnalysis(any())).thenReturn(UUID.randomUUID());
 
@@ -143,6 +171,7 @@ class AnalysisBatchServiceTest {
 		ArgumentCaptor<AnalysisRequest> captor = ArgumentCaptor.forClass(AnalysisRequest.class);
 		verify(client).requestAnalysis(captor.capture());
 		AnalysisRequest sent = captor.getValue();
+		assertThat(sent.method()).isEqualTo("GITHUB_URL");
 		assertThat(sent.submissionId()).isEqualTo(target.getSubmissionId());
 		assertThat(sent.repositoryUrl()).isEqualTo(target.getRepositoryUrl());
 		assertThat(sent.requestedBranch()).isEqualTo("main");
@@ -155,10 +184,99 @@ class AnalysisBatchServiceTest {
 	}
 
 	@Test
+	void dispatchSubmissionAlwaysNamesTheModelRatherThanLettingTheServerPick() {
+		DispatchTarget target = target();
+		catalogHasTheConfiguredModel();
+		when(dispatchRepository.findDispatchTarget(target.getSubmissionId(), MAX_ATTEMPTS)).thenReturn(Optional.of(target));
+		when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+		when(client.requestAnalysis(any())).thenReturn(UUID.randomUUID());
+
+		service.dispatchSubmission(target.getSubmissionId());
+
+		ArgumentCaptor<AnalysisRequest> captor = ArgumentCaptor.forClass(AnalysisRequest.class);
+		verify(client).requestAnalysis(captor.capture());
+		// 생략하면 AI가 자기 기본 모델을 쓰고, 그 modelCode 가 ai_model 에 없으면
+		// ai_usage.model_code FK 위반으로 사용량이 통째로 유실된다.
+		assertThat(captor.getValue().providerModelCode()).isEqualTo(PROVIDER_MODEL_CODE);
+		// 화면 선택값(model_code)이 아니라 공급자 원본 식별자를 보내야 호출이 된다.
+		assertThat(captor.getValue().providerModelCode()).doesNotContain("/");
+
+		ArgumentCaptor<AnalysisJob> jobCaptor = ArgumentCaptor.forClass(AnalysisJob.class);
+		verify(jobRepository, org.mockito.Mockito.atLeastOnce()).save(jobCaptor.capture());
+		assertThat(jobCaptor.getValue().getRequestedModelId()).isEqualTo(MODEL_ID);
+	}
+
+	@Test
+	void dispatchSubmissionLeavesNoJobRowWhenTheConfiguredModelIsMissing() {
+		DispatchTarget target = target();
+		when(dispatchRepository.findDispatchTarget(target.getSubmissionId(), MAX_ATTEMPTS)).thenReturn(Optional.of(target));
+		when(modelRepository.findActiveByModelCode(MODEL_CODE)).thenReturn(Optional.empty());
+
+		service.dispatchSubmission(target.getSubmissionId());
+
+		// 요청을 보내지 않는다 -- 모델을 생략한 채로 보내면 사용량 적재가 깨진다.
+		verify(client, never()).requestAnalysis(any());
+		// job 행도 남기지 않는다. 재시도 불가 실패로 남으면 그 제출은 두 번 다시 집히지 않는다.
+		verify(jobRepository, never()).save(any());
+	}
+
+	@Test
+	void retryUsesAFreshExecutionNoSoTheIdempotencyKeyDiffersFromTheFailedAttempt() {
+		DispatchTarget target = target();
+		catalogHasTheConfiguredModel();
+		when(dispatchRepository.findRetryableSubmissions(MAX_ATTEMPTS)).thenReturn(List.of(target));
+		// 앞선 시도 1회가 일시적 실패로 끝나 있다.
+		when(dispatchRepository.findMaxExecutionNo(target.getSubmissionId())).thenReturn(1);
+		when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+		when(client.requestAnalysis(any())).thenReturn(UUID.randomUUID());
+
+		assertThat(service.retryPendingSubmissions()).isEqualTo(1);
+
+		ArgumentCaptor<AnalysisRequest> captor = ArgumentCaptor.forClass(AnalysisRequest.class);
+		verify(client).requestAnalysis(captor.capture());
+		// execution_no 를 1로 고정하면 AI 가 앞선 실패 요청과 같은 멱등키로 보고 중복 판정할 수 있어
+		// 재시도가 요청조차 되지 않는다.
+		assertThat(captor.getValue().idempotencyKey()).isEqualTo(target.getSubmissionId() + ":2");
+
+		ArgumentCaptor<AnalysisJob> jobCaptor = ArgumentCaptor.forClass(AnalysisJob.class);
+		verify(jobRepository, org.mockito.Mockito.atLeastOnce()).save(jobCaptor.capture());
+		assertThat(jobCaptor.getValue().getExecutionNo()).isEqualTo(2);
+	}
+
+	@Test
+	void firstAttemptStartsAtExecutionNoOne() {
+		DispatchTarget target = target();
+		catalogHasTheConfiguredModel();
+		when(dispatchRepository.findRetryableSubmissions(MAX_ATTEMPTS)).thenReturn(List.of(target));
+		// 행이 없으면 max() 가 NULL 이다.
+		when(dispatchRepository.findMaxExecutionNo(target.getSubmissionId())).thenReturn(null);
+		when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+		when(client.requestAnalysis(any())).thenReturn(UUID.randomUUID());
+
+		service.retryPendingSubmissions();
+
+		ArgumentCaptor<AnalysisJob> jobCaptor = ArgumentCaptor.forClass(AnalysisJob.class);
+		verify(jobRepository, org.mockito.Mockito.atLeastOnce()).save(jobCaptor.capture());
+		// ck_analysis_job_execution_no 가 0 이하를 막는다.
+		assertThat(jobCaptor.getValue().getExecutionNo()).isEqualTo(1);
+	}
+
+	@Test
+	void retryPassesTheAttemptLimitToTheQueryRatherThanFilteringInMemory() {
+		when(dispatchRepository.findRetryableSubmissions(MAX_ATTEMPTS)).thenReturn(List.of());
+
+		assertThat(service.retryPendingSubmissions()).isZero();
+
+		// 상한 판정은 SQL 이 한다. 여기서 거른다면 상한을 넘긴 제출을 매번 읽어 오게 된다.
+		verify(dispatchRepository).findRetryableSubmissions(MAX_ATTEMPTS);
+		verify(client, never()).requestAnalysis(any());
+	}
+
+	@Test
 	void dispatchSubmissionDoesNothingWhenTheSubmissionIsNotADispatchTarget() {
 		UUID submissionId = UUID.randomUUID();
 		// 이미 처리됐거나(job 존재) 슈퍼시드된 경우다 — findDispatchTarget 문서 참조.
-		when(dispatchRepository.findDispatchTarget(submissionId)).thenReturn(Optional.empty());
+		when(dispatchRepository.findDispatchTarget(submissionId, MAX_ATTEMPTS)).thenReturn(Optional.empty());
 
 		service.dispatchSubmission(submissionId);
 
@@ -169,7 +287,8 @@ class AnalysisBatchServiceTest {
 	@Test
 	void dispatchSubmissionSwallowsAServerFailureRatherThanPropagatingIt() {
 		DispatchTarget target = target();
-		when(dispatchRepository.findDispatchTarget(target.getSubmissionId())).thenReturn(Optional.of(target));
+		catalogHasTheConfiguredModel();
+		when(dispatchRepository.findDispatchTarget(target.getSubmissionId(), MAX_ATTEMPTS)).thenReturn(Optional.of(target));
 		when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 		when(client.requestAnalysis(any())).thenThrow(
 				new AnalysisServerException(AnalysisFailureCode.TEMPORARY_ERROR, "AI 서버 연결 실패"));

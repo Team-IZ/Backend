@@ -91,14 +91,15 @@ class SubmissionOpenApiTest {
 	}
 
 	@Test
-	void marksTheZipEndpointAsOnHoldButNotTheGithubOne() throws Exception {
-		// AI 서버의 POST /api/v0/analyses 에 ZIP 을 전달할 필드가 없어 분석까지 이어지지 않는다.
-		// 접수만 되고 영원히 VALIDATING 에 머무르므로 프론트가 연동하지 않도록 문서에 표시한다.
+	void marksNeitherSubmissionEndpointAsDeprecated() throws Exception {
+		// 2026-08-09 ZIP 보류 해제. AI 서버 POST /api/v0/analyses 에 multipart/form-data
+		// (payload + file) 경로가 생겨 "ZIP 을 전달할 필드가 없다"는 보류 근거가 사라졌다.
+		// 두 제출 수단 모두 정상 경로이므로 어느 쪽도 deprecated 로 묻히면 안 된다.
 		mockMvc.perform(get("/v3/api-docs"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath(ZIP_POST + ".deprecated").value(true))
-				.andExpect(jsonPath(ZIP_POST + ".summary").value(org.hamcrest.Matchers.startsWith("[구현 보류]")))
-				// GitHub 경로는 현재 유일하게 쓸 수 있는 제출 수단이라 함께 묻히면 안 된다.
+				.andExpect(jsonPath(ZIP_POST + ".deprecated").doesNotExist())
+				.andExpect(jsonPath(ZIP_POST + ".summary").value(org.hamcrest.Matchers.not(
+						org.hamcrest.Matchers.containsString("보류"))))
 				.andExpect(jsonPath(GITHUB_POST + ".deprecated").doesNotExist());
 	}
 
