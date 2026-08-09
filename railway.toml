@@ -1,7 +1,9 @@
 [build]
-builder = "RAILPACK"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
+# startCommand 없음: Dockerfile ENTRYPOINT(java ... -jar app.jar)를 그대로 사용합니다.
+# 이미지 안에는 /app/app.jar만 있으므로 build/libs 경로를 start command로 지정하면 실행에 실패합니다.
 [deploy]
-startCommand = "java -jar build/libs/app.jar"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
