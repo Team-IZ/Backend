@@ -23,10 +23,17 @@ public class CurrentUserResolver {
 	private final AuthUserRepository authUserRepository;
 
 	public UUID resolveCurrentMemberId() {
+		return resolveCurrentUser().userId();
+	}
+
+	/**
+	 * 인증된 사용자 전체 정보(역할, 소속 기관 포함)를 조회한다.
+	 * 슈퍼어드민이 아닌 역할이 기관 스코프 API를 호출할 때 "자기 기관인지" 검증하려면 organizationId가 필요하다.
+	 */
+	public AuthUser resolveCurrentUser() {
 		String email = SecurityContextHolder.getContext().getAuthentication().getName();
 		String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
 		return authUserRepository.findByNormalizedEmail(normalizedEmail)
-				.map(AuthUser::userId)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "인증된 사용자를 찾을 수 없습니다."));
 	}
 }

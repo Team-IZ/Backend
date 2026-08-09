@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.auth.application;
 
+import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.auth.domain.AccountActivationRepository;
 import com.bigproject.backend.domain.auth.domain.AccountActivationTarget;
 import com.bigproject.backend.domain.auth.domain.ConsentCode;
@@ -14,7 +16,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Optional;
@@ -47,7 +48,7 @@ class AccountActivationServiceTest {
 	@Test
 	void activatesManagerAndStoresRequiredConsents() {
 		AccountActivationTarget target = target(Role.MANAGER);
-		stubResolvable(target, InvitationPurpose.INVITE_MANAGER);
+		stubResolvable(target, InvitationPurpose.INVITE_OPERATOR_MANAGER);
 		when(repository.activateUser(eq(target.userId()), eq(target.rowVersion()), eq("매니저"), any(), any()))
 				.thenReturn(true);
 		when(repository.markInvitationUsed(eq(target.tokenId()), eq("request-1"), any())).thenReturn(true);
@@ -146,9 +147,8 @@ class AccountActivationServiceTest {
 				METADATA,
 				"request-3",
 				"ko-KR"
-		)).isInstanceOfSatisfying(ResponseStatusException.class, exception -> {
-			assertThat(exception.getStatusCode().value()).isEqualTo(400);
-			assertThat(exception.getReason()).contains("필수 동의");
+		)).isInstanceOfSatisfying(ApiException.class, exception -> {
+			assertThat(exception.errorCode()).isEqualTo(AuthErrorCode.REQUIRED_CONSENT_MISSING);
 		});
 		verify(repository, never()).findTargetForUpdate(any(), any(), any(), any());
 	}
@@ -162,9 +162,8 @@ class AccountActivationServiceTest {
 				METADATA,
 				"request-4",
 				"ko-KR"
-		)).isInstanceOfSatisfying(ResponseStatusException.class, exception -> {
-			assertThat(exception.getStatusCode().value()).isEqualTo(400);
-			assertThat(exception.getReason()).contains("비밀번호 확인");
+		)).isInstanceOfSatisfying(ApiException.class, exception -> {
+			assertThat(exception.errorCode()).isEqualTo(AuthErrorCode.PASSWORD_CONFIRMATION_MISMATCH);
 		});
 		verify(repository, never()).findTargetForUpdate(any(), any(), any(), any());
 	}
@@ -195,9 +194,8 @@ class AccountActivationServiceTest {
 				METADATA,
 				"request-5",
 				"ko-KR"
-		)).isInstanceOfSatisfying(ResponseStatusException.class, exception -> {
-			assertThat(exception.getStatusCode().value()).isEqualTo(400);
-			assertThat(exception.getReason()).isEqualTo("유효하지 않거나 만료된 초대입니다.");
+		)).isInstanceOfSatisfying(ApiException.class, exception -> {
+			assertThat(exception.errorCode()).isEqualTo(AuthErrorCode.INVITATION_INVALID);
 		});
 		verify(repository, never()).activateUser(any(), anyInt(), any(), any(), any());
 	}
@@ -220,6 +218,7 @@ class AccountActivationServiceTest {
 
 	private AccountActivationTarget target(Role role) {
 		return new AccountActivationTarget(
+				UUID.randomUUID(),
 				UUID.randomUUID(),
 				UUID.randomUUID(),
 				"invitee@example.com",
