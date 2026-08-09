@@ -149,10 +149,45 @@ ai:
 
   report:
     # AI의 POST /reports는 202 + jobId만 주고 생성은 백그라운드에서 돈다.
-    # 아래 둘의 곱(2초 x 60회 = 2분)이 한 리포트를 기다리는 상한이고,
-    # AI의 최악 소요 시간(20초 x 6회 재시도)에 맞춰 잡았다.
+    #
+    # 🔴 아래 둘은 ReportGenerationServiceImpl(스레드를 붙들고 기다리는 동기 경로)만 쓴다.
+    #    그 상한(2초 x 60회 = 2분)은 "AI 최악 20초 x 6회 재시도" 가정에서 나왔는데,
+    #    2026-08-09 실측 응답이 latencyMs=129108(2분 9초)로 그 가정을 이미 넘겼다.
+    #    즉 이 설정 그대로는 성공한 job을 타임아웃으로 처리한다.
+    #    리포트 생성 배치(ReportBatchService)는 이 경로를 쓰지 않고 dispatch/poll 2단계로 돈다.
+    #    동기 경로를 되살릴 일이 있으면 max-attempts부터 180(6분)으로 올려야 한다.
     poll-interval: ${AI_REPORT_POLL_INTERVAL:PT2S}
     poll-max-attempts: ${AI_REPORT_POLL_MAX_ATTEMPTS:60}
+
+    # 리포트 생성에 쓸 모델의 ai_model.model_code.
+    #
+    # 🔴 코드 분석과 같은 이유로 비워 두면 안 된다. 지정하지 않으면 AI가 자기 기본 모델을 쓰고
+    # 그 modelCode가 응답 aiUsage[]에 실려 오는데, ai_usage.model_code는 ai_model을 참조하는
+    # FK다. 카탈로그에 없는 모델이면 사용량 행이 통째로 적재 실패하고, 그건 monthly_ai_budget
+    # 집행 근거가 조용히 비는 것이라 리포트 하나를 못 만드는 것보다 나쁘다.
+    #
+    # 값 형식은 provider/provider_model_code다(2026-08-09 규칙).
+    model-code: ${AI_REPORT_MODEL_CODE:minimaxai/minimax-m3}
+
+    # 회차·교육생 1건에 허용하는 총 실행 횟수(첫 시도 포함, 재시도 횟수가 아니다).
+    # 상한이 없으면 AI 서버가 계속 죽어 있는 동안 배치가 돌 때마다 전 대상을 다시 요청한다.
+    # 리포트 1건이 문제 수(최대 3)만큼 LLM 호출이라 그 낭비가 작지 않다.
+    max-attempts: ${AI_REPORT_MAX_ATTEMPTS:3}
+
+    # 문제 1건의 생성을 기다리는 상한. 실측 129초의 약 5배로 잡았다.
+    # 없으면 AI가 잃어버린 job이 RUNNING으로 영원히 남고, 그 실행에 묶인 리포트가 확정되지
+    # 않아 교육생 화면이 계속 `발행 전`이다.
+    item-timeout: ${AI_REPORT_ITEM_TIMEOUT:PT10M}
+
+    scheduler:
+      # 🔴 기본 false. 켜져 있으면 @SpringBootTest 컨텍스트가 뜰 때마다 실제 AI 서버로
+      # 요청이 나가고, 로컬에서 앱을 띄워 둔 것만으로 종료된 회차에 LLM 비용이 발생한다.
+      enabled: ${AI_REPORT_SCHEDULER_ENABLED:false}
+      # 회차 종료 후 늦어도 이 간격 안에 요청이 나간다.
+      dispatch-delay: ${AI_REPORT_SCHEDULER_DISPATCH_DELAY:PT5M}
+      # 교육생 화면이 `발행 전`에서 넘어가는 지연이 곧 이 값이다.
+      poll-delay: ${AI_REPORT_SCHEDULER_POLL_DELAY:PT1M}
+      initial-delay: ${AI_REPORT_SCHEDULER_INITIAL_DELAY:PT1M}
 
   # 교안 분석 연동. develop 머지 때 파일 아래쪽에 `ai:` 블록이 하나 더 생겨
   # YAML 중복 키로 기동이 통째로 실패했다(snakeyaml: found duplicate key ai).
