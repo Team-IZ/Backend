@@ -85,5 +85,60 @@ jobs:
           push: true
           tags: ${{ steps.ecr-login.outputs.registry }}/teamiz-backend:latest
 
-      # App Runner Service의 AutoDeploymentsEnabled=true가 새 :latest 이미지를 감지해서
-      # 자동으로 재배포한다 -- 이 워크플로에서 apprunner API를 별도로 호출할 필요 없음.
+      # D1: 배포를 App Runner의 AutoDeploymentsEnabled(암묵적 EventBridge 트리거)에 맡기지 않고
+      # 이 워크플로가 직접 확정짓는다.
+      #   WHY: App Runner는 서비스가 PAUSED인 동안 들어온 새 이미지를 resume 시점에도 자동배포
+      #        안 함(AWS 공식 문서, 2026-08-08 실제 재현 -- 9차 API 반영 PR이 새벽에 병합됐는데
+      #        서비스가 idle-pause 중이라 배포가 약 10시간 조용히 누락됨. CI는 계속 success였음).
+      #        서비스는 request-based idle-pause를 쓰므로(20분 무요청 시 자동정지) 이 갭이
+      #        상시 재현 가능한 조건임 -- 한 번의 우연이 아니라 구조적 문제.
+      #   COST: GitHub Actions 역할에 apprunner:ResumeService/StartDeployment/ListOperations
+      #        권한 추가 필요(ECR push 권한만 있던 것에서 확장). 배포마다 폴링으로 CI 시간이
+      #        조금 늘어남(수십 초~수 분, resume 필요 시 최대 1분 내외 추가).
+      #   EXIT: 서비스에서 pause 자동화를 완전히 없애면(24/7 상시로 전환) 이 스텝 없이 순수
+      #        AutoDeploymentsEnabled만으로 되돌려도 안전함 -- 그 경우에도 이 스텝은 그냥
+      #        중복 확인일 뿐 해가 되지 않으므로 지우지 않아도 됨.
+      - name: Deploy to App Runner
+        env:
+          SERVICE_ARN: arn:aws:apprunner:ap-northeast-1:357457230521:service/teamiz-backend/366dffb648d0441cb4112b7ec49c1c54
+        run: |
+          set -euo pipefail
+
+          STATUS=$(aws apprunner describe-service --service-arn "$SERVICE_ARN" --query 'Service.Status' --output text)
+          echo "Current service status: $STATUS"
+
+          if [ "$STATUS" = "PAUSED" ]; then
+            echo "Service is paused, resuming..."
+            aws apprunner resume-service --service-arn "$SERVICE_ARN" >/dev/null
+          fi
+
+          for i in $(seq 1 40); do
+            STATUS=$(aws apprunner describe-service --service-arn "$SERVICE_ARN" --query 'Service.Status' --output text)
+            [ "$STATUS" = "RUNNING" ] && break
+            sleep 8
+          done
+          if [ "$STATUS" != "RUNNING" ]; then
+            echo "Service did not reach RUNNING in time (status: $STATUS)"
+            exit 1
+          fi
+
+          OP_ID=$(aws apprunner start-deployment --service-arn "$SERVICE_ARN" --query 'OperationId' --output text)
+          echo "Started deployment operation: $OP_ID"
+
+          for i in $(seq 1 60); do
+            OP_STATUS=$(aws apprunner list-operations --service-arn "$SERVICE_ARN" --max-results 5 \
+              --query "OperationSummaryList[?Id=='$OP_ID'].Status" --output text)
+            case "$OP_STATUS" in
+              SUCCEEDED)
+                echo "Deployment succeeded."
+                exit 0
+                ;;
+              FAILED|ROLLBACK_FAILED|ROLLBACK_SUCCEEDED)
+                echo "Deployment did not succeed (status: $OP_STATUS) -- check CloudWatch logs."
+                exit 1
+                ;;
+            esac
+            sleep 8
+          done
+          echo "Timed out waiting for deployment $OP_ID to finish"
+          exit 1
