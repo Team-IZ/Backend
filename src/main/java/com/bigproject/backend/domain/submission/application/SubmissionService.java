@@ -10,12 +10,16 @@ import com.bigproject.backend.domain.submission.domain.SubmissionAcceptedEvent;
 import com.bigproject.backend.domain.submission.domain.SubmissionErrorCode;
 import com.bigproject.backend.domain.submission.domain.SubmissionException;
 import com.bigproject.backend.domain.submission.infrastructure.GithubRepositoryRepository;
+import com.bigproject.backend.domain.submission.infrastructure.JdbcMeasurementAttemptOpener;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionArtifactRepository;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionContextRepository;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionContextRepository.SubmissionContext;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionRepository;
 import com.bigproject.backend.domain.submission.presentation.dto.CreateGithubSubmissionRequest;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisResultQueryRepository;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisResultQueryRepository.AnalysisSummary;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
+import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResultResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -55,6 +59,8 @@ public class SubmissionService {
 	private final SubmissionContextRepository submissionContextRepository;
 	private final AnalysisJobRepository analysisJobRepository;
 	private final SubmissionArtifactStorage artifactStorage;
+	private final JdbcAnalysisResultQueryRepository analysisResultQueryRepository;
+	private final JdbcMeasurementAttemptOpener measurementAttemptOpener;
 	private final ApplicationEventPublisher eventPublisher;
 
 	/**
@@ -113,6 +119,11 @@ public class SubmissionService {
 				idempotencyKey
 		));
 
+		// 개인 응시를 여기서 연다. 분석 성공 시점에 만들면 분석이 실패했을 때 응시가 영영 생기지
+		// 않아 "미응시"와 "분석 실패로 응시 불가"가 구분되지 않는다.
+		measurementAttemptOpener.openForTeam(context.getOrgId(), context.getTeamId(),
+				request.assessmentRoundId(), submission.getSubmissionId());
+
 		eventPublisher.publishEvent(new SubmissionAcceptedEvent(submission.getSubmissionId()));
 
 		return SubmissionResponse.of(submission, null);
@@ -150,11 +161,12 @@ public class SubmissionService {
 	 * {@code VALIDATING} 행을 먼저 만들 수 있다. 접수를 먼저 확정해두면 마감 직전 후속 처리 장애로 제출이
 	 * 거부되어 교육생이 마감을 놓치는 사고를 막을 수 있다.
 	 *
-	 * <p>여기서 판정하는 것은 크기와 압축 형식뿐이다. {@code EMPTY_CODE}·{@code GIT_LOG_MISSING}과 안전 추출은
-	 * 아직 구현되지 않았고, 그 때문에 제출은 {@code VALIDATING}에 머문다.
+	 * <p>여기서 판정하는 것은 크기와 압축 형식뿐이다. {@code EMPTY_CODE}·{@code GIT_LOG_MISSING}은
+	 * AI가 분석 중에 {@code failureCode}로 돌려주므로 백엔드가 볼 것이 없다.
 	 *
-	 * <p>{@link SubmissionAcceptedEvent}를 발행하지 않는다. AI 서버가 ZIP을 받을 방법이 아직 없어
-	 * {@code POST /submissions/zip} 자체가 {@code deprecated}다.
+	 * <p>{@link SubmissionAcceptedEvent}를 발행한다(2026-08-09). AI의
+	 * {@code POST /api/v0/analyses}에 {@code multipart/form-data} 경로가 생겨 ZIP을 실어 보낼 수 있게
+	 * 되면서 보류가 풀렸다. GitHub 경로와 같은 트리거를 쓴다.
 	 */
 	@Transactional
 	public SubmissionResponse submitZip(
@@ -210,6 +222,13 @@ public class SubmissionService {
 				maxZipBytes
 		));
 
+		measurementAttemptOpener.openForTeam(context.getOrgId(), context.getTeamId(),
+				assessmentRoundId, submission.getSubmissionId());
+
+		// artifact 를 저장한 뒤에 발행한다. 리스너가 storage_uri 를 읽어 AI 에 파일을 실어 보내므로
+		// 순서가 뒤집히면 분석 요청이 파일을 찾지 못한다.
+		eventPublisher.publishEvent(new SubmissionAcceptedEvent(submission.getSubmissionId()));
+
 		return SubmissionResponse.of(submission, artifact.getArtifactId());
 	}
 
@@ -221,21 +240,59 @@ public class SubmissionService {
 	 */
 	@Transactional(readOnly = true)
 	public SubmissionAnalysisResponse getAnalysis(UUID userId, UUID submissionId) {
+		// 제출은 팀 단위라 같은 팀이면 누가 조회해도 같은 결과가 나와야 한다.
+		requireTeamSubmission(userId, submissionId);
+
+		return analysisJobRepository
+				.findFirstBySubmissionIdOrderByExecutionNoDescStartedAtDescJobIdDesc(submissionId)
+				.map(SubmissionAnalysisResponse::of)
+				.orElseGet(() -> SubmissionAnalysisResponse.notStarted(submissionId));
+	}
+
+	/**
+	 * 분석 결과 본체.
+	 *
+	 * <p>진행 상태({@link #getAnalysis})와 나눈 이유: 폴링은 초 단위로 도는데 결과는 한 번만 읽는다.
+	 * 한 응답에 합치면 "분석 중"을 확인하는 요청마다 문제·근거·커밋을 함께 조회하게 된다.
+	 *
+	 * <p>세션만 조회자 본인 것을 돌려준다. 제출은 팀 단위지만 응시는 개인 단위라, 같은 제출을 조회해도
+	 * {@code session}은 사람마다 다르다.
+	 *
+	 * @throws SubmissionException 분석이 아직 성공하지 않아 결과가 없을 때
+	 */
+	@Transactional(readOnly = true)
+	public SubmissionAnalysisResultResponse getAnalysisResult(UUID userId, UUID submissionId) {
+		Submission submission = requireTeamSubmission(userId, submissionId);
+
+		AnalysisSummary summary = analysisResultQueryRepository
+				.findActiveAnalysis(submission.getSubmissionId())
+				.orElseThrow(() -> new SubmissionException(SubmissionErrorCode.ANALYSIS_RESULT_NOT_FOUND));
+
+		return new SubmissionAnalysisResultResponse(
+				submissionId,
+				summary.analysisId(),
+				summary.appliedScope(),
+				summary.scopeFallback(),
+				summary.fallbackReason(),
+				summary.resolvedBranch(),
+				summary.headCommit(),
+				summary.analyzedAt(),
+				analysisResultQueryRepository.findProblems(submissionId),
+				analysisResultQueryRepository.findRequirementResults(submissionId),
+				analysisResultQueryRepository.findMySession(submissionId, userId).orElse(null));
+	}
+
+	/** 제출을 찾고 조회자가 같은 팀인지 확인한다. 상태 조회와 결과 조회가 같은 규칙을 쓰게 묶어 둔다. */
+	private Submission requireTeamSubmission(UUID userId, UUID submissionId) {
 		Submission submission = submissionRepository.findById(submissionId)
 				.orElseThrow(() -> new SubmissionException(SubmissionErrorCode.SUBMISSION_NOT_FOUND));
-
-		// 제출은 팀 단위라 같은 팀이면 누가 조회해도 같은 결과가 나와야 한다.
 		SubmissionContext context = submissionContextRepository
 				.findSubmissionContext(userId, submission.getAssessmentRoundId())
 				.orElseThrow(() -> new SubmissionException(SubmissionErrorCode.SUBMISSION_ACCESS_DENIED));
 		if (!context.getTeamId().equals(submission.getTeamId())) {
 			throw new SubmissionException(SubmissionErrorCode.SUBMISSION_ACCESS_DENIED);
 		}
-
-		return analysisJobRepository
-				.findFirstBySubmissionIdOrderByExecutionNoDescStartedAtDescJobIdDesc(submissionId)
-				.map(SubmissionAnalysisResponse::of)
-				.orElseGet(() -> SubmissionAnalysisResponse.notStarted(submissionId));
+		return submission;
 	}
 
 	/**

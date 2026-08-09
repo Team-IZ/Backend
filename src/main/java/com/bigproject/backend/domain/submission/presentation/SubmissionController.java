@@ -4,6 +4,7 @@ import com.bigproject.backend.domain.submission.application.SubmissionService;
 import com.bigproject.backend.domain.submission.domain.IdempotencyKey;
 import com.bigproject.backend.domain.submission.presentation.dto.CreateGithubSubmissionRequest;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
+import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResultResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
@@ -36,7 +37,7 @@ import java.util.UUID;
 @PreAuthorize("hasRole('TRAINEE')")
 @Validated
 @RestController
-@RequestMapping("/submissions")
+@RequestMapping(value = "/submissions", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class SubmissionController {
 
@@ -60,7 +61,7 @@ public class SubmissionController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "GitHub 저장소 URL 제출·재제출",
+			summary = "GitHub 저장소 URL 제출·재제출 | ⚠️ 사용 불가",
 			description = """
 					**제출 시점에 백엔드는 GitHub에 접근하지 않는다.** 검사하는 것은 URL 형식과 호스트뿐이고,
 					저장소가 실제로 존재하는지·접근 가능한지는 회차 마감 후 분석 단계에서 판정된다. 따라서
@@ -86,7 +87,7 @@ public class SubmissionController {
 	}
 
 	@Operation(
-			summary = "ZIP 업로드 제출·재제출",
+			summary = "ZIP 업로드 제출·재제출 | ⚠️ 사용 불가",
 			description = """
 					GitHub URL 제출과 같은 리소스를 만드는 다른 표현이지만 **경로를 분리한다.** OpenAPI는
 					경로·메서드당 operation이 하나뿐이라, 한 경로에 `consumes`만 다른 핸들러를 둘 두면 springdoc이
@@ -99,9 +100,9 @@ public class SubmissionController {
 					기관 단위로 막으려면 `organization_policy.allow_zip_submission=FALSE`로 두면 되고,
 					그 경우 이 API는 `SUBMISSION_METHOD_NOT_ALLOWED`로 거절한다.
 
-					**접수는 `VALIDATING`으로 끝난다.** 이번 범위에서 판정하는 것은 크기와 압축 형식뿐이고,
-					`EMPTY_CODE`·`GIT_LOG_MISSING` 같은 내용 판정과 안전 추출은 아직 붙지 않았다. 이 둘은
-					분석 단계에서 AI가 `failureCode`로 돌려준다.
+					**접수는 `ACCEPTED`로 끝난다.** 백엔드가 보는 것은 크기와 압축 형식뿐이고,
+					`EMPTY_CODE`·`GIT_LOG_MISSING` 같은 내용 판정은 분석 단계에서 AI가 `failureCode`로
+					돌려준다. 접수 즉시 분석이 트리거된다.
 
 					> **2026-08-09 보류 해제.** 종전에는 "AI 서버에 ZIP을 전달할 자리가 없다"는 이유로 이
 					> 경로를 막아 두었으나, `POST /api/v0/analyses`에 `multipart/form-data`(`payload` +
@@ -120,7 +121,7 @@ public class SubmissionController {
 	}
 
 	@Operation(
-			summary = "코드 분석 진행 상태·실패 사유 조회",
+			summary = "코드 분석 진행 상태·실패 사유 조회 | ⚠️ 사용 불가",
 			description = """
 					폴링 대상은 `code_analysis`가 아니라 `analysis_job`이다. 전자는 성공했을 때에만 생기는
 					결과물이라 "진행 중"과 "분석 없음"을 구분할 수 없고 실패 사유도 갖지 않는다.
@@ -133,5 +134,28 @@ public class SubmissionController {
 	public ResponseEntity<SubmissionAnalysisResponse> getAnalysis(@PathVariable UUID submissionId) {
 		UUID userId = currentUserResolver.resolveCurrentMemberId();
 		return ResponseEntity.ok(submissionService.getAnalysis(userId, submissionId));
+	}
+
+	@Operation(
+			summary = "코드 분석 결과 조회 | ⚠️ 사용 불가",
+			description = """
+					분석이 성공한 뒤 화면이 한 번 읽는 결과 본체다. 문제 슬롯·요구사항 판정·본인 세션을 함께 준다.
+
+					**진행 상태 폴링은 `GET /submissions/{submissionId}/analysis`로 한다.** 둘을 나눈 이유는
+					폴링이 초 단위로 도는 반면 결과는 한 번만 읽기 때문이다 — 한 응답에 합치면 "분석 중"을
+					확인하는 요청마다 문제·근거를 함께 조회하게 된다.
+
+					아직 분석이 성공하지 않았으면 `404 ANALYSIS_RESULT_NOT_FOUND`다. 진행 중인지 실패인지는
+					상태 조회의 `phase`로 구분한다.
+
+					`problems[]`에는 근거를 찾지 못한 슬롯도 `generationStatus=NOT_GENERATED`로 함께 온다.
+					화면에서 `―`(문항 없음)로 표시할 근거이며 **0단(물어봤는데 못 풀었음)과 다르다.**
+
+					제출은 팀 단위라 같은 팀이면 누가 조회해도 같은 결과가 나오지만, `session`만은
+					**조회자 본인의 응시**다. 응시는 개인 단위이기 때문이다.""")
+	@GetMapping("/{submissionId}/analysis/result")
+	public ResponseEntity<SubmissionAnalysisResultResponse> getAnalysisResult(@PathVariable UUID submissionId) {
+		UUID userId = currentUserResolver.resolveCurrentMemberId();
+		return ResponseEntity.ok(submissionService.getAnalysisResult(userId, submissionId));
 	}
 }

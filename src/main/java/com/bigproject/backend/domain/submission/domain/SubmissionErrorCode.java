@@ -46,6 +46,11 @@ public enum SubmissionErrorCode {
 
 	// ── 조회 ──
 	SUBMISSION_NOT_FOUND(HttpStatus.NOT_FOUND, "제출을 찾을 수 없습니다."),
+	/**
+	 * 분석이 아직 성공하지 않아 결과가 없다. 진행 중·실패와 구분하려면
+	 * {@code GET /submissions/{submissionId}/analysis}의 {@code phase}를 본다.
+	 */
+	ANALYSIS_RESULT_NOT_FOUND(HttpStatus.NOT_FOUND, "분석 결과가 아직 없습니다."),
 	SUBMISSION_ACCESS_DENIED(HttpStatus.FORBIDDEN, "다른 팀의 제출은 조회할 수 없습니다.");
 
 	private final HttpStatus status;
