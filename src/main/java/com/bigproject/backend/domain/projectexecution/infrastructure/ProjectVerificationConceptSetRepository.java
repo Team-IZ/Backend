@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -22,4 +24,7 @@ public interface ProjectVerificationConceptSetRepository extends JpaRepository<P
      */
     @Query("SELECT COALESCE(MAX(s.versionNo), 0) FROM ProjectVerificationConceptSet s WHERE s.projectId = :projectId")
     int findMaxVersionNo(@Param("projectId") UUID projectId);
+
+    /** 여러 프로젝트의 세트를 한 번에(11차 R1·R3). 프로젝트마다 따로 읽으면 목록에서 N+1이 된다. */
+    List<ProjectVerificationConceptSet> findByProjectIdInAndStatus(Collection<UUID> projectIds, ConceptSetStatus status);
 }

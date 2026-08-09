@@ -107,14 +107,17 @@ public class ClassroomController {
 					- cohortId (경로): 반을 만들 기수 ID
 					- name (필수): 반 이름. 같은 기수 안에서 중복되면 409
 					- capacity (필수, 1 이상): 정원
-					- managerIds (선택): ⚠ 요청에 넣어도 적용되지 않는다(아래 참고)
+					- managerIds (선택): 담당 매니저로 지정할 사용자 ID 목록. **반 생성과 같은 트랜잭션에서 배정된다**
 
 					**응답 (201)**
 					- 생성된 반 정보(응답 필드는 "기수 반 목록 조회"의 classrooms[] 항목과 동일).
-					  갓 만든 반이므로 traineeCount=0, managers=[], managerAssignmentRequired=true로 내려온다
+					  `managerIds`를 보냈으면 `managers[]`가 채워져 오고 `managerAssignmentRequired=false`다.
+					  갓 만든 반이라 `traineeCount`는 항상 0이다
 
-					⚠️ `managerIds`를 요청에 넣어도 적용되지 않는다. 스키마에는 남아 있지만 서버가 사용하지 않으며,
-					담당 매니저 지정은 `PATCH /cohorts/{cohortId}/classrooms/{classroomId}/managers`로 따로 호출해야 한다.
+					✅ **11차 Q3 — `managerIds`는 실제로 적용된다.** 예전 설명이 "서버가 사용하지 않는다"고
+					적고 있었는데 사실과 달랐다(그 문장을 보고 화면이 입력 칸을 지웠다). 반 생성과 매니저 배정이
+					**한 트랜잭션**이라 중간에 실패해도 "반만 있고 담당은 없는" 상태가 남지 않는다.
+					`PATCH .../managers`는 이미 만든 반의 담당을 <b>나중에 바꿀 때</b> 쓴다.
 					"""
 	)
 	@ApiResponses({

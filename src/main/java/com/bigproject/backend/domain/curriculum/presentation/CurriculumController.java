@@ -5,6 +5,7 @@ import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogSort;
 import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumCatalogItemResponse;
 import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumCatalogResponse;
+import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumUsingProjectResponse;
 import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumVersionResponse;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
@@ -122,7 +123,9 @@ public class CurriculumController {
                 catalogPage.page(),
                 catalogPage.size(),
                 catalogPage.totalElements(),
-                catalogPage.totalPages()));
+                catalogPage.totalPages(),
+                catalogPage.statusCounts(),
+                catalogPage.notAnalyzedCount()));
     }
 
     /** 경로의 기관과 토큰의 기관이 같은지 본다. 다른 기관 ID로 남의 교안을 읽는 경로를 막는다. */
@@ -167,27 +170,52 @@ public class CurriculumController {
     @Operation(
             summary = "쓰인 회차 | ✅ 사용 가능",
             description = """
-					이 교안 버전을 연결한 프로젝트(회차)들의 "미프 N차" 라벨 목록을 조회한다.
+					이 교안 버전을 연결한 회차 목록을 조회한다. **재분석 경고를 좁히는 데 쓴다.**
+
+					⚠️ **11차 R3 — 응답이 문자열 배열에서 객체 배열로 바뀌었습니다.**
+					예전에는 `["미니프로젝트 4차", …]` 였습니다.
 
 					**요청**
 					- materialId (경로): 교안 버전 ID
 
-					**응답 (200)**
-					- 문자열 배열. 연결된 프로젝트가 없으면 빈 배열
+					**응답 (200)** — 연결된 회차가 없으면 빈 배열
+
+					| 필드 | 설명 |
+					|---|---|
+					| `projectId` | 회차 ID. 이름을 눌러 프로젝트 화면으로 보낼 때 쓴다 |
+					| `name` | 기수 안에서 붙인 회차 이름 (`미니프로젝트 4차`) |
+					| `roundLabel` | 기수를 포함한 라벨 (`9기 미프 4차`) |
+					| `cohortId` \\ `cohortName` | 기수 |
+					| **`attendedCount`** | **응시를 시작한 인원.** 재분석 경고의 문턱 |
+					| `conceptNames` | 이 회차가 쓰는 확정 검증 개념 이름 |
+
+					## `attendedCount`가 경고를 정한다
+
+					`0`이면 아직 아무도 응시하지 않은 회차라 **다시 분석해도 발행된 리포트가 어긋나지 않는다.**
+					1 이상이면 이미 문항을 받은 학생이 있으므로, 재분석으로 섹션·쪽 번호가 달라지면
+					리포트가 가리키는 교안 위치가 실제와 어긋난다.
+
+					**완료가 아니라 시작 기준이다.** 완료만 세면 진행 중인 응시가 빠져 경고를 놓친다.
+
+					## 빅프로젝트는 라벨이 없다
+
+					예전에는 연결된 회차 중 빅프로젝트가 하나라도 있으면 400으로 <b>조회 전체가 실패</b>했다.
+					지금은 `roundLabel`만 `null`로 두고 나머지는 그대로 준다 — 목록 하나 때문에
+					화면이 통째로 비는 편이 더 나쁘다.
 					"""
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "쓰인 회차 조회 성공"),
-            @ApiResponse(responseCode = "400", description = "BIG_PROJECT_HAS_NO_ROUND_LABEL 연결된 프로젝트가 빅프로젝트라 회차 라벨이 없음"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
-            @ApiResponse(responseCode = "404", description = "PROJECT_NOT_FOUND 연결된 프로젝트를 찾을 수 없음"),
     })
     @GetMapping("/curricula/{materialId}/projects")
-    public ResponseEntity<List<String>> findUsedProjects(
+    public ResponseEntity<List<CurriculumUsingProjectResponse>> findUsedProjects(
             @Parameter(description = "교안 버전 ID") @PathVariable UUID materialId
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-        return ResponseEntity.ok(curriculumService.findUsedProjects(materialId, orgId));
+        return ResponseEntity.ok(curriculumService.findUsedProjects(materialId, orgId).stream()
+                .map(CurriculumUsingProjectResponse::from)
+                .toList());
     }
 
     @Operation(

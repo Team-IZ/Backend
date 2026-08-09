@@ -28,6 +28,7 @@ public class CohortService {
     private final com.bigproject.backend.domain.academicoperations.infrastructure.CohortMemberRepository cohortMemberRepository;
     private final com.bigproject.backend.domain.academicoperations.infrastructure.ClassMembershipRepository classMembershipRepository;
     private final com.bigproject.backend.domain.academicoperations.infrastructure.ClassroomRepository classroomRepository;
+    private final com.bigproject.backend.domain.academicoperations.domain.CohortDependencyRepository cohortDependencyRepository;
     // 기수 생성
     @Transactional
     public Cohort createCohort(UUID orgId, String name, LocalDate startDate,
@@ -81,6 +82,74 @@ public class CohortService {
         cohort.close(actorUserId, policy.getPolicyId(), policy.getRetentionDays());
         classroomService.releaseAllAssignmentsForCohort(cohortId, orgId, actorUserId);
         return cohort;
+    }
+
+    /**
+     * 기수 이름·기간 수정(11차 Q2). <b>개강 전({@code PLANNED})에만</b> 열려 있다.
+     *
+     * <p>반 수정과 같이 부분 수정이라 보낸 필드만 바뀐다 — 이름만 고쳐도 기간이 덮이지 않는다.
+     * 개강 후를 막는 이유는 기간이 이미 발행된 리포트·회차 일정의 기준이기 때문이다.
+     */
+    @Transactional
+    public Cohort updateCohort(UUID cohortId, UUID orgId, String name,
+                               LocalDate startDate, LocalDate endDate, UUID actorUserId) {
+        if (name == null && startDate == null && endDate == null) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_UPDATE_EMPTY);
+        }
+
+        Cohort cohort = findCohort(cohortId, orgId);
+        if (cohort.getStatus() != CohortStatus.PLANNED) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_MUTABLE,
+                    "개강 전(PLANNED) 기수만 수정할 수 있습니다. 현재 상태: " + cohort.getStatus());
+        }
+
+        // 이름을 바꾸는 경우에만 중복을 본다 — 자기 이름을 그대로 다시 보내는 것이 409가 되면 안 된다.
+        if (name != null && !name.equals(cohort.getName())
+                && cohortRepository.existsByOrgIdAndNameAndDeletedAtIsNull(orgId, name)) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NAME_TAKEN, "이미 존재하는 기수명입니다: " + name);
+        }
+
+        try {
+            cohort.edit(name, startDate, endDate, actorUserId);
+        } catch (IllegalArgumentException exception) {
+            // 엔티티가 던지는 것은 전역에서 안 잡혀 500이 된다. 입력 오류이므로 400으로 바꿔 준다.
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_PERIOD_INVALID);
+        }
+        return cohort;
+    }
+
+    /**
+     * 기수 삭제(11차 Q2). <b>개강 전이고 아무것도 붙지 않은 기수만</b> 지운다.
+     *
+     * <p>잘못 만든 기수를 되돌리기 위한 것이지 운영 중인 기수를 정리하는 수단이 아니다.
+     * 명단·반·회차 중 하나라도 있으면 막고, 무엇이 걸렸는지 메시지에 담는다 — 화면이 할 일은
+     * 어느 쪽이든 "지울 수 없습니다" 하나라 코드는 쪼개지 않는다(반 삭제와 같은 규칙).
+     */
+    @Transactional
+    public void deleteCohort(UUID cohortId, UUID orgId, UUID actorUserId) {
+        Cohort cohort = findCohort(cohortId, orgId);
+
+        if (cohort.getStatus() != CohortStatus.PLANNED) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_DELETABLE,
+                    "개강 전(PLANNED) 기수만 삭제할 수 있습니다. 현재 상태: " + cohort.getStatus());
+        }
+
+        java.util.List<String> blockers = new java.util.ArrayList<>();
+        if (cohortDependencyRepository.hasMembers(cohortId)) {
+            blockers.add("등록된 교육생");
+        }
+        if (cohortDependencyRepository.hasClassrooms(cohortId)) {
+            blockers.add("만들어진 반");
+        }
+        if (cohortDependencyRepository.hasProjects(cohortId)) {
+            blockers.add("만들어진 회차");
+        }
+        if (!blockers.isEmpty()) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_DELETABLE,
+                    String.join("·", blockers) + "이(가) 있어 삭제할 수 없습니다. 먼저 정리해 주세요.");
+        }
+
+        cohort.softDelete(actorUserId);
     }
 
     // 기수 목록 조회

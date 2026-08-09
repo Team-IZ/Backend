@@ -89,7 +89,13 @@ public interface TraineeRosterRepository {
 			String inactivatedReason,
 			OffsetDateTime inactivatedAt,
 			UUID inactivatedById,
-			String inactivatedByName
+			String inactivatedByName,
+
+			/**
+			 * 아직 수락·취소되지 않은 초대 토큰(11차 R2). 없으면 null이다 —
+			 * 이미 활성화됐거나 초대가 취소된 계정이라 재발송할 것이 없다.
+			 */
+			UUID pendingInvitationTokenId
 	) {
 	}
 }

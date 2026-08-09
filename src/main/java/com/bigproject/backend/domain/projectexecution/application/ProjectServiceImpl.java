@@ -149,27 +149,192 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public List<String> findRoundLabelsUsingTeaches(UUID teachesId, UUID orgId) {
-        List<ProjectVerificationConcept> concepts = verificationConceptRepository.findByTeachesId(teachesId);
+        return findRoundLabelsByTeaches(List.of(teachesId), orgId).getOrDefault(teachesId, List.of());
+    }
 
-        List<String> labels = new ArrayList<>();
+    /**
+     * 11차 R1·R5. 한 건씩 부르던 것을 <b>쿼리 4건</b>으로 접었다.
+     *
+     * <p>예전 경로는 개념마다 세트를 {@code findById}로 읽고, 세트마다
+     * {@link #resolveMiniProjectRoundLabel}이 프로젝트 한 건과 <b>그 기수의 미니프로젝트 전량</b>을
+     * 다시 읽었다. 같은 프로젝트·같은 기수를 몇 번이고 다시 읽는 구조라 항목이 늘수록 제곱으로 늘었다.
+     */
+    @Override
+    public Map<UUID, List<String>> findRoundLabelsByTeaches(Collection<UUID> teachesIds, UUID orgId) {
+        if (teachesIds.isEmpty()) {
+            return Map.of();
+        }
+
+        // ① 개념 행 전부
+        List<ProjectVerificationConcept> concepts =
+                verificationConceptRepository.findByTeachesIdIn(Set.copyOf(teachesIds));
+        if (concepts.isEmpty()) {
+            return Map.of();
+        }
+
+        // ② 세트 전부 → ACTIVE 인 것만 projectId 로
+        Map<UUID, UUID> projectIdBySetId = verificationConceptSetRepository
+                .findAllById(concepts.stream().map(ProjectVerificationConcept::getConceptSetId).collect(Collectors.toSet()))
+                .stream()
+                .filter(set -> set.getStatus() == ConceptSetStatus.ACTIVE)
+                .collect(Collectors.toMap(ProjectVerificationConceptSet::getConceptSetId,
+                        ProjectVerificationConceptSet::getProjectId));
+
+        // ③ 프로젝트 전부 → ④ 기수별 미니프로젝트 순서로 라벨 표를 한 번에 만든다
+        Map<UUID, String> labelByProjectId = resolveRoundLabels(Set.copyOf(projectIdBySetId.values()), orgId);
+
+        Map<UUID, List<String>> result = new LinkedHashMap<>();
         for (ProjectVerificationConcept concept : concepts) {
-            ProjectVerificationConceptSet set = verificationConceptSetRepository.findById(concept.getConceptSetId())
-                    .orElse(null);
-            if (set == null || set.getStatus() != ConceptSetStatus.ACTIVE) {
+            UUID projectId = projectIdBySetId.get(concept.getConceptSetId());
+            if (projectId == null) {
                 continue;
             }
-            labels.add(resolveMiniProjectRoundLabel(set.getProjectId(), orgId));
+            String label = labelByProjectId.get(projectId);
+            if (label == null) {
+                continue;
+            }
+            // 같은 라벨이 여러 기수에서 나오므로 중복을 걸러 넣는다(11차 R5). 순서는 첫 등장 순이다.
+            List<String> labels = result.computeIfAbsent(concept.getTeachesId(), key -> new ArrayList<>());
+            if (!labels.contains(label)) {
+                labels.add(label);
+            }
         }
-        return labels;
+        return result;
+    }
+
+    /**
+     * 프로젝트 ID 여러 개 → {@code 9기 미프 3차} 라벨. 기수별 미니프로젝트 목록을 <b>기수당 한 번만</b> 읽는다.
+     *
+     * <p>라벨에 기수를 붙이는 이유는 11차 R5다 — 교안 하나가 4개 기수에 쓰이면 `미프 1차`가 4번 나오는데,
+     * 기수를 떼고 중복만 지우면 서로 다른 기수의 회차가 한 줄로 합쳐진다.
+     *
+     * <p>미니프로젝트가 아니거나 삭제된 프로젝트는 <b>결과에서 빠진다</b> — 예외를 던지지 않는다.
+     * 목록을 그리다 라벨 하나 때문에 화면 전체가 실패하면 안 된다.
+     */
+    private Map<UUID, String> resolveRoundLabels(Collection<UUID> projectIds, UUID orgId) {
+        if (projectIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Project> projects = projectRepository.findByProjectIdInAndOrgIdAndDeletedAtIsNull(projectIds, orgId).stream()
+                .filter(project -> project.getProjectCategory() == ProjectCategory.MINI_PROJECT)
+                .toList();
+        if (projects.isEmpty()) {
+            return Map.of();
+        }
+
+        Set<UUID> cohortIds = projects.stream().map(Project::getCohortId).collect(Collectors.toSet());
+
+        // 기수별 미니프로젝트를 sequence_no 순으로 한 번에 읽어 회차 번호를 매긴다.
+        Map<UUID, String> cohortNameById = projectDependencyRepository.findCohortNames(cohortIds);
+
+        Map<UUID, String> labelByProjectId = new HashMap<>();
+        Map<UUID, List<Project>> miniProjectsByCohort = projectRepository
+                .findByCohortIdInAndOrgIdAndProjectCategoryAndDeletedAtIsNullOrderBySequenceNoAsc(
+                        cohortIds, orgId, ProjectCategory.MINI_PROJECT)
+                .stream()
+                .collect(Collectors.groupingBy(Project::getCohortId, LinkedHashMap::new, Collectors.toList()));
+
+        miniProjectsByCohort.forEach((cohortId, ordered) -> {
+            String cohortName = cohortNameById.get(cohortId);
+            for (int index = 0; index < ordered.size(); index++) {
+                String label = "미프 " + (index + 1) + "차";
+                labelByProjectId.put(ordered.get(index).getProjectId(),
+                        cohortName == null ? label : cohortName + " " + label);
+            }
+        });
+
+        // 요청한 프로젝트만 남긴다(같은 기수의 다른 회차까지 표에 들어가 있다).
+        Map<UUID, String> result = new HashMap<>();
+        for (Project project : projects) {
+            String label = labelByProjectId.get(project.getProjectId());
+            if (label != null) {
+                result.put(project.getProjectId(), label);
+            }
+        }
+        return result;
     }
 
     @Override
     public List<String> findRoundLabelsUsingCurriculum(UUID curriculumVersionId, UUID orgId) {
-        List<ProjectCurriculum> links = projectCurriculumRepository.findAllByCurriculumVersionId(curriculumVersionId);
-
-        return links.stream()
-                .map(link -> resolveMiniProjectRoundLabel(link.getProjectId(), orgId))
+        return findProjectsUsingCurriculum(curriculumVersionId, orgId).stream()
+                .map(CurriculumUsingProject::roundLabel)
                 .toList();
+    }
+
+    /**
+     * 11차 R3. 이름 배열만 주던 것을 회차 객체로 바꿨다 — 재분석 경고가
+     * "연결된 회차가 있으면 무조건"에서 "응시가 시작된 회차만"으로 좁혀질 수 있어야 한다.
+     */
+    @Override
+    public List<CurriculumUsingProject> findProjectsUsingCurriculum(UUID curriculumVersionId, UUID orgId) {
+        List<UUID> projectIds = projectCurriculumRepository.findAllByCurriculumVersionId(curriculumVersionId).stream()
+                .map(ProjectCurriculum::getProjectId)
+                .distinct()
+                .toList();
+        if (projectIds.isEmpty()) {
+            return List.of();
+        }
+
+        List<Project> projects = projectRepository.findByProjectIdInAndOrgIdAndDeletedAtIsNull(projectIds, orgId);
+        if (projects.isEmpty()) {
+            return List.of();
+        }
+
+        Map<UUID, String> labelByProjectId = resolveRoundLabels(
+                projects.stream().map(Project::getProjectId).toList(), orgId);
+        Map<UUID, String> cohortNameById = projectDependencyRepository.findCohortNames(
+                projects.stream().map(Project::getCohortId).collect(Collectors.toSet()));
+        Map<UUID, Integer> attendedByProjectId = projectDependencyRepository.countAttendedByProject(
+                projects.stream().map(Project::getProjectId).toList());
+
+        // 회차가 지금 쓰고 있는(ACTIVE) 확정 개념 이름. 재분석하면 위치가 어긋날 개념들이다.
+        Map<UUID, List<String>> conceptNamesByProjectId = findConfirmedConceptNames(
+                projects.stream().map(Project::getProjectId).toList());
+
+        return projects.stream()
+                .sorted(Comparator.comparing(Project::getCohortId).thenComparing(Project::getSequenceNo))
+                .map(project -> new CurriculumUsingProject(
+                        project.getProjectId(),
+                        project.getName(),
+                        labelByProjectId.get(project.getProjectId()),
+                        project.getCohortId(),
+                        cohortNameById.get(project.getCohortId()),
+                        attendedByProjectId.getOrDefault(project.getProjectId(), 0),
+                        conceptNamesByProjectId.getOrDefault(project.getProjectId(), List.of())))
+                .toList();
+    }
+
+    /** 프로젝트별 활성 확정 개념 이름. 세트·개념·매핑을 각각 한 번씩만 읽는다. */
+    private Map<UUID, List<String>> findConfirmedConceptNames(Collection<UUID> projectIds) {
+        List<ProjectVerificationConceptSet> activeSets =
+                verificationConceptSetRepository.findByProjectIdInAndStatus(projectIds, ConceptSetStatus.ACTIVE);
+        if (activeSets.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<UUID, UUID> projectIdBySetId = activeSets.stream()
+                .collect(Collectors.toMap(ProjectVerificationConceptSet::getConceptSetId,
+                        ProjectVerificationConceptSet::getProjectId));
+
+        List<ProjectVerificationConcept> concepts =
+                verificationConceptRepository.findByConceptSetIdInOrderBySequenceNoAsc(projectIdBySetId.keySet());
+
+        Map<UUID, String> nameByMappingId = mappingRepository
+                .findAllById(concepts.stream().map(ProjectVerificationConcept::getSourceMappingId).collect(Collectors.toSet()))
+                .stream()
+                .collect(Collectors.toMap(CurriculumTeachesMapping::getMappingId,
+                        CurriculumTeachesMapping::getExtractedName));
+
+        Map<UUID, List<String>> result = new LinkedHashMap<>();
+        for (ProjectVerificationConcept concept : concepts) {
+            UUID projectId = projectIdBySetId.get(concept.getConceptSetId());
+            String name = nameByMappingId.get(concept.getSourceMappingId());
+            if (projectId != null && name != null) {
+                result.computeIfAbsent(projectId, key -> new ArrayList<>()).add(name);
+            }
+        }
+        return result;
     }
 
     @Override

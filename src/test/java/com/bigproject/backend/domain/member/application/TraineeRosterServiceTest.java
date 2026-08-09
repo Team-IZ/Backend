@@ -31,7 +31,13 @@ import static org.mockito.Mockito.when;
 class TraineeRosterServiceTest {
 
 	private final TraineeRosterRepository traineeRosterRepository = mock(TraineeRosterRepository.class);
-	private final TraineeRosterService service = new TraineeRosterService(traineeRosterRepository);
+	// 초대 재발송(11차 R2)에 쓰는 두 협력자. 이 테스트가 보는 경로에서는 호출되지 않는다.
+	private final com.bigproject.backend.domain.auth.domain.PasswordResetRepository accountRepository =
+			mock(com.bigproject.backend.domain.auth.domain.PasswordResetRepository.class);
+	private final com.bigproject.backend.domain.auth.application.InvitationResendDispatcher resendDispatcher =
+			mock(com.bigproject.backend.domain.auth.application.InvitationResendDispatcher.class);
+	private final TraineeRosterService service =
+			new TraineeRosterService(traineeRosterRepository, accountRepository, resendDispatcher);
 
 	private final UUID cohortId = UUID.randomUUID();
 	private final UUID orgId = UUID.randomUUID();
@@ -188,6 +194,8 @@ class TraineeRosterServiceTest {
 				traineeId, "교육생", "trainee@example.com", rawStatus,
 				null, null, OffsetDateTime.now(), inactive ? OffsetDateTime.now() : null,
 				inactive ? "ADMIN_SUSPENDED" : null, null, inactive ? OffsetDateTime.now() : null,
-				inactive ? actorUserId : null, inactive ? "김오퍼레이터" : null);
+				inactive ? actorUserId : null, inactive ? "김오퍼레이터" : null,
+				// 대기 중 초대 토큰(11차 R2). 활성화 전(PENDING)인 계정에만 있다.
+				"PENDING".equals(rawStatus) ? UUID.randomUUID() : null);
 	}
 }
