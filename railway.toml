@@ -2,6 +2,6 @@
 builder = "RAILPACK"
 
 [deploy]
-startCommand = "java -Xmx384m -Xss512k -XX:MaxMetaspaceSize=192m -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError -Dserver.port=$PORT -jar build/libs/backend-0.0.1-SNAPSHOT.jar"
+startCommand = "java -jar build/libs/app.jar"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
