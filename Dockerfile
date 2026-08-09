@@ -9,7 +9,7 @@ RUN ./gradlew build -x test --no-daemon
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 RUN groupadd -r app && useradd -r -g app -u 1001 -d /app app
-COPY --from=build --chown=app:app /app/build/libs/backend-0.0.1-SNAPSHOT.jar app.jar
+COPY --from=build --chown=app:app /app/build/libs/app.jar app.jar
 USER app
 EXPOSE 8080
 # MaxRAMPercentage: App Runner InstanceConfiguration.Memory 값의 70%까지 힙으로 사용 --
