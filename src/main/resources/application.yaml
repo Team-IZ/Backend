@@ -110,6 +110,43 @@ ai:
   # AI는 계속 작업 중인데 백엔드만 재시도해서 같은 요청에 LLM 비용이 두 번 나간다.
   read-timeout: ${AI_READ_TIMEOUT:PT150S}
 
+  # 코드 분석 연동. POST /analyses · GET /analyses/{jobId}.
+  analysis:
+    # 코드 분석에 쓸 모델의 ai_model.model_code.
+    #
+    # 🔴 비워 두거나 카탈로그에 없는 값을 넣으면 분석 요청 자체가 TEMPORARY_ERROR로 실패한다.
+    # 일부러 그렇게 했다 — 모델을 지정하지 않으면 AI가 자기 기본 모델을 쓰는데, 그 modelCode가
+    # 응답 aiUsage[]에 실려 오고 ai_usage.model_code는 ai_model을 참조하는 FK다. 카탈로그에
+    # 없는 모델이면 사용량 행이 통째로 적재 실패하고, 그건 monthly_ai_budget 집행 근거가
+    # 조용히 비는 것이라 분석 하나를 못 돌리는 것보다 나쁘다.
+    #
+    # 값 형식은 provider/provider_model_code다(2026-08-09 규칙). AI에 실제로 보내는 값은
+    # 이 코드로 조회한 행의 provider_model_code이고, model_id는 analysis_job.requested_model_id에 남는다.
+    model-code: ${AI_ANALYSIS_MODEL_CODE:nvidia/nemotron-3-ultra-550b-a55b}
+
+    # 한 제출에 허용하는 총 분석 시도 횟수(첫 시도 포함, 재시도 횟수가 아니다).
+    #
+    # 다시 거는 대상은 일시적 실패 4종(TEMPORARY_ERROR·ANALYSIS_TIMEOUT·MODEL_ERROR·
+    # SOURCE_UNREACHABLE)뿐이다. 저장소 URL 오류나 제출물 문제는 같은 제출을 다시 분석해도
+    # 결과가 같아 재시도하지 않는다 — 그쪽 복구 경로는 교육생의 재제출이다.
+    #
+    # 상한이 없으면 AI 서버가 계속 죽어 있는 동안 안전망이 돌 때마다 전 제출을 다시 요청한다.
+    # 분석 1회가 LLM 호출 20여 건이라 낭비가 크다. 1로 두면 재시도가 꺼진다.
+    max-attempts: ${AI_ANALYSIS_MAX_ATTEMPTS:3}
+
+    scheduler:
+      # 기본 false. 켜져 있으면 앱을 띄우기만 해도 마감 지난 제출에 LLM 비용이 발생하고,
+      # @SpringBootTest 컨텍스트가 뜰 때마다 실제 AI 서버로 요청이 나간다. 운영에서만 켠다.
+      enabled: ${AI_ANALYSIS_SCHEDULER_ENABLED:false}
+      # 요청 안전망. 정상 경로는 제출 이벤트가 즉시 처리하므로 여기서 걸리는 것이 없어야 정상이다.
+      dispatch-delay: ${AI_ANALYSIS_DISPATCH_DELAY:PT5M}
+      # 상태 폴링. 분석 1건이 5분 안팎 걸리지만, 교육생 화면이 "분석 중"에서 넘어가는 지연이
+      # 곧 이 간격이라 짧게 잡았다.
+      poll-delay: ${AI_ANALYSIS_POLL_DELAY:PT1M}
+      # 기동 직후에는 돌지 않는다. 배포 롤링 중 두 인스턴스가 동시에 같은 제출을 집는 창을 줄인다
+      # (uq_analysis_job_active가 최종 방어선이지만 예외 로그로 시끄러워진다).
+      initial-delay: ${AI_ANALYSIS_SCHEDULER_INITIAL_DELAY:PT1M}
+
   report:
     # AI의 POST /reports는 202 + jobId만 주고 생성은 백그라운드에서 돈다.
     # 아래 둘의 곱(2초 x 60회 = 2분)이 한 리포트를 기다리는 상한이고,
