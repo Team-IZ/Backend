@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.reporting.presentation.dto;
 
+import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.util.List;
@@ -36,20 +37,33 @@ public record TraineeReportsResponse(
 	 * TS의 선택 필드({@code publishAfter?})와 정확히 맞는다 — null을 실어 보내면
 	 * {@code undefined}를 기대하는 쪽과 어긋난다.
 	 *
+	 * @param id      <b>회차</b> 식별자(assessmentRoundId)다. 리포트 ID가 아니다 —
+	 *                미응시 회차는 리포트 행 자체가 없어 목록의 키로 쓸 수 없기 때문이다.
+	 * @param reportId 이 회차의 리포트 식별자. <b>회차당 최대 1건</b>이다
+	 *                ({@code uq_report_active_user}가 (assessment_round_id, user_id, report_type)로
+	 *                유일성을 건다). 아직 리포트가 만들어지지 않은 회차({@code NOT_ATTEMPTED} 등)에서는
+	 *                키가 빠진다. {@code GET /reports/{reportId}} 단건 조회에 이 값을 쓴다 —
+	 *                {@code id}(회차 ID)로 부르면 404다.
 	 * @param status  {@code PUBLISHED} · {@code PENDING_PUBLISH} · {@code PENDING_VISIBILITY}
 	 *                · {@code NOT_ATTEMPTED} · {@code VOID_ATTEMPT} · {@code STOPPED}
 	 * @param publishAfter {@code PENDING_PUBLISH}에서만. 이 시각 이후에 발행된다.
+	 * @param disclosureScope 이 리포트의 공개 범위. 발행·공개 전이거나 리포트가 없으면 키가 빠진다.
+	 *                <b>화면이 {@code qa} 유무로 범위를 되짚지 않게</b> 하려고 값으로 내려준다 —
+	 *                {@code FULL}인데 문항이 아직 없어 {@code qa}가 비는 경우를 {@code SUMMARY}로
+	 *                오인하는 것을 막는다.
 	 * @param concepts {@code PUBLISHED}에서만.
 	 * @param retryState {@code NONE} · {@code PENDING} · {@code DONE}. PUBLISHED에서만.
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record RoundReportResponse(
 			String id,
+			String reportId,
 			String label,
 			String status,
 			String publishAfter,
 			String publishedAt,
 			String curriculum,
+			DisclosureScope disclosureScope,
 			List<ConceptReportResponse> concepts,
 			String retryState,
 			String retryDueAt,
@@ -60,6 +74,9 @@ public record TraineeReportsResponse(
 	/**
 	 * 개념 하나의 결과.
 	 *
+	 * @param problemId 이 개념을 물은 문항 식별자. <b>개념 이름은 회차마다 반복된다</b>
+	 *                  (`예외 처리와 롤백 전략`이 1·2·4차에 모두 나온다) — 이름으로 개념을 지목하면
+	 *                  다시 보기 대상을 잘못 짚을 수 있어 안정 키를 함께 내려준다.
 	 * @param level 도달 단계 <b>0~4</b>. 0은 통과한 축이 하나도 없다는 뜻이며
 	 *              "안 물어본 것"이 아니라 "못한 것"이다 — 화면이 이 둘을 섞으면 안 된다.
 	 *              (DB {@code reach_display_code} L0~L4, AI {@code reachedStage} 0~4와 같은 눈금)
@@ -89,6 +106,7 @@ public record TraineeReportsResponse(
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record ConceptReportResponse(
+			String problemId,
 			String name,
 			int level,
 			String said,
