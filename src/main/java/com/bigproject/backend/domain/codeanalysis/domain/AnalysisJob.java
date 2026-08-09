@@ -86,6 +86,21 @@ public class AnalysisJob {
 	@Column(name = "failure_code", length = 100)
 	private AnalysisFailureCode failureCode;
 
+	/**
+	 * 이 실행에 쓰라고 지정한 모델. {@code ai_model.model_id}.
+	 *
+	 * <p>AI가 자기 기본 모델을 고르게 두면 응답 {@code aiUsage[].modelCode}가 우리 카탈로그에 없는
+	 * 값일 수 있고, {@code ai_usage.model_code}는 FK라 그 순간 사용량 적재가 통째로 실패한다.
+	 * 그래서 <b>요청 시점에 우리가 고르고 그 선택을 여기 남긴다</b> — 나중에 "이 실행은 어느 모델로
+	 * 돌았나"를 응답이 아니라 우리 원장으로 답할 수 있어야 한다.
+	 */
+	@Column(name = "requested_model_id")
+	private UUID requestedModelId;
+
+	/** 요청한 계획 문제 수. {@code assessment_problem.problem_no}가 1~3이라 3을 넘길 수 없다. */
+	@Column(name = "question_budget")
+	private Short questionBudget;
+
 	@Column(name = "created_at", nullable = false, updatable = false, insertable = false)
 	private Instant createdAt;
 
@@ -116,6 +131,18 @@ public class AnalysisJob {
 			String batchKey, String jobType, int executionNo, String traceId) {
 		return new AnalysisJob(orgId, assessmentRoundId, teamId, submissionId,
 				batchKey, jobType, executionNo, traceId);
+	}
+
+	/**
+	 * AI 서버를 부르기 직전에 <b>무엇을 요청했는지</b>를 남긴다.
+	 *
+	 * <p>{@link #queued}의 인자로 받지 않고 따로 둔 이유: 이 둘은 job의 정체가 아니라 요청 파라미터다.
+	 * 팩터리에 계속 인자를 붙이면 어느 것이 상태 전이에 필요한 값이고 어느 것이 기록용인지 흐려진다.
+	 */
+	public void recordRequest(UUID requestedModelId, Integer questionBudget) {
+		this.requestedModelId = requestedModelId;
+		// ck_analysis_job_question_budget: NULL 이거나 0보다 커야 한다.
+		this.questionBudget = questionBudget == null ? null : questionBudget.shortValue();
 	}
 
 	/** AI 서버가 202로 준 작업 ID를 붙인다. uq_analysis_job_external_job_id 가 중복을 막는다. */

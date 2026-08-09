@@ -42,6 +42,30 @@ public enum AnalysisFailureCode {
 	PROHIBITED_FILE,
 	GIT_LOG_MISSING;
 
+	/**
+	 * 같은 제출을 그대로 다시 분석해서 풀릴 수 있는 실패인가.
+	 *
+	 * <p><b>구분의 실익.</b> 나머지 11종은 저장소 URL이 틀렸거나 제출물 자체에 문제가 있는 경우라
+	 * 같은 제출을 재분석해 봐야 결과가 같다. 그쪽의 복구 경로는 재시도가 아니라 <b>교육생의
+	 * 재제출</b>이고, 재제출은 새 {@code submission} 행을 만들므로 분석이 자연히 다시 걸린다.
+	 * 여기 4종만 우리 쪽 사정(AI 서버 장애·타임아웃·모델 오류·소스 일시 접근 실패)이라
+	 * 교육생이 할 수 있는 일이 없다.
+	 *
+	 * <p>{@code MODEL_ERROR}를 넣은 것은 판단이 갈리는 지점이다. 공급자 일시 오류가 대부분이지만
+	 * 계약 위반(AI가 UUID 아닌 jobId를 주는 등)도 이 코드로 접히므로, 후자면 재시도가 통째로
+	 * 낭비된다. 재시도 상한({@code ai.analysis.max-attempts})으로 손실을 묶어 두고 넣었다 —
+	 * 빼면 공급자 blip 한 번에 분석이 영구 실패한다.
+	 *
+	 * <p>🔴 이 값 집합은 {@code AnalysisDispatchRepository}의 두 네이티브 쿼리에 문자열로도
+	 * 들어가 있다. 한쪽만 고치면 조용히 어긋나므로 반드시 함께 고친다.
+	 */
+	public boolean retryable() {
+		return this == TEMPORARY_ERROR
+				|| this == ANALYSIS_TIMEOUT
+				|| this == MODEL_ERROR
+				|| this == SOURCE_UNREACHABLE;
+	}
+
 	/** 값 집합 밖이면 비어 있는 결과를 준다. 호출부가 "모르는 코드"를 어떻게 다룰지 정하게 한다. */
 	public static Optional<AnalysisFailureCode> parse(String raw) {
 		if (raw == null || raw.isBlank()) {
