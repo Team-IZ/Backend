@@ -175,8 +175,20 @@ public class Submission {
 	}
 
 	/**
-	 * ZIP 업로드를 접수한다. 내용 검증(EMPTY_CODE·GIT_LOG_MISSING)과 안전 추출이 아직 남아 있어 VALIDATING으로 둔다.
-	 * ck_submission_method_2가 ZIP 분기에서 저장소·커밋 컬럼 전부를 NULL로 요구하므로 그대로 비워 둔다.
+	 * ZIP 업로드를 접수한다. ck_submission_method_2가 ZIP 분기에서 저장소·커밋 컬럼 전부를 NULL로 요구하므로
+	 * 그대로 비워 둔다.
+	 *
+	 * <p><b>ACCEPTED로 둔다(2026-08-09).</b> 종전에는 VALIDATING이었다 — 내용 검증
+	 * (EMPTY_CODE·GIT_LOG_MISSING)이 남아 있다는 이유였는데, 그 판정의 주체가 AI로 확정됐다.
+	 * 세 코드 모두 {@code analysis_job.failure_code} 값 집합에 있고 AI가 분석 중에 돌려준다.
+	 * 즉 <b>백엔드가 더 할 검증이 없다</b> — 크기와 압축 형식은 접수 시점에 이미 봤다.
+	 * VALIDATING으로 두면 아무도 다음 상태로 옮겨 주지 않아 제출이 영원히 그 자리에 머물고,
+	 * 분석 대상 조회({@code status='ACCEPTED'})에도 걸리지 않아 ZIP 제출은 분석 자체가 안 된다.
+	 *
+	 * <p>⚠️ {@code submission_artifact.validation_status}는 VALIDATING으로 남는다. 그쪽 VERIFIED는
+	 * {@code safe_extract_uri}를 요구하는데 안전 추출은 실제로 구현돼 있지 않다 — 상태만 올리면
+	 * 하지 않은 일을 했다고 기록하는 것이 된다. 정의서의 "ACCEPTED 시점에 검증 완료 artifact 1건"
+	 * 서술과 어긋나므로 정의서 쪽 주석도 함께 고쳤다.
 	 */
 	public static Submission receiveZipUpload(
 			UUID orgId,
@@ -196,7 +208,7 @@ public class Submission {
 				null,
 				supersedesSubmissionId,
 				submittedBy,
-				SubmissionStatus.VALIDATING,
+				SubmissionStatus.ACCEPTED,
 				submittedAt,
 				requestIdempotencyKey
 		);

@@ -17,7 +17,9 @@ public record SubmissionResponse(
 		SubmissionMethod method,
 
 		@Schema(
-				description = "GITHUB_URL은 접수 즉시 ACCEPTED다. ZIP은 내용 검증이 남아 VALIDATING으로 시작한다.",
+				description = "두 방식 모두 접수 즉시 ACCEPTED다. 내용 판정(저장소 접근 실패·빈 코드·git log 누락)은 "
+						+ "제출이 아니라 분석 단계의 사건이므로 `GET /submissions/{submissionId}/analysis`의 "
+						+ "`failureCode`로 드러난다.",
 				example = "ACCEPTED"
 		)
 		SubmissionStatus status,
