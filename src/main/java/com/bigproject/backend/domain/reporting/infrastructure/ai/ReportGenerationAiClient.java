@@ -57,19 +57,22 @@ public class ReportGenerationAiClient {
 	/**
 	 * job 상태를 읽고, 종료 상태면 태운 토큰을 원장에 남긴다.
 	 *
-	 * <p>🔴 {@code snapshotId}를 반드시 넘겨야 한다. AI는 {@code report_snapshot}의 PK를 받은 적이
-	 * 없어 {@code aiUsage.contextId}에 <b>자기 내부 jobId</b>를 넣어 보낸다. 그대로 저장하면 원장이
+	 * <p>🔴 {@code contextEntityId}를 반드시 넘겨야 한다. AI는 우리 PK를 받은 적이 없어
+	 * {@code aiUsage.contextId}에 <b>자기 내부 jobId</b>를 넣어 보낸다. 그대로 저장하면 원장이
 	 * 존재하지 않는 엔터티를 가리켜 비용이 영구 미귀속으로 남는다.
 	 *
-	 * <p>스냅샷 행을 아직 안 만들었다면 null을 넘겨도 되지만, 그러면 위 문제가 그대로 남는다 —
-	 * <b>AI를 부르기 전에 스냅샷 행을 먼저 만드는 순서</b>가 맞다(면담 브리프가 briefId를 먼저
-	 * 만들어 보내는 것과 같은 이유다).
+	 * <p><b>무엇의 PK인가는 {@code attribution}이 정한다.</b> 생성 배치는
+	 * {@link AiUsageAttribution#reportGenerationItem}으로 {@code REPORT_GENERATION_ITEM}을 지정하고
+	 * {@code generation_item_id}를 넘긴다 — 리포트 1건에 AI 호출이 문제 수만큼 나가므로 스냅샷
+	 * 단위로 묶으면 문제별 원가가 사라진다. 유형을 지정하지 않으면 AI가 준 {@code REPORT_SNAPSHOT}이
+	 * 그대로 쓰이고, 그때 이 인자는 {@code report_snapshot.snapshot_id}여야 한다.
 	 *
-	 * @param attribution 기관·기수·프로젝트 등 AI가 모르는 귀속 정보
-	 * @param snapshotId  {@code report_snapshot.snapshot_id}. {@code aiUsage.contextId}를 이 값으로 덮는다.
+	 * @param attribution     기관·기수·프로젝트 등 AI가 모르는 귀속 정보. 컨텍스트 유형 override도 여기 있다.
+	 * @param contextEntityId {@code aiUsage.contextId}를 덮을 실제 PK. {@code attribution}에 이미
+	 *                        {@code contextIdOverride}가 있으면 그쪽이 우선한다.
 	 */
 	public ReportGenerationJob.Status fetchJob(String jobId, String traceId,
-			AiUsageAttribution attribution, UUID snapshotId) {
+			AiUsageAttribution attribution, UUID contextEntityId) {
 
 		ReportGenerationJob.Status job = aiClient.get(
 				GENERATE_PATH + "/" + jobId, ReportGenerationJob.Status.class, traceId);
@@ -82,7 +85,10 @@ public class ReportGenerationAiClient {
 					attribution.classId(),
 					attribution.projectId(),
 					attribution.triggerType(),
-					snapshotId == null ? attribution.contextIdOverride() : snapshotId.toString()
+					// 호출부가 이미 채워 뒀으면 그것을 쓴다. 인자는 아직 안 채운 경로를 위한 보조다.
+					attribution.contextIdOverride() != null ? attribution.contextIdOverride()
+							: (contextEntityId == null ? null : contextEntityId.toString()),
+					attribution.contextTypeOverride()
 			);
 
 			int recorded = aiUsageRecorder.record(job.aiUsage(), resolved);
