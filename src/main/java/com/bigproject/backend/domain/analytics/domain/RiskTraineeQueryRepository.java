@@ -47,10 +47,11 @@ public interface RiskTraineeQueryRepository {
 	/**
 	 * projectId는 선택이며 null이면 기수의 모든 미니프로젝트를 조회한다.
 	 *
-	 * round_no는 (project_id, round_no) UNIQUE라 프로젝트마다 1부터 다시 시작한다.
-	 * 기수에 미니프로젝트가 여러 건이면 같은 round_no 열이 프로젝트 수만큼 생기므로
-	 * 한 프로젝트의 회차 흐름만 보려면 projectId로 좁혀야 한다.
-	 * analysis_sequence_no(미니프로젝트 재번호화 조회값)와 혼용하지 않는다.
+	 * fromRoundNo·toRoundNo는 project_assessment_round.round_no가 아니라 project.sequence_no
+	 * 범위다. round_no는 (project_id, round_no) UNIQUE라 프로젝트마다 1부터 다시 시작하는데
+	 * 미니프로젝트는 프로젝트당 이해도 확인 회차가 1건뿐이라 값이 늘 1이어서 범위 조건이 성립하지
+	 * 않는다. 기수의 차수 흐름은 프로젝트 순서에만 남으므로 그쪽을 축으로 삼는다.
+	 * 이름은 API 파라미터(fromRoundNo·toRoundNo)와 맞춰 두었다.
 	 */
 	record RoundCriteria(
 			UUID cohortId,

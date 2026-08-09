@@ -38,11 +38,36 @@ public class JdbcManagedReportQueryRepository implements ManagedReportQueryRepos
 		 * 남겨 두면 같은 회차가 목록에 두 번 보인다. DRAFT는 남긴다 — 생성 중인 리포트가
 		 * 목록에서 사라지면 매니저는 "아직 안 만들어졌다"와 "실패했다"를 구분할 수 없다.
 		 */
+		/*
+		 * round_no를 그대로 내보내지 않고 미니프로젝트 재번호(analysis_sequence_no)를 만들어 쓴다.
+		 *
+		 * round_no는 uq_project_assessment_round_no_active가 (project_id, round_no)라
+		 * 프로젝트 안에서만 유일하고, 정의서가 "MINI_PROJECT는 활성 회차 정확히 1건, round_no=1"을
+		 * 요구하므로 미니프로젝트만 쓰는 지금은 전부 1이다. 그대로 내보내면 목록의 모든 행이
+		 * `roundNo: 1`이 되고 정렬도 무너진다.
+		 *
+		 * 기수 안 차수는 정의서가 따로 정의해 뒀다 — "화면 analysis_sequence_no는 삭제되지 않은
+		 * MINI_PROJECT만 sequence_no·project_id 순으로 재번호화한 조회값". 그 정의를 그대로
+		 * DENSE_RANK로 옮긴다. 삭제된 프로젝트는 빼야 번호가 붙어 있는다.
+		 */
 		StringBuilder sql = new StringBuilder("""
+				WITH mini_round_no AS (
+				    SELECT par.assessment_round_id,
+				           DENSE_RANK() OVER (
+				               PARTITION BY pj.cohort_id
+				               ORDER BY pj.sequence_no, pj.project_id
+				           ) AS analysis_sequence_no
+				    FROM project_assessment_round par
+				    JOIN project pj
+				           ON pj.project_id = par.project_id
+				          AND pj.deleted_at IS NULL
+				          AND pj.project_category = 'MINI_PROJECT'
+				    WHERE par.deleted_at IS NULL
+				)
 				SELECT r.report_id,
 				       r.assessment_round_id,
 				       par.round_name,
-				       par.round_no,
+				       COALESCE(mrn.analysis_sequence_no, par.round_no) AS round_no,
 				       r.user_id                     AS trainee_user_id,
 				       au.name                       AS trainee_name,
 				       clm.class_id,
@@ -74,6 +99,8 @@ public class JdbcManagedReportQueryRepository implements ManagedReportQueryRepos
 				       ON au.user_id = r.user_id
 				LEFT JOIN project_assessment_round par
 				       ON par.assessment_round_id = r.assessment_round_id
+				LEFT JOIN mini_round_no mrn
+				       ON mrn.assessment_round_id = r.assessment_round_id
 				WHERE r.org_id = ?
 				  AND r.lifecycle_status <> 'SUPERSEDED'
 				""");
@@ -101,7 +128,9 @@ public class JdbcManagedReportQueryRepository implements ManagedReportQueryRepos
 		}
 
 		// 화면이 회차 → 반 → 이름 순으로 읽는다. 최신 회차가 위다(TR-04 레일과 같은 방향).
-		sql.append("ORDER BY par.round_no DESC NULLS LAST, cl.name, au.name\n");
+		// 정렬 키도 재번호 쪽이다 — par.round_no로 정렬하면 값이 전부 1이라 순서가 무너진다.
+		sql.append("ORDER BY mrn.analysis_sequence_no DESC NULLS LAST, par.round_no DESC NULLS LAST,"
+				+ " cl.name, au.name\n");
 
 		return jdbcTemplate.query(sql.toString(), (ResultSet rs, int rowNum) -> new ManagedReportRow(
 				rs.getObject("report_id", UUID.class),

@@ -87,7 +87,8 @@ class MemberQueryControllerTest {
 				"홍길동",
 				Role.TRAINEE,
 				organizationId,
-				AccountStatus.ACTIVE
+				AccountStatus.ACTIVE,
+				"example.com"
 		));
 
 		mockMvc.perform(get("/api/v0/members/me"))

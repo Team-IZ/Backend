@@ -32,6 +32,13 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 	public List<RoundRow> findRounds(UUID userId) {
 		// 교육생이 속한 기수의 회차를 전부 세우고(cohort_member) 응시·리포트를 LEFT JOIN한다.
 		// INITIAL 응시만 본다 — REVIEW(다시 보기)는 rev 서브쿼리에서 따로 읽는다.
+		//
+		// 정렬은 `project.sequence_no`가 앞이고 `round_no`가 뒤다. round_no는
+		// uq_project_assessment_round_no_active가 (project_id, round_no)라 **프로젝트 안에서만**
+		// 유일하고, 정의서가 "MINI_PROJECT는 활성 회차 정확히 1건, round_no=1"을 요구하므로
+		// 미니프로젝트만 쓰는 지금은 모든 회차가 1이다. round_no만으로 정렬하면 기수의 회차가
+		// 전부 같은 값이라 순서가 사실상 무작위가 된다. 기수 안 운영 순서를 가진 축은
+		// project.sequence_no다(정의서: "sequence_no는 기수 내 전체 프로젝트 운영 순서").
 		String sql = """
 				SELECT r.assessment_round_id,
 				       r.round_name,
@@ -79,7 +86,7 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				) rev ON TRUE
 				WHERE cm.user_id = ?
 				  AND cm.left_at IS NULL
-				ORDER BY r.round_no DESC
+				ORDER BY p.sequence_no DESC, r.round_no DESC
 				""";
 
 		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> new RoundRow(

@@ -30,12 +30,15 @@ class ManagerRosterServiceTest {
 	private final UUID orgId = UUID.randomUUID();
 	private final UUID cohortId = UUID.randomUUID();
 
+	/**
+	 * 9차 Q3-② — {@code LOCKED}를 <b>타입에서</b> 없앴다. 예전에는 값을 받아 두고 서비스가 거절했는데,
+	 * 안 오는 값이 타입에 있으면 화면이 도달할 수 없는 분기를 계속 들고 있게 된다.
+	 * {@code ck_app_user_status}가 세 값만 허용하므로 DB에서도 나올 수 없다.
+	 */
 	@Test
-	void rejectsLockedAsAnAccountStatusFilter() {
-		assertThatThrownBy(() -> service.findManagers(
-				orgId, null, AccountStatus.LOCKED, null, ManagerRosterSort.NAME, PageRequest.of(0, 20)))
-				.isInstanceOfSatisfying(ApiException.class, exception ->
-						assertThat(exception.errorCode()).isEqualTo(MemberErrorCode.ACCOUNT_STATUS_FILTER_NOT_SUPPORTED));
+	void offersOnlyTheThreeAccountStatusesThatCanActuallyOccur() {
+		assertThat(AccountStatus.values())
+				.containsExactly(AccountStatus.INVITED, AccountStatus.ACTIVE, AccountStatus.INACTIVE);
 	}
 
 	@Test

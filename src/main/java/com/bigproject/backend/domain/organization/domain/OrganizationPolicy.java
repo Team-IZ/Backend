@@ -208,6 +208,16 @@ public class OrganizationPolicy {
 			Boolean allowGithubIntegration,
 			Boolean enableBigProjectContributionAnalysis
 	) {
+
+		/**
+		 * 예산만 바꾼 사본. 두 묶음이 같은 값인지 볼 때 {@link BigDecimal}만 따로 비교하려고 쓴다 —
+		 * {@code equals}는 소수 자릿수까지 보기 때문에 {@code 1500}과 {@code 1500.00}이 달라진다.
+		 */
+		public Settings withBudget(BigDecimal budget) {
+			return new Settings(budget, monthlyTokenLimit, storageLimitBytes, retentionDays,
+					defaultDisclosureScope, codeSessionTierCode, allowManagerInvite, allowDataExport,
+					allowZipSubmission, allowGithubIntegration, enableBigProjectContributionAnalysis);
+		}
 	}
 
 	// DB CHECK: status IN ('ACTIVE','SUPERSEDED','EXPIRED'). 별도 공용 enum 파일 없이 정책 엔티티에 종속시켜 정의한다.

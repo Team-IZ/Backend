@@ -97,6 +97,11 @@ public class TraineeRosterService {
 		}
 	}
 
+	/**
+	 * 화면 용어를 {@code app_user.status} 원문으로 옮긴다.
+	 *
+	 * <p>{@code LOCKED} 분기는 9차 Q3-②로 사라졌다 — enum에서 값을 빼서 <b>애초에 들어올 수 없게</b> 했다.
+	 */
 	private String toRawStatus(AccountStatus status) {
 		if (status == null) {
 			return null;
@@ -105,8 +110,6 @@ public class TraineeRosterService {
 			case INVITED -> RAW_PENDING;
 			case ACTIVE -> RAW_ACTIVE;
 			case INACTIVE -> RAW_INACTIVE;
-			case LOCKED -> throw new ApiException(
-					MemberErrorCode.ACCOUNT_STATUS_FILTER_NOT_SUPPORTED, "LOCKED는 계정 상태 필터로 지원하지 않습니다.");
 		};
 	}
 

@@ -60,7 +60,10 @@ public class ManagerController {
 					| `page` | 선택 | int | 0부터 시작. 기본 `0` |
 					| `size` | 선택 | int | 페이지당 개수. 기본 `20`, 최대 `100` |
 
-					⚠️ **`status`에 `LOCKED`는 쓸 수 없다.** 이 화면이 쓰지 않는 값이라 지정하면 400이다.
+					💡 **`status`는 세 값뿐이다.** `LOCKED`는 9차 Q3-②로 `AccountStatus`에서 제거했다 —
+					`ck_app_user_status`가 `PENDING`·`ACTIVE`·`INACTIVE`만 허용해 실제로 올 수 없던 값이고,
+					안 오는 값이 타입에 있으면 화면이 도달할 수 없는 분기를 계속 들고 있게 된다.
+					로그인 연속 실패로 인한 일시 차단은 상태가 아니라 `login_blocked_until` 시각이다.
 
 					## 응답 (200)
 
@@ -98,6 +101,20 @@ public class ManagerController {
 					| `lastLoginAt` | date-time? | 최근 로그인. 이력이 없으면 `null`(화면에서는 `—`) |
 					| `invitedAt` | date-time? | 최초 초대 시각 |
 					| `invitedByName` | string? | 초대한 사람 이름 |
+					| `pendingInvitationTokenId` | UUID? | 대기 중 초대 토큰. **`null`이 아니면 재발송·취소 가능** |
+					| `suspendable` | boolean | `false`면 정지 버튼을 잠근다(기관의 마지막 활성 매니저) |
+
+					### 행별 버튼 노출 기준 (9차 R7)
+
+					| 버튼 | 조건 | 부를 API |
+					|---|---|---|
+					| 정지 | `suspendable === true` | `PATCH /members/organizations/{organizationId}/managers/{managerId}/status` |
+					| 재활성 | `status === 'INACTIVE'` | 위와 같음 (`status: "ACTIVE"`) |
+					| 재발송 | `pendingInvitationTokenId !== null` | `POST /members/organizations/{organizationId}/manager-invitations/{tokenId}/resend` |
+					| 취소 | `pendingInvitationTokenId !== null` | `DELETE /members/organizations/{organizationId}/manager-invitations/{tokenId}` |
+
+					⚠️ **`suspendable`은 기관 전체 활성 매니저 수로 판정한다.** `cohortId`로 좁혀도 이 값의
+					모집단은 기관이다 — 마지막 한 명인지는 기수가 아니라 기관에서 정해지기 때문이다.
 
 					⚠️ **`statusCounts`는 상태·검색 필터와 무관한 모집단**이라 `totalElements`와 다르다.
 					상태 칩이 자기 자신을 필터링하면 안 되므로 목록 한 페이지로는 만들 수 없다.
@@ -126,7 +143,7 @@ public class ManagerController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "매니저 목록 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "ACCOUNT_STATUS_FILTER_NOT_SUPPORTED 이 화면이 쓰지 않는 계정 상태(LOCKED) · VALIDATION_FAILED page·size 값이 올바르지 않음"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED status·sort에 없는 값을 지정했거나 page·size 값이 올바르지 않음"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 만료됨"),
 			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터 권한이 아님"),
 			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 기관을 확인할 수 없음")
@@ -157,7 +174,9 @@ public class ManagerController {
 
 		Page<ManagerRosterRepository.ManagerRosterRow> managerPage = result.page();
 		ManagerRosterResponse response = new ManagerRosterResponse(
-				managerPage.getContent().stream().map(ManagerRosterResponse.Manager::from).toList(),
+				managerPage.getContent().stream()
+						.map(row -> ManagerRosterResponse.Manager.from(row, result.activeManagerCount()))
+						.toList(),
 				managerPage.getNumber(),
 				managerPage.getSize(),
 				managerPage.getTotalElements(),

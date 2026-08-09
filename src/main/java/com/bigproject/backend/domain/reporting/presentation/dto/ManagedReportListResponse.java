@@ -1,6 +1,8 @@
 package com.bigproject.backend.domain.reporting.presentation.dto;
 
+import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
 import com.bigproject.backend.domain.reporting.domain.ManagedReportQueryRepository.ManagedReportRow;
+import com.bigproject.backend.domain.reporting.domain.TraineeReleaseStatus;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -22,11 +24,11 @@ import java.util.UUID;
 @Schema(description = "매니저가 담당하는 반의 리포트 목록")
 public record ManagedReportListResponse(
 		@Schema(description = "담당 반 교육생의 개인 리포트. 담당이 없거나 필터가 좁으면 빈 배열")
-		List<Item> reports
+		List<ManagedReportItem> reports
 ) {
 
 	public static ManagedReportListResponse from(List<ManagedReportRow> rows) {
-		return new ManagedReportListResponse(rows.stream().map(Item::from).toList());
+		return new ManagedReportListResponse(rows.stream().map(ManagedReportItem::from).toList());
 	}
 
 	/**
@@ -39,41 +41,50 @@ public record ManagedReportListResponse(
 	 * @param bodyVisible   교육생이 지금 본문을 읽을 수 있는가. 발행·공개가 모두 갖춰져야 참이다
 	 *                      ({@code ReportDisclosureResponse.bodyVisible}과 같은 규칙).
 	 *
-	 * <p>⚠️ 클래스 단위 {@link JsonInclude}라 {@code ResponseRecordRequiredConverter}가 이 레코드를
-	 * 건너뛴다 — 생성되는 화면 타입에서 <b>모든 필드가 optional</b>이 된다. 형제 DTO인
-	 * {@code ReportDisclosureResponse}·{@code TraineeReportsResponse}가 이미 같은 방식이고,
-	 * 매니저 화면이 그 셋을 함께 읽으므로 여기서만 규칙을 달리하지 않는다.
-	 * 항상 오는 필드까지 optional이 되는 것이 걸리면 세 DTO를 <b>같이</b> 바꿔야 한다.
+	 * <p>{@link JsonInclude}를 <b>키가 빠질 수 있는 네 필드에만</b> 건다. 클래스 단위로 걸면
+	 * {@code ResponseRecordRequiredConverter}가 레코드를 통째로 건너뛰어 항상 오는 필드까지
+	 * 생성 타입에서 optional이 되고, 화면이 {@code ?.}·{@code !}를 남발하게 된다. 나가는 JSON은
+	 * 같다 — 아래 네 필드가 그대로 null일 때 빠지는 전부다.
 	 */
-	@JsonInclude(JsonInclude.Include.NON_NULL)
-	public record Item(
+	public record ManagedReportItem(
 			@Schema(description = "리포트 식별자. PUT /reports/{reportId}/disclosure에 그대로 쓴다")
 			UUID reportId,
 			@Schema(description = "회차 식별자. 리포트 id가 아니다")
 			UUID assessmentRoundId,
 			@Schema(description = "회차 이름(예: 미프 3차). 회차 행이 없으면 키가 빠진다", nullable = true)
+			@JsonInclude(JsonInclude.Include.NON_NULL)
 			String roundName,
+			@Schema(description = """
+					기수 안 미니프로젝트 차수(1부터). 3이면 그 기수의 세 번째 미니프로젝트다.
+
+					⚠️ `ProjectAssessmentRound.round_no`가 아니다. 그 컬럼은 `(project_id, round_no)`
+					UNIQUE라 프로젝트 안에서만 유일하고, 정의서가 "MINI_PROJECT는 활성 회차 정확히
+					1건, round_no=1"을 요구하므로 실제로는 항상 1이다. 여기서 내는 값은 정의서의
+					`analysis_sequence_no`(삭제되지 않은 MINI_PROJECT를 sequence_no 순으로 재번호화한
+					조회값)이며, 서버가 계산해 내려준다.
+					""")
 			int roundNo,
 			UUID traineeUserId,
 			String traineeName,
 			UUID classId,
 			String className,
 			@Schema(description = "발행 시각. 아직 발행 전이면 키가 빠진다", nullable = true)
+			@JsonInclude(JsonInclude.Include.NON_NULL)
 			Instant publishedAt,
-			@Schema(description = "공개 상태 판별자", allowableValues = {"NOT_CONFIGURED", "WITHHELD", "RELEASED"},
-					example = "NOT_CONFIGURED")
-			String releaseStatus,
-			@Schema(description = "공개 범위. NOT_CONFIGURED이면 키가 빠진다",
-					allowableValues = {"PRIVATE", "SUMMARY", "FULL"}, nullable = true)
-			String scope,
+			@Schema(description = "공개 상태 판별자")
+			TraineeReleaseStatus releaseStatus,
+			@Schema(description = "공개 범위. NOT_CONFIGURED이면 키가 빠진다", nullable = true)
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			DisclosureScope scope,
 			@Schema(description = "공개 처리 시각. RELEASED에서만 있다", nullable = true)
+			@JsonInclude(JsonInclude.Include.NON_NULL)
 			Instant releasedAt,
 			@Schema(description = "교육생이 지금 본문을 읽을 수 있는가")
 			boolean bodyVisible
 	) {
 
-		static Item from(ManagedReportRow row) {
-			return new Item(
+		static ManagedReportItem from(ManagedReportRow row) {
+			return new ManagedReportItem(
 					row.reportId(),
 					row.assessmentRoundId(),
 					row.roundName(),
@@ -83,12 +94,26 @@ public record ManagedReportListResponse(
 					row.classId(),
 					row.className(),
 					row.publishedAt(),
-					row.traineeReleaseStatus(),
+					releaseStatus(row.traineeReleaseStatus()),
 					// 미지정이면 scope 컬럼이 NULL이라 그대로 빠진다(@JsonInclude).
-					row.traineeDisclosureScope(),
+					scope(row.traineeDisclosureScope()),
 					row.traineeReleasedAt(),
 					isBodyVisible(row)
 			);
+		}
+
+		/**
+		 * 행의 문자열을 공용 enum으로 옮긴다. 값 집합은 DB CHECK
+		 * ({@code ck_report_trainee_release_status} · {@code ck_report_trainee_disclosure_scope})가
+		 * 강제하므로 목록이 모르는 값을 만나면 그건 조용히 넘길 데이터가 아니라 제약이 깨진 것이다 —
+		 * {@code valueOf}가 그대로 터지게 둔다.
+		 */
+		private static TraineeReleaseStatus releaseStatus(String value) {
+			return value == null ? null : TraineeReleaseStatus.valueOf(value);
+		}
+
+		private static DisclosureScope scope(String value) {
+			return value == null ? null : DisclosureScope.valueOf(value);
 		}
 
 		/**

@@ -7,6 +7,8 @@ import com.bigproject.backend.domain.usagemetering.presentation.dto.Organization
 import com.bigproject.backend.domain.usagemetering.presentation.dto.UpdateOperationSettingRequest;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -16,8 +18,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -140,7 +142,16 @@ public class OperationsController {
 	@GetMapping("/usage")
 	public ResponseEntity<OrganizationUsageResponse> findUsage(
 			@PathVariable UUID organizationId,
+			// 형식을 파라미터 자체에 적는다. 설명 본문에만 적어 두면 스펙의 파라미터 스키마는
+			// 그냥 string이라, 화면은 어떤 문자열을 넣어야 하는지 알 수 없다.
+			@Parameter(
+					description = "조회 월. `yyyy-MM` 형식이며 상대 표기(`CURRENT` 등)는 받지 않는다. "
+							+ "생략하면 이번 달(UTC)이다.",
+					example = "2026-07",
+					schema = @Schema(type = "string", pattern = "^\\d{4}-(0[1-9]|1[0-2])$", example = "2026-07")
+			)
 			@RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM") YearMonth period,
+			@Parameter(description = "반별 내역(classCosts)의 범위. 생략하면 classCosts가 빈 배열이다.")
 			@RequestParam(required = false) UUID cohortId
 	) {
 		YearMonth resolvedPeriod = period == null ? YearMonth.now(ZoneOffset.UTC) : period;
@@ -178,11 +189,11 @@ public class OperationsController {
 					| `allowDataExport` | boolean | 신규 데이터 export 생성 허용 |
 					| `allowZipSubmission` | boolean | ZIP 코드 제출 허용. 끄면 GitHub 연동만 남는다 |
 					| `allowGithubIntegration` | boolean | GitHub 조직 연동 허용(**정책**이며 실제 연결은 별도 흐름) |
-					| `enableBigProjectContributionAnalysis` | boolean | 빅프로젝트 기여도 분석 허용 |
 					| `policyVersion` | int | 현재 정책 버전. 변경할 때마다 올라간다 |
 
-					⚠️ **변경 API 가 전체 치환이므로 이 응답을 그대로 폼 초기값으로 쓰세요.**
-					사용자가 바꾼 필드만 덮어쓰고 나머지는 여기서 받은 값을 그대로 다시 보내야 합니다.
+					이 응답을 폼 초기값으로 쓰되, 저장할 때는 **사용자가 바꾼 필드만** 보내면 된다
+					(`PATCH .../settings`). 받아 둔 값을 통째로 되돌려보내지 마세요 —
+					그 사이 다른 사람이 바꾼 값을 덮어씁니다.
 
 					## 오류
 
@@ -204,61 +215,79 @@ public class OperationsController {
 			description = """
 					SA-02 ④ 설정 탭의 저장 액션. **슈퍼어드민 전용**이다(오퍼레이터는 사용량 조회만 가능).
 
-					## ⚠️ 부분 수정(PATCH)이 아니라 전체 치환(PUT)이다
+					## 부분 수정이다 — 바꾼 것만 보내세요
 
-					**보내지 않은 필드는 유지되는 게 아니라 검증 오류(400)가 난다.**
-					`GET .../settings` 응답을 폼 초기값으로 받아 두고, 사용자가 바꾼 것만 덮어써서
-					**전체를 다시 보내세요.**
+					**전 필드가 선택이고, 보내지 않은 필드는 직전 활성 버전의 값을 그대로 승계한다.**
+					설정 탭이 항목별 모달이라 모달이 담당하는 2~4 개만 보내면 된다.
+
+					받아 둔 값을 통째로 되돌려보내지 마세요 — 화면을 연 뒤 다른 사람이 바꾼 값을
+					**되돌립니다.** 그 덮어쓰기는 화면에 보이지도 않는다.
 
 					`organization_policy` 는 append-only 이력 테이블이라 기존 행을 고치지 않는다.
 					활성 버전을 `SUPERSEDED` 로 닫고 **새 버전을 발급**하므로 `policyVersion` 이 1 올라간다.
+
+					**값이 실제로 바뀔 때만 버전이 올라간다.** 모달을 열었다가 그대로 저장하거나
+					`organizationStatus` 만 보낸 요청은 정책 버전을 올리지 않는다 —
+					기관 상태는 정책이 아니라 기관의 값이고, 원인 없는 버전이 이력에 섞이면
+					"언제 무엇이 바뀌었나"를 읽을 수 없게 된다.
 
 					## 요청
 
 					**경로 변수** — `organizationId` (**필수**, UUID)
 
-					**JSON 본문**
+					**JSON 본문 — 전부 선택이다.** 다만 **빈 본문 `{}` 은 400** 이다.
 
-					| 필드 | 필수 | 타입 | 설명 |
-					|---|---|---|---|
-					| `organizationStatus` | **필수** | enum | `ACTIVE` 또는 `SUSPENDED` 만. 그 외 값은 400 |
-					| `monthlyAiBudget` | **필수** | decimal | 0 이상. `0` 은 무제한이 아니라 **예산 0** |
-					| `dataRetentionDays` | **필수** | int | **`90` · `180` · `365` 중 하나만** |
-					| `defaultDisclosureScope` | **필수** | enum | `SUMMARY` · `PRIVATE` · `FULL` |
-					| `codeSessionTierCode` | **필수** | enum | `ACCURACY_FIRST` · `BALANCED` · `COST_FIRST` |
-					| `allowManagerInvite` | **필수** | boolean | 신규 매니저 초대·재발송 허용 |
-					| `allowDataExport` | **필수** | boolean | 신규 데이터 export 생성 허용 |
-					| `allowZipSubmission` | **필수** | boolean | ZIP 코드 제출 허용 |
-					| `allowGithubIntegration` | **필수** | boolean | GitHub 조직 연동 허용(정책이며 실제 연결은 별도 흐름) |
-					| `enableBigProjectContributionAnalysis` | **필수** | boolean | 빅프로젝트 기여도 분석 허용 |
-					| `monthlyTokenLimit` | 선택 | long | 월 토큰 상한. **`null` 이면 무제한**. 보낼 경우 0 초과 |
-					| `storageLimitBytes` | 선택 | long | 저장량 상한(바이트). **`null` 이면 무제한**. 0 이상 |
+					| 필드 | 타입 | 설명 |
+					|---|---|---|
+					| `organizationStatus` | enum | `ACTIVE` 또는 `SUSPENDED` 만. 그 외 값은 400 |
+					| `monthlyAiBudget` | decimal | 0 이상. `0` 은 무제한이 아니라 **예산 0** |
+					| `monthlyTokenLimit` | long? | 월 토큰 상한. 보낼 경우 0 초과. **`null` 을 보내면 무제한으로 푼다** |
+					| `storageLimitBytes` | long? | 저장량 상한(바이트). 0 이상. **`null` 을 보내면 무제한으로 푼다** |
+					| `dataRetentionDays` | int | **`90` · `180` · `365` 중 하나만** |
+					| `defaultDisclosureScope` | enum | `SUMMARY` · `PRIVATE` · `FULL` |
+					| `codeSessionTierCode` | enum | `ACCURACY_FIRST` · `BALANCED` · `COST_FIRST` |
+					| `allowManagerInvite` | boolean | 신규 매니저 초대·재발송 허용 |
+					| `allowDataExport` | boolean | 신규 데이터 export 생성 허용 |
+					| `allowZipSubmission` | boolean | ZIP 코드 제출 허용 |
+					| `allowGithubIntegration` | boolean | GitHub 조직 연동 허용(정책이며 실제 연결은 별도 흐름) |
+
+					### ⚠️ 상한 두 개는 `null` 이 값이다
+
+					`monthlyTokenLimit` · `storageLimitBytes` 는 **`null` 이 무제한**이라는 값이라,
+					다른 필드와 규칙이 다르다.
+
+					| 보낸 것 | 결과 |
+					|---|---|
+					| 키를 뺌 | 지금 상한을 그대로 유지 |
+					| `"monthlyTokenLimit": null` | **무제한으로 푼다** |
+					| `"monthlyTokenLimit": 100` | 100 으로 바꾼다 |
+
+					나머지 필드는 `null` 을 보내도 생략과 같게 본다(그 필드들은 `null` 이 의미를 갖지 않는다).
 
 					통화(`currencyCode`)는 **요청 항목이 아니다.** 플랫폼 공통 USD 고정이며 DB CHECK 로도 강제된다.
 
 					## 응답
 
-					새 버전 기준의 운영 설정. **`GET .../settings` 와 완전히 같은 구조**다.
-					`policyVersion` 이 올라간 것을 확인하면 저장이 반영된 것이다.
+					변경 후 기준의 운영 설정. **`GET .../settings` 와 완전히 같은 구조**다.
 
 					## 이 API 로 기관 상태도 바뀐다
 
-					`organizationStatus` 가 함께 저장되므로 설정 탭의 `기관 상태` 행이 여기서 처리된다.
-					다만 **삭제(`DELETED`)된 기관은 이 API 로 되살릴 수 없다** —
-					`POST /organizations/{organizationId}/restore` 를 쓰세요.
+					`organizationStatus` 를 함께 보낼 수 있어 설정 탭의 `기관 상태` 행이 여기서 처리된다.
+					보내지 않으면 상태는 건드리지 않는다. 다만 **삭제(`DELETED`)된 기관은 이 API 로
+                    되살릴 수 없다** — `POST /organizations/{organizationId}/restore` 를 쓰세요.
 
 					## 오류
 
 					| 코드 | 상황 |
 					|---|---|
-					| 400 | 필수 누락 · `dataRetentionDays` 가 90/180/365 밖 · `organizationStatus` 가 ACTIVE/SUSPENDED 밖 |
+					| 400 | **빈 본문** · `dataRetentionDays` 가 90/180/365 밖 · `organizationStatus` 가 ACTIVE/SUSPENDED 밖 · 상한이 범위 밖 |
 					| 404 `ORG_NOT_FOUND` | 없는 기관 |
 					| 409 `ORG_ALREADY_DELETED` | 삭제된 기관 |
 					| 409 `ORG_POLICY_NOT_FOUND` | 활성 정책이 없음 |
 					"""
 	)
 	@PreAuthorize("hasRole('SUPER_ADMIN')")
-	@PutMapping("/settings")
+	@PatchMapping("/settings")
 	public ResponseEntity<OperationSettingResponse> updateSettings(
 			@PathVariable UUID organizationId,
 			@Valid @RequestBody UpdateOperationSettingRequest request

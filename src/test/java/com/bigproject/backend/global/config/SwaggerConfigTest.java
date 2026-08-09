@@ -1,5 +1,6 @@
 package com.bigproject.backend.global.config;
 
+import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.PathItem;
@@ -11,6 +12,8 @@ import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -112,6 +115,70 @@ class SwaggerConfigTest {
 		Schema<?> errorSchema = openApi.getComponents().getSchemas().get("ErrorResponse");
 		assertThat(errorSchema.getProperties()).containsKeys("timestamp", "status", "error", "code", "message");
 		assertThat(errorSchema.getRequired()).contains("code", "message", "status");
+	}
+
+	/**
+	 * 숫자 필드의 값 목록이 문자열로 나가면 생성 타입이 {@code '90' | '180' | '365'}가 되어
+	 * 숫자를 보내는 호출부마다 캐스팅이 한 줄씩 붙는다({@code dataRetentionDays}가 그랬다).
+	 * {@code allowableValues}가 String[]밖에 될 수 없어서 생기는 일이라 스펙 단계에서 되돌린다.
+	 */
+	@Test
+	void writesNumericAllowableValuesAsNumbersNotStrings() {
+		Schema<Object> retentionDays = new Schema<>();
+		retentionDays.setType("integer");
+		retentionDays.setEnum(new ArrayList<Object>(List.of("90", "180", "365")));
+		Schema<?> request = new Schema<>().type("object").addProperty("dataRetentionDays", retentionDays);
+
+		OpenAPI openApi = specWith("/api/v0/organizations", operation("기관 생성 | ✅ 사용 가능", Map.of()));
+		openApi.components(new Components().addSchemas("CreateOrganizationRequest", request));
+
+		customise(openApi);
+
+		assertThat(((Schema<Object>) openApi.getComponents().getSchemas().get("CreateOrganizationRequest")
+				.getProperties().get("dataRetentionDays")).getEnum())
+				.containsExactly(90L, 180L, 365L);
+	}
+
+	/** 숫자가 아닌 값 목록은 건드리지 않는다 — enum 문자열까지 숫자로 바꾸면 그쪽이 깨진다. */
+	@Test
+	void leavesStringEnumsAlone() {
+		Schema<Object> status = new Schema<>();
+		status.setType("string");
+		status.setEnum(new ArrayList<Object>(List.of("ACTIVE", "SUSPENDED")));
+		Schema<?> response = new Schema<>().type("object").addProperty("status", status);
+
+		OpenAPI openApi = specWith("/api/v0/organizations", operation("기관 조회 | ✅ 사용 가능", Map.of()));
+		openApi.components(new Components().addSchemas("OrganizationResponse", response));
+
+		customise(openApi);
+
+		assertThat(((Schema<Object>) openApi.getComponents().getSchemas().get("OrganizationResponse")
+				.getProperties().get("status")).getEnum())
+				.containsExactly("ACTIVE", "SUSPENDED");
+	}
+
+	/**
+	 * 프로젝트 실행·교안 도메인의 코드가 카탈로그에 등록되어 있어야 예시 본문에 도메인 기본 메시지가 실린다.
+	 * 등록을 빠뜨리면 조용히 "요청을 처리할 수 없습니다."로 나가고, 코드가 없는 것과 구분되지 않는다.
+	 */
+	@Test
+	void knowsTheProjectExecutionAndCurriculumCodes() {
+		OpenAPI openApi = specWith("/api/v0/projects/{projectId}/curricula", operation(
+				"프로젝트 교안 연결 | ✅ 사용 가능",
+				Map.of(
+						"404", response("PROJECT_NOT_FOUND 프로젝트가 없음 · CURRICULUM_VERSION_NOT_FOUND 교안 버전이 없음", SUCCESS_REF),
+						"409", response("CURRICULUM_ALREADY_LINKED 이미 연결된 교안 버전", SUCCESS_REF)
+				)
+		));
+
+		customise(openApi);
+
+		ApiResponses responses = operationOf(openApi, "/api/v0/projects/{projectId}/curricula").getResponses();
+		assertThat(examplesOf(responses.get("404")))
+				.containsOnlyKeys("PROJECT_NOT_FOUND", "CURRICULUM_VERSION_NOT_FOUND");
+		assertThat(examplesOf(responses.get("409")).get("CURRICULUM_ALREADY_LINKED"))
+				.extracting("value")
+				.isEqualTo(Map.of("code", "CURRICULUM_ALREADY_LINKED", "message", "이미 연결된 교안 버전입니다."));
 	}
 
 	private void customise(OpenAPI openApi) {

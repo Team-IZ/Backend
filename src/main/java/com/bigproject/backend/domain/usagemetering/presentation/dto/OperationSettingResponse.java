@@ -66,9 +66,6 @@ public record OperationSettingResponse(
 				실제 연결 상태는 organization_github_integration이 따로 관리한다.""")
 		Boolean allowGithubIntegration,
 
-		@Schema(description = "빅프로젝트 기여도 분석(커밋 기준) 실행 허용 여부. 미니프로젝트는 대상이 아니다.")
-		Boolean enableBigProjectContributionAnalysis,
-
 		@Schema(description = "이 설정이 속한 정책 버전. organization_policy는 append-only 이력이라 변경할 때마다 올라간다.")
 		int policyVersion
 ) {
