@@ -4,11 +4,14 @@ import com.bigproject.backend.domain.submission.application.SubmissionArtifactSt
 import com.bigproject.backend.domain.submission.domain.SubmissionErrorCode;
 import com.bigproject.backend.domain.submission.domain.SubmissionException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.DigestInputStream;
@@ -64,6 +67,29 @@ public class LocalSubmissionArtifactStorage implements SubmissionArtifactStorage
 		} catch (NoSuchAlgorithmException exception) {
 			throw new IllegalStateException("SHA-256을 사용할 수 없습니다.", exception);
 		}
+	}
+
+	@Override
+	public Resource load(String storageUri) {
+		Path path;
+		try {
+			path = Path.of(URI.create(storageUri)).toAbsolutePath().normalize();
+		} catch (RuntimeException exception) {
+			throw new SubmissionException(SubmissionErrorCode.ARTIFACT_STORE_FAILED,
+					"제출물 저장 위치를 해석할 수 없습니다: " + storageUri, exception);
+		}
+
+		// storage_uri 는 우리가 만든 값이지만, DB 를 거쳐 돌아오는 값을 그대로 파일 경로로 쓰는 자리라
+		// 루트 밖을 가리키면 거절한다. 값이 오염되는 경로가 생겨도 파일시스템 전체가 열리지는 않는다.
+		if (!path.startsWith(storageRoot)) {
+			throw new SubmissionException(SubmissionErrorCode.ARTIFACT_STORE_FAILED,
+					"제출물 저장 위치가 저장소 루트 밖을 가리킵니다: " + storageUri);
+		}
+		if (!Files.isReadable(path)) {
+			throw new SubmissionException(SubmissionErrorCode.ARTIFACT_STORE_FAILED,
+					"제출물 파일을 읽을 수 없습니다: " + storageUri);
+		}
+		return new FileSystemResource(path);
 	}
 
 	private void deleteQuietly(Path path) {
