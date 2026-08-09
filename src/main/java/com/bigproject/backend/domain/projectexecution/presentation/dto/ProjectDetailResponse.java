@@ -31,7 +31,9 @@ public record ProjectDetailResponse(
         // 9차 Q1 ⓐ — 목록 항목과 같은 값·같은 규칙이다.
         ProjectReadiness readiness,
         @Schema(description = "시작일") LocalDate startDate,
-        @Schema(description = "종료일. **날짜만이며 시각 의미가 없다** — 9차 Q2 참고", nullable = true) LocalDate endDate,
+        // 10차 R4 — 목록 항목과 같은 이유로 nullable=true를 뺐다(ProjectResponse.endDate 주석 참고).
+        @Schema(description = "종료일. **날짜만이며 시각 의미가 없다** — 9차 Q2 참고. "
+                + "항상 값이 있다(생성·수정 모두 필수이며 DB도 NOT NULL이다)") LocalDate endDate,
 
         @Schema(description = "연결된 교안 수 = curricula의 길이", example = "2") int curriculumCount,
         @Schema(description = "확정된 검증 개념 수 = concepts의 길이", example = "3") int conceptCount,
@@ -67,16 +69,24 @@ public record ProjectDetailResponse(
     ) {
     }
 
+    /**
+     * 확정된 검증 개념 한 건.
+     *
+     * <p>10차 Q2 — 아래 네 필드에서 {@code nullable = true}를 뺐다. <b>null이 올 수 없다.</b>
+     * 값의 출처인 {@code curriculum_teaches_mapping}에서 {@code extracted_name}·{@code version_id}·
+     * {@code page_start}·{@code page_end}가 전부 NOT NULL이고, 그 행은
+     * {@code fk_project_verification_concept_source_mapping_id ... ON DELETE RESTRICT} 때문에
+     * <b>확정 개념이 참조하는 동안 지워지지 않는다</b>. 즉 "확정되면서 이름이 사라지는" 경로가 없다.
+     */
     @Schema(name = "ProjectConfirmedConcept", description = "확정된 검증 개념 한 건")
     public record ConfirmedConcept(
             @Schema(description = "출처 매핑 ID") UUID mappingId,
             @Schema(description = "공용 개념 원장 ID. 현황·리포트가 개념을 가리킬 때 쓰는 값") UUID teachesId,
-            @Schema(description = "개념 이름", example = "트랜잭션 경계 설정", nullable = true) String extractedName,
-            @Schema(description = "출처 교안 버전 ID. 없으면 교안 위치를 가리킬 수 없다", nullable = true)
-            UUID curriculumVersionId,
-            @Schema(description = "출처 시작 페이지. 구성 탭의 `· spring_backend_v1 v1 · p.53`", nullable = true)
-            Integer pageStart,
-            @Schema(description = "출처 끝 페이지", nullable = true) Integer pageEnd
+            @Schema(description = "개념 이름. 항상 값이 있다 — 출처 매핑이 NOT NULL이고 참조되는 동안 삭제되지 않는다",
+                    example = "트랜잭션 경계 설정") String extractedName,
+            @Schema(description = "출처 교안 버전 ID. 항상 값이 있다") UUID curriculumVersionId,
+            @Schema(description = "출처 시작 페이지. 구성 탭의 `· spring_backend_v1 v1 · p.53`") Integer pageStart,
+            @Schema(description = "출처 끝 페이지") Integer pageEnd
     ) {
     }
 

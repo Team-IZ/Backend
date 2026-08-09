@@ -16,6 +16,7 @@ import com.bigproject.backend.domain.projectexecution.domain.ProjectCurriculum;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectDependencyRepository;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectLifecycleStatus;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectListSort;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectReadiness;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectRequirement;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectVerificationConcept;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectVerificationConceptSet;
@@ -339,7 +340,11 @@ public class ProjectServiceImpl implements ProjectService {
      */
     @Override
     public ProjectList findProjectList(UUID cohortId, UUID orgId, ProjectListCriteria criteria) {
-        List<Project> population = findProjects(cohortId, orgId);
+        // 모집단 전체를 먼저 요약한다. readiness 개수(10차 Q1)가 걸러지지 않은 모집단 기준이라
+        // 필터를 통과한 것만 요약해서는 만들 수 없다.
+        List<ProjectSummary> population = findProjects(cohortId, orgId).stream()
+                .map(project -> summarize(project, orgId))
+                .toList();
 
         // 상태별 개수는 필터를 적용하지 않은 모집단이다 — 상태 칩이 자기 자신을 필터링하면
         // 언제나 자기 개수만 남아 다른 칩이 0이 된다. 0인 상태도 키를 채운다(키가 빠지는 것과 다르다).
@@ -347,14 +352,26 @@ public class ProjectServiceImpl implements ProjectService {
         for (ProjectLifecycleStatus status : ProjectLifecycleStatus.values()) {
             counts.put(status, 0L);
         }
-        population.forEach(project -> counts.merge(project.getLifecycleStatus(), 1L, Long::sum));
+        population.forEach(summary -> counts.merge(summary.project().getLifecycleStatus(), 1L, Long::sum));
+
+        // 화면의 상태 필터는 4값인데 status는 3값이라 `준비 중`·`준비됨`만 개수를 못 쓰고 있었다(10차 Q1).
+        // PLANNED만 준비 상태로 다시 가른다 — RUNNING·CLOSED에는 readiness가 의미 없다
+        // (화면도 `status === 'PLANNED' ? readiness : status`로 겹친다).
+        Map<ProjectReadiness, Long> readinessCounts = new EnumMap<>(ProjectReadiness.class);
+        for (ProjectReadiness readiness : ProjectReadiness.values()) {
+            readinessCounts.put(readiness, 0L);
+        }
+        population.stream()
+                .filter(summary -> summary.project().getLifecycleStatus() == ProjectLifecycleStatus.PLANNED)
+                .forEach(summary -> readinessCounts.merge(summary.readiness(), 1L, Long::sum));
 
         String search = criteria.search() == null || criteria.search().isBlank()
                 ? null
                 : criteria.search().trim().toLowerCase(Locale.ROOT);
 
         List<ProjectSummary> filtered = new ArrayList<>();
-        for (Project project : population) {
+        for (ProjectSummary summary : population) {
+            Project project = summary.project();
             if (criteria.status() != null && project.getLifecycleStatus() != criteria.status()) {
                 continue;
             }
@@ -364,11 +381,11 @@ public class ProjectServiceImpl implements ProjectService {
             if (criteria.curriculumId() != null && !usesCurriculum(project.getProjectId(), orgId, criteria.curriculumId())) {
                 continue;
             }
-            filtered.add(summarize(project, orgId));
+            filtered.add(summary);
         }
 
         filtered.sort(comparatorFor(criteria.sort() == null ? ProjectListSort.READINESS : criteria.sort()));
-        return new ProjectList(List.copyOf(filtered), counts);
+        return new ProjectList(List.copyOf(filtered), counts, readinessCounts);
     }
 
     /** 교안 버전 ID와 자료(material) ID를 모두 받는다 — 화면이 어느 쪽을 들고 있든 되도록. */
@@ -454,15 +471,17 @@ public class ProjectServiceImpl implements ProjectService {
 
     /**
      * 확정 개념은 <b>출처를 달고 다녀야</b> 한다. 이름·페이지·교안 버전이 전부 원장(매핑)에 있으므로
-     * source_mapping_id로 되짚어 채운다. 매핑이 없어진 경우에도 개념 자체는 내려보낸다 —
-     * 확정 이력이 화면에서 통째로 사라지는 편이 더 나쁘다.
+     * source_mapping_id로 되짚어 채운다.
+     *
+     * <p>예전에는 매핑이 없으면 이름·페이지를 null로 채워 내보냈는데, 그 경로가 응답 타입을
+     * nullable로 만들어 프론트가 "확정됐는데 이름이 없는 개념"을 그려야 하는지 묻게 됐다(10차 Q2).
+     * FK가 ON DELETE RESTRICT라 <b>매핑은 참조되는 동안 지워지지 않으므로</b> 그런 개념은 생기지 않는다 —
+     * 없다면 DB가 규약 밖에서 바뀐 것이라 조용히 넘기지 않는다.
      */
     private ConfirmedConcept toConfirmedConcept(ProjectVerificationConcept concept) {
-        CurriculumTeachesMapping mapping = mappingRepository.findById(concept.getSourceMappingId()).orElse(null);
-        if (mapping == null) {
-            return new ConfirmedConcept(
-                    concept.getSourceMappingId(), concept.getTeachesId(), null, null, null, null);
-        }
+        CurriculumTeachesMapping mapping = mappingRepository.findById(concept.getSourceMappingId())
+                .orElseThrow(() -> new ApiException(ProjectExecutionErrorCode.CONCEPT_SOURCE_MAPPING_MISSING,
+                        "확정 개념의 출처 매핑을 찾을 수 없습니다: mappingId=" + concept.getSourceMappingId()));
         return new ConfirmedConcept(
                 mapping.getMappingId(),
                 concept.getTeachesId(),
@@ -485,31 +504,91 @@ public class ProjectServiceImpl implements ProjectService {
         return Math.toIntExact(total);
     }
 
+    /**
+     * 검증 개념 확정. <b>몇 번을 불러도 같은 결과가 된다</b>(10차 R1).
+     *
+     * <p>이전에는 최초 확정만 되고 교체가 전부 409였다. 원인은 flush 순서였다 —
+     * Hibernate는 flush 시 INSERT를 UPDATE보다 먼저 실행하므로, 기존 세트를 SUPERSEDED로
+     * 바꾸는 UPDATE보다 새 ACTIVE 세트의 INSERT가 먼저 나가 한 프로젝트에 ACTIVE 행이 순간
+     * 2건이 됐고, 부분 유니크 인덱스
+     * {@code uq_proj_verif_concept_set_active (project_id) WHERE status='ACTIVE' AND effective_to IS NULL}가
+     * 이를 막았다. 그래서 <b>바꾸는 것이 없는 재확정조차</b> 실패했다.
+     *
+     * <p>고친 방식은 세 가지다.
+     * <ol>
+     *   <li>같은 세트를 다시 확정하면 <b>아무 일도 하지 않는다</b> — 버전 이력을 헛되이 쌓지 않는다.</li>
+     *   <li>바뀌었으면 기존 세트를 닫는 UPDATE를 <b>먼저 flush</b>한 뒤 새 세트를 넣는다.</li>
+     *   <li>버전 번호를 활성 세트 기준이 아니라 <b>최대값 + 1</b>로 채번한다.</li>
+     * </ol>
+     */
     @Override
     @Transactional
     public void confirmConcepts(UUID projectId, UUID orgId, List<UUID> mappingIds, UUID actorUserId) {
         findProject(projectId, orgId);
 
-        int nextVersionNo = verificationConceptSetRepository.findByProjectIdAndStatus(projectId, ConceptSetStatus.ACTIVE)
-                .map(existing -> {
-                    existing.supersede(OffsetDateTime.now());
-                    return existing.getVersionNo() + 1;
-                })
-                .orElse(1);
+        List<CurriculumTeachesMapping> mappings = resolveMappings(mappingIds);
+
+        Optional<ProjectVerificationConceptSet> activeSet =
+                verificationConceptSetRepository.findByProjectIdAndStatus(projectId, ConceptSetStatus.ACTIVE);
+
+        // 같은 세트를 그대로 다시 보내는 것은 아무것도 바꾸지 않는 요청이다. 새 버전을 만들지 않고 끝낸다.
+        // 이 판정을 화면에 두면 "무엇이 바뀐 것인가"라는 같은 규칙이 화면과 서버 두 곳에 생긴다(10차 R1).
+        if (activeSet.isPresent() && isSameAsConfirmed(activeSet.get(), mappingIds)) {
+            return;
+        }
+
+        activeSet.ifPresent(existing -> existing.supersede(OffsetDateTime.now()));
+
+        // 닫는 UPDATE를 새 행 INSERT보다 먼저 DB로 보낸다. 이 flush가 없으면 위 javadoc의 409가 난다.
+        verificationConceptSetRepository.flush();
 
         ProjectVerificationConceptSet newSet = ProjectVerificationConceptSet.activate(
-                projectId, orgId, nextVersionNo, actorUserId, "검증개념 확정");
+                projectId, orgId, verificationConceptSetRepository.findMaxVersionNo(projectId) + 1,
+                actorUserId, "검증개념 확정");
         verificationConceptSetRepository.save(newSet);
 
         int sequenceNo = 1;
+        for (CurriculumTeachesMapping mapping : mappings) {
+            ProjectVerificationConcept concept = ProjectVerificationConcept.of(
+                    newSet.getConceptSetId(), orgId, mapping.getTeachesId(), mapping.getMappingId(), sequenceNo++);
+            verificationConceptRepository.save(concept);
+        }
+    }
+
+    /**
+     * 요청의 매핑 ID를 원장 행으로 바꾼다. 쓰기를 시작하기 <b>전에</b> 전부 확인해서,
+     * 절반만 반영되고 실패하는 상태를 만들지 않는다.
+     *
+     * <p>같은 개념(teaches)이 두 번 들어오면 여기서 400으로 끊는다. 교안 두 벌이 같은 개념을
+     * 가르치면 후보 목록에 다른 매핑으로 두 줄 나오기 때문에 실제로 고를 수 있는 조합이고,
+     * 그대로 두면 {@code uq_..._concept_set_id_teaches_id}에 걸려 정체 모를 409가 된다.
+     */
+    private List<CurriculumTeachesMapping> resolveMappings(List<UUID> mappingIds) {
+        List<CurriculumTeachesMapping> mappings = new ArrayList<>();
+        Map<UUID, CurriculumTeachesMapping> seenByTeachesId = new LinkedHashMap<>();
+
         for (UUID mappingId : mappingIds) {
             CurriculumTeachesMapping mapping = mappingRepository.findById(mappingId)
                     .orElseThrow(() -> new ApiException(ProjectExecutionErrorCode.CONCEPT_MAPPING_NOT_FOUND,
                             "존재하지 않는 매핑입니다: " + mappingId));
-            ProjectVerificationConcept concept = ProjectVerificationConcept.of(
-                    newSet.getConceptSetId(), orgId, mapping.getTeachesId(), mappingId, sequenceNo++);
-            verificationConceptRepository.save(concept);
+
+            CurriculumTeachesMapping duplicate = seenByTeachesId.putIfAbsent(mapping.getTeachesId(), mapping);
+            if (duplicate != null) {
+                throw new ApiException(ProjectExecutionErrorCode.CONCEPT_DUPLICATED,
+                        "같은 개념을 두 번 확정할 수 없습니다: " + mapping.getExtractedName());
+            }
+            mappings.add(mapping);
         }
+        return mappings;
+    }
+
+    /** 확정된 개념의 매핑 ID가 요청과 <b>순서까지</b> 같은가. 순서는 화면이 칩을 나열하는 순서라 의미가 있다. */
+    private boolean isSameAsConfirmed(ProjectVerificationConceptSet activeSet, List<UUID> mappingIds) {
+        List<UUID> confirmed = verificationConceptRepository
+                .findByConceptSetIdOrderBySequenceNoAsc(activeSet.getConceptSetId()).stream()
+                .map(ProjectVerificationConcept::getSourceMappingId)
+                .toList();
+        return confirmed.equals(mappingIds);
     }
 
     /**

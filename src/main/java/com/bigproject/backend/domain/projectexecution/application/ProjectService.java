@@ -94,13 +94,16 @@ public interface ProjectService {
     }
 
     /**
-     * @param projects 필터·정렬이 적용된 목록
-     * @param counts   <b>필터를 적용하지 않은</b> 기수 전체 모집단의 상태별 개수.
-     *                 상태 칩이 자기 자신을 필터링하면 안 되므로 걸러진 목록에서는 만들 수 없다
+     * @param projects        필터·정렬이 적용된 목록
+     * @param counts          <b>필터를 적용하지 않은</b> 기수 전체 모집단의 상태별 개수.
+     *                        상태 칩이 자기 자신을 필터링하면 안 되므로 걸러진 목록에서는 만들 수 없다
+     * @param readinessCounts 같은 모집단에서 <b>{@code PLANNED}만</b> 준비 상태로 다시 가른 개수(10차 Q1).
+     *                        {@code PREP + READY == counts.get(PLANNED)}이다
      */
     record ProjectList(
             List<ProjectSummary> projects,
-            Map<ProjectLifecycleStatus, Long> counts) {
+            Map<ProjectLifecycleStatus, Long> counts,
+            Map<ProjectReadiness, Long> readinessCounts) {
     }
 
     /** 생성·수정 응답처럼 이미 손에 든 프로젝트 하나를 목록 항목과 같은 모양으로 만든다. */
@@ -148,8 +151,13 @@ public interface ProjectService {
             int conceptCandidateCount) {
 
         /**
-         * 준비가 덜 된 정도 — 교안·확정 개념·마감 셋 중 <b>비어 있는 개수</b>다.
+         * 준비가 덜 된 정도 — 교안·확정 개념 <b>둘 중 비어 있는 개수</b>다.
          * {@link ProjectListSort#READINESS} 정렬이 이 값의 내림차순을 쓴다.
+         *
+         * <p>예전에는 {@code endDate == null}도 한 몫으로 셌는데 <b>절대 성립하지 않는 조건</b>이었다 —
+         * {@code project.end_date}가 DB에서 NOT NULL이고 생성·수정 요청도 둘 다 필수라 null이 될 수 없다(10차 R4).
+         * 없는 분기를 규칙인 것처럼 두면 "마감을 지우면 준비 중으로 돌아간다"고 읽히므로 걷어냈다.
+         * 판정 결과는 달라지지 않는다.
          */
         public int unreadyCount() {
             int count = 0;
@@ -157,9 +165,6 @@ public interface ProjectService {
                 count++;
             }
             if (conceptCount == 0) {
-                count++;
-            }
-            if (project.getEndDate() == null) {
                 count++;
             }
             return count;

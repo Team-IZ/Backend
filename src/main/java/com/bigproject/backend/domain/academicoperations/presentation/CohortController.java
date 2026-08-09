@@ -39,6 +39,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Tag(name = "Academic Operations", description = "기수, 반, 교육생 소속 이력, 매니저 반 배정 API")
@@ -71,8 +73,11 @@ public class CohortController {
 					- totalElements: 조건에 맞는 전체 기수 수
 					- totalPages: 전체 페이지 수
 
-					**아직 채워지지 않는 값** — content[].traineeCount는 항상 0, content[].managers는 항상 빈 배열이다.
-					교육생 수와 담당 매니저는 member·classroom 도메인 조인이 필요해 아직 연결되지 않았다.
+					content[].traineeCount는 **재적 교육생 수**다 — 이 기수에 등록돼 있고 아직 나가지 않은 인원이며,
+					중도 이탈자는 빠진다(10차 R3). 그래서 교육생 명단 조회의 전체 건수보다 작을 수 있다.
+
+					**아직 채워지지 않는 값** — content[].managers는 항상 빈 배열이다.
+					담당 매니저는 classroom 도메인 조인이 필요해 아직 연결되지 않았다.
 					반 목록·담당 매니저가 필요하면 `GET /cohorts/{cohortId}/classrooms`를 함께 호출한다.
 					"""
 	)
@@ -103,8 +108,15 @@ public class CohortController {
 		Page<Cohort> cohorts = cohortService.findCohorts(
 				organizationId, status, query, PageRequest.of(page, size));
 
+		// 기수마다 COUNT를 날리지 않도록 이 페이지의 기수 전체를 한 번에 센다(10차 R3).
+		Map<UUID, Integer> traineeCounts = cohortService.countActiveTrainees(
+				cohorts.getContent().stream().map(Cohort::getCohortId).toList(), organizationId);
+
 		CohortListResponse response = new CohortListResponse(
-				cohorts.getContent().stream().map(CohortResponse::from).toList(),
+				cohorts.getContent().stream()
+						.map(cohort -> CohortResponse.from(
+								cohort, traineeCounts.getOrDefault(cohort.getCohortId(), 0)))
+						.toList(),
 				cohorts.getNumber(),
 				cohorts.getSize(),
 				cohorts.getTotalElements(),
@@ -130,10 +142,10 @@ public class CohortController {
 					- name: 기수명
 					- status: PLANNED(개설 예정) / RUNNING(진행 중) / CLOSED(종료)
 					- startDate / endDate: 기수 기간
-					- traineeCount: 소속 교육생 수
+					- traineeCount: 재적 교육생 수(등록돼 있고 아직 나가지 않은 인원. 중도 이탈자 제외)
 					- managers[]: 담당 매니저 목록
 
-					**아직 채워지지 않는 값** — traineeCount는 항상 0, managers는 항상 빈 배열이다(목록 조회와 동일).
+					**아직 채워지지 않는 값** — managers는 항상 빈 배열이다(목록 조회와 동일).
 					"""
 	)
 	@ApiResponses({
@@ -148,8 +160,11 @@ public class CohortController {
 			@PathVariable UUID cohortId,
 			Authentication authentication
 	) {
-		Cohort cohort = cohortService.findCohort(cohortId, extractOrganizationId(authentication));
-		return ResponseEntity.ok(CohortResponse.from(cohort));
+		UUID organizationId = extractOrganizationId(authentication);
+		Cohort cohort = cohortService.findCohort(cohortId, organizationId);
+		int traineeCount = cohortService.countActiveTrainees(List.of(cohortId), organizationId)
+				.getOrDefault(cohortId, 0);
+		return ResponseEntity.ok(CohortResponse.from(cohort, traineeCount));
 	}
 
 	@Operation(

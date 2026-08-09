@@ -88,6 +88,23 @@ public class CohortService {
         return cohortRepository.findCohorts(orgId, status, query, pageable);
     }
 
+    /**
+     * 기수별 재적 교육생 수(10차 R3). 목록·단건이 같은 경로를 쓰도록 항상 Map으로 돌려준다.
+     *
+     * <p>구성원이 하나도 없는 기수는 GROUP BY 결과에 아예 나오지 않으므로,
+     * 호출부는 <b>없는 키를 0으로</b> 읽어야 한다.
+     */
+    public java.util.Map<UUID, Integer> countActiveTrainees(java.util.List<UUID> cohortIds, UUID orgId) {
+        if (cohortIds.isEmpty()) {
+            return java.util.Map.of();
+        }
+        return cohortMemberRepository.countActiveByCohortIdIn(cohortIds, orgId).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        com.bigproject.backend.domain.academicoperations.infrastructure
+                                .CohortMemberRepository.CohortTraineeCount::getCohortId,
+                        row -> Math.toIntExact(row.getCount())));
+    }
+
     // GET /members/me/enrollments — 로그인한 교육생이 자기 소속 기수·반을 모른 채로 맨 처음 호출하는 진입점.
     // 기수당 반은 최대 1건이라 가정하고, 배정 전(className=null)도 정상 케이스로 내려준다.
     public java.util.List<EnrollmentView> findMyEnrollments(UUID userId, UUID orgId) {
