@@ -2,11 +2,13 @@ package com.bigproject.backend.domain.auth.presentation;
 
 import com.bigproject.backend.domain.auth.application.AccountActivationService;
 import com.bigproject.backend.domain.auth.application.AuthService;
+import com.bigproject.backend.domain.auth.application.InvitationResendService;
 import com.bigproject.backend.domain.auth.application.InvitationResolveService;
 import com.bigproject.backend.domain.auth.application.LoginOriginResolver;
 import com.bigproject.backend.domain.auth.application.PasswordResetService;
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetRequest;
 import com.bigproject.backend.domain.auth.presentation.dto.PasswordResetRequestResponse;
+import com.bigproject.backend.global.security.ClientIpResolver;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
@@ -26,9 +28,11 @@ class PasswordResetControllerTest {
 				mock(AuthService.class),
 				mock(AccountActivationService.class),
 				mock(InvitationResolveService.class),
+				mock(InvitationResendService.class),
 				mock(RefreshTokenCookieManager.class),
 				mock(LoginOriginResolver.class),
-				passwordResetService
+				passwordResetService,
+				mock(ClientIpResolver.class)
 		);
 
 		var response = controller.requestPasswordReset(

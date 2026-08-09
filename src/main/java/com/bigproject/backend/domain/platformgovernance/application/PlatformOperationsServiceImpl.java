@@ -11,18 +11,26 @@ import com.bigproject.backend.domain.platformgovernance.infrastructure.Organizat
 import com.bigproject.backend.domain.platformgovernance.infrastructure.PlatformAiTierModelPolicyRepository;
 import com.bigproject.backend.domain.platformgovernance.infrastructure.PlatformGradingCalibrationVersionRepository;
 import com.bigproject.backend.domain.platformgovernance.infrastructure.PlatformGradingModelPolicyRepository;
+import com.bigproject.backend.domain.member.application.InvitationConflictException;
+import com.bigproject.backend.domain.member.application.MemberInvitationService;
+import com.bigproject.backend.domain.member.presentation.dto.InviteManagerResponse;
+import com.bigproject.backend.domain.platformgovernance.presentation.dto.InviteSuperAdminRequest;
+import com.bigproject.backend.domain.platformgovernance.presentation.dto.InviteSuperAdminResponse;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.PlatformModelSettingResponse;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.SuperAdminListResponse;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.UpdateGradingModelRequest;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.UpdateModelPricingRequest;
 import com.bigproject.backend.domain.platformgovernance.presentation.dto.UpdateTierModelRequest;
+import com.bigproject.backend.domain.organization.domain.AccountInactivationReason;
 import com.bigproject.backend.domain.organization.domain.OperatorAccountStatus;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationException;
 import com.bigproject.backend.domain.organization.infrastructure.OrganizationRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -50,6 +58,7 @@ public class PlatformOperationsServiceImpl implements PlatformOperationsService 
 	private final AiModelRepository aiModelRepository;
 	private final PlatformSuperAdminRepository superAdminRepository;
 	private final OrganizationRepository organizationRepository;
+	private final MemberInvitationService memberInvitationService;
 
 	// ─────────────────────────── 모델 · 단가 탭 ───────────────────────────
 
@@ -313,7 +322,45 @@ public class PlatformOperationsServiceImpl implements PlatformOperationsService 
 
 	@Override
 	@Transactional
-	public SuperAdminListResponse updateSuperAdminStatus(UUID memberId, OperatorAccountStatus status) {
+	public InviteSuperAdminResponse inviteSuperAdmin(
+			InviteSuperAdminRequest request, String actorEmail, String requestId
+	) {
+		InviteManagerResponse invited;
+		try {
+			invited = memberInvitationService.inviteSuperAdmin(request.email(), actorEmail, requestId);
+		} catch (InvitationConflictException exception) {
+			// 목업 케이스 계약은 SA-03 계정 탭 기준이라 member 도메인의 실패를 이 도메인 코드로 다시 던진다.
+			throw new OrganizationException(OrganizationErrorCode.ALREADY_INVITED, exception.getMessage(), exception);
+		} catch (ResponseStatusException exception) {
+			// member 도메인은 메일 발송 실패를 502로 올린다. 오퍼레이터 초대와 같은 코드로 맞춘다 —
+			// 서버 사정이 다를 뿐 사용자가 할 일은 `재발송` 하나이기 때문이다.
+			if (exception.getStatusCode() == HttpStatus.BAD_GATEWAY) {
+				throw new OrganizationException(
+						OrganizationErrorCode.INVITE_MAIL_FAILED,
+						OrganizationErrorCode.INVITE_MAIL_FAILED.defaultMessage(),
+						exception
+				);
+			}
+			throw exception;
+		}
+
+		return new InviteSuperAdminResponse(
+				invited.memberId(),
+				invited.email(),
+				OperatorAccountStatus.PENDING,
+				invited.invitedAt(),
+				buildSuperAdminList()
+		);
+	}
+
+	@Override
+	@Transactional
+	public SuperAdminListResponse updateSuperAdminStatus(
+			UUID memberId,
+			OperatorAccountStatus status,
+			String reason,
+			UUID requesterId
+	) {
 		PlatformSuperAdminRepository.SuperAdminAccount target = superAdminRepository.findSuperAdmin(memberId)
 				.orElseThrow(() -> new OrganizationException(OrganizationErrorCode.SUPER_ADMIN_NOT_FOUND));
 
@@ -332,7 +379,15 @@ public class PlatformOperationsServiceImpl implements PlatformOperationsService 
 			);
 		}
 
-		superAdminRepository.updateStatus(memberId, status);
+		superAdminRepository.updateStatus(
+				memberId,
+				status,
+				requesterId,
+				// 이 화면에서 오는 정지는 전부 관리자 조치다. 요청의 reason은 코드가 아니라
+				// 사람이 읽을 설명이므로 자유 텍스트 컬럼으로 따로 넘긴다.
+				AccountInactivationReason.ADMIN_SUSPENDED,
+				reason
+		);
 		return buildSuperAdminList();
 	}
 

@@ -1,9 +1,9 @@
 package com.bigproject.backend.domain.auth.application;
 
+import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URI;
 
@@ -56,7 +56,7 @@ public class LoginOriginResolver {
 		}
 	}
 
-	private ResponseStatusException forbidden(String message) {
-		return new ResponseStatusException(HttpStatus.FORBIDDEN, message);
+	private ApiException forbidden(String message) {
+		return new ApiException(AuthErrorCode.LOGIN_ORIGIN_NOT_ALLOWED, message);
 	}
 }

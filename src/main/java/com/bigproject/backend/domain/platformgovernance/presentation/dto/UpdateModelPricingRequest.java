@@ -23,22 +23,22 @@ public record UpdateModelPricingRequest(
 		@Schema(description = """
 				100만 토큰당 입력 단가. null이면 단가 미설정으로 되돌린다.
 				0은 '무료'를 의미하므로 미설정 용도로 쓰지 말 것.""",
-				example = "5.000000")
+				example = "5.000000", nullable = true)
 		@DecimalMin("0.000000")
 		BigDecimal inputPricePerMillionTokens,
 
-		@Schema(description = "100만 토큰당 출력 단가. null이면 단가 미설정.", example = "25.000000")
+		@Schema(description = "100만 토큰당 출력 단가. null이면 단가 미설정.", example = "25.000000", nullable = true)
 		@DecimalMin("0.000000")
 		BigDecimal outputPricePerMillionTokens,
 
-		@Schema(description = "100만 토큰당 캐시 입력 단가. 선택.", example = "0.500000")
+		@Schema(description = "100만 토큰당 캐시 입력 단가. 선택.", example = "0.500000", nullable = true)
 		@DecimalMin("0.000000")
 		BigDecimal cachedInputPricePerMillionTokens,
 
 		@Schema(description = """
 				단가의 기준 토큰 수. 생략하면 1,000,000을 사용한다.
 				공급자가 다른 기준으로 고지하는 경우에만 바꾼다.""",
-				example = "1000000")
+				example = "1000000", nullable = true)
 		@Positive
 		Integer priceUnitTokenCount
 ) {

@@ -22,11 +22,11 @@ public record OrganizationResponse(
 		UUID organizationId,
 
 		@Schema(description = "URL·외부 연동에 쓰는 기관 slug(예: greencompany). 지정하지 않은 기관은 null.",
-				example = "greencompany")
+				example = "greencompany", nullable = true)
 		String slug,
 
 		@Schema(description = "화면 표시용 짧은 코드(예: ORG_GRN_4F21). 권한·테넌트 판정에는 쓰지 않는다. 미지정이면 null.",
-				example = "ORG_GRN_4F21")
+				example = "ORG_GRN_4F21", nullable = true)
 		String displayCode,
 
 		String name,
@@ -34,10 +34,9 @@ public record OrganizationResponse(
 		@Schema(description = """
 				초대 허용 이메일 도메인(예: codebase.ac.kr). 이 도메인 밖 주소로는 오퍼레이터를 초대할 수 없다.
 				null이면 도메인 제한을 적용하지 않는다.""",
-				example = "codebase.ac.kr")
+				example = "codebase.ac.kr", nullable = true)
 		String emailDomain,
 
-		@Schema(description = "저장되는 운영 상태. ACTIVE/SUSPENDED/DELETION_PENDING/DELETED")
 		OrganizationStatus status,
 
 		@Schema(description = """
@@ -58,7 +57,7 @@ public record OrganizationResponse(
 
 		int traineeCount,
 
-		@Schema(description = "진행 중 세션 수. ⚠ 06_MEAS 세션 계열 테이블이 이번 DDL 범위 밖이라 항상 0입니다.")
+		@Schema(description = "진행 중 세션 수. 시작됐고 아직 끝나지 않은 세션(IN_PROGRESS·PAUSED)만 센다.")
 		int activeSessionCount,
 
 		BigDecimal currentMonthAiCost,
@@ -66,13 +65,20 @@ public record OrganizationResponse(
 		@Schema(description = "활성 정책의 월 AI 예산. 상세 개요의 `예산 $600 대비 69%` 계산에 쓴다.")
 		BigDecimal monthlyAiBudget,
 
-		@Schema(description = "예산 소진율(0~1). 예산이 0이면 null.")
+		@Schema(description = "예산 소진율(0~1). 예산이 0이면 null.", nullable = true)
 		BigDecimal budgetUsageRate,
 
+		@Schema(description = "통화. 플랫폼 공통 USD. 활성 정책이 없으면 null", nullable = true)
 		String currencyCode,
+
 		int dataRetentionDays,
+
+		@Schema(description = "신규 기수 공개 범위 기본값. 활성 정책이 없으면 null", nullable = true)
 		DisclosureScope defaultDisclosureScope,
+
 		Instant createdAt,
+
+		@Schema(description = "soft-delete 시각. 살아 있는 기관은 null", nullable = true)
 		Instant deletedAt
 ) {
 

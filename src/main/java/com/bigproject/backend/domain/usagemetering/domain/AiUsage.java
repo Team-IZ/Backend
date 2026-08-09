@@ -1,17 +1,15 @@
 package com.bigproject.backend.domain.usagemetering.domain;
 
-import com.bigproject.backend.domain.platformgovernance.domain.AiModel;
 import com.bigproject.backend.domain.platformgovernance.domain.AiTier;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
@@ -25,10 +23,26 @@ import java.util.UUID;
  * ai_usage 테이블 매핑 엔티티. 기관별 AI 호출 1건마다 남는 토큰 사용량·비용 원장(append-only 로그).
  * 이 도메인에서는 월별 AI 비용 사용량 집계(findUsage) 조회 전용으로 사용하며,
  * 실제 사용량 적재는 AI 호출을 수행하는 다른 도메인(채점/세션 등)의 책임이다.
+ *
+ * <h2>적재 경로가 생겼다 (2026-08-08)</h2>
+ *
+ * <p>지금까지 이 엔티티는 <b>읽기 전용</b>이었다 — AI를 부르는 코드가 저장소에 없었으므로
+ * 행을 만드는 주체도 없었다. {@code global.ai.AiUsageRecorder}가 그 주체가 되면서 생성 경로가
+ * 필요해졌고, 그래서 {@link Builder}를 연다.
+ *
+ * <p><b>setter가 아니라 builder인 이유.</b> 이 테이블은 append-only 원장이라 거의 모든 컬럼이
+ * {@code updatable = false}다. 필드를 하나씩 채우는 경로를 열면 DB CHECK 조합
+ * (예: {@code CODE_SESSION}만 {@code tier_code} 필수, {@code REPORT_GENERATION}은 NULL이어야 함)을
+ * 어긴 상태가 만들어질 수 있다. 한 번에 완성해서 넣는 편이 원장의 성격과 맞는다.
+ *
+ * <p>{@link AllArgsConstructor}를 {@code PRIVATE}으로 함께 두는 이유는 Lombok 규칙 때문이다 —
+ * {@link NoArgsConstructor}가 이미 있으면 {@link Builder}가 전 인자 생성자를 스스로 만들지 않는다.
  */
 @Getter
 @Entity
+@Builder
 @Table(name = "ai_usage")
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class AiUsage {
 
@@ -40,19 +54,13 @@ public class AiUsage {
 	@Column(name = "org_id", nullable = false, updatable = false)
 	private UUID orgId;
 
-	// 같은 operations 도메인 소속이라 AiModel과는 실제 연관관계로 매핑해, 사용량 집계 시 모델 표시명 등을 조인해 가져온다.
-	@ManyToOne(fetch = FetchType.LAZY)
-	@JoinColumn(name = "model_id", nullable = false, updatable = false)
-	private AiModel model;
-
-  
-//	/**
-//	 * 실제 호출에 사용된 모델 인스턴스(ai_model_instance). v06 신규 NOT NULL FK다.
-//	 * 이 도메인은 조회 전용이라 인스턴스 엔티티까지 만들지 않고 원시 UUID만 보관한다.
-//	 */
-//	@Column(name = "model_instance_id", nullable = false, updatable = false)
-//	private UUID modelInstanceId;
-
+	/*
+	 * v07에서 model_id FK가 model_code 문자열로 대체됐다. 사용 원장이 모델 마스터에 의존하지 않도록
+	 * 호출 시점의 모델 코드를 그대로 복사해 두는 방식이며, 모델이 마스터에서 사라져도 이력이 끊기지 않는다.
+	 * 표시명이 필요한 화면은 이 코드로 ai_model을 따로 조회한다(OperationsServiceImpl).
+	 */
+	@Column(name = "model_code", nullable = false, updatable = false, length = 100)
+	private String modelCode;
 
 	@Column(name = "actor_user_id", updatable = false)
 	private UUID actorUserId;
@@ -71,7 +79,7 @@ public class AiUsage {
 	@Column(name = "project_id", updatable = false)
 	private UUID projectId;
 
-	// DB CHECK: feature_code IN ('CODE_ANALYSIS','CURRICULUM_ANALYSIS','QUESTION_GENERATION','ANSWER_GRADING','SUMMARY_DRAFT')
+	// DB CHECK: feature_code IN ('CODE_ANALYSIS','CURRICULUM_ANALYSIS','CODE_SESSION','ANSWER_EVALUATION','INTERVIEW_BRIEF_GENERATION','REPORT_GENERATION')
 	@Enumerated(EnumType.STRING)
 	@Column(name = "feature_code", nullable = false, updatable = false, length = 100)
 	private FeatureCode featureCode;
@@ -92,14 +100,14 @@ public class AiUsage {
 	@Column(name = "trigger_type", nullable = false, updatable = false, length = 30)
 	private TriggerType triggerType;
 
-	/** 질문 생성·요약 실행 시 기관이 선택한 티어 스냅샷. 그 외 기능은 NULL이라 화면에서 `플랫폼 고정`으로 표시한다. */
+	/** 코드 세션 실행 시 기관이 선택한 티어 스냅샷. 그 외 기능은 NULL이라 화면에서 `플랫폼 고정`으로 표시한다. */
 	@Enumerated(EnumType.STRING)
 	@Column(name = "tier_code", updatable = false, length = 30)
 	private AiTier tierCode;
 
 	/*
 	 * 실행 당시 적용된 플랫폼 정책 스냅샷. 나중에 정책이 바뀌어도 이 호출이 어떤 기준으로 실행됐는지 재현할 수 있다.
-	 * 질문 생성·요약은 티어 정책을, 답변 채점은 채점 모델 정책과 캘리브레이션 버전을 남긴다(해당 없으면 NULL).
+	 * 코드 세션은 티어 정책을, 답변 채점은 채점 모델 정책과 캘리브레이션 버전을 남긴다(해당 없으면 NULL).
 	 */
 	@Column(name = "tier_policy_id", updatable = false)
 	private UUID tierPolicyId;
@@ -209,15 +217,23 @@ public class AiUsage {
 		return pricingStatus == PricingStatus.UNPRICED;
 	}
 
-	/** AI가 무슨 기능을 수행했는지. v06에서 GRADING→ANSWER_GRADING, SESSION_DIALOG→QUESTION_GENERATION으로 바뀌고 CODE_ANALYSIS가 추가됐다. */
+	/**
+	 * AI가 무슨 기능을 수행했는지.
+	 * v07에서 QUESTION_GENERATION→CODE_SESSION, ANSWER_GRADING→ANSWER_EVALUATION으로 바뀌고
+	 * SUMMARY_DRAFT가 INTERVIEW_BRIEF_GENERATION·REPORT_GENERATION으로 분리됐다.
+	 * 티어 선택 대상은 CODE_SESSION 하나뿐이다(DB CHECK: CODE_SESSION은 tier_code·tier_policy_id 필수,
+	 * INTERVIEW_BRIEF_GENERATION·REPORT_GENERATION은 둘 다 NULL이어야 한다).
+	 */
 	public enum FeatureCode {
-		CODE_ANALYSIS, CURRICULUM_ANALYSIS, QUESTION_GENERATION, ANSWER_GRADING, SUMMARY_DRAFT
+		CODE_ANALYSIS, CURRICULUM_ANALYSIS, CODE_SESSION,
+		ANSWER_EVALUATION, INTERVIEW_BRIEF_GENERATION, REPORT_GENERATION
 	}
 
-	/** 호출의 처리 대상 업무 엔터티 유형. */
+	/** 호출의 처리 대상 업무 엔터티 유형. v07에서 값이 전면 개편됐다. */
 	public enum ContextType {
-		CODE_SNAPSHOT, CURRICULUM_VERSION, ASSESSMENT_SESSION, ASSESSMENT_PROBLEM,
-		STAGE_ANSWER_ATTEMPT, REPORT_SNAPSHOT, INTERVENTION
+		SUBMISSION, CURRICULUM_VERSION, CURRICULUM_ANALYSIS, ANALYSIS_JOB, CODE_ANALYSIS,
+		ASSESSMENT_SESSION, ASSESSMENT_PROBLEM, PROBLEM_STAGE, INTERVIEW_BRIEF,
+		REPORT_GENERATION_ITEM, REPORT_SNAPSHOT, INTERVENTION
 	}
 
 	/** 이번 실행을 직접 시작한 방식. */

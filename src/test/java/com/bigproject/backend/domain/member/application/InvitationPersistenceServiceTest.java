@@ -7,7 +7,6 @@ import com.bigproject.backend.domain.member.domain.InvitationToken;
 import com.bigproject.backend.domain.member.domain.MemberInvitationRepository;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
-import com.bigproject.backend.domain.member.presentation.dto.ManagerAssignmentRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -23,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -47,7 +47,8 @@ class InvitationPersistenceServiceTest {
 
 		assertThatThrownBy(() -> service.createManagerInvitation(
 				InvitationContext.organization(UUID.randomUUID(), "AIVLE"),
-				new InviteManagerRequest("Operator@Example.com", null, null),
+				new InviteManagerRequest("Operator@Example.com", null),
+				Role.OPERATOR,
 				actor,
 				"request-duplicate"
 		)).isInstanceOf(InvitationConflictException.class)
@@ -86,7 +87,8 @@ class InvitationPersistenceServiceTest {
 
 		var invitation = service.createManagerInvitation(
 				InvitationContext.organization(organizationId, "AIVLE"),
-				new InviteManagerRequest("Operator@Example.com", null, null),
+				new InviteManagerRequest("Operator@Example.com", null),
+				Role.OPERATOR,
 				actor,
 				"request-1"
 		);
@@ -126,20 +128,20 @@ class InvitationPersistenceServiceTest {
 
 		service.createManagerInvitation(
 				InvitationContext.organization(organizationId, "AIVLE"),
-				new InviteManagerRequest("manager@example.com", cohortId, null),
+				new InviteManagerRequest("manager@example.com", cohortId),
+				Role.MANAGER,
 				actor,
 				"request-manager"
 		);
 
-		List<ManagerAssignmentRequest> expectedAssignments = List.of(
-				new ManagerAssignmentRequest(cohortId, List.of())
-		);
-		verify(repository).validateManagerAssignments(organizationId, expectedAssignments);
+		verify(repository).validateCohort(organizationId, cohortId);
 		verify(repository).createPendingUser(
 				eq(organizationId),
 				eq("manager@example.com"),
 				eq("manager@example.com"),
-				eq("manager@example.com"),
+				// 이름은 비워 둔다 — 초대받은 본인이 가입할 때 정한다.
+				// 예전에는 이메일을 넣어서 목록 이름 칸에 `—` 대신 이메일이 그대로 보였다.
+				isNull(),
 				eq(Role.MANAGER),
 				any(),
 				any()
