@@ -102,11 +102,31 @@ public record CohortDiagnosisResponse(
 	 * {@code labels.ts}의 라벨·색·CSV 열.
 	 */
 	public record ReachDistribution(
+			@Schema(description = """
+					**통과한 축이 하나도 없는 인원(0단).** "안 물어본 것"(`unasked`)이 아니라 **물었는데 못한 것**이다.
+
+					🔴 **프론트엔드 확인 필요 — 도달 단계는 4단이 아니라 5단(0~4)이다.**
+					`operator/report/_/api/types.ts`의 손으로 쓴 `ReachDistribution`에 이 필드가 없어
+					`DistributionBar.tsx`가 `level1+level2+level3+level4+unasked`로만 합계를 낸다.
+					그러면 0단 인원이 막대 어디에도 안 들어가 **비율이 전부 부풀려지고**,
+					같은 행의 `2단 이하` 숫자는 0단을 포함한 `belowLevel2Count`를 쓰므로
+					**막대와 숫자가 서로 다른 모집단**을 말하게 된다. `labels.ts`의 CSV에도 0단 열이 없다.
+
+					⚠️ **지금은 값이 0이라 증상이 안 보인다.** 0단 인원이 한 명이라도 생기는 기수에서
+					비로소 틀리기 시작한다 — 데이터가 조용해서 더 늦게 발견된다.
+
+					자동 생성 타입(`src/api/schema.d.ts`의 `ReachDistribution`)에는 이 필드가 이미 있다.
+					손으로 쓴 타입을 생성 타입에 맞추면 된다.""")
 			int level0,
 			int level1,
 			int level2,
 			int level3,
 			int level4,
+			@Schema(description = """
+					묻지 못한 인원. 그 학생 코드에 개념이 없어 **문항이 아예 만들어지지 않은** 경우다.
+
+					🔴 `level0`과 합치면 안 된다 — "못한 것"과 "안 물어본 것"은 다르다.
+					`belowLevel2Count`(= 0단+1단+2단)에도 포함되지 않는다.""")
 			int unasked
 	) {
 	}
@@ -150,8 +170,26 @@ public record CohortDiagnosisResponse(
 			String name,
 			List<String> conceptNames,
 			ReachDistribution distribution,
+			@Schema(description = """
+					채점된 **(인원 × 개념)** 수. 회차 하나가 개념 3개를 물으므로 인원의 약 3배다
+					(예: 194명 → 582). `distribution`의 여섯 값을 더한 것과 같다.
+
+					⚠️ **`totalCount`와 단위가 다르다** — 아래 설명 참고.""", example = "582")
 			int gradedCount,
+			@Schema(description = """
+					이 회차의 대상 **인원** 수(예: 194).
+
+					⚠️ **`gradedCount`와 단위가 다르다.** 이쪽은 *사람*, `gradedCount`는 *사람 × 개념*이라
+					**두 값을 비율로 쓰면 안 된다**(582/194 = 300%). 회차의 달성률을 그리려면
+					`belowLevel2Count / gradedCount`처럼 **같은 단위끼리** 나눠야 한다
+					(화면 `RoundBreakdown.tsx`가 그렇게 쓰고 있다).
+
+					개념 단위(`ConceptDiagnosis`)에서는 둘 다 *사람*이라 단위가 같다 — 회차 단위만 다르다.""",
+					example = "194")
 			int totalCount,
+			@Schema(description = """
+					2단 이하 **(인원 × 개념)** 수. **0·1·2단의 합**이며 `unasked`는 빠진다.
+					`gradedCount`와 같은 단위라 둘을 나누면 회차의 미달 비율이 된다.""", example = "355")
 			int belowLevel2Count
 	) {
 	}
@@ -189,9 +227,21 @@ public record CohortDiagnosisResponse(
 			String conceptName,
 			String curriculumName,
 			String section,
+			@Schema(description = """
+					⚠️ **항상 빈 문자열(`""`)이다.** 값이 안 채워진 게 아니라 **애초에 없는 축**이다 —
+					이 지표의 grain이 `CLASS_CONCEPT`(반 × 개념)라 회차로 나뉘지 않는다.
+					회차별 분해가 필요하면 지표 grain 자체를 늘려야 한다(리포트 재생성이 따른다).
+
+					🔴 **프론트엔드 확인 필요 — CSV에 빈 열이 나간다.**
+					화면(`ClassOps.tsx`)은 이 필드를 쓰지 않아 지장이 없지만,
+					CSV 내보내기(`labels.ts`의 `exportReportCsv`)는 집단 미달 블록에 `회차` 열을
+					그대로 넣어 **외부로 나가는 파일에 빈 열이 통째로 실린다.**
+					데이터가 없는 열이므로 **CSV에서 그 열을 빼는 편**이 맞다.""", example = "")
 			String round,
 			String className,
+			@Schema(description = "2단 이하 인원(반 × 개념 기준). `totalCount`와 같은 단위라 둘을 나누면 미달 비율이 된다")
 			int shortfallCount,
+			@Schema(description = "그 반에서 이 개념을 채점한 인원. `shortfallCount`와 같은 단위다")
 			int totalCount
 	) {
 	}
