@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
@@ -94,6 +95,44 @@ public class AiClient {
 		} catch (ResourceAccessException exception) {
 			// 연결 실패·읽기 타임아웃. 응답이 없으므로 상태 코드도 failureCode도 없다.
 			// AI 서버가 살아 있는데 느린 것일 수 있어 재시도 가능으로 본다.
+			throw new AiCallException(null, "TIMEOUT", true,
+					"AI 서버에 닿지 못했습니다: " + path, exception);
+		}
+	}
+
+	/**
+	 * AI에 {@code multipart/form-data}로 POST한다. ZIP 제출 분석({@code POST /analyses})용이다.
+	 *
+	 * <p>파트를 {@code HttpEntity}로 감싸 넘기면 파트마다 {@code Content-Type}을 붙일 수 있고,
+	 * 객체 파트는 {@code FormHttpMessageConverter}가 중첩 Jackson 컨버터로 직렬화한다.
+	 * 여기서 JSON 문자열을 직접 만들지 않는 이유다 — 매퍼를 하나 더 두면 요청 본문 직렬화 규칙이
+	 * JSON 경로({@link #post})와 갈라진다.
+	 *
+	 * @param parts {@code MultiValueMap}. 파일 파트는 길이를 아는 {@code Resource}여야 한다 —
+	 *              {@code InputStream}을 넣으면 청크 전송이 되어 {@code Content-Length} 없는 파트를
+	 *              거절하는 서버에서 실패한다.
+	 */
+	public <T> T postMultipart(String path, MultiValueMap<String, Object> parts, Class<T> responseType,
+			String idempotencyKey, String traceId) {
+		try {
+			return restClient.post()
+					.uri(path)
+					.contentType(MediaType.MULTIPART_FORM_DATA)
+					.headers(headers -> {
+						if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+							headers.set(IDEMPOTENCY_KEY_HEADER, idempotencyKey);
+						}
+						if (traceId != null && !traceId.isBlank()) {
+							headers.set(TRACE_ID_HEADER, traceId);
+						}
+					})
+					.body(parts)
+					.retrieve()
+					.onStatus(HttpStatusCode::isError, (request, response) -> {
+						throw translate(path, response.getStatusCode(), readBody(response.getBody()));
+					})
+					.body(responseType);
+		} catch (ResourceAccessException exception) {
 			throw new AiCallException(null, "TIMEOUT", true,
 					"AI 서버에 닿지 못했습니다: " + path, exception);
 		}
