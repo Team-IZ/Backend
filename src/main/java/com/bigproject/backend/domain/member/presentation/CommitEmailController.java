@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
@@ -28,7 +29,7 @@ import org.springframework.web.bind.annotation.RestController;
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController
-@RequestMapping("/members/me/commit-email")
+@RequestMapping(value = "/members/me/commit-email", produces = MediaType.APPLICATION_JSON_VALUE)
 @PreAuthorize("hasRole('TRAINEE')")
 @RequiredArgsConstructor
 public class CommitEmailController {
@@ -36,7 +37,7 @@ public class CommitEmailController {
 	private final CommitEmailService commitEmailService;
 
 	@Operation(
-			summary = "내 커밋 이메일 조회",
+			summary = "내 커밋 이메일 조회 | ✅ 사용 가능",
 			description = """
 					**상태**: ✅ 사용 가능
 
@@ -124,7 +125,7 @@ public class CommitEmailController {
 	}
 
 	@Operation(
-			summary = "내 커밋 이메일 등록·변경",
+			summary = "내 커밋 이메일 등록·변경 | ✅ 사용 가능",
 			description = """
 					**상태**: ✅ 사용 가능
 

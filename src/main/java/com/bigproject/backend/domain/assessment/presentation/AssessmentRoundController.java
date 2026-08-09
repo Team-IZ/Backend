@@ -12,6 +12,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Assessment", description = "교육생 이해도 확인 회차")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/assessment-rounds")
+@RequestMapping(value = "/assessment-rounds", produces = MediaType.APPLICATION_JSON_VALUE)
 @PreAuthorize("hasRole('TRAINEE')")
 @RequiredArgsConstructor
 public class AssessmentRoundController {
@@ -29,7 +30,7 @@ public class AssessmentRoundController {
 	private final AssessmentRoundQueryService assessmentRoundQueryService;
 
 	@Operation(
-			summary = "교육생 홈 3구획 조회",
+			summary = "교육생 홈 3구획 조회 | ✅ 사용 가능",
 			description = """
 					**상태**: ✅ 사용 가능
 
