@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.academicoperations.presentation;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.academicoperations.application.CohortService;
 import com.bigproject.backend.domain.academicoperations.domain.Cohort;
 import com.bigproject.backend.domain.academicoperations.domain.CohortStatus;
@@ -21,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -43,23 +46,30 @@ import java.util.UUID;
 @Validated
 @RequiredArgsConstructor
 @RestController
-@RequestMapping("/cohorts")
+@RequestMapping(value = "/cohorts", produces = MediaType.APPLICATION_JSON_VALUE)
 public class CohortController {
 
 	private final CohortService cohortService;
-
-	// 기존 TODO("인증 연동 후 X-Actor-User-Id 헤더 제거")를 해소한 것이다.
-	// feat/rbac 머지로 CurrentUserResolver가 생겼고 organization·operations가 이미 이 방식을 쓴다.
-	// 헤더 방식은 클라이언트가 임의 UUID를 보내 cohort.created_by / updated_by를 위조할 수 있었다.
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "기관 기수 목록 조회",
+			operationId = "findCohorts",
+			summary = "기관 기수 목록 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					로그인한 사용자의 소속 기관에 개설된 기수를 상태 필터·이름 검색으로 페이지네이션 조회한다.
-					조회 범위인 기관은 요청 파라미터가 아니라 **액세스 토큰에서 가져온다** — 다른 기관의 기수는 조회할 수 없다.
+					조회 범위인 기관은 요청 파라미터가 아니라 액세스 토큰에서 가져온다 — 다른 기관의 기수는 조회할 수 없다.
+
+					**요청**
+					- status (쿼리, 선택): 기수 상태 필터. PLANNED/RUNNING/CLOSED. 생략하면 전체
+					- query (쿼리, 선택): 기수명 부분검색
+					- page (쿼리, 선택, 기본 0): 0부터 시작하는 페이지 번호
+					- size (쿼리, 선택, 기본 20, 최대 100): 페이지당 개수
+
+					**응답 (200)**
+					- content[]: 기수 목록(필드는 아래 "기수 상세 조회" 응답과 동일)
+					- page / size: 요청한 페이지 정보 그대로
+					- totalElements: 조건에 맞는 전체 기수 수
+					- totalPages: 전체 페이지 수
 
 					**아직 채워지지 않는 값** — content[].traineeCount는 항상 0, content[].managers는 항상 빈 배열이다.
 					교육생 수와 담당 매니저는 member·classroom 도메인 조인이 필요해 아직 연결되지 않았다.
@@ -68,9 +78,9 @@ public class CohortController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "기수 목록 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "page·size 범위가 올바르지 않음"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED page·size 범위가 올바르지 않음"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "500", description = "인증 정보에서 organizationId를 확인할 수 없음")
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
 	})
 	@GetMapping
 	public ResponseEntity<CohortListResponse> findCohorts(
@@ -104,13 +114,24 @@ public class CohortController {
 	}
 
 	@Operation(
-			summary = "기수 상세 조회",
+			operationId = "findCohort",
+			summary = "기수 상세 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					기수 하나의 상세 정보를 조회한다. 조회 범위인 기관은 액세스 토큰에서 가져오며,
-					**다른 기관의 기수를 요청하면 404**다(존재 여부 자체를 알려주지 않기 위해 403이 아니라 404로 응답한다).
+					다른 기관의 기수를 요청하면 404다(존재 여부 자체를 알려주지 않기 위해 403이 아니라 404로 응답한다).
 					삭제된 기수도 404다.
+
+					**요청**
+					- cohortId (경로): 조회할 기수 ID
+
+					**응답 (200)**
+					- cohortId: 기수 ID
+					- organizationId: 소속 기관 ID
+					- name: 기수명
+					- status: PLANNED(개설 예정) / RUNNING(진행 중) / CLOSED(종료)
+					- startDate / endDate: 기수 기간
+					- traineeCount: 소속 교육생 수
+					- managers[]: 담당 매니저 목록
 
 					**아직 채워지지 않는 값** — traineeCount는 항상 0, managers는 항상 빈 배열이다(목록 조회와 동일).
 					"""
@@ -118,8 +139,8 @@ public class CohortController {
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "기수 상세 조회 성공"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "404", description = "기수를 찾을 수 없음(다른 기관의 기수·삭제된 기수 포함)"),
-			@ApiResponse(responseCode = "500", description = "인증 정보에서 organizationId를 확인할 수 없음")
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수·삭제된 기수 포함)"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
 	})
 	@GetMapping("/{cohortId}")
 	public ResponseEntity<CohortResponse> findCohort(
@@ -132,25 +153,33 @@ public class CohortController {
 	}
 
 	@Operation(
-			summary = "기수 생성",
+			operationId = "createCohort",
+			summary = "기수 생성 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					오퍼레이터가 자기 기관에 새 기수를 개설한다. 개설 시 기관의 활성 운영 정책에서
 					기본 공개범위(defaultDisclosureScope)를 복사해 기수에 고정한다 — 이후 기관 정책이 바뀌어도
 					이미 만들어진 기수의 공개범위는 따라 바뀌지 않는다.
 
-					⚠️ `X-Actor-User-Id`는 인증 연동 전의 임시 헤더다. 클라이언트가 임의 UUID를 보낼 수 있는 구조라
-					감사 필드를 신뢰할 수 없으며, 토큰에서 사용자 UUID를 얻게 되면 제거될 예정이다.
+					**요청**
+					- organizationId (필수): 기수를 개설할 기관 ID. 액세스 토큰의 기관과 다르면 403
+					- name (필수): 기수명. 같은 기관 안에서 중복되면 409
+					- startDate (필수) / endDate (필수): 기수 기간. endDate가 startDate보다 빠르면 400
+
+					**응답 (201)**
+					- 생성된 기수 정보(응답 필드는 "기수 상세 조회"와 동일). status는 PLANNED로 시작한다
+
+					⚠️ `initialTrainees`를 요청에 넣어도 저장되지 않는다. 스키마에는 남아 있지만 서버가 사용하지 않으며,
+					교육생 등록은 `POST /cohorts/{cohortId}/trainees`(CSV) 또는 `.../trainees/invitations`(직접 입력)로 한다.
 					"""
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "201", description = "기수 생성 성공"),
-			@ApiResponse(responseCode = "400", description = "필수값 누락 또는 종료일이 시작일보다 빠름"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 필수값 누락 · COHORT_PERIOD_INVALID 종료일이 시작일보다 빠름"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "오퍼레이터가 아니거나 다른 기관의 organizationId를 지정함"),
-			@ApiResponse(responseCode = "409", description = "같은 기관에 이미 존재하는 기수명"),
-			@ApiResponse(responseCode = "500", description = "기관에 활성 운영 정책이 없음")
+			@ApiResponse(responseCode = "409",
+					description = "COHORT_NAME_TAKEN 같은 기관에 이미 존재하는 기수명 · ORG_POLICY_NOT_FOUND 기관에 활성 운영 정책이 없음"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@PostMapping
@@ -172,25 +201,29 @@ public class CohortController {
 	}
 
 	@Operation(
-			summary = "기수 종료",
+			operationId = "endCohort",
+			summary = "기수 종료 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					진행 중인 기수를 CLOSED로 전환한다. 종료 대상 기관은 액세스 토큰에서 가져오므로
 					다른 기관의 기수를 종료할 수 없다(404).
 
+					**요청**
+					- cohortId (경로): 종료할 기수 ID
+					- reason (필수): 종료 사유. 빈 문자열이면 400
+
+					**응답 (200)**
+					- 종료 처리된 기수 정보(응답 필드는 "기수 상세 조회"와 동일). status가 CLOSED로 바뀐다
+
 					종료는 삭제가 아니다. 명단·과거 이력은 그대로 남고 새 활동만 막힌다. 이미 종료된 기수를
 					다시 종료하면 아무 변화 없이 그대로 성공 응답한다(멱등).
-
-					⚠️ `X-Actor-User-Id`는 인증 연동 전의 임시 헤더다(기수 생성과 동일).
 					"""
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "기수 종료 성공"),
-			@ApiResponse(responseCode = "400", description = "종료 사유가 비어 있음"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 종료 사유가 비어 있음"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한이 없음"),
-			@ApiResponse(responseCode = "404", description = "기수를 찾을 수 없음(다른 기관의 기수 포함)")
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수 포함)")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/{cohortId}/end")
@@ -205,12 +238,10 @@ public class CohortController {
 		return ResponseEntity.ok(CohortResponse.from(cohort));
 	}
 
-	// JwtFilter가 authentication.getDetails()에 담아준 organizationId(UUID)를 추출
 	private UUID extractOrganizationId(Authentication authentication) {
 		Object details = authentication.getDetails();
 		if (!(details instanceof UUID organizationId)) {
-			throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-					"인증 정보에서 organizationId(UUID)를 확인할 수 없습니다.");
+			throw new ApiException(AcademicOperationsErrorCode.ORGANIZATION_CONTEXT_MISSING);
 		}
 		return organizationId;
 	}

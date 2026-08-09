@@ -1,0 +1,193 @@
+package com.bigproject.backend.domain.auth.application;
+
+import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
+import com.bigproject.backend.global.security.ClientIpAddresses;
+import com.bigproject.backend.global.security.InstanceIdentity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * 로그인 연속 실패를 세어 잠시 지연시킨다. {@code LOGIN_TEMPORARILY_BLOCKED}(429)를 실제로 만드는 곳이다.
+ *
+ * <p>코드와 {@code retryAfter}는 전부터 있었지만 <b>카운터가 없어 실제로는 한 번도 발생하지 않았다.</b>
+ * 임계값은 제품 결정이라 프론트 답을 기다리고 있었고, 3차 요청서 A1로 확정됐다 —
+ * <b>5회 실패 → 60초, 이후 실패마다 2배, 상한 15분.</b> 성공하면 카운터를 버린다.
+ *
+ * <p><b>계정 잠금이 아니라 지연인 이유.</b> 화면정의서 v2가 잠금을 버린 이유는 "명단에 전원 이메일이
+ * 있어 잠금이 남을 막는 수단이 되고, 해제 화면이 없다"였다. 즉 임계값이 낮거나 지속이 길면
+ * <b>그 자체가 공격 수단</b>이 된다. 5회는 오타 반복(교육생이 자주 그런다)을 넘기고, 60초는 자동화만
+ * 실질적으로 막는 선이다.
+ *
+ * <p><b>왜 이메일이 아니라 이메일+IP로 세는가.</b> 이메일만으로 세면 남의 이메일에 다섯 번 틀리는
+ * 것만으로 그 사람을 막을 수 있다 — 위에서 버린 바로 그 문제가 이름만 바꿔 돌아온다. 키에 IP를
+ * 넣으면 공격자는 자기 자리만 막게 된다. 대신 IP를 바꿔 가며 오는 분산 시도는 이 장치로 막지
+ * 못한다. 그건 여기서 풀 문제가 아니다.
+ *
+ * <p><b>카운터는 이 인스턴스의 메모리에만 있다.</b> DB {@code app_user.login_blocked_until}에 쓰지
+ * 않는 이유는 그 컬럼이 <b>계정 단위</b>라 IP를 담을 수 없고, 거기에 쓰는 순간 이메일만으로 남을
+ * 막을 수 있게 되기 때문이다. 대가로 재시작하면 카운터가 사라지고 인스턴스를 늘리면 인스턴스마다
+ * 따로 센다. 지연이 목적이라 그 정도 누수는 감수할 수 있고, 여러 인스턴스로 갈 때 공유 저장소로
+ * 옮기면 된다. {@code login_blocked_until}은 그대로 살아 있으며 운영자가 직접 채우는 경로로 남는다
+ * ({@code AuthService#validateAccount}).
+ *
+ * <p><b>차단이 확률적으로만 걸리던 문제(4차 요청서 Q1).</b> 원인은 인스턴스가 아니라 <b>키</b>였다.
+ * 호출부가 {@code getRemoteAddr()}를 그대로 넘겼는데 이 서비스는 프록시 뒤라 그 값은 <b>프록시의
+ * 주소</b>였고, 프록시가 여러 대라 <b>요청마다 값이 달라져</b> 카운터가 한 키에 쌓이지 못했다.
+ * 이제 IP는 {@code ClientIpResolver}가 프록시 헤더에서 뽑아 넘기고, 여기서는 한 번 더
+ * {@link ClientIpAddresses#throttleKey(String)}로 정규화한다 — 표기가 달라도
+ * ({@code ::ffff:1.2.3.4} · 대문자 · 포트 · IPv6 임시 주소) 같은 클라이언트면 같은 키가 된다.
+ *
+ * <p><b>진단 로그를 남긴다.</b> 실패·차단마다 {@code instance}와 <b>실제로 사용한 키의 IP</b>를
+ * 함께 찍는다. 다시 새는 일이 생겼을 때 로그 한 번으로 "키가 흩어졌나(IP가 여러 개)"와
+ * "요청이 인스턴스로 나뉘었나({@code instance}가 여러 개)"가 갈린다 — 이 둘은 증상이 똑같고
+ * 해법이 완전히 다르다. 이메일은 로그인 시도의 식별자일 뿐이므로 첫 글자와 도메인만 남긴다.
+ */
+@Component
+public class LoginAttemptThrottle {
+	private static final Logger log = LoggerFactory.getLogger(LoginAttemptThrottle.class);
+
+	/**
+	 * 기록을 들고 있을 상한. 넘으면 지난 것부터 버린다 — 실패 기록이 무한히 쌓이면
+	 * 로그인 API가 그대로 메모리 고갈 수단이 된다.
+	 */
+	private static final int MAX_TRACKED_KEYS = 10_000;
+
+	private final int maxAttempts;
+	private final Duration initialBlock;
+	private final Duration maxBlock;
+	private final Map<String, Attempts> attemptsByKey = new ConcurrentHashMap<>();
+
+	public LoginAttemptThrottle(
+			@Value("${auth.login.throttle.max-attempts:5}") int maxAttempts,
+			@Value("${auth.login.throttle.initial-block:PT1M}") Duration initialBlock,
+			@Value("${auth.login.throttle.max-block:PT15M}") Duration maxBlock
+	) {
+		this.maxAttempts = Math.max(1, maxAttempts);
+		this.initialBlock = initialBlock;
+		this.maxBlock = maxBlock.compareTo(initialBlock) < 0 ? initialBlock : maxBlock;
+	}
+
+	/**
+	 * 차단 중이면 남은 시간을 실어 거절한다. <b>비밀번호 검사보다 먼저</b> 불러야 자동화를 실제로 막는다.
+	 */
+	public void checkNotBlocked(String email, String ipAddress) {
+		Attempts attempts = attemptsByKey.get(key(email, ipAddress));
+		if (attempts == null || attempts.blockedUntil() == null) {
+			return;
+		}
+		Instant now = Instant.now();
+		if (attempts.blockedUntil().isAfter(now)) {
+			// 0이 되지 않도록 올림한다 — 0을 주면 화면이 즉시 재시도해 또 막힌다.
+			long retryAfterSeconds = Math.max(1, Duration.between(now, attempts.blockedUntil()).toSeconds());
+			log.info(
+					"login-throttle 차단 instance={} email={} clientIp={} failures={} retryAfterSeconds={}",
+					InstanceIdentity.id(), maskEmail(email), ipKey(ipAddress),
+					attempts.failures(), retryAfterSeconds
+			);
+			throw new ApiException(AuthErrorCode.LOGIN_TEMPORARILY_BLOCKED, retryAfterSeconds);
+		}
+	}
+
+	/** 자격 증명이 틀렸을 때만 부른다. 정지 계정·기관 정지처럼 계정 상태 때문에 막힌 것은 세지 않는다. */
+	public void recordFailure(String email, String ipAddress) {
+		Instant now = Instant.now();
+		evictStaleIfCrowded(now);
+		Attempts updated = attemptsByKey.compute(key(email, ipAddress), (ignored, current) -> {
+			int failures = (current == null || current.isStale(now, maxBlock) ? 0 : current.failures()) + 1;
+			return new Attempts(failures, blockUntil(failures, now), now);
+		});
+		// 이 한 줄이 "차단이 새는" 증상의 원인을 가른다 — clientIp가 흩어지면 키 문제,
+		// instance가 흩어지면 인스턴스 문제다.
+		log.info(
+				"login-throttle 실패 instance={} email={} clientIp={} failures={} blockedForSeconds={}",
+				InstanceIdentity.id(), maskEmail(email), ipKey(ipAddress), updated.failures(),
+				updated.blockedUntil() == null
+						? 0
+						: Math.max(1, Duration.between(now, updated.blockedUntil()).toSeconds())
+		);
+	}
+
+	/** 로그인에 성공하면 그 자리의 카운터를 되돌린다. */
+	public void reset(String email, String ipAddress) {
+		attemptsByKey.remove(key(email, ipAddress));
+	}
+
+	/**
+	 * 임계값에 닿기 전에는 잠그지 않는다. 닿은 뒤로는 실패마다 2배씩 늘리고 상한에서 멈춘다.
+	 * 5회→60초 · 6회→2분 · 7회→4분 · 8회→8분 · 9회 이후→15분.
+	 */
+	private Instant blockUntil(int failures, Instant now) {
+		if (failures < maxAttempts) {
+			return null;
+		}
+		int doublings = failures - maxAttempts;
+		Duration block = maxBlock;
+		// 2의 거듭제곱은 금방 long을 넘긴다. 상한에 닿으면 더 곱하지 않는다.
+		if (doublings < Long.SIZE - 1) {
+			Duration scaled = initialBlock.multipliedBy(1L << doublings);
+			block = scaled.compareTo(maxBlock) > 0 ? maxBlock : scaled;
+		}
+		return now.plus(block);
+	}
+
+	/**
+	 * 상한을 넘었을 때만 훑는다. 매 실패마다 전체를 훑으면 실패가 잦을수록 느려지는데,
+	 * 실패가 잦은 상황이 바로 공격받는 상황이다.
+	 */
+	private void evictStaleIfCrowded(Instant now) {
+		if (attemptsByKey.size() < MAX_TRACKED_KEYS) {
+			return;
+		}
+		attemptsByKey.values().removeIf(attempts -> attempts.isStale(now, maxBlock));
+	}
+
+	/**
+	 * 키는 <b>정규화한 이메일 + 정규화한 IP</b>다. IP를 받은 문자열 그대로 쓰면 표기 하나만 달라도
+	 * 다른 카운터가 되어 차단이 새어나간다 — {@link ClientIpAddresses#throttleKey(String)} 참고.
+	 */
+	private String key(String email, String ipAddress) {
+		String normalizedEmail = email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+		return normalizedEmail + " " + ipKey(ipAddress);
+	}
+
+	private String ipKey(String ipAddress) {
+		return ClientIpAddresses.throttleKey(ipAddress);
+	}
+
+	/**
+	 * 로그에 이메일 전체를 남기지 않는다. 어느 계정을 노리는지는 도메인과 첫 글자로 충분히 좁혀지고,
+	 * 서버 로그는 이 서비스에서 가장 오래 남고 가장 널리 읽히는 저장소다.
+	 */
+	private String maskEmail(String email) {
+		if (email == null || email.isBlank()) {
+			return "(none)";
+		}
+		String value = email.trim();
+		int at = value.indexOf('@');
+		if (at <= 0) {
+			return "***";
+		}
+		return value.charAt(0) + "***" + value.substring(at);
+	}
+
+	/**
+	 * @param failures     연속 실패 횟수
+	 * @param blockedUntil 이 시각까지 거절한다. 임계값 미만이면 {@code null}
+	 * @param lastFailedAt 마지막 실패 시각. 조용해진 지 오래면 기록을 버린다
+	 */
+	private record Attempts(int failures, Instant blockedUntil, Instant lastFailedAt) {
+		/** 상한 잠금 시간만큼 조용하면 카운터를 처음부터 다시 센다. */
+		boolean isStale(Instant now, Duration retention) {
+			return lastFailedAt.plus(retention).isBefore(now);
+		}
+	}
+}

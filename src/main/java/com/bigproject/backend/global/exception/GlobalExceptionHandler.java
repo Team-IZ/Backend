@@ -1,61 +1,93 @@
 package com.bigproject.backend.global.exception;
 
-import com.bigproject.backend.domain.member.application.InvitationConflictException;
-import com.bigproject.backend.domain.auth.application.PasswordResetException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.Instant;
+import java.util.List;
 
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
-	@ExceptionHandler(PasswordResetException.class)
-	public ResponseEntity<ErrorResponse> handlePasswordReset(PasswordResetException exception) {
-		return ResponseEntity.status(exception.status()).body(ErrorResponse.of(
-				exception.status().value(),
-				exception.code(),
-				exception.getMessage()
-		));
-	}
 
-	@ExceptionHandler(InvitationConflictException.class)
-	public ResponseEntity<ErrorResponse> handleInvitationConflict(InvitationConflictException exception) {
-		return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.of(
-				HttpStatus.CONFLICT.value(),
-				HttpStatus.CONFLICT.getReasonPhrase(),
-				exception.getMessage()
-		));
-	}
+	/** 안정 코드가 없는 예외에 붙이는 검증 실패 코드. 프론트는 fieldErrors를 읽어 입력칸에 붙인다. */
+	static final String VALIDATION_FAILED = "VALIDATION_FAILED";
 
+	/**
+	 * 본문 DTO의 Bean Validation 실패.
+	 *
+	 * <p>전에는 "요청 값이 올바르지 않습니다." 한 줄만 내려서 <b>어느 칸이 틀렸는지 알 수 없었다.</b>
+	 * 화면이 입력칸 옆에 사유를 붙일 수 있도록 필드명·사유를 {@code fieldErrors}로 함께 준다.
+	 * 값 자체는 싣지 않는다 — 비밀번호처럼 되돌려 보내면 안 되는 입력이 섞여 있다.
+	 */
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ResponseEntity<ErrorResponse> handleValidation(
 			MethodArgumentNotValidException exception,
 			HttpServletRequest request
 	) {
-		ErrorResponse response = new ErrorResponse(
-				Instant.now(),
-				HttpStatus.BAD_REQUEST.value(),
-				"Validation Failed",
-				"요청 값이 올바르지 않습니다."
-		);
-		return ResponseEntity.badRequest().body(response);
+		List<ErrorResponse.FieldError> fieldErrors = exception.getBindingResult().getFieldErrors().stream()
+				.map(error -> new ErrorResponse.FieldError(
+						error.getField(),
+						error.getDefaultMessage() == null ? "올바르지 않은 값입니다." : error.getDefaultMessage()
+				))
+				.toList();
+
+		return ResponseEntity.badRequest().body(ErrorResponse.of(
+				HttpStatus.BAD_REQUEST,
+				VALIDATION_FAILED,
+				"요청 값이 올바르지 않습니다.",
+				fieldErrors
+		));
+	}
+
+	/**
+	 * 본문 JSON을 DTO로 만들지 못했다. 형식이 깨졌거나, 허용값이 아닌 enum 문자열이 왔거나,
+	 * 필드 타입이 맞지 않는 경우다.
+	 *
+	 * <p>잡지 않으면 스프링 기본 처리로 넘어가 <b>이 API만 응답 모양이 달라진다</b> — 다른 400은
+	 * {@code code}·{@code fieldErrors}를 담은 ErrorResponse인데 여기만 {timestamp, status, error, path}가
+	 * 나가서 화면이 분기해야 한다. 허용값을 타입으로 좁힌 DTO(예: {@code TraineeStatusUpdate})는
+	 * 잘못된 값이 이 경로로 오므로 형식을 맞춰 둔다.
+	 *
+	 * <p>파싱 실패 원문은 싣지 않는다. 역직렬화 예외 메시지에는 클래스 경로와 입력값이 그대로 들어 있다.
+	 */
+	@ExceptionHandler(HttpMessageNotReadableException.class)
+	public ResponseEntity<ErrorResponse> handleUnreadableBody(
+			HttpMessageNotReadableException exception,
+			HttpServletRequest request
+	) {
+		log.warn("요청 본문을 읽지 못했습니다: method={}, path={}",
+				request.getMethod(), request.getRequestURI(), exception);
+		return ResponseEntity.badRequest().body(ErrorResponse.of(
+				HttpStatus.BAD_REQUEST,
+				VALIDATION_FAILED,
+				"요청 본문을 읽을 수 없습니다. 형식과 허용값을 확인해 주세요.",
+				List.of()
+		));
 	}
 
 	@ExceptionHandler(ConstraintViolationException.class)
 	public ResponseEntity<ErrorResponse> handleConstraintViolation(ConstraintViolationException exception) {
+		List<ErrorResponse.FieldError> fieldErrors = exception.getConstraintViolations().stream()
+				.map(violation -> new ErrorResponse.FieldError(
+						violation.getPropertyPath().toString(),
+						violation.getMessage()
+				))
+				.toList();
+
 		return ResponseEntity.badRequest().body(ErrorResponse.of(
-				HttpStatus.BAD_REQUEST.value(),
-				"Validation Failed",
-				"요청 값이 올바르지 않습니다."
+				HttpStatus.BAD_REQUEST,
+				VALIDATION_FAILED,
+				"요청 값이 올바르지 않습니다.",
+				fieldErrors
 		));
 	}
 
@@ -77,6 +109,7 @@ public class GlobalExceptionHandler {
 		return ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse.of(
 				HttpStatus.CONFLICT.value(),
 				"DATA_INTEGRITY_VIOLATION",
+				"DATA_INTEGRITY_VIOLATION",
 				"요청을 처리할 수 없습니다. 데이터 제약 조건에 맞지 않습니다."
 		));
 	}
@@ -92,17 +125,23 @@ public class GlobalExceptionHandler {
 	 * server.error.include-stacktrace=never 로 막는다.
 	 */
 
+	/**
+	 * {@code ResponseStatusException}은 안정 코드를 담지 않는다(auth 도메인이 주로 쓴다).
+	 * 프론트가 최소한 상태 단위로는 분기할 수 있도록 <b>HTTP 상태 이름</b>을 코드로 쓴다 —
+	 * 케이스별 분기가 필요해지면 그 지점을 도메인 예외로 승격시켜 코드를 붙인다.
+	 */
 	@ExceptionHandler(ResponseStatusException.class)
 	public ResponseEntity<ErrorResponse> handleResponseStatus(
 			ResponseStatusException exception,
 			HttpServletRequest request
 	) {
-		int status = exception.getStatusCode().value();
+		HttpStatus status = HttpStatus.resolve(exception.getStatusCode().value());
 		ErrorResponse response = ErrorResponse.of(
-				status,
+				exception.getStatusCode().value(),
 				exception.getStatusCode().toString(),
+				status == null ? "UNEXPECTED_ERROR" : status.name(),
 				exception.getReason() == null ? "요청을 처리할 수 없습니다." : exception.getReason()
 		);
-		return ResponseEntity.status(status).body(response);
+		return ResponseEntity.status(exception.getStatusCode()).body(response);
 	}
 }

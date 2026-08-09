@@ -44,10 +44,10 @@ public record PlatformSummaryResponse(
 			@Schema(description = "전 기관 월 예산 합계")
 			BigDecimal totalMonthlyBudget,
 
-			@Schema(description = "예산 소진율(0~1). 예산 합계가 0이면 null")
+			@Schema(description = "예산 소진율(0~1). 예산 합계가 0이면 null", nullable = true)
 			BigDecimal budgetUsageRate,
 
-			@Schema(description = "전월 대비 증감률. 전월 값이 0이거나 없으면 null", example = "0.18")
+			@Schema(description = "전월 대비 증감률. 전월 값이 0이거나 없으면 null", example = "0.18", nullable = true)
 			BigDecimal changeRateVsPrevMonth,
 
 			String currencyCode
@@ -58,7 +58,7 @@ public record PlatformSummaryResponse(
 	public record Storage(
 			long totalBytes,
 
-			@Schema(description = "전월 대비 증감률. 전월 값이 0이거나 없으면 null", example = "0.06")
+			@Schema(description = "전월 대비 증감률. 전월 값이 0이거나 없으면 null", example = "0.06", nullable = true)
 			BigDecimal changeRateVsPrevMonth,
 
 			@Schema(description = "기관 1곳당 평균 저장 바이트")

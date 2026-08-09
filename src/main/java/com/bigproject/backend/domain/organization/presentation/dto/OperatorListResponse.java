@@ -10,6 +10,12 @@ import java.util.UUID;
 /**
  * 기관의 오퍼레이터 계정 목록. 목업 SA-02 ② `이 기관의 오퍼레이터 계정` 표에 대응한다.
  * 컬럼: 이름 / 이메일 / 상태 / 초대일 / 최근 로그인 + 행별 액션(정지·재활성·취소).
+ *
+ * <p>항목 이름이 {@code OperatorListItem}인 이유 — 스펙의 스키마 이름은 <b>중첩 record의 홑이름</b>으로
+ * 정해진다. 예전에는 이 항목도 {@code Operator}였는데 {@code OrganizationResponse.Operator}(이름·이메일만
+ * 담는 요약)와 이름이 같아 <b>한쪽이 다른 쪽을 덮었다.</b> 좁은 쪽이 남는 바람에 목록 응답의 스키마에
+ * {@code status}·{@code suspendable} 같은 필드가 통째로 사라졌고, 스펙으로 타입을 생성하는 화면에서는
+ * 서버가 내려주는 값을 쓸 방법이 없었다. 두 응답이 같은 이름을 쓰지 않게 갈라 둔다.
  */
 @Schema(description = "기관 오퍼레이터 계정 목록 (SA-02 ② 오퍼레이터 탭)")
 public record OperatorListResponse(
@@ -18,34 +24,29 @@ public record OperatorListResponse(
 		@Schema(description = "활성 오퍼레이터 수. 0이면 기관이 아직 시작되지 않은 상태(`오퍼레이터 미배정`)")
 		int activeCount,
 
-		List<Operator> content
+		List<OperatorListItem> content
 ) {
 
 	@Schema(description = "오퍼레이터 계정 한 줄")
-	public record Operator(
+	public record OperatorListItem(
 			UUID memberId,
 
-			@Schema(description = "이름. 초대만 되고 아직 활성화되지 않으면 비어 있다(화면에서는 `—`).")
+			@Schema(description = "이름. 초대만 되고 아직 활성화되지 않으면 비어 있다(화면에서는 `—`).", nullable = true)
 			String name,
 
 			String email,
 
-			@Schema(description = """
-					계정 상태. ACTIVE(활성) / PENDING(초대됨) / INACTIVE(정지).
-					v06에서 LOCKED가 폐지됐다 — 로그인 연속 실패로 인한 일시 차단은 상태가 아니라
-					app_user.login_blocked_until 시각으로 표현한다.
-					목업의 `메일 발송 실패` 배지는 계정 상태가 아니라 초대 원장(user_invitation.status=DELIVERY_FAILED)에서 온다.""")
 			OperatorAccountStatus status,
 
-			@Schema(description = "최초 초대 시각. 초대 이력이 없으면 null")
+			@Schema(description = "최초 초대 시각. 초대 이력이 없으면 null", nullable = true)
 			Instant invitedAt,
 
-			@Schema(description = "최근 로그인 시각. 한 번도 로그인하지 않았으면 null(화면에서는 `대기 중`)")
+			@Schema(description = "최근 로그인 시각. 한 번도 로그인하지 않았으면 null(화면에서는 `대기 중`)", nullable = true)
 			Instant lastLoginAt,
 
 			@Schema(description = """
 					대기 중인 초대 토큰 ID. null이 아니면 아직 수락되지 않은 초대이므로 `취소` 액션을 노출한다.
-					취소 호출 시 이 값을 경로에 넣는다.""")
+					취소 호출 시 이 값을 경로에 넣는다.""", nullable = true)
 			UUID pendingInvitationTokenId,
 
 			@Schema(description = """

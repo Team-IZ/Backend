@@ -49,3 +49,5 @@ vite-project
 
 ### Submission artifacts (local storage) ###
 var/
+
+uploads/

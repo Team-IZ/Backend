@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.organization.domain;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * 오퍼레이터 계정 상태. app_user.status의 DB CHECK(ck_app_user_status)와 값을 맞춘다.
  *
@@ -22,6 +24,7 @@ package com.bigproject.backend.domain.organization.domain;
  * <p>member 도메인의 {@code AccountStatus}와 값이 겹치지만, 여기서 그 enum을 쓰지 않는 이유는
  * organization 도메인이 member 도메인 타입에 묶이지 않게 하기 위함이다(DB 문자열에서 직접 매핑한다).
  */
+@Schema(name = "OperatorAccountStatus", description = "오퍼레이터·슈퍼어드민 계정 상태. ACTIVE(활성) · PENDING(초대됨, 수락 전) · INACTIVE(정지·퇴사). v06에서 LOCKED는 폐지됐다 — 로그인 연속 실패로 인한 일시 차단은 상태가 아니라 login_blocked_until 시각이다.", enumAsRef = true)
 public enum OperatorAccountStatus {
 	PENDING,
 	ACTIVE,

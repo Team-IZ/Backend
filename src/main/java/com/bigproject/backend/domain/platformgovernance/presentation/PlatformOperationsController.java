@@ -19,6 +19,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -43,7 +44,7 @@ import java.util.UUID;
 @PreAuthorize("hasRole('SUPER_ADMIN')")
 @Validated
 @RestController
-@RequestMapping("/platform/operations")
+@RequestMapping(value = "/platform/operations", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class PlatformOperationsController {
 
@@ -53,10 +54,9 @@ public class PlatformOperationsController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "플랫폼 모델·단가 설정 조회",
+			operationId = "findModelSettings",
+			summary = "플랫폼 모델·단가 설정 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-03 ① `모델 · 단가` 탭 **전체를 한 번에** 채운다. 이 화면에서 다른 조회 API 는 필요 없다.
 
 					## 요청
@@ -132,10 +132,9 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "채점 모델 변경 (전 기관 재캘리브레이션 유발)",
+			operationId = "updateGradingModel",
+			summary = "채점 모델 변경 (전 기관 재캘리브레이션 유발) | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-03 ① `채점 · 고정 · claude-x` 행의 변경 액션.
 
 					## ⚠️ 되돌릴 수 없다
@@ -204,10 +203,9 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "티어 ↔ 모델 매핑 변경",
+			operationId = "updateTierModel",
+			summary = "티어 ↔ 모델 매핑 변경 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-03 ① `코드 세션 · 정확도 우선 / 균형 / 비용 우선` 3티어 매핑을 바꾼다.
 					**한 번에 한 티어씩** 바꾼다.
 
@@ -260,10 +258,9 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "모델 단가 수정",
+			operationId = "updateModelPricing",
+			summary = "모델 단가 수정 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-03 ① `단가 · 모델별 입력·출력 토큰 단가` 행의 `입력`/`수정` 액션.
 
 					## 요청
@@ -327,10 +324,9 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "슈퍼어드민 계정 목록",
+			operationId = "findSuperAdmins",
+			summary = "슈퍼어드민 계정 목록 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-03 ② `슈퍼어드민 계정` 탭의 목록.
 
 					## 요청
@@ -376,21 +372,9 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "슈퍼어드민 초대",
+			operationId = "inviteSuperAdmin",
+			summary = "슈퍼어드민 초대 | ✅ 사용 가능",
 			description = """
-					**상태**: ⚠️ 사용 불가
-
-					초대 메일 발송까지는 동작하지만 **받은 사람이 가입할 수 없다.** 수락 경로가 막혀 있어
-					초대해도 활성 슈퍼어드민이 늘지 않으므로, 프론트는 아직 이 API를 연결하지 않는다.
-
-					막는 지점은 세 곳이며 전부 이 도메인 밖이다.
-					1. `OneTimeTokenJpaRepository.findActivationTargetForUpdate` — `JOIN organization`과
-					   `u.org_id = ott.org_id`가 `org_id IS NULL`인 슈퍼어드민을 걸러 낸다(auth 도메인)
-					2. `findResolvableInvitation` — 같은 조인 문제 + 목적 목록에 `INVITE_SUPER_ADMIN`이 없다(auth 도메인)
-					3. `consent_record.org_id`가 NOT NULL이라 동의 기록에서 실패한다(**DDL 변경 필요**)
-
-					---
-
 					SA-03 ② `+ 계정 초대`. 계정 자리를 만들고 초대 메일을 보낸다.
 
 					## 요청 (JSON 본문)
@@ -458,19 +442,9 @@ public class PlatformOperationsController {
 	}
 
 	@Operation(
-			summary = "슈퍼어드민 정지 · 재활성",
+			operationId = "updateSuperAdminStatus",
+			summary = "슈퍼어드민 정지 · 재활성 | ✅ 사용 가능",
 			description = """
-					**상태**: ⚠️ 사용 불가
-
-					API 자체는 정상 동작하지만 **현재 환경에서는 정지를 성공시킬 수 없다.**
-					활성 슈퍼어드민이 1명뿐이라 아래 `LAST_SUPER_ADMIN` 방어에 항상 걸린다.
-					2명 이상으로 만들려면 슈퍼어드민 초대의 수락 경로가 열려야 하는데 그쪽이 막혀 있다
-					(`POST /platform/operations/super-admins/invitations` 설명 참고).
-
-					→ 초대 수락 경로가 열리면 이 API 는 그대로 사용 가능하다. 재활성(ACTIVE)은 지금도 동작한다.
-
-					---
-
 					SA-03 ② 표의 행별 액션 `정지` / `재활성`.
 
 					## 요청
@@ -504,6 +478,22 @@ public class PlatformOperationsController {
 
 					⚠️ **`PENDING` 계정은 활성 수에 포함되지 않는다.** 목록에 2명이 보여도 하나가 `PENDING`
 					이면 `activeCount=1` 이라 정지가 차단된다 — 초대장만으로는 플랫폼에 들어올 수 없기 때문이다.
+
+					## ⚠️ 자기 자신도 정지된다 (알려진 이슈)
+
+					**서버는 호출자와 대상이 같은지 확인하지 않는다.** 활성 슈퍼어드민이 2명 이상이면
+					`LAST_SUPER_ADMIN` 방어에 걸리지 않으므로, 자기 `memberId` 를 넣으면 **본인 계정이
+					정지되고 즉시 로그인 불가 상태가 된다.** 응답은 200 이고 경고도 없다.
+
+					정지된 계정은 스스로 풀 수 없고 슈퍼어드민 위에 상위 권한이 없으므로, **다른 활성
+					슈퍼어드민이 재활성해 주어야만 복구된다.** 활성 2명 중 서로를 정지시키면 둘 다 잠긴다.
+
+					목록 응답의 `deactivatable` 은 이 경우를 **걸러 주지 않는다** — 마지막 1명 여부만 본다.
+					따라서 화면이 방어해야 한다. 로그인한 사용자의 `memberId` 와 같은 행은 정지 버튼을
+					잠그거나, 최소한 되돌릴 수 없다는 확인 절차를 두는 것을 권한다.
+
+					> 서버에서 막지 않는 이유는 의도가 아니라 **누락**이다. 자기 정지를 금지할지, 확인 절차를
+					> 거쳐 허용할지 정책이 정해지면 서버 쪽 검증을 추가한다.
 
 					## 오류
 

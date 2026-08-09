@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -42,7 +43,7 @@ import java.util.UUID;
 @SecurityRequirement(name = "bearerAuth")
 @PreAuthorize("hasRole('SUPER_ADMIN')")
 @RestController
-@RequestMapping("/organizations/{organizationId}/operators")
+@RequestMapping(value = "/organizations/{organizationId}/operators", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class OperatorController {
 
@@ -51,9 +52,9 @@ public class OperatorController {
 	private final OperatorService operatorService;
 
 	@Operation(
-			summary = "기관 오퍼레이터 계정 목록 조회",
+			operationId = "findOperators",
+			summary = "기관 오퍼레이터 계정 목록 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
 
 					SA-02 ② `이 기관의 오퍼레이터 계정` 표를 채운다.
 
@@ -118,10 +119,9 @@ public class OperatorController {
 	}
 
 	@Operation(
-			summary = "오퍼레이터 초대",
+			operationId = "inviteOperator",
+			summary = "오퍼레이터 초대 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-02 ② `오퍼레이터 초대` 모달. 계정 자리를 만들고 초대 메일을 보낸다.
 
 					## 요청
@@ -197,10 +197,9 @@ public class OperatorController {
 	}
 
 	@Operation(
-			summary = "오퍼레이터 계정 정지 / 재활성",
+			operationId = "updateOperatorStatus",
+			summary = "오퍼레이터 계정 정지 / 재활성 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-02 ② 표의 행별 액션 `정지` / `재활성`.
 
 					## 요청
@@ -262,10 +261,9 @@ public class OperatorController {
 	}
 
 	@Operation(
-			summary = "오퍼레이터 초대 취소",
+			operationId = "cancelInvitation",
+			summary = "오퍼레이터 초대 취소 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-02 ② 표의 `취소` 액션. 아직 수락되지 않은 초대를 무효화한다.
 
 					## 요청
@@ -328,10 +326,9 @@ public class OperatorController {
 	}
 
 	@Operation(
-			summary = "오퍼레이터 초대 재발송",
+			operationId = "resendOperatorInvitation",
+			summary = "오퍼레이터 초대 재발송 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-02 ② case 4·5 의 [재발송] 액션. 초대 메일을 다시 보낸다.
 
 					## 언제 쓰나

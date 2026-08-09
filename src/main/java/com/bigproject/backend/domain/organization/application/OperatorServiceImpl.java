@@ -180,8 +180,19 @@ public class OperatorServiceImpl implements OperatorService {
 			);
 		}
 
-		// 토큰만 무효화하면 계정 자리가 PENDING으로 남아 로그인 경로가 애매해진다. 자리는 남기되(이력 보존)
-		// 로그인은 막도록 INACTIVE로 내린다 — 목업의 "퇴사한 계정도 지우지 않고 정지로 남긴다"와 같은 처리다.
+		/*
+		 * 자리는 남기되(이력 보존) 로그인은 막도록 INACTIVE로 내린다 —
+		 * 목업의 "퇴사한 계정도 지우지 않고 정지로 남긴다"와 같은 처리다.
+		 *
+		 * <b>INACTIVE는 재초대의 전제다. 상태를 안 내리면 같은 주소로 다시 초대할 수 없다.</b>
+		 * app_user.normalized_email이 UNIQUE라 재초대는 새 계정을 만들지 못하고 기존 자리를
+		 * 되살려 쓰는데, member 도메인의 FIND_REUSABLE_INVITED_USER가 그 자리를
+		 * status='INACTIVE'로 찾기 때문이다. PENDING으로 남기면 재사용 조회가 비고,
+		 * 그다음 EXISTS_USER(상태 무관)에 걸려 409 ALREADY_INVITED가 난다.
+		 *
+		 * 수락 전 자리는 이름이 비어 있어 그대로 내리면 ck_app_user_status_2에 걸리는데,
+		 * 그 보정은 리포지토리의 UPDATE가 한다(JdbcOrganizationOperatorRepository 참고).
+		 */
 		if (invitation.memberId() != null) {
 			operatorRepository.updateOperatorStatus(
 					invitation.memberId(),
@@ -261,8 +272,8 @@ public class OperatorServiceImpl implements OperatorService {
 				.filter(operator -> operator.status() == OperatorAccountStatus.ACTIVE)
 				.count();
 
-		List<OperatorListResponse.Operator> content = operators.stream()
-				.map(operator -> new OperatorListResponse.Operator(
+		List<OperatorListResponse.OperatorListItem> content = operators.stream()
+				.map(operator -> new OperatorListResponse.OperatorListItem(
 						operator.memberId(),
 						operator.name(),
 						operator.email(),

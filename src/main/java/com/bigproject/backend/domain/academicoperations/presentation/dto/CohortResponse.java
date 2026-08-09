@@ -13,12 +13,10 @@ public record CohortResponse(
 		@Schema(description = "기수 ID") UUID cohortId,
 		@Schema(description = "소속 기관 ID") UUID organizationId,
 		@Schema(description = "기수명", example = "7기") String name,
-
-		@Schema(description = "PLANNED(개설 예정) / RUNNING(진행 중) / CLOSED(종료)")
 		CohortStatus status,
 
-		@Schema(description = "기수 시작일") LocalDate startDate,
-		@Schema(description = "기수 종료일") LocalDate endDate,
+		@Schema(description = "기수 시작일", nullable = true) LocalDate startDate,
+		@Schema(description = "기수 종료일", nullable = true) LocalDate endDate,
 
 		@Schema(description = "⚠ 아직 채워지지 않는 값 — 항상 0이다. member 도메인 조인이 필요해 아직 연결되지 않았다.", example = "0")
 		int traineeCount,
@@ -27,6 +25,9 @@ public record CohortResponse(
 				"담당 매니저가 필요하면 GET /cohorts/{cohortId}/classrooms를 함께 호출한다.")
 		List<Manager> managers
 ) {
+	// managers[]의 항목 타입은 공용 Manager 스키마다(같은 패키지). 예전에는 여기에 memberId가 Long인
+	// 중첩 record가 따로 있었는데, springdoc이 단순 클래스 이름으로 키잉해 반 응답의 Manager(UUID)와
+	// `Manager` 키 하나를 놓고 충돌했고 먼저 등록된 이쪽이 이겨서 스펙이 integer라고 거짓말했다(9차 R5).
 	// traineeCount/managers는 member·classroom 도메인이 준비되기 전까지 빈 값으로 채운다.
 	public static CohortResponse from(Cohort cohort) {
 		return new CohortResponse(
@@ -39,12 +40,5 @@ public record CohortResponse(
 				0,
 				List.of()
 		);
-	}
-
-	@Schema(description = "담당 매니저 한 명(현재 미사용 — 항상 빈 배열로 내려감)")
-	public record Manager(
-			@Schema(description = "매니저의 회원 ID") Long memberId,
-			@Schema(description = "매니저 이름") String name
-	) {
 	}
 }

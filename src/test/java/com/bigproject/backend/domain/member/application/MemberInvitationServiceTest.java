@@ -1,8 +1,10 @@
 package com.bigproject.backend.domain.member.application;
 
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.auth.domain.AuthUserRepository;
 import com.bigproject.backend.domain.member.domain.InvitationContext;
+import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.member.domain.MemberInvitationRepository;
 import com.bigproject.backend.domain.member.domain.PendingInvitation;
 import com.bigproject.backend.domain.member.domain.Role;
@@ -11,7 +13,6 @@ import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesReq
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
@@ -78,10 +79,13 @@ class MemberInvitationServiceTest {
 				Role.OPERATOR,
 				"admin@example.com",
 				"request-constraint"
-		)).isInstanceOf(ResponseStatusException.class)
-				.hasMessageContaining("500 INTERNAL_SERVER_ERROR")
-				.hasMessageContaining("초대 정보를 저장할 수 없습니다.")
-				.hasCause(databaseException);
+		)).isInstanceOfSatisfying(ApiException.class, exception -> {
+					// 상태는 이제 예외 메시지가 아니라 코드가 들고 있다.
+					assertThat(exception.errorCode()).isEqualTo(MemberErrorCode.INVITATION_SAVE_FAILED);
+					assertThat(exception.errorCode().status().value()).isEqualTo(500);
+					assertThat(exception.getMessage()).contains("초대 정보를 저장할 수 없습니다.");
+					assertThat(exception).hasCause(databaseException);
+				});
 	}
 
 	@Test
@@ -140,7 +144,7 @@ class MemberInvitationServiceTest {
 				Role.MANAGER,
 				"admin@example.com",
 				null
-		)).isInstanceOf(ResponseStatusException.class)
+		)).isInstanceOf(ApiException.class)
 				.hasMessageContaining("오퍼레이터만 매니저를 초대할 수 있습니다");
 		verifyNoInvitationDispatched();
 	}
@@ -157,7 +161,7 @@ class MemberInvitationServiceTest {
 				Role.OPERATOR,
 				"lead@example.com",
 				null
-		)).isInstanceOf(ResponseStatusException.class)
+		)).isInstanceOf(ApiException.class)
 				.hasMessageContaining("슈퍼어드민만 오퍼레이터를 초대할 수 있습니다");
 		verifyNoInvitationDispatched();
 	}
@@ -174,7 +178,7 @@ class MemberInvitationServiceTest {
 				Role.MANAGER,
 				"lead@example.com",
 				null
-		)).isInstanceOf(ResponseStatusException.class)
+		)).isInstanceOf(ApiException.class)
 				.hasMessageContaining("하나의 기수");
 		verifyNoInvitationDispatched();
 	}
@@ -191,7 +195,7 @@ class MemberInvitationServiceTest {
 				Role.OPERATOR,
 				"admin@example.com",
 				null
-		)).isInstanceOf(ResponseStatusException.class)
+		)).isInstanceOf(ApiException.class)
 				.hasMessageContaining("기수를 배정하지 않습니다");
 		verifyNoInvitationDispatched();
 	}
@@ -208,7 +212,7 @@ class MemberInvitationServiceTest {
 				Role.MANAGER,
 				"lead@example.com",
 				null
-		)).isInstanceOf(ResponseStatusException.class)
+		)).isInstanceOf(ApiException.class)
 				.hasMessageContaining("오퍼레이터만 매니저를 초대할 수 있습니다");
 		verifyNoInvitationDispatched();
 	}
@@ -234,7 +238,7 @@ class MemberInvitationServiceTest {
 				List.of(new TraineeCsvRow(2, "교육생", "trainee@example.com")),
 				"admin@example.com",
 				null
-		)).isInstanceOf(ResponseStatusException.class)
+		)).isInstanceOf(ApiException.class)
 				.hasMessageContaining("오퍼레이터만");
 		verify(invitationDispatcher, never()).inviteTrainee(
 				org.mockito.ArgumentMatchers.any(),
@@ -402,7 +406,7 @@ class MemberInvitationServiceTest {
 				List.of(new TraineeCsvRow(2, "교육생", "trainee@example.com")),
 				"lead@example.com",
 				null
-		)).isInstanceOf(ResponseStatusException.class)
+		)).isInstanceOf(ApiException.class)
 				.hasMessageContaining("다른 기관");
 	}
 

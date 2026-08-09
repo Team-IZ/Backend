@@ -74,6 +74,14 @@ public class Classroom {
         this.name = newName;
     }
 
+    /**
+     * 정원 변경. <b>현재 인원보다 작게 두는 것을 막지 않는다</b> — 정원 초과는 애초에 허용하는 상태이고
+     * (중도 합류·반 통폐합), 여기서만 막으면 배정 경로와 규칙이 두 벌이 된다.
+     */
+    public void changeCapacity(Integer newCapacity) {
+        this.capacity = newCapacity;
+    }
+
     public void softDelete() {
         this.deletedAt = OffsetDateTime.now();
     }

@@ -26,6 +26,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
@@ -47,7 +48,7 @@ import java.util.UUID;
 @PreAuthorize("hasRole('SUPER_ADMIN')")
 @Validated
 @RestController
-@RequestMapping("/organizations")
+@RequestMapping(value = "/organizations", produces = MediaType.APPLICATION_JSON_VALUE)
 @RequiredArgsConstructor
 public class OrganizationController {
 
@@ -55,10 +56,9 @@ public class OrganizationController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "기관 목록 조회",
+			operationId = "findOrganizations",
+			summary = "기관 목록 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-01 기관 목록 표를 채운다. 이름 검색·상태 필터·정렬을 **모두 서버가 처리**하므로
 					화면은 파라미터만 넘기면 된다(클라이언트에서 다시 거르지 않는다).
 
@@ -123,10 +123,9 @@ public class OrganizationController {
 	}
 
 	@Operation(
-			summary = "플랫폼 전체 집계 조회",
+			operationId = "findPlatformSummary",
+			summary = "플랫폼 전체 집계 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-01 상단 지표 카드 4개를 채운다. 전 기관을 합산한 값이다.
 
 					목록 조회(`GET /organizations`)와 **의존 관계가 없으므로 병렬로 호출**하면 된다.
@@ -164,10 +163,9 @@ public class OrganizationController {
 	}
 
 	@Operation(
-			summary = "기관명 중복 확인",
+			operationId = "checkNameAvailability",
+			summary = "기관명 중복 확인 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-01 생성 모달의 "입력 중 실시간 중복 확인"(✓/✗)에 쓴다.
 					타이핑마다 호출하지 말고 **디바운스(300ms 정도)** 를 걸어 주세요.
 
@@ -201,10 +199,9 @@ public class OrganizationController {
 	}
 
 	@Operation(
-			summary = "기관 생성 및 기본 운영 정책 초기화",
+			operationId = "createOrganization",
+			summary = "기관 생성 및 기본 운영 정책 초기화 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-01 `기관 생성 (테넌트 프로비저닝)` 모달. 기관과 **최초 운영 정책(버전 1)을 함께** 만든다.
 					정책 기본값은 월 예산 0 · 통화 USD · 공개범위 SUMMARY 다.
 
@@ -272,10 +269,9 @@ public class OrganizationController {
 	}
 
 	@Operation(
-			summary = "기관 상세 조회",
+			operationId = "findOrganization",
+			summary = "기관 상세 조회 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-02 ① 개요 탭의 지표 카드와 정보 행을 채운다.
 
 					## 요청 (경로 변수)
@@ -316,10 +312,9 @@ public class OrganizationController {
 	}
 
 	@Operation(
-			summary = "기관 기수 목록 조회 (읽기전용)",
+			operationId = "findOrganizationCohorts",
+			summary = "기관 기수 목록 조회 (읽기전용) | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-02 ① 개요 하단의 `기수 · 읽기전용` 표를 채운다.
 
 					## 요청 (경로 변수)
@@ -362,10 +357,9 @@ public class OrganizationController {
 	}
 
 	@Operation(
-			summary = "기관 이름 또는 운영 상태 변경",
+			operationId = "updateOrganization",
+			summary = "기관 이름 또는 운영 상태 변경 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					**기관명을 바꿀 수 있는 유일한 API 다.** 운영 설정(`PUT .../operations/settings`)에는
 					이름 필드가 없다.
 
@@ -418,10 +412,9 @@ public class OrganizationController {
 	}
 
 	@Operation(
-			summary = "기관 soft-delete",
+			operationId = "deleteOrganization",
+			summary = "기관 soft-delete | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					SA-02 ④ 설정 탭의 `기관 삭제` + 확인 모달(case 7).
 					**즉시 파기가 아니라 보존기간을 두는 soft-delete 다.**
 
@@ -494,10 +487,9 @@ public class OrganizationController {
 	}
 
 	@Operation(
-			summary = "기관 복구",
+			operationId = "restoreOrganization",
+			summary = "기관 복구 | ✅ 사용 가능",
 			description = """
-					**상태**: ✅ 사용 가능
-
 					soft-delete 된 기관을 되살린다. 목업 case 7: *"보존기간이 지난 뒤 파기됩니다.
 					**그전까지는 복구할 수 있습니다.**"*
 
@@ -546,10 +538,9 @@ public class OrganizationController {
 	}
 
 	@Operation(
-			summary = "기관 파기 요청",
+			operationId = "purgeOrganization",
+			summary = "기관 파기 요청 | ⚠️ 사용 불가",
 			description = """
-					**상태**: ⚠️ 사용 불가
-
 					**요청은 접수되지만 데이터가 실제로 지워지지 않는다.** 보존기간 검증과
 					`purge_status = IN_PROGRESS` 전이까지만 구현돼 있고, 응답은 항상 `purged=false`다.
 

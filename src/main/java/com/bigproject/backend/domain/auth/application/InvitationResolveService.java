@@ -1,15 +1,15 @@
 package com.bigproject.backend.domain.auth.application;
 
+import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.domain.auth.domain.InvitationRecipient;
 import com.bigproject.backend.domain.auth.domain.InvitationResolveRepository;
 import com.bigproject.backend.domain.auth.presentation.dto.InvitationResolveRequest;
 import com.bigproject.backend.domain.auth.presentation.dto.InvitationResolveResponse;
 import com.bigproject.backend.domain.member.application.OneTimeTokenHasher;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 
@@ -25,7 +25,7 @@ public class InvitationResolveService {
 	public InvitationResolveResponse resolve(InvitationResolveRequest request) {
 		String tokenHash = tokenHasher.hash(request.invitationToken().trim());
 		InvitationRecipient recipient = invitationResolveRepository.findResolvableByTokenHash(tokenHash, Instant.now())
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, INVALID_INVITATION_MESSAGE));
-		return new InvitationResolveResponse(recipient.userId(), recipient.email());
+				.orElseThrow(() -> new ApiException(AuthErrorCode.INVITATION_INVALID, INVALID_INVITATION_MESSAGE));
+		return new InvitationResolveResponse(recipient.userId(), recipient.email(), recipient.role());
 	}
 }

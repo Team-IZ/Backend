@@ -6,6 +6,7 @@ import com.bigproject.backend.domain.platformgovernance.domain.AiModel;
 import com.bigproject.backend.domain.platformgovernance.domain.AiTier;
 import com.bigproject.backend.domain.platformgovernance.infrastructure.AiModelRepository;
 import com.bigproject.backend.domain.usagemetering.domain.AiUsage;
+import com.bigproject.backend.domain.usagemetering.domain.CohortCostRepository;
 import com.bigproject.backend.domain.usagemetering.domain.OperationsActivityRepository;
 import com.bigproject.backend.domain.usagemetering.domain.OperationsCostRepository;
 import com.bigproject.backend.domain.usagemetering.domain.OrganizationUsageSnapshot;
@@ -13,9 +14,11 @@ import com.bigproject.backend.domain.usagemetering.domain.StorageUsageSnapshot;
 import com.bigproject.backend.domain.usagemetering.infrastructure.AiUsageRepository;
 import com.bigproject.backend.domain.usagemetering.infrastructure.OrganizationUsageSnapshotRepository;
 import com.bigproject.backend.domain.usagemetering.infrastructure.StorageUsageSnapshotRepository;
+import com.bigproject.backend.domain.usagemetering.presentation.dto.CohortCostResponse;
 import com.bigproject.backend.domain.usagemetering.presentation.dto.OperationSettingResponse;
 import com.bigproject.backend.domain.usagemetering.presentation.dto.OrganizationUsageResponse;
 import com.bigproject.backend.domain.usagemetering.presentation.dto.UpdateOperationSettingRequest;
+import com.bigproject.backend.global.json.PatchField;
 import com.bigproject.backend.domain.organization.domain.Organization;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationException;
@@ -32,8 +35,15 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +73,7 @@ public class OperationsServiceImpl implements OperationsService {
 	private final AiModelRepository aiModelRepository;
 	private final OperationsCostRepository operationsCostRepository;
 	private final OperationsActivityRepository operationsActivityRepository;
+	private final CohortCostRepository cohortCostRepository;
 	private final CurrentUserResolver currentUserResolver;
 
 	@Override
@@ -132,43 +143,80 @@ public class OperationsServiceImpl implements OperationsService {
 		}
 
 		OrganizationPolicy currentPolicy = getActivePolicyOrThrow(organizationId);
+		OrganizationPolicy.Settings current = currentPolicy.toSettings();
+		OrganizationPolicy.Settings merged = merge(current, request);
 
-		// organization_policy는 append-only 이력 테이블이므로 기존 행을 고치지 않고,
-		// 현재 활성 버전은 SUPERSEDED로 닫은 뒤 새 버전을 INSERT한다.
-		// Hibernate는 같은 flush 안에서 INSERT를 UPDATE보다 먼저 실행하기 때문에, supersede()만 호출하고
-		// 넘어가면 새 버전 INSERT가 먼저 나가면서 부분 유니크 인덱스(uq_organization_policy_current)를
-		// 위반한다. saveAndFlush로 UPDATE를 먼저 커밋해 순서를 강제한다.
-		currentPolicy.supersede(requesterId);
-		organizationPolicyRepository.saveAndFlush(currentPolicy);
+		/*
+		 * 값이 그대로면 버전을 올리지 않는다. 부분 수정이라 "모달을 열었다가 바꾸지 않고 저장"이
+		 * 정상 경로로 들어오는데, 그때마다 버전이 하나씩 쌓이면 이력에 원인 없는 행이 섞여
+		 * 정작 무엇이 언제 바뀌었는지 읽기 어려워진다. 기관 상태만 바꾸는 요청도 마찬가지다 —
+		 * 상태는 organization의 값이라 정책 버전과 무관하다.
+		 */
+		OrganizationPolicy effectivePolicy = currentPolicy;
+		if (!isSameSettings(current, merged)) {
+			// organization_policy는 append-only 이력 테이블이므로 기존 행을 고치지 않고,
+			// 현재 활성 버전은 SUPERSEDED로 닫은 뒤 새 버전을 INSERT한다.
+			// Hibernate는 같은 flush 안에서 INSERT를 UPDATE보다 먼저 실행하기 때문에, supersede()만 호출하고
+			// 넘어가면 새 버전 INSERT가 먼저 나가면서 부분 유니크 인덱스(uq_organization_policy_current)를
+			// 위반한다. saveAndFlush로 UPDATE를 먼저 커밋해 순서를 강제한다.
+			currentPolicy.supersede(requesterId);
+			organizationPolicyRepository.saveAndFlush(currentPolicy);
 
-		OrganizationPolicy nextPolicy = OrganizationPolicy.createNextVersion(
-				currentPolicy,
-				toSettings(request),
-				requesterId
-		);
-		organizationPolicyRepository.save(nextPolicy);
+			effectivePolicy = organizationPolicyRepository.save(
+					OrganizationPolicy.createNextVersion(currentPolicy, merged, requesterId)
+			);
+		}
 
-		organization.changeStatus(request.organizationStatus());
+		// 상태는 보냈을 때만 바꾼다. 안 보낸 필드를 유지한다는 규칙이 정책값과 기관 상태에 같이 적용된다.
+		if (request.organizationStatus() != null) {
+			organization.changeStatus(request.organizationStatus());
+		}
 		organization.touchUpdatedBy(requesterId);
 
-		return toResponse(organization, nextPolicy);
+		return toResponse(organization, effectivePolicy);
 	}
 
-	/** 요청 DTO를 정책 버전에 실을 값 묶음으로 옮긴다. 버전형 테이블이라 전체 치환이다. */
-	private OrganizationPolicy.Settings toSettings(UpdateOperationSettingRequest request) {
+	/**
+	 * 부분 수정 병합. <b>보내지 않은 필드는 직전 활성 버전의 값을 그대로 승계한다.</b>
+	 *
+	 * <p>상한 두 개만 {@link PatchField}로 받는다 — {@code null}이 "값 없음"이 아니라 <b>무제한</b>이라는
+	 * 값이라, 안 보낸 것과 구분하지 못하면 한 번 건 상한을 다시 풀 방법이 사라진다.
+	 * 나머지 필드는 {@code null}이 의미를 갖지 않으므로 생략과 같게 본다.
+	 */
+	private OrganizationPolicy.Settings merge(
+			OrganizationPolicy.Settings current, UpdateOperationSettingRequest request) {
 		return new OrganizationPolicy.Settings(
-				request.monthlyAiBudget(),
-				request.monthlyTokenLimit(),
-				request.storageLimitBytes(),
-				request.dataRetentionDays(),
-				request.defaultDisclosureScope(),
-				request.codeSessionTierCode(),
-				request.allowManagerInvite(),
-				request.allowDataExport(),
-				request.allowZipSubmission(),
-				request.allowGithubIntegration(),
-				request.enableBigProjectContributionAnalysis()
+				requireNonNullElse(request.monthlyAiBudget(), current.monthlyAiBudget()),
+				PatchField.mergeInto(request.monthlyTokenLimit(), current.monthlyTokenLimit()),
+				PatchField.mergeInto(request.storageLimitBytes(), current.storageLimitBytes()),
+				requireNonNullElse(request.dataRetentionDays(), current.retentionDays()),
+				requireNonNullElse(request.defaultDisclosureScope(), current.defaultDisclosureScope()),
+				requireNonNullElse(request.codeSessionTierCode(), current.codeSessionTierCode()),
+				requireNonNullElse(request.allowManagerInvite(), current.allowManagerInvite()),
+				requireNonNullElse(request.allowDataExport(), current.allowDataExport()),
+				requireNonNullElse(request.allowZipSubmission(), current.allowZipSubmission()),
+				requireNonNullElse(request.allowGithubIntegration(), current.allowGithubIntegration()),
+				// 화면에서 빠진 항목이라 요청 필드가 없다. 정책 원장에는 남아 있으므로 직전 값을 그대로 승계한다
+				// (컬럼이 NOT NULL이고, 승계하지 않으면 새 버전마다 DB 기본값으로 되돌아간다).
+				current.enableBigProjectContributionAnalysis()
 		);
+	}
+
+	private static <T> T requireNonNullElse(T sent, T current) {
+		return sent == null ? current : sent;
+	}
+
+	/**
+	 * 새 버전을 발급할 값인지 판정한다. {@code record}의 {@code equals}를 그대로 쓰지 않는 이유는
+	 * {@link BigDecimal}이 <b>소수 자릿수까지 비교</b>하기 때문이다 — DB에서 읽은 {@code 1500.00}과
+	 * 요청으로 들어온 {@code 1500}이 다른 값이 되어, 바꾸지 않은 예산이 매번 새 버전을 만든다.
+	 */
+	private boolean isSameSettings(OrganizationPolicy.Settings left, OrganizationPolicy.Settings right) {
+		boolean sameBudget = left.monthlyAiBudget() == null || right.monthlyAiBudget() == null
+				? left.monthlyAiBudget() == right.monthlyAiBudget()
+				: left.monthlyAiBudget().compareTo(right.monthlyAiBudget()) == 0;
+
+		return sameBudget && left.withBudget(null).equals(right.withBudget(null));
 	}
 
 	/**
@@ -526,12 +574,187 @@ public class OperationsServiceImpl implements OperationsService {
 				policy.getAllowDataExport(),
 				policy.getAllowZipSubmission(),
 				policy.getAllowGithubIntegration(),
-				policy.getEnableBigProjectContributionAnalysis(),
 				policy.getPolicyVersion()
 		);
 	}
 
 	/** (기능, 티어, 모델 코드) 조합. 티어가 호출 스냅샷으로 남아 같은 모델이라도 티어가 다르면 별도 행으로 보여준다. */
 	private record UsageGroupKey(AiUsage.FeatureCode featureCode, AiTier tierCode, String modelCode) {
+	}
+
+	// ════════════════════════════════════════════════════════════════
+	// OP-06 ⑤ 비용 탭
+	// ════════════════════════════════════════════════════════════════
+
+	@Override
+	@Transactional(readOnly = true)
+	public CohortCostResponse findCohortCost(
+			UUID organizationId, UUID cohortId, CohortCostResponse.ClassCostSort sort) {
+
+		assertOrganizationExists(organizationId);
+		assertUsageAccessible(organizationId);
+
+		CohortCostRepository.CohortPeriod cohort =
+				cohortCostRepository.findCohortPeriod(organizationId, cohortId);
+		if (cohort == null) {
+			throw new OrganizationException(
+					OrganizationErrorCode.ORG_NOT_FOUND, "기수를 찾을 수 없습니다: " + cohortId);
+		}
+
+		/*
+		 * 월 범위 = 기수 시작월 ~ min(이번 달, 기수 종료월).
+		 * 아직 오지 않은 달은 담지 않는다 — 기수가 9월까지여도 7월이면 다섯 칸이다.
+		 */
+		YearMonth firstMonth = YearMonth.from(cohort.startDate());
+		YearMonth currentMonth = YearMonth.now(ZoneOffset.UTC);
+		YearMonth lastMonth = YearMonth.from(cohort.endDate());
+		if (lastMonth.isAfter(currentMonth)) {
+			lastMonth = currentMonth;
+		}
+		if (lastMonth.isBefore(firstMonth)) {
+			lastMonth = firstMonth;
+		}
+
+		List<YearMonth> months = new ArrayList<>();
+		for (YearMonth m = firstMonth; !m.isAfter(lastMonth); m = m.plusMonths(1)) {
+			months.add(m);
+		}
+
+		Instant rangeFrom = startOf(firstMonth);
+		Instant rangeTo = startOf(lastMonth.plusMonths(1));
+
+		// ── 기수 월별 (비용 + 세션) ──
+		Map<YearMonth, CohortCostRepository.MonthlyCohortCost> cohortByMonth =
+				cohortCostRepository.findCohortMonthlyCost(organizationId, cohortId, rangeFrom, rangeTo)
+						.stream()
+						.collect(Collectors.toMap(
+								CohortCostRepository.MonthlyCohortCost::month, r -> r, (a, b) -> a));
+
+		Map<YearMonth, List<String>> roundNamesByMonth = new LinkedHashMap<>();
+		for (CohortCostRepository.MonthlyRoundName row
+				: cohortCostRepository.findCohortMonthlyRoundNames(organizationId, cohortId, rangeFrom, rangeTo)) {
+			roundNamesByMonth.computeIfAbsent(row.month(), k -> new ArrayList<>()).add(row.roundName());
+		}
+
+		// 최근 달이 앞 — 월별 표는 최신이 위다(반 매트릭스와 방향이 반대).
+		List<CohortCostResponse.MonthlyCost> monthly = new ArrayList<>();
+		BigDecimal cohortTotal = BigDecimal.ZERO;
+		for (YearMonth m : months) {
+			CohortCostRepository.MonthlyCohortCost row = cohortByMonth.get(m);
+			BigDecimal amount = row == null ? BigDecimal.ZERO : row.amount();
+			cohortTotal = cohortTotal.add(amount);
+			monthly.add(new CohortCostResponse.MonthlyCost(
+					m.toString(),
+					amount,
+					row == null ? 0L : row.sessions(),
+					roundNamesByMonth.getOrDefault(m, List.of())
+			));
+		}
+		Collections.reverse(monthly);
+
+		// ── 기관 전체 이번 달 / 지난달 ──
+		YearMonth basisMonth = lastMonth;
+		YearMonth previousMonth = basisMonth.minusMonths(1);
+		Map<YearMonth, BigDecimal> orgByMonth =
+				cohortCostRepository.findOrganizationMonthlyCost(
+								organizationId, startOf(previousMonth), startOf(basisMonth.plusMonths(1)))
+						.stream()
+						.collect(Collectors.toMap(
+								CohortCostRepository.MonthlyAmount::month,
+								CohortCostRepository.MonthlyAmount::amount, (a, b) -> a));
+
+		BigDecimal total = orgByMonth.getOrDefault(basisMonth, BigDecimal.ZERO);
+		// 지난달 행이 아예 없으면 "첫 달"이라 null이다 — 0과 구분해야 화면이 `—`를 그린다.
+		BigDecimal previousTotal = orgByMonth.get(previousMonth);
+		BigDecimal changePct = changePercent(total, previousTotal);
+
+		// ── 기수 카드 (기준 월에 실제로 비용이 난 기수만) ──
+		List<CohortCostResponse.CohortCard> cards =
+				cohortCostRepository.findActiveCohortCards(
+								organizationId, startOf(basisMonth), startOf(basisMonth.plusMonths(1)))
+						.stream()
+						.map(c -> new CohortCostResponse.CohortCard(
+								c.cohortId(), c.name(), c.amount(), c.traineeCount(),
+								periodLabel(c.startDate(), c.endDate())))
+						.toList();
+
+		// ── 반별 ──
+		Map<UUID, Map<YearMonth, BigDecimal>> classMonthly = new HashMap<>();
+		for (CohortCostRepository.MonthlyClassAmount row
+				: cohortCostRepository.findClassMonthlyCost(organizationId, cohortId, rangeFrom, rangeTo)) {
+			classMonthly.computeIfAbsent(row.classId(), k -> new HashMap<>()).put(row.month(), row.amount());
+		}
+
+		List<YearMonth> ascendingMonths = months;   // 매트릭스는 왼쪽에서 오른쪽으로 시간이 흐른다
+		List<CohortCostResponse.ClassCost> classes = new ArrayList<>();
+		for (CohortCostRepository.ClassSummary cs
+				: cohortCostRepository.findClassSummaries(organizationId, cohortId, rangeFrom, rangeTo)) {
+			Map<YearMonth, BigDecimal> byMonth = classMonthly.getOrDefault(cs.classId(), Map.of());
+			List<CohortCostResponse.MonthlyClassCost> cells = ascendingMonths.stream()
+					.map(m -> new CohortCostResponse.MonthlyClassCost(
+							m.toString(), byMonth.getOrDefault(m, BigDecimal.ZERO)))
+					.toList();
+			classes.add(new CohortCostResponse.ClassCost(
+					cs.classId(), cohortId, cs.name(), cs.managerName(),
+					cells, cs.cohortAmount(), cs.cohortSessions()));
+		}
+
+		if (sort == CohortCostResponse.ClassCostSort.COHORT_AMOUNT) {
+			classes.sort(Comparator.comparing(
+					CohortCostResponse.ClassCost::cohortAmount).reversed());
+		}
+		// NAME은 조회 쿼리가 이미 이름순으로 준다.
+
+		// ── 예산 ──
+		OrganizationPolicy policy = organizationPolicyRepository
+				.findByOrgIdAndStatus(organizationId, OrganizationPolicy.Status.ACTIVE)
+				.orElse(null);
+		BigDecimal budget = cohortBudget(policy, cohort.startDate(), cohort.endDate());
+
+		int monthsLeft = (int) Math.max(0, ChronoUnit.MONTHS.between(basisMonth, YearMonth.from(cohort.endDate())));
+
+		CohortCostResponse.CostSummary summary = new CohortCostResponse.CostSummary(
+				basisMonth.toString(), total, previousTotal, changePct,
+				cohortTotal, budget, monthsLeft, monthly, cards);
+
+		return new CohortCostResponse(organizationId, cohortId, OrganizationPolicy.PLATFORM_CURRENCY_CODE, summary, classes);
+	}
+
+	/**
+	 * 전월 대비 증감률을 <b>퍼센트</b>로 낸다(`+12.0`). 화면 계약이 퍼센트라 0~1 비율을 쓰는
+	 * 다른 응답과 단위가 다르다. 지난달이 없거나 0이면 나눌 수 없어 0을 준다 —
+	 * 이 자리는 화면이 부호와 함께 그대로 찍는 값이라 null을 주면 렌더가 깨진다.
+	 */
+	private BigDecimal changePercent(BigDecimal current, BigDecimal previous) {
+		if (previous == null || previous.compareTo(BigDecimal.ZERO) == 0) {
+			return BigDecimal.ZERO;
+		}
+		return current.subtract(previous)
+				.multiply(BigDecimal.valueOf(100))
+				.divide(previous, 1, RoundingMode.HALF_UP);
+	}
+
+	/**
+	 * 기수 전체 예산 = 월 예산 × 기수 개월 수.
+	 *
+	 * <p>기수 단위 예산 컬럼이 스키마에 없어 파생한다. 활성 정책이 없거나 월 예산이 0이면
+	 * null을 주고, 화면은 그때 비율을 그리지 않는다 — 분모 없는 퍼센트는 만들 수 없다.
+	 */
+	private BigDecimal cohortBudget(OrganizationPolicy policy, LocalDate start, LocalDate end) {
+		if (policy == null || policy.getMonthlyAiBudget() == null
+				|| policy.getMonthlyAiBudget().compareTo(BigDecimal.ZERO) <= 0) {
+			return null;
+		}
+		long spanMonths = ChronoUnit.MONTHS.between(YearMonth.from(start), YearMonth.from(end)) + 1;
+		return policy.getMonthlyAiBudget().multiply(BigDecimal.valueOf(Math.max(1, spanMonths)));
+	}
+
+	/** `2026-03 ~ 09`. 해가 넘어가면 뒤쪽도 연도를 붙인다 — `2026-11 ~ 2027-02`. */
+	private String periodLabel(LocalDate start, LocalDate end) {
+		String head = YearMonth.from(start).toString();
+		YearMonth tail = YearMonth.from(end);
+		return start.getYear() == end.getYear()
+				? head + " ~ " + String.format("%02d", tail.getMonthValue())
+				: head + " ~ " + tail;
 	}
 }
