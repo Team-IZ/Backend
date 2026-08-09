@@ -54,4 +54,27 @@ public interface ReportRepository extends JpaRepository<Report, UUID> {
 
 	/** 단건 조회 시 소유자 확인까지 한 번에. 남의 리포트면 빈 값이라 403 분기가 단순해진다. */
 	Optional<Report> findByReportIdAndUserId(UUID reportId, UUID userId);
+
+	/**
+	 * 회차 × 교육생의 개인 리포트 전량. 생성 배치가 "이미 만든 리포트가 있는가"를 묻는다.
+	 *
+	 * <p>{@code Optional}이 아니라 목록인 이유는 <b>재생성 이력이 쌓이기 때문</b>이다.
+	 * {@code uq_report_active_user}가 유일성을 거는 범위는 {@code lifecycle_status='ACTIVE'}뿐이라
+	 * {@code SUPERSEDED} 행은 얼마든지 남을 수 있다. 발행 전 {@code DRAFT}도 함께 걸린다.
+	 *
+	 * <p>{@code class_id IS NULL}(개인 단위) 조건은 JPQL로 표현한다 — 파생 쿼리 이름으로 쓰면
+	 * {@code ...AndClassIdIsNull}까지 붙어 메서드 이름이 읽히지 않는다.
+	 */
+	@Query("""
+			SELECT r FROM Report r
+			 WHERE r.assessmentRoundId = :assessmentRoundId
+			   AND r.userId = :userId
+			   AND r.reportType = :reportType
+			   AND r.classId IS NULL
+			""")
+	List<Report> findRoundReports(
+			@Param("assessmentRoundId") UUID assessmentRoundId,
+			@Param("userId") UUID userId,
+			@Param("reportType") ReportType reportType
+	);
 }
