@@ -11,14 +11,18 @@ import com.bigproject.backend.domain.curriculum.domain.CurriculumSection;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumTeachesMapping;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumVersion;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumVersionStatus;
+import com.bigproject.backend.domain.curriculum.domain.MappingStatus;
+import com.bigproject.backend.domain.curriculum.domain.Teaches;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumAnalysisRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumMaterialRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumSectionRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumTeachesMappingRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumVersionRepository;
+import com.bigproject.backend.domain.curriculum.infrastructure.TeachesRepository;
 import com.bigproject.backend.domain.projectexecution.application.ProjectService;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,6 +46,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -50,6 +55,10 @@ public class CurriculumServiceImpl implements CurriculumService {
     private static final S3Client S3_CLIENT = S3Client.builder()
             .region(Region.AP_SOUTHEAST_2)
             .build();
+
+    // 폴링 파라미터를 상수로 분리 — 값을 바꿀 때 루프 코드를 뒤지지 않게 한다.
+    private static final int POLL_MAX_ATTEMPTS = 30;
+    private static final long POLL_INTERVAL_MS = 3000L;
 
     private final CurriculumVersionRepository curriculumVersionRepository;
     private final CurriculumTeachesMappingRepository mappingRepository;
@@ -61,6 +70,7 @@ public class CurriculumServiceImpl implements CurriculumService {
     private final AiCurriculumClient aiCurriculumClient;
     private final CurriculumCatalogRepository catalogRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final TeachesRepository teachesRepository;
 
     @Override
     public List<CurriculumVersion> findLinkableCurricula(UUID orgId) {
@@ -214,7 +224,145 @@ public class CurriculumServiceImpl implements CurriculumService {
                 version.getVersionId(), placeholderModelId, nextAnalysisVersion,
                 idempotencyKeyUuid, requestFingerprint, actorUserId);
         analysis.updateExternalJobId(accepted.jobId());
+        analysisRepository.save(analysis);
 
+        // 임시: 동기 폴링으로 결과를 즉시 받아온다(최대 90초, 3초 간격).
+        // 정식 구현(콜백/스케줄러·재시도·RESULT_PERSISTENCE 실패 처리)은 별도 작업 필요.
+        pollUntilDoneOrTimeout(analysis, version, orgId, accepted.jobId());
+    }
+
+    /**
+     * AI 서버 상태를 폴링하며 SUCCEEDED/FAILED를 구분해 처리한다.
+     *
+     * <p>기존 코드는 result가 비어있으면 무조건 "아직 안 끝났다"로 보고 계속 기다렸다.
+     * AI가 FAILED를 명시적으로 돌려줘도 그 값을 확인하지 않아, 실패한 요청도 90초
+     * 내내 재시도만 하다가 결국 PENDING 상태로 영원히 멈춰 있었다(started_at도 NULL로 남음).
+     * 이제는 매 응답의 status를 먼저 보고 SUCCEEDED/FAILED/그 외(진행중)를 구분한다.
+     */
+    private void pollUntilDoneOrTimeout(CurriculumAnalysis analysis, CurriculumVersion version,
+                                        UUID orgId, String jobId) {
+        for (int attempt = 1; attempt <= POLL_MAX_ATTEMPTS; attempt++) {
+            try {
+                Thread.sleep(POLL_INTERVAL_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+
+            AiCurriculumClient.AnalysisResult result;
+            try {
+                result = aiCurriculumClient.checkStatus(jobId);
+            } catch (Exception e) {
+                // AI 서버 호출 자체가 예외를 던지는 경우(네트워크 오류, 4xx/5xx 등) —
+                // 조용히 삼키지 않고 로그를 남긴다. 다음 시도에서 계속 실패하면
+                // 마지막 시도에서 FAILED 처리로 떨어진다.
+                log.warn("AI 분석 상태 조회 실패 (jobId={}, attempt={}/{})", jobId, attempt, POLL_MAX_ATTEMPTS, e);
+                continue;
+            }
+
+            if (result == null) {
+                continue;
+            }
+
+            String status = result.status();
+
+            if ("FAILED".equalsIgnoreCase(status)) {
+                markAnalysisFailed(analysis, "AI_ANALYSIS_FAILED", "AI 서버가 분석 실패를 반환했습니다. jobId=" + jobId);
+                return;
+            }
+
+            if (result.sections() == null || result.sections().isEmpty()) {
+                // SUCCEEDED인데 섹션이 비어 있는 경우도 실패로 취급한다 —
+                // 섹션 없는 SUCCEEDED를 그대로 두면 조회 쪽에서 빈 화면과
+                // "분석 진행중"을 구분할 수 없다.
+                if ("SUCCEEDED".equalsIgnoreCase(status)) {
+                    markAnalysisFailed(analysis, "EMPTY_ANALYSIS_RESULT", "AI 분석이 SUCCEEDED이나 섹션이 비어 있습니다. jobId=" + jobId);
+                    return;
+                }
+                continue; // 아직 RUNNING/PENDING 등 진행 중
+            }
+
+            persistAnalysisResult(analysis, version, orgId, result);
+            return;
+        }
+
+        // 여기까지 왔다는 건 POLL_MAX_ATTEMPTS 동안 SUCCEEDED도 FAILED도 못 받았다는 뜻 —
+        // 이것도 무한 PENDING으로 방치하지 않고 명시적으로 실패 처리한다.
+        markAnalysisFailed(analysis, "ANALYSIS_TIMEOUT",
+                "최대 대기 시간(" + (POLL_MAX_ATTEMPTS * POLL_INTERVAL_MS / 1000) + "초) 동안 결과를 받지 못했습니다. jobId=" + jobId);
+    }
+
+    private void persistAnalysisResult(CurriculumAnalysis analysis, CurriculumVersion version,
+                                       UUID orgId, AiCurriculumClient.AnalysisResult result) {
+        analysis.start();
+
+        int sectionSeq = 1;
+        for (AiCurriculumClient.SectionResult sec : result.sections()) {
+            CurriculumSection savedSection = sectionRepository.save(
+                    CurriculumSection.builder()
+                            .versionId(version.getVersionId())
+                            .sourceAnalysisId(analysis.getAnalysisId())
+                            .sequenceNo(sectionSeq++)
+                            .title(sec.title())
+                            .pageStart(sec.pageStart())
+                            .pageEnd(sec.pageEnd())
+                            .keywords(sec.keywords())
+                            .confidence(sec.confidence())
+                            .build());
+
+            int mappingSeq = 1;
+            for (AiCurriculumClient.TeachesResult t : sec.teaches()) {
+                Teaches teaches = teachesRepository
+                        .findByOrgIdAndNormalizedName(orgId, t.normalizedName())
+                        .orElseGet(() -> teachesRepository.save(
+                                Teaches.builder()
+                                        .orgId(orgId)
+                                        .canonicalName(t.canonicalName())
+                                        .normalizedName(t.normalizedName())
+                                        .build()));
+
+                mappingRepository.save(
+                        CurriculumTeachesMapping.builder()
+                                .orgId(orgId)
+                                .teachesId(teaches.getTeachesId())
+                                .versionId(version.getVersionId())
+                                .sectionId(savedSection.getSectionId())
+                                .sourceAnalysisId(analysis.getAnalysisId())
+                                .extractedName(t.canonicalName())
+                                .sourceDescription(t.description())
+                                .pageStart(sec.pageStart())
+                                .pageEnd(sec.pageEnd())
+                                .sequenceNo(mappingSeq++)
+                                .confidence(t.confidence())
+                                .mappingStatus(MappingStatus.ACTIVE)
+                                .build());
+            }
+        }
+
+        analysis.succeed();
+        analysisRepository.save(analysis);
+    }
+
+    /**
+     * 분석 실행을 FAILED로 전환한다.
+     *
+     * <p>주의: {@code curriculum_analysis} 테이블 제약상 FAILED는
+     * started_at·failed_at·failure_code·failure_stage·failure_reason·
+     * is_retryable·recovery_action이 모두 필수다. {@link CurriculumAnalysis}
+     * 도메인 객체에 이 값들을 채우는 메서드(예: fail(...))가 없다면
+     * 반드시 추가해야 컴파일·제약 둘 다 통과한다. 아래 호출은 그 메서드가
+     * 있다는 가정하에 작성했으니, 실제 시그니처에 맞춰 인자를 조정할 것.
+     */
+    private void markAnalysisFailed(CurriculumAnalysis analysis, String failureCode, String failureReason) {
+        log.warn("교안 분석 실패 처리: analysisId={}, code={}, reason={}",
+                analysis.getAnalysisId(), failureCode, failureReason);
+
+        if (analysis.getStartedAt() == null) {
+            analysis.start();
+        }
+        // TODO: 아래 fail(...) 시그니처는 CurriculumAnalysis 도메인 클래스의 실제 메서드에 맞춰 조정.
+        // failure_stage, is_retryable, recovery_action 등 정의서상 FAILED 필수 컬럼을 채워야 한다.
+        analysis.fail(failureCode, "AI_POLLING", failureReason, /* isRetryable= */ true, /* recoveryAction= */ "RETRY");
         analysisRepository.save(analysis);
     }
 
@@ -276,33 +424,38 @@ public class CurriculumServiceImpl implements CurriculumService {
         }
     }
 
-    // TODO: 임시 우회 — S3 자격증명 문제로 실제 파일 대신 더미 바이트를 반환한다.
-    // 나중에 AWS 키 받으면 아래 주석 처리된 원래 로직으로 되돌려야 한다.
+    /**
+     * 실제 업로드된 파일 바이트를 읽어 AI 서버로 전송한다.
+     *
+     * <p>이전 코드는 S3 자격증명 문제를 우회한다며 실제 파일 대신
+     * {@code "dummy pdf content for testing"} 문자열을 그대로 반환하고 있었다.
+     * 그 결과 AI 서버는 PDF가 아닌 텍스트 한 줄을 받아 분석에 실패했고,
+     * 우리 쪽 폴링 루프는 그 실패를 구분하지 못해 90초 내내 재시도만 하다
+     * 끝났다. 최소한 로컬 디스크 경로는 실제로 읽도록 되돌린다.
+     *
+     * <p>S3 경로({@code s3://...})는 자격증명이 준비되기 전까지는 명시적으로
+     * 예외를 던진다 — 조용히 더미 데이터를 반환하면 오늘 겪은 것과 같은 문제가
+     * 다시 재현되고 원인 파악이 훨씬 오래 걸린다.
+     */
     private byte[] readFileBytes(String fileUri) {
-        return "dummy pdf content for testing".getBytes();
-    }
-
-    /*
-    private byte[] readFileBytesOriginal(String fileUri) {
+        // FileStorageService.store()가 targetPath.toUri().toString()을 그대로 fileUri로 저장하므로
+        // 항상 "file:///절대/경로/..." 형태의 완전한 file:// URI다. scheme이 항상 채워져 있어
+        // Paths.get(URI)로 바로 변환할 수 있다 (getPath() null 걱정을 할 필요가 없다).
         URI uri = URI.create(fileUri);
         try {
             if ("s3".equals(uri.getScheme())) {
-                String bucket = uri.getHost();
-                String key = uri.getPath().startsWith("/") ? uri.getPath().substring(1) : uri.getPath();
-                GetObjectRequest request = GetObjectRequest.builder()
-                        .bucket(bucket)
-                        .key(key)
-                        .build();
-                return S3_CLIENT.getObject(request, ResponseTransformer.toBytes()).asByteArray();
+                // TODO: AWS 자격증명 준비되면 아래로 교체.
+                // String bucket = uri.getHost();
+                // String key = uri.getPath().startsWith("/") ? uri.getPath().substring(1) : uri.getPath();
+                // GetObjectRequest request = GetObjectRequest.builder().bucket(bucket).key(key).build();
+                // return S3_CLIENT.getObject(request, ResponseTransformer.toBytes()).asByteArray();
+                throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILE_UNREADABLE);
             }
             return Files.readAllBytes(Paths.get(uri));
         } catch (IOException e) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILE_UNREADABLE);
-        } catch (Exception e) {
-            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILE_UNREADABLE);
         }
     }
-    */
 
     /** 섹션 하나짜리 경로. 여기서도 회차 라벨은 한 번에 받는다(11차 R1). */
     private List<SectionItemView> toSectionItemViews(List<CurriculumTeachesMapping> mappings, UUID orgId) {
