@@ -46,6 +46,35 @@ class TraineeReportSchemaTest {
 				.containsExactlyInAnyOrder("SUMMARY", "PRIVATE", "FULL");
 	}
 
+	/**
+	 * PARTIAL 리포트를 화면이 완전한 리포트와 구분할 수 있어야 한다.
+	 *
+	 * <p>문제 3개 중 1개가 실패해도 발행은 된다(결정 11). 이 값이 없으면 화면에 개념 카드가
+	 * 2장만 뜨는데, 학생은 "원래 개념이 2개였나 보다" 하고 넘어간다 — 응답이 200이라
+	 * 아무 데서도 드러나지 않는다.
+	 *
+	 * <p>설명까지 못 박는 이유는 <b>같은 이름이 OP-05에서 다른 뜻</b>이기 때문이다.
+	 * 여기 PARTIAL은 AI 생성 실패(장애)이고 OP-05는 미응시·무효로 모수가 준 것(정상)이다.
+	 * 문구를 재사용하면 한쪽이 정상 동작을 장애로 표시하게 된다. javadoc은 스펙에 닿지 않아
+	 * ({@code therapi} 플러그인 없음) 이 구분이 프론트에 전달되는 경로는 {@code @Schema} 하나뿐이다.
+	 */
+	@Test
+	void distinguishesPartialReportsAndWarnsThatOp05MeansSomethingElse() {
+		Map<String, Schema> schemas = ModelConverters.getInstance()
+				.readAll(new AnnotatedType(TraineeReportsResponse.class));
+
+		assertThat(((Schema<?>) roundReportProperties().get("completionStatus")).get$ref())
+				.isEqualTo("#/components/schemas/ReportCompletionStatus");
+		assertThat(schemas.get("ReportCompletionStatus").getEnum())
+				.containsExactlyInAnyOrder("FULL", "PARTIAL");
+
+		// 설명이 타입에 있는 이유는 ReportCompletionStatus javadoc 참고 — $ref 옆 형제 필드는
+		// 무시되므로 필드에 달면 값 목록과 설명 중 하나를 잃는다.
+		assertThat(schemas.get("ReportCompletionStatus").getDescription())
+				.as("javadoc은 스펙에 닿지 않는다 — 이 설명이 비면 프론트는 두 화면의 PARTIAL을 같은 문구로 쓴다")
+				.contains("OP-05");
+	}
+
 	/** 개념 이름은 회차마다 반복되므로 이름으로 지목하면 엉뚱한 회차의 개념을 짚을 수 있다. */
 	@Test
 	void identifiesEachConceptByProblemIdNotJustItsName() {

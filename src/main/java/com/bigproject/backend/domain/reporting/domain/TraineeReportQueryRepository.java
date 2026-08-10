@@ -41,6 +41,8 @@ public interface TraineeReportQueryRepository {
 	 * @param attemptId         응시 기록. null이면 미응시다.
 	 * @param terminalReasonCode measurement_attempt 종료 사유. 중단·미제출 판정에 쓴다.
 	 * @param validityReviewStatus 무효 응시 검토 상태. PENDING·CONFIRMED_INVALID면 화면이 `확인 필요`다.
+	 * @param completionStatus  활성 스냅샷의 {@code FULL}·{@code PARTIAL}. 스냅샷이 없으면 null이다.
+	 *                          {@code ck_report_snapshot_completion_status}가 두 값만 허용한다.
 	 * @param reportPublishNotBeforeAt 발행 예정 시각. 화면 `PENDING_PUBLISH`의 `publishAfter`.
 	 * @param reviewStatus      다시 보기(REVIEW attempt) 상태. 없으면 null.
 	 */
@@ -51,6 +53,7 @@ public interface TraineeReportQueryRepository {
 			String projectName,
 			UUID reportId,
 			UUID snapshotId,
+			String completionStatus,
 			UUID attemptId,
 			String attemptStatus,
 			String terminalReasonCode,

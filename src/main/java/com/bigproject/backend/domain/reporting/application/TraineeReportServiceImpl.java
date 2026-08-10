@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.reporting.application;
 
 import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
+import com.bigproject.backend.domain.reporting.domain.ReportCompletionStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
 import com.bigproject.backend.domain.reporting.domain.ReportException;
 import com.bigproject.backend.domain.reporting.domain.TraineeReportQueryRepository;
@@ -128,7 +129,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		//    publishAfter는 회차가 정해 둔 "이 시각 전에는 발행하지 않는다" 값이다.
 		if (round.reportId() == null || round.publishedAt() == null) {
 			return new RoundReportResponse(id, reportId, label, "PENDING_PUBLISH",
-					iso(round.reportPublishNotBeforeAt()), null, null, null, null, null, null, null);
+					iso(round.reportPublishNotBeforeAt()), null, null, null, null, null, null, null, null);
 		}
 
 		// ⑤ 발행됐지만 공개 범위 미지정 — 발행과 공개는 다른 사건이다.
@@ -153,6 +154,9 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				// 만나면 조용히 넘길 데이터가 아니다 — valueOf가 그대로 터지게 둔다
 				// (ManagedReportListResponse.scope와 같은 판단).
 				scope(round.traineeDisclosureScope()),
+				// PUBLISHED 분기에서만 채운다. 앞의 ①~⑤는 활성 스냅샷이 없거나(발행 전)
+				// 볼 수 없는 상태라 완전성을 말할 대상 자체가 없다.
+				completion(round.completionStatus()),
 				concepts,
 				retryState(round),
 				iso(round.reviewDueAt()),
@@ -162,6 +166,16 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 
 	private static DisclosureScope scope(String value) {
 		return value == null ? null : DisclosureScope.valueOf(value);
+	}
+
+	/**
+	 * 활성 스냅샷의 완전성. 스냅샷이 없으면 null이고 {@code @JsonInclude(NON_NULL)}이라 키가 빠진다.
+	 *
+	 * <p>{@code ck_report_snapshot_completion_status}가 {@code FULL}·{@code PARTIAL} 둘만 허용하므로
+	 * 모르는 값은 조용히 넘길 데이터가 아니다 — {@link #scope}와 같이 valueOf가 그대로 터지게 둔다.
+	 */
+	private static ReportCompletionStatus completion(String value) {
+		return value == null ? null : ReportCompletionStatus.valueOf(value);
 	}
 
 	private ConceptReportResponse toConcept(ConceptRow row, List<StageAnswerRow> answerRows) {
@@ -293,7 +307,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 
 	/** 본문이 없는 상태들. 화면은 status만 보고 그린다. */
 	private static RoundReportResponse statusOnly(String id, String reportId, String label, String status) {
-		return new RoundReportResponse(id, reportId, label, status, null, null, null, null, null, null, null, null);
+		return new RoundReportResponse(id, reportId, label, status,
+				null, null, null, null, null, null, null, null, null);
 	}
 
 	private static String iso(Instant instant) {
