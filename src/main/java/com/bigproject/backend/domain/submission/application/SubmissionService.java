@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.submission.application;
 
+import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJob;
+import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJobStatus;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepository;
 import com.bigproject.backend.domain.submission.domain.GithubRepositoryUrl;
 import com.bigproject.backend.domain.submission.domain.Repository;
@@ -256,6 +258,10 @@ public class SubmissionService {
 	 *
 	 * <p>{@code code_analysis}가 아니라 {@code analysis_job}을 읽는다. 전자는 성공했을 때에만 생기는 결과물이라
 	 * "진행 중"과 "분석 없음"을 구분할 수 없고 실패 사유 컬럼도 없다.
+	 *
+	 * <p><b>성공은 job 상태만으로 판정하지 않는다(2026-08-10).</b> 세션 준비는 job과 별개로 실패할 수
+	 * 있어서, 그때 SUCCEEDED를 그대로 내려 주면 교육생이 시작할 수 없는 화면을 계속 새로고침하게
+	 * 된다. {@link #withSessionReadiness} 참조.
 	 */
 	@Transactional(readOnly = true)
 	public SubmissionAnalysisResponse getAnalysis(UUID userId, UUID submissionId) {
@@ -264,8 +270,29 @@ public class SubmissionService {
 
 		return analysisJobRepository
 				.findFirstBySubmissionIdOrderByExecutionNoDescStartedAtDescJobIdDesc(submissionId)
-				.map(SubmissionAnalysisResponse::of)
+				.map(job -> withSessionReadiness(job, userId))
 				.orElseGet(() -> SubmissionAnalysisResponse.notStarted(submissionId));
+	}
+
+	/**
+	 * 성공한 job이라도 이 교육생이 실제로 응시할 수 있는지 확인해 응답을 낮춘다.
+	 *
+	 * <p>제출은 팀 단위지만 <b>세션은 개인 단위</b>라, 같은 SUCCEEDED job을 놓고도 사람마다 답이
+	 * 다를 수 있다 — 한 사람만 팀 배정이 끊겼다면 그 사람에게만 세션이 없다. 그래서 조회자 기준으로
+	 * 본다.
+	 *
+	 * <p>{@code analysis_job}은 건드리지 않는다. 분석은 실제로 성공했고, FAILED로 쓰면 재시도 대상이
+	 * 되어 같은 분석을 또 돌리게 되는데 원인이 우리 쪽 준비 단계면 몇 번을 불러도 같은 자리에서
+	 * 깨진다. 원장은 사실대로 두고 화면에만 실패를 드러낸다.
+	 */
+	private SubmissionAnalysisResponse withSessionReadiness(AnalysisJob job, UUID userId) {
+		if (job.getStatus() != AnalysisJobStatus.SUCCEEDED && job.getStatus() != AnalysisJobStatus.PARTIAL) {
+			return SubmissionAnalysisResponse.of(job);
+		}
+		if (analysisResultQueryRepository.isSessionPrepared(job.getSubmissionId(), userId)) {
+			return SubmissionAnalysisResponse.of(job);
+		}
+		return SubmissionAnalysisResponse.sessionPreparationFailed(job);
 	}
 
 	/**
