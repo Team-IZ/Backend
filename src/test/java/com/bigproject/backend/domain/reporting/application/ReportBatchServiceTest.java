@@ -7,6 +7,7 @@ import com.bigproject.backend.domain.reporting.domain.ReportGenerationItem;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationItemStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRun;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRunStatus;
+import com.bigproject.backend.domain.reporting.domain.ReportGenerationTriggerType;
 import com.bigproject.backend.domain.reporting.infrastructure.JdbcReportPayloadRepository;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.ProblemTarget;
@@ -229,6 +230,58 @@ class ReportBatchServiceTest {
 		ArgumentCaptor<ReportGenerationRun> runs = ArgumentCaptor.forClass(ReportGenerationRun.class);
 		verify(runRepository, times(2)).save(runs.capture());
 		assertThat(runs.getAllValues().get(0).getReportId()).isEqualTo(existing.getReportId());
+	}
+
+	// ------------------------------------------------------------- 운영자 재생성
+
+	/**
+	 * 배치가 놓친 대상을 푸는 유일한 경로다. 두 가지를 못 박는다.
+	 *
+	 * <p><b>① 배치 대상 조회를 타지 않는다.</b> {@code findDueSessions}는
+	 * {@code BLOCKING_RUN_EXISTS}·{@code UNDER_ATTEMPT_LIMIT}로 걸러진 목록이라, 재생성이 그걸
+	 * 거치면 <b>정확히 고쳐야 할 대상만 빠진다</b>(상한을 소진했거나 PARTIAL로 닫힌 것들).
+	 *
+	 * <p><b>② run이 {@code USER_REQUESTED}로 남는다.</b> 이 값이 {@code SCHEDULED}로 새면
+	 * {@code UNDER_ATTEMPT_LIMIT}가 그 실행까지 세서, 재생성을 누를수록 배치가 그 대상을 더 빨리
+	 * 포기하게 된다 — 도구가 문제를 악화시키는 방향이다.
+	 */
+	@Test
+	void regeneratesBypassingTheBatchGatesAndMarksTheRunUserRequested() {
+		catalogHasTheConfiguredModel();
+		ReportTarget target = target();
+		when(dispatchRepository.findTargetBySession(target.getSessionId())).thenReturn(Optional.of(target));
+		when(dispatchRepository.findSessionProblems(target.getSessionId()))
+				.thenReturn(List.of(problem(1), problem(2), problem(3)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
+		when(aiClient.requestGeneration(any(), any()))
+				.thenAnswer(call -> new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		Optional<UUID> runId = service.regenerateSession(target.getSessionId(), "operator@example.com");
+
+		assertThat(runId).isPresent();
+		verify(dispatchRepository, never()).findDueSessions(anyInt());
+		verify(aiClient, times(3)).requestGeneration(any(), any());
+
+		ArgumentCaptor<ReportGenerationRun> runs = ArgumentCaptor.forClass(ReportGenerationRun.class);
+		verify(runRepository, times(2)).save(runs.capture());
+		assertThat(runs.getAllValues().get(0).getTriggerType())
+				.isEqualTo(ReportGenerationTriggerType.USER_REQUESTED);
+	}
+
+	/**
+	 * 세션이 없거나 유효성 규칙에 안 맞으면 아무것도 만들지 않는다.
+	 *
+	 * <p>재생성이 푸는 것은 <b>"얼마나 자주"이지 "누구를"이 아니다.</b> 무효 응시나 미완료 세션은
+	 * 조회가 빈 값을 내므로, 여기서 run을 만들면 영원히 확정되지 않는 실행이 남는다.
+	 */
+	@Test
+	void doesNotRegenerateWhatIsNotAValidTarget() {
+		when(dispatchRepository.findTargetBySession(any())).thenReturn(Optional.empty());
+
+		assertThat(service.regenerateSession(UUID.randomUUID(), "operator@example.com")).isEmpty();
+
+		verify(runRepository, never()).save(any());
+		verify(aiClient, never()).requestGeneration(any(), any());
 	}
 
 	// ---------------------------------------------------------------------- poll

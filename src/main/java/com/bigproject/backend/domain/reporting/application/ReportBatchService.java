@@ -33,6 +33,7 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -166,7 +167,7 @@ public class ReportBatchService {
 		int dispatched = 0;
 		for (ReportTarget target : targets) {
 			try {
-				dispatchOne(target, model, Instant.now());
+				dispatchOne(target, model, Instant.now(), ReportGenerationTriggerType.SCHEDULED);
 				dispatched++;
 			} catch (DataIntegrityViolationException exception) {
 				// uq_report_generation_run_idempotency_key. 다른 인스턴스가 같은 대상을 먼저
@@ -182,18 +183,94 @@ public class ReportBatchService {
 	}
 
 	/**
+	 * 세션 1건의 리포트를 <b>운영자 판단으로 다시 만든다.</b> 배치가 다시 집지 못하는 대상을 푸는
+	 * 유일한 경로다.
+	 *
+	 * <h2>이것 말고 복구 수단이 없다</h2>
+	 *
+	 * <p>배치는 두 가지 이유로 대상을 영구히 놓칠 수 있고, 둘 다 이 메서드로만 풀린다.
+	 * <ul>
+	 *   <li><b>한계 1</b> — {@code ai.report.max-attempts}를 소진했다</li>
+	 *   <li><b>한계 7</b> — 문제 1개만 실패해 run이 {@code PARTIAL}로 닫혔다.
+	 *       {@code BLOCKING_RUN_EXISTS}가 {@code FAILED}만 통과시키므로 <b>상한과 무관하게</b>
+	 *       다시 집히지 않는다. 상한 소진보다 흔하다</li>
+	 * </ul>
+	 *
+	 * <p>대상을 찾는 방법은 통합본 §6의 모니터링 쿼리 두 개다.
+	 *
+	 * <h2>🔴 상한이 사라지는 게 아니라 사람에게 옮겨간다</h2>
+	 *
+	 * <p>{@code USER_REQUESTED} 실행은 {@code UNDER_ATTEMPT_LIMIT}가 세지 않으므로 <b>몇 번이든
+	 * 다시 부를 수 있다.</b> 그래서 누가·언제·몇 번째인지를 로그로 남긴다 — 같은 대상을 반복해서
+	 * 누르고 있으면 그건 이 도구가 아니라 AI 쪽 문제이고, 운영에서 그게 보여야 한다.
+	 *
+	 * <p>동기 경로({@code ReportGenerationService})로 부르고 싶어지는 지점이지만 그러면 안 된다.
+	 * 여기도 202만 받고 끊고, 결과는 기존 {@link #pollActiveItems()}가 회수한다.
+	 *
+	 * <p>아직 화면이 없어 컨트롤러를 두지 않았다. 운영자 화면이 생기면 이 메서드를 부르는 얇은
+	 * 엔드포인트 하나면 된다 — 매핑표에 자리가 잡힌 뒤에 붙이는 것이 맞다.
+	 *
+	 * @param sessionId   {@code assessment_session.session_id}
+	 * @param requestedBy 누가 눌렀는지. 로그에만 쓴다 — 감사 원장은 이 경로의 책임이 아니다
+	 * @return 요청을 보냈으면 그 {@code generation_run_id}. 대상이 아니거나 문제가 없으면 빈 값
+	 */
+	public Optional<UUID> regenerateSession(UUID sessionId, String requestedBy) {
+		ReportTarget target = dispatchRepository.findTargetBySession(sessionId).orElse(null);
+		if (target == null) {
+			// 세션이 없는 것과 조건에 안 맞는 것을 구분하지 않는다 — 어느 쪽이든 만들면 안 된다.
+			log.warn("재생성 대상이 아니다: sessionId={}, requestedBy={}", sessionId, requestedBy);
+			return Optional.empty();
+		}
+
+		AnalysisModel model = modelRepository.findActiveByModelCode(modelCode).orElse(null);
+		if (model == null) {
+			log.error("ai.report.model-code 가 가리키는 ACTIVE 모델이 ai_model 에 없다. "
+					+ "재생성을 건너뛴다: modelCode={}, sessionId={}", modelCode, sessionId);
+			return Optional.empty();
+		}
+
+		Optional<UUID> runId;
+		try {
+			runId = dispatchOne(target, model, Instant.now(), ReportGenerationTriggerType.USER_REQUESTED);
+		} catch (DataIntegrityViolationException exception) {
+			/*
+			 * uq_report_generation_run_active 는 (report_id, trigger_type) 부분 유니크다
+			 * (status IN QUEUED·RUNNING·RETRYING).
+			 *
+			 * 즉 진행 중인 수동 재생성이 이미 있다는 뜻이다 — 운영자가 두 번 눌렀거나, 앞의 것이
+			 * 아직 폴링 중이다. 오류가 아니라 "이미 돌고 있다"이므로 예외를 밖으로 던지지 않는다.
+			 *
+			 * SCHEDULED 실행과는 부딪히지 않는다. trigger_type 이 인덱스 키에 있어서, 배치가 돌고
+			 * 있어도 수동 재생성은 걸린다 — 그게 이 도구가 필요한 상황이기도 하다.
+			 */
+			log.warn("이미 진행 중인 재생성이 있다: sessionId={}, requestedBy={}", sessionId, requestedBy);
+			return Optional.empty();
+		}
+
+		runId.ifPresent(id -> log.info(
+				"운영자 재생성 요청: sessionId={}, userId={}, roundId={}, runId={}, requestedBy={}",
+				sessionId, target.getUserId(), target.getAssessmentRoundId(), id, requestedBy));
+		return runId;
+	}
+
+	/**
 	 * 대상 1건을 요청한다.
 	 *
 	 * <p>순서가 중요하다. <b>run과 item을 먼저 저장하고</b> AI를 부른다. 반대로 하면 202를 받고도
 	 * 행이 없는 순간이 생기고, 그 사이 프로세스가 죽으면 AI에는 실행이 있는데 우리 원장에는 없다.
 	 * {@code request_payload}가 NOT NULL이라 스키마도 이 순서를 강제한다.
+	 *
+	 * @param triggerType {@code SCHEDULED}면 {@code UNDER_ATTEMPT_LIMIT}가 계수하고
+	 *                    {@code USER_REQUESTED}면 세지 않는다({@code ReportDispatchRepository} 참고)
+	 * @return 만든 실행의 {@code generation_run_id}. 세션에 문제가 없어 아무것도 만들지 않았으면 빈 값
 	 */
-	private void dispatchOne(ReportTarget target, AnalysisModel model, Instant now) {
+	private Optional<UUID> dispatchOne(ReportTarget target, AnalysisModel model, Instant now,
+			ReportGenerationTriggerType triggerType) {
 		List<ProblemTarget> problems = dispatchRepository.findSessionProblems(target.getSessionId());
 		if (problems.isEmpty()) {
 			// 문제가 없으면 만들 리포트도 없다. run을 남기면 영원히 확정되지 않는 실행이 된다.
 			log.warn("세션에 문제가 없어 리포트를 만들지 않는다: sessionId={}", target.getSessionId());
-			return;
+			return Optional.empty();
 		}
 
 		Report report = resolveReport(target);
@@ -207,7 +284,7 @@ public class ReportBatchService {
 
 		ReportGenerationRun run = runRepository.save(ReportGenerationRun.queued(
 				report.getReportId(),
-				ReportGenerationTriggerType.SCHEDULED,
+				triggerType,
 				idempotencyKeyOf(report.getReportId(), executionNo),
 				ReportRunFinalizer.CALCULATION_VERSION,
 				executionNo,
@@ -244,8 +321,11 @@ public class ReportBatchService {
 		run.markRunning(now);
 		runRepository.save(run);
 
-		log.info("리포트 생성 요청: reportId={}, runId={}, 문제 {}건",
-				report.getReportId(), run.getGenerationRunId(), prepared.size());
+		// executionNo가 "이 리포트의 몇 번째 실행인가"다. 수동 재생성이 상한을 타지 않으므로
+		// 이 값이 계속 오르고 있으면 재생성으로 덮이지 않는 문제가 있다는 뜻이다.
+		log.info("리포트 생성 요청: reportId={}, runId={}, 문제 {}건, trigger={}, 실행 {}회차",
+				report.getReportId(), run.getGenerationRunId(), prepared.size(), triggerType, executionNo);
+		return Optional.of(run.getGenerationRunId());
 	}
 
 	/** item 하나를 AI에 보낸다. 실패는 그 item만 닫고 나머지 문제는 계속 보낸다. */

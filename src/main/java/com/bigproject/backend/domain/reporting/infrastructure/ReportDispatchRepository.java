@@ -39,6 +39,28 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 	 * 않는다</b> — AI 서버 장애로 한 번 실패한 회차가 영구히 리포트 없이 남으면 복구 경로가 없다.
 	 * 무한 재시도는 {@code ai.report.max-attempts}가 막는다.
 	 *
+	 * <p>🔴 <b>여기에는 {@code trigger_type} 조건을 넣지 않는다.</b> {@link #UNDER_ATTEMPT_LIMIT}에는
+	 * 넣었는데 여기 없는 것이 실수처럼 보이지만 의도한 것이다 — 두 조건은 서로 다른 질문에 답한다.
+	 *
+	 * <table>
+	 *   <caption>두 조건의 역할</caption>
+	 *   <tr><th>조건</th><th>답하는 질문</th><th>{@code trigger_type}</th><th>이유</th></tr>
+	 *   <tr>
+	 *     <td>{@code UNDER_ATTEMPT_LIMIT}</td><td>"얼마나까지"</td><td>✅ {@code = 'SCHEDULED'}</td>
+	 *     <td>상한은 사람 판단 없는 5분 주기 반복을 막는 것. 수동 재생성이 계수되면
+	 *         상한을 소진한 대상을 <b>고치라고 만든 도구가 고치지 못한다</b></td>
+	 *   </tr>
+	 *   <tr>
+	 *     <td>{@code BLOCKING_RUN_EXISTS}</td><td>"지금 걸어도 되나"</td><td>❌ 넣지 않음</td>
+	 *     <td>수동 재생성이 {@code QUEUED}/{@code RUNNING}이거나 성공했으면 배치가 끼어들면 안 된다.
+	 *         넣으면 <b>사람이 돌리는 중에 배치가 같은 대상을 또 건다</b></td>
+	 *   </tr>
+	 * </table>
+	 *
+	 * <p>"재생성은 상한에서 뺀다"는 원칙을 반사적으로 양쪽에 적용하는 것이 이 코드에서 가장 하기 쉬운
+	 * 실수다. 수동 경로가 이 조건을 넘어서는 방법은 조건을 고치는 게 아니라
+	 * <b>이 질의를 타지 않는 것</b>이다({@link #findTargetBySession}).
+	 *
 	 * <p>⚠️ 이 상수를 이어 붙이는 쪽은 {@code AND NOT\s"""}처럼 <b>{@code \s}로 공백을 지켜야 한다.</b>
 	 * 텍스트 블록은 줄 끝 공백을 지우므로 {@code AND NOT """}로 쓰면 {@code AND NOTEXISTS}가 되어
 	 * 붙는다. 컴파일도 되고 단위 테스트도 통과하지만 실행하면 Postgres 문법 오류다.
@@ -59,13 +81,24 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 	 *
 	 * <p>상한이 필요한 이유: AI 서버가 계속 죽어 있으면 배치가 돌 때마다 전 대상을 다시 요청한다.
 	 * 리포트 1건이 문제 수만큼 LLM 호출이라 그 낭비가 작지 않다.
+	 *
+	 * <p><b>운영자 수동 재생성({@code USER_REQUESTED})은 세지 않는다.</b> 상한이 막으려는 것은 사람의
+	 * 판단이 없는 반복인데, 수동 재생성은 운영자가 대상을 특정하고 누른 것이라 폭주하지 않는다.
+	 * 더 결정적으로, 이 도구의 목적이 <b>상한을 소진해 리포트가 빈 대상을 구제하는 것</b>이라
+	 * 계수하면 목적과 모순된다 — 고쳐야 할 대상에서만 안 듣는 도구가 된다.
+	 *
+	 * <p>대신 상한이 사람에게 옮겨간다. 같은 대상을 반복해서 누르고 있으면 그건 AI 쪽 문제이므로
+	 * {@code ReportBatchService.regenerateSession}이 <b>누가·언제·몇 번째인지</b>를 로그로 남긴다.
+	 *
+	 * <p>{@link #BLOCKING_RUN_EXISTS}에는 같은 조건을 <b>넣지 않는다</b> — 이유는 그쪽 javadoc의 표.
 	 */
 	String UNDER_ATTEMPT_LIMIT = """
 			(SELECT count(*) FROM report rp2
 			   JOIN report_generation_run run2 ON run2.report_id = rp2.report_id
 			  WHERE rp2.user_id             = ma.user_id
 			    AND rp2.assessment_round_id = ma.assessment_round_id
-			    AND rp2.class_id IS NULL) < :maxAttempts
+			    AND rp2.class_id IS NULL
+			    AND run2.trigger_type       = 'SCHEDULED') < :maxAttempts
 			""";
 
 	/**
@@ -109,6 +142,65 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			 ORDER BY r.assessment_due_at, ma.user_id
 			""", nativeQuery = true)
 	List<ReportTarget> findDueSessions(int maxAttempts);
+
+	/**
+	 * 세션 1건의 맥락. <b>운영자 수동 재생성</b>이 쓴다.
+	 *
+	 * <h2>왜 별도 질의인가</h2>
+	 *
+	 * <p>{@link #findDueSessions}와 SELECT는 같지만 <b>{@link #BLOCKING_RUN_EXISTS}와
+	 * {@link #UNDER_ATTEMPT_LIMIT}를 타지 않는다.</b> 그 둘이 막고 있는 대상을 푸는 것이 이 경로의
+	 * 목적이기 때문이다 — 조건 안에서 예외를 만들면 배치 경로까지 헐거워진다.
+	 *
+	 * <p>수동 재생성이 실제로 필요해지는 두 경우가 모두 그 조건에 막혀 있다.
+	 * <ul>
+	 *   <li><b>한계 1</b> — {@code max-attempts}를 소진한 대상({@code UNDER_ATTEMPT_LIMIT})</li>
+	 *   <li><b>한계 7</b> — 문제 1개만 실패해 {@code PARTIAL}로 닫힌 run. {@code BLOCKING_RUN_EXISTS}가
+	 *       {@code status <> 'FAILED'}라 <b>상한과 무관하게</b> 영구히 다시 집히지 않는다.
+	 *       상한 3회 소진보다 훨씬 흔하다</li>
+	 * </ul>
+	 *
+	 * <h2>🔴 무엇을 빼지 <b>않는가</b></h2>
+	 *
+	 * <p>두 조건만 빼고 <b>유효성 규칙은 그대로 둔다</b> — 세션·응시 완료, 무효 응시 제외,
+	 * 종료 사유 6종 제외, 그리고 <b>발행 예정 시각</b>({@code report_publish_not_before_at})까지.
+	 * 운영자가 누른다고 아직 안 끝난 세션이나 무효 응시로 리포트를 만들 이유는 없고, 발행 시각을
+	 * 넘기면 확정 트랜잭션이 {@code report.publish()}까지 하므로 <b>정해 둔 시각보다 먼저 발행된다.</b>
+	 * 이 경로가 푸는 것은 "얼마나 자주"이지 "누구를"이 아니다.
+	 *
+	 * @return 대상이 없으면 빈 값. <b>세션이 없어서인지 조건에 안 맞아서인지 구분되지 않으므로</b>
+	 *         호출부는 "재생성할 수 없는 세션"으로만 다뤄야 한다.
+	 */
+	@Query(value = """
+			SELECT s.session_id           AS sessionId,
+			       ma.attempt_id          AS attemptId,
+			       ma.user_id             AS userId,
+			       ma.org_id              AS orgId,
+			       ma.cohort_id           AS cohortId,
+			       ma.project_id          AS projectId,
+			       ma.assessment_round_id AS assessmentRoundId,
+			       ma.code_analysis_id    AS codeAnalysisId,
+			       r.report_publish_not_before_at AS reportPublishNotBeforeAt
+			  FROM assessment_session s
+			  JOIN measurement_attempt ma
+			    ON ma.attempt_id = s.attempt_id
+			  JOIN project_assessment_round r
+			    ON r.assessment_round_id = ma.assessment_round_id
+			   AND r.deleted_at IS NULL
+			 WHERE s.session_id = :sessionId
+			   AND s.status  = 'COMPLETED'
+			   AND ma.status = 'COMPLETED'
+			   AND s.ended_at IS NOT NULL
+			   AND r.assessment_due_at IS NOT NULL
+			   AND s.ended_at < r.assessment_due_at
+			   AND now() >= COALESCE(r.report_publish_not_before_at, r.assessment_due_at)
+			   AND ma.validity_review_status <> 'CONFIRMED_INVALID'
+			   AND (s.end_reason_code IS NULL OR s.end_reason_code NOT IN (
+			           'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
+			           'REVIEW_DUE_AT_EXPIRED', 'DATA_INTEGRITY_INVALID',
+			           'ADMIN_INVALIDATED', 'TECHNICAL_FAILURE'))
+			""", nativeQuery = true)
+	java.util.Optional<ReportTarget> findTargetBySession(UUID sessionId);
 
 	/**
 	 * 이 세션의 문제 목록. AI를 문제마다 부르므로 이 수만큼 item이 생긴다.
