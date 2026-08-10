@@ -34,6 +34,15 @@ public enum CurriculumErrorCode implements ApiErrorCode {
     CURRICULUM_FILE_REQUIRED(HttpStatus.BAD_REQUEST, "업로드할 파일이 없습니다."),
 
     /**
+     * 분석 상태 필터와 `분석 전`만 보기를 함께 걸었다(13차 R2).
+     *
+     * <p>둘은 서로를 배제한다 — `분석 전`은 분석 상태가 <b>없는</b> 교안이라 어떤 상태로도 좁혀지지
+     * 않는다. 빈 목록을 조용히 돌려주면 화면이 "그런 교안이 없다"로 읽으므로 입력 오류로 끊는다.
+     * 명단의 {@code ROSTER_FILTER_CONFLICT}(반 필터 + 미배정 필터)와 같은 성격이다.
+     */
+    CURRICULUM_FILTER_CONFLICT(HttpStatus.BAD_REQUEST, "상태 필터와 분석 전 필터는 함께 지정할 수 없습니다."),
+
+    /**
      * 저장된 파일을 읽지 못했다. 사용자가 할 수 있는 일이 없고 재시도로 풀릴 수 있어 503이다.
      *
      * <p>지금은 {@code readFileBytes}가 더미 바이트를 돌려주는 임시 우회 상태라 <b>실제로는 나가지 않는다</b> —

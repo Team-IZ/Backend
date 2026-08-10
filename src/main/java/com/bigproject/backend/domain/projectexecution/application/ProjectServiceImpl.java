@@ -257,7 +257,7 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public List<String> findRoundLabelsUsingCurriculum(UUID curriculumVersionId, UUID orgId) {
-        return findProjectsUsingCurriculum(curriculumVersionId, orgId).stream()
+        return findProjectsUsingCurricula(List.of(curriculumVersionId), orgId).stream()
                 .map(CurriculumUsingProject::roundLabel)
                 .toList();
     }
@@ -267,8 +267,12 @@ public class ProjectServiceImpl implements ProjectService {
      * "연결된 회차가 있으면 무조건"에서 "응시가 시작된 회차만"으로 좁혀질 수 있어야 한다.
      */
     @Override
-    public List<CurriculumUsingProject> findProjectsUsingCurriculum(UUID curriculumVersionId, UUID orgId) {
-        List<UUID> projectIds = projectCurriculumRepository.findAllByCurriculumVersionId(curriculumVersionId).stream()
+    public List<CurriculumUsingProject> findProjectsUsingCurricula(Collection<UUID> curriculumVersionIds, UUID orgId) {
+        if (curriculumVersionIds.isEmpty()) {
+            return List.of();
+        }
+        List<UUID> projectIds = projectCurriculumRepository
+                .findAllByCurriculumVersionIdIn(Set.copyOf(curriculumVersionIds)).stream()
                 .map(ProjectCurriculum::getProjectId)
                 .distinct()
                 .toList();
