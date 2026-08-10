@@ -109,6 +109,7 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 				SELECT
 					r.assessment_round_id,
 					r.round_no,
+					p.sequence_no AS cohort_round_no,
 					r.round_name,
 					p.project_id,
 					p.name AS project_name,
@@ -135,6 +136,7 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 				(rs, rowNum) -> new RoundRow(
 						rs.getObject("assessment_round_id", UUID.class),
 						rs.getInt("round_no"),
+						rs.getInt("cohort_round_no"),
 						rs.getString("round_name"),
 						rs.getObject("project_id", UUID.class),
 						rs.getString("project_name"),
