@@ -121,12 +121,32 @@ public class SubmissionService {
 
 		// 개인 응시를 여기서 연다. 분석 성공 시점에 만들면 분석이 실패했을 때 응시가 영영 생기지
 		// 않아 "미응시"와 "분석 실패로 응시 불가"가 구분되지 않는다.
-		measurementAttemptOpener.openForTeam(context.getOrgId(), context.getTeamId(),
-				request.assessmentRoundId(), submission.getSubmissionId());
+		openAttempts(context, request.assessmentRoundId(), submission);
 
 		eventPublisher.publishEvent(new SubmissionAcceptedEvent(submission.getSubmissionId()));
 
 		return SubmissionResponse.of(submission, null);
+	}
+
+	/**
+	 * 팀원마다 개인 응시를 연다. <b>제출 행을 먼저 flush한다.</b>
+	 *
+	 * <p>{@code Submission}은 {@code @UuidGenerator}라 {@code save()}가 메모리에서 id를 채운 객체를
+	 * 곧바로 돌려주지만, INSERT 자체는 쓰기 지연으로 flush 시점까지 미뤄진다. 그런데
+	 * {@link JdbcMeasurementAttemptOpener}는 {@code JdbcTemplate}이라 Hibernate가 이 호출을 모르고
+	 * auto-flush를 걸지 않는다 — 같은 커넥션·같은 트랜잭션이어도 DB에는 아직 그 제출이 없다.
+	 *
+	 * <p>그 상태로 {@code measurement_attempt.source_submission_id}에 새 제출 id를 쓰면
+	 * {@code fk_measurement_attempt_source_submission_id}가 막고, 전역 핸들러가 이를 409
+	 * {@code DATA_INTEGRITY_VIOLATION}으로 바꿔 <b>제출·재제출이 통째로 거부된다.</b>
+	 *
+	 * <p>{@link #supersedeCurrentSubmission}이 이미 같은 이유로 flush를 강제하고 있다 — JPA 지연 쓰기와
+	 * 생 JDBC를 섞는 자리마다 이 경계가 필요하다.
+	 */
+	private void openAttempts(SubmissionContext context, UUID assessmentRoundId, Submission submission) {
+		submissionRepository.flush();
+		measurementAttemptOpener.openForTeam(context.getOrgId(), context.getTeamId(),
+				assessmentRoundId, submission.getSubmissionId());
 	}
 
 	/**
@@ -222,8 +242,7 @@ public class SubmissionService {
 				maxZipBytes
 		));
 
-		measurementAttemptOpener.openForTeam(context.getOrgId(), context.getTeamId(),
-				assessmentRoundId, submission.getSubmissionId());
+		openAttempts(context, assessmentRoundId, submission);
 
 		// artifact 를 저장한 뒤에 발행한다. 리스너가 storage_uri 를 읽어 AI 에 파일을 실어 보내므로
 		// 순서가 뒤집히면 분석 요청이 파일을 찾지 못한다.
