@@ -38,7 +38,11 @@ public enum SessionErrorCode {
 	// ── 힌트 ──
 	/** 단계당 2회를 다 썼다. 화면은 버튼을 문구로 바꾸므로 정상 흐름에서는 오지 않는다. */
 	HINT_EXHAUSTED(HttpStatus.CONFLICT, "더 이상 설명해 드릴 수 없습니다."),
-	/** 이미 통과한 단계에는 힌트를 열 수 없다. DB CHECK(ck_problem_stage_*_hint_presented_at)와 같은 규칙이다. */
+	/**
+	 * 직전 답변이 <b>채점되어 미달</b>일 때만 힌트가 열린다. 아직 답하지 않았거나 이미 통과한 단계는
+	 * 여기로 걸린다. DB CHECK({@code ck_problem_stage_*_hint_presented_at})와 같은 규칙이되, 그쪽은
+	 * NULL 비교라 "아직 채점 전"을 걸러 주지 못해 여기서 막는다.
+	 */
 	HINT_NOT_AVAILABLE(HttpStatus.CONFLICT, "지금은 다시 설명을 받을 수 없습니다."),
 
 	// ── AI ──

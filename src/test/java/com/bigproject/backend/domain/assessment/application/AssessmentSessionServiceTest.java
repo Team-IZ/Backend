@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -67,6 +68,51 @@ class AssessmentSessionServiceTest {
 		assertThat(response.hintsLeft()).isEqualTo(1);
 		verify(repository).openHint(STAGE_ID, AnswerSlot.FIRST_HINT, 3L);
 		verifyNoInteractions(grader);
+	}
+
+	/**
+	 * 힌트는 "3점 미만이면 실패이고 그때 보여준다"는 순서를 지킨다. 답하기 전에 열리면 질문 슬롯이
+	 * 비어 있는 채로 힌트만 소모되고, 마지막에 {@code NOT_PASSED}를 쓸 때
+	 * {@code ck_problem_stage_status_2}가 "슬롯 셋이 모두 FALSE"를 요구해 CHECK 위반으로 터진다.
+	 */
+	@Test
+	void 답하기_전에는_힌트를_열_수_없다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
+		when(repository.findStage(STAGE_ID))
+				.thenReturn(Optional.of(stage(0, new SlotState(null, null, null, null))));
+
+		assertThatThrownBy(() -> service.openHint(USER_ID, SESSION_ID))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.HINT_NOT_AVAILABLE);
+		verify(repository, never()).openHint(any(), any(), anyLong());
+	}
+
+	/** 3점 이상으로 통과한 단계에는 더 설명할 것이 없다. */
+	@Test
+	void 통과한_단계에는_힌트를_열_수_없다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
+		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(
+				stage(0, new SlotState("답", (short) 4, true, Instant.now()))));
+
+		assertThatThrownBy(() -> service.openHint(USER_ID, SESSION_ID))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.HINT_NOT_AVAILABLE);
+	}
+
+	/** 첫 힌트 재답변도 미달이면 마지막 힌트가 열린다. */
+	@Test
+	void 첫_힌트_재답변도_미달이면_마지막_힌트를_준다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
+		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(stage(1)));
+		when(repository.openHint(any(), any(), anyLong())).thenReturn(1);
+
+		HintResponse response = service.openHint(USER_ID, SESSION_ID);
+
+		assertThat(response.hintText()).isEqualTo("힌트2");
+		assertThat(response.hintsLeft()).isZero();
+		verify(repository).openHint(STAGE_ID, AnswerSlot.SECOND_HINT, 3L);
 	}
 
 	@Test
@@ -166,16 +212,27 @@ class AssessmentSessionServiceTest {
 				attemptType, "IN_PROGRESS", PROBLEM_ID, STAGE_ID, Instant.now(), null, null, UUID.randomUUID());
 	}
 
+	/**
+	 * 힌트를 {@code hintsUsed}개 연 단계. 힌트는 <b>직전 답변이 미달일 때만</b> 열리므로 질문 슬롯은
+	 * 언제나 답해서 미달인 상태이고, 힌트를 하나 더 열었다면 첫 힌트 슬롯도 그렇다.
+	 */
 	private static SessionStage stage(int hintsUsed) {
+		return stage(hintsUsed, failed());
+	}
+
+	private static SessionStage stage(int hintsUsed, SlotState question) {
 		SlotState empty = new SlotState(null, null, null, null);
-		SlotState failed = new SlotState("답", (short) 1, false, Instant.now());
 		return new SessionStage(STAGE_ID, PROBLEM_ID, 1, "L1", 1, "질문", "힌트1", "힌트2", "IN_PROGRESS",
-				hintsUsed > 0 ? failed : empty,
-				hintsUsed > 1 ? failed : empty,
+				question,
+				hintsUsed >= 1 ? failed() : empty,
 				empty,
 				hintsUsed >= 1 ? Instant.now() : null,
 				hintsUsed >= 2 ? Instant.now() : null,
 				3L);
+	}
+
+	private static SlotState failed() {
+		return new SlotState("답", (short) 1, false, Instant.now());
 	}
 
 	private static SessionProblem problem(int problemNo, UUID problemId) {

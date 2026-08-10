@@ -8,6 +8,7 @@ import com.bigproject.backend.domain.assessment.domain.SessionException;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionHead;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionProblem;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionStage;
+import com.bigproject.backend.domain.assessment.domain.SessionModels.SlotState;
 import com.bigproject.backend.domain.assessment.infrastructure.JdbcSessionRepository;
 import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitRequest;
 import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitResponse;
@@ -139,10 +140,16 @@ public class AssessmentSessionService {
 		if (hintsUsed >= 2) {
 			throw new SessionException(SessionErrorCode.HINT_EXHAUSTED);
 		}
-		// 이미 통과한 단계에는 열 수 없다. DB CHECK(ck_problem_stage_*_hint_presented_at)도 같은 규칙이지만
-		// 그쪽은 NULL 비교라 "아직 채점 전"을 걸러 주지 못한다 — 여기서 명시적으로 막는다.
-		if (Boolean.TRUE.equals(stage.question().passed())
-				|| (hintsUsed == 1 && Boolean.TRUE.equals(stage.firstHint().passed()))) {
+
+		// 힌트는 <b>직전 답변이 채점되어 미달일 때만</b> 열린다(정의서: 3점 미만이면 실패이고 그때 힌트를
+		// 보여준다). 통과한 단계를 막는 것만으로는 부족하다 — 아직 답하지 않은 슬롯은 passed 가 NULL 이라
+		// "통과 아님"으로 통과해 버리고, 그러면 학생이 질문에 답하기도 전에 힌트를 두 번 열 수 있다.
+		//
+		// 그렇게 건너뛴 슬롯은 영영 NULL 로 남는데, 마지막 힌트까지 미달일 때 쓰는 NOT_PASSED 는
+		// ck_problem_stage_status_2 가 "슬롯 셋이 모두 FALSE"를 요구한다. 즉 사고는 힌트를 열 때가 아니라
+		// 30분 뒤 마지막 제출에서 CHECK 위반 500 으로 터진다. 여기서 순서를 강제해야 그 자리가 생기지 않는다.
+		SlotState answered = stage.slot(AnswerSlot.ofHintsUsed(hintsUsed));
+		if (!answered.isAnswered() || Boolean.TRUE.equals(answered.passed())) {
 			throw new SessionException(SessionErrorCode.HINT_NOT_AVAILABLE);
 		}
 
