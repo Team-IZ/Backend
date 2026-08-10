@@ -30,7 +30,7 @@ public class AssessmentRoundController {
 	private final AssessmentRoundQueryService assessmentRoundQueryService;
 
 	@Operation(
-			summary = "교육생 홈 3구획 조회 | ✅ 사용 가능",
+			summary = "교육생 홈 3구획 조회 | ⚠️ 사용 불가",
 			description = """
 					**상태**: ✅ 사용 가능
 
