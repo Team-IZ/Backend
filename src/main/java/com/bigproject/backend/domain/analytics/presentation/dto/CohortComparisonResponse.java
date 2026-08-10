@@ -175,7 +175,18 @@ public record CohortComparisonResponse(
 	) {
 	}
 
-	@Schema(description = "교안 버전 변화이며 화면의 'v1 → v2' 또는 'v3 · 그대로'입니다.")
+	/**
+	 * 교안 버전 변화. 12차 R2 — 판정 기준이 버전 <b>번호</b>에서 버전 <b>식별자</b>로 바뀌었다.
+	 */
+	@Schema(description = """
+			교안 버전 변화이며 화면의 'v1 → v2' 또는 'v3 · 그대로'입니다.
+
+			⚠️ **`versionChanged`는 버전 번호가 아니라 버전 식별자로 판정합니다**(12차 R2).
+			버전 번호는 교안마다 1부터 다시 매겨져 **서로 다른 교안의 v1끼리도 같아 보입니다**.
+			그래서 `baselineVersionNo`와 `targetVersionNo`가 둘 다 `1`인데
+			`versionChanged`가 `true`일 수 있습니다 — 번호는 같아도 다른 교안이라는 뜻입니다.
+			두 교안을 구분해 보여줘야 하면 `baselineVersionId`·`targetVersionId`를 쓰세요.
+			""")
 	public record CurriculumVersionChange(
 			@Schema(description = "지난 기수에서 쓴 교안 버전이며 지난 기수에 없던 개념이거나 교안에 매핑되지 않았으면 null입니다.",
 					example = "1", nullable = true)
@@ -183,7 +194,14 @@ public record CohortComparisonResponse(
 			@Schema(description = "이번 기수에서 쓴 교안 버전이며 이번 기수에 없던 개념이거나 교안에 매핑되지 않았으면 null입니다.",
 					example = "2", nullable = true)
 			Integer targetVersionNo,
-			@Schema(description = "두 버전이 모두 있고 서로 다르면 true입니다.")
+			@Schema(description = "지난 기수 교안 버전의 식별자입니다. `versionChanged` 판정의 실제 기준이며 "
+					+ "확인할 수 없으면 null입니다(12차 R2).", nullable = true)
+			UUID baselineVersionId,
+			@Schema(description = "이번 기수 교안 버전의 식별자입니다. `versionChanged` 판정의 실제 기준이며 "
+					+ "확인할 수 없으면 null입니다(12차 R2).", nullable = true)
+			UUID targetVersionId,
+			@Schema(description = "두 버전 식별자가 모두 있고 서로 다르면 true입니다. "
+					+ "**번호가 같아도 다른 교안이면 true입니다.**")
 			boolean versionChanged
 	) {
 	}

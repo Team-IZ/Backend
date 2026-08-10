@@ -271,8 +271,8 @@ public class AnalyticsController {
 					| --- | --- | --- | --- |
 					| `projectId` | 선택 | UUID | 한 미니프로젝트로 좁힌다. 비우면 기수의 모든 미니프로젝트 |
 					| `classroomId` | 선택 | UUID[] | 조회할 반 목록. 비우면 기수의 모든 반 |
-					| `fromRoundNo` | 선택 | int | 시작 회차. 비우면 1차부터. 최소 `1` |
-					| `toRoundNo` | 선택 | int | 종료 회차. 비우면 마지막 회차까지. 최소 `1` |
+					| `fromRoundNo` | 선택 | int | 시작 차수. 비우면 1차부터. 최소 `1`. **`rounds[].cohortRoundNo`와 같은 축** |
+					| `toRoundNo` | 선택 | int | 종료 차수. 비우면 마지막 차수까지. 최소 `1`. **`rounds[].cohortRoundNo`와 같은 축** |
 					| `level` | 선택 | enum | `CLASS`(반, 기본) · `TEAM`(팀) |
 					| `sort` | 선택 | enum | `RECENT_ROUND_WORST`(기본) · `WORSE_ROUND_COUNT` · `EXCLUSION_COUNT` · `NAME` |
 
@@ -299,7 +299,8 @@ public class AnalyticsController {
 					| 필드 | 타입 | 설명 |
 					| --- | --- | --- |
 					| `assessmentRoundId` | UUID | 회차 ID |
-					| `roundNo` | int | 회차 번호. **프로젝트 안에서만 유일** |
+					| **`cohortRoundNo`** | int | **기수 안의 회차 순번. 열 키로 쓰세요** — 요청의 `fromRoundNo`·`toRoundNo`와 같은 축 |
+					| `roundNo` | int | 프로젝트 안의 응시 번호. **프로젝트 안에서만 유일**하며 미니프로젝트는 늘 `1` |
 					| `roundName` | string | 회차 이름 |
 					| `projectId` | UUID | 회차가 속한 프로젝트 ID |
 					| `projectName` | string | 프로젝트 이름. 화면의 `미프 N차` 기준 |
@@ -345,8 +346,9 @@ public class AnalyticsController {
 
 					| 필드 | 타입 | 설명 |
 					| --- | --- | --- |
-					| `assessmentRoundId` | UUID | 이 칸이 속한 회차. `rounds[].assessmentRoundId`와 짝 |
-					| `roundNo` | int | 회차 번호 |
+					| `assessmentRoundId` | UUID | 이 칸이 속한 회차. `rounds[].assessmentRoundId`와 짝. **칸을 열에 잇는 것은 이 값으로** |
+					| `cohortRoundNo` | int | 기수 안의 회차 순번(`rounds[].cohortRoundNo`와 같은 값) |
+					| `roundNo` | int | 프로젝트 안의 응시 번호. **프로젝트 안에서만 유일** |
 					| `aggregationStatus` | enum | `NOT_STARTED` · `NOT_AGGREGATED` · `AGGREGATED` |
 					| `eligibleCount` | long | 미집계를 제외한 **분모** |
 					| `riskCount` | long | 위험 유형을 하나라도 가진 고유 교육생 수(**분자**) |
@@ -383,11 +385,23 @@ public class AnalyticsController {
 					⚠️ **집계 상태는 회차 생명주기가 아니라 발행된 리포트 유무로 판정합니다.** 발행본이 없으면
 					`riskRate`는 0이 아니라 `null`이고 `aggregationStatus`로 원인을 구분합니다.
 
-					⚠️ **`roundNo`는 `(project_id, round_no)` UNIQUE라 프로젝트마다 1부터 다시 시작합니다.**
-					미니프로젝트는 프로젝트마다 이해도 확인 회차가 1건뿐이라 모든 열의 `roundNo`가 1입니다.
-					기수의 차수 흐름은 프로젝트 순서에만 남으므로 **격자의 가로축은 `roundNo`가 아니라 프로젝트
-					순서**이며, `fromRoundNo`·`toRoundNo`도 이 프로젝트 순서 범위입니다. 열을 구분해야 하면
-					`roundNo`가 아니라 `assessmentRoundId`나 `projectName`을 쓰십시오.
+					## ⚠️ 회차 번호가 두 축입니다 (12차 R1)
+
+					| 필드 | 무엇 | 어디서 유일한가 |
+					| --- | --- | --- |
+					| **`cohortRoundNo`** | **기수 안의 회차 순번** | 기수 안에서 유일 — **열 키로 쓰세요** |
+					| `roundNo` | 프로젝트 안의 응시 번호 | 프로젝트 안에서만 유일 |
+
+					**`cohortRoundNo`가 요청의 `fromRoundNo`·`toRoundNo`와 같은 축입니다.** 받은 값을 그대로
+					범위 조건에 다시 넣을 수 있습니다 — 화면이 열 번호를 다시 셀 필요가 없습니다.
+
+					`roundNo`는 `(project_id, round_no)` UNIQUE라 프로젝트마다 1부터 다시 시작하고,
+					미니프로젝트는 프로젝트당 이해도 확인 회차가 1건뿐이라 **모든 열이 1**입니다.
+					이것을 격자의 열 키로 쓰면 여섯 열이 전부 같은 키가 됩니다.
+
+					두 축을 모두 남긴 이유는 실제로 둘 다 있는 값이기 때문입니다 — 한 프로젝트에 응시가
+					여러 번 생기면 그때는 `roundNo`가 그 안에서 갈립니다. 칸을 열에 이을 때는
+					`assessmentRoundId`를 쓰는 것이 가장 안전합니다.
 
 					⚠️ **`rounds[]`와 각 행의 `cells[]`는 최근 프로젝트부터 내림차순입니다.** 두 배열의 순서와
 					길이는 항상 같으므로 인덱스로 짝지어도 됩니다.
@@ -431,11 +445,12 @@ public class AnalyticsController {
 			@RequestParam(required = false) List<UUID> classroomId,
 			@Parameter(description = """
 					조회 시작 차수이며 생략 시 1차부터 조회합니다.
-					미니프로젝트는 프로젝트마다 이해도 확인 회차가 1건뿐이라 차수는 회차 번호가 아니라
-					기수 안의 미니프로젝트 순서를 뜻합니다.
+					**응답의 `rounds[].cohortRoundNo`와 같은 축**이라 받은 값을 그대로 다시 넣을 수 있습니다.
+					응답의 `roundNo`(프로젝트 안의 응시 번호)와는 다른 값이니 주의하세요(12차 R1).
 					""", example = "1")
 			@RequestParam(required = false) @Min(1) Integer fromRoundNo,
-			@Parameter(description = "조회 종료 차수이며 생략 시 마지막 차수까지 조회합니다.", example = "4")
+			@Parameter(description = "조회 종료 차수이며 생략 시 마지막 차수까지 조회합니다. "
+					+ "`fromRoundNo`와 같이 `rounds[].cohortRoundNo` 축입니다.", example = "4")
 			@RequestParam(required = false) @Min(1) Integer toRoundNo,
 			@Parameter(description = """
 					행 계층입니다. TEAM이면 projectId와 classroomId 한 건이 모두 필요합니다.
@@ -474,7 +489,11 @@ public class AnalyticsController {
 
 					| 파라미터 | 필수 | 타입 | 설명 |
 					| --- | --- | --- | --- |
-					| `cohortId` | 필수 | UUID | 이번 기수 |
+					| `cohortId` | 필수 | UUID | 이번 기수. **경로 파라미터입니다** — 쿼리로 보내면 400 |
+
+					⚠️ **`GET /curricula/comparable-cohorts`와 헷갈리기 쉽습니다**(12차 Q1). 그쪽은 `cohortId`를
+					**쿼리**로 받는 다른 오퍼레이션이며, 비교 후보 기수 ID 배열만 돌려줍니다. 이 API는 개념별 비교
+					격자를 돌려주고 `cohortId`를 **경로**로 받습니다.
 
 					## 요청 (쿼리 파라미터)
 
@@ -484,8 +503,24 @@ public class AnalyticsController {
 					| `sort` | 선택 | enum | `WORSENED`(나빠진 순, 기본) · `IMPROVED`(좋아진 순) · `CONCEPT`(검증 개념 순) |
 					| `sameCurriculumOnly` | 선택 | boolean | 같은 교안 버전을 쓴 개념만. 기본 `false` |
 
-					💡 **`sameCurriculumOnly=true`이면** 교안이 바뀐 개념을 걸러냅니다 — 평균 차이가 교육생
-					변화인지 교안 변화인지 갈라 볼 수 없기 때문입니다. 한쪽 기수에 없던 개념도 함께 제외됩니다.
+					## `sameCurriculumOnly=true`의 판정 기준 (12차 R2)
+
+					교안이 바뀌면 평균 차이가 교육생 변화인지 교안 변화인지 갈라 볼 수 없어 걸러냅니다.
+					**남으려면 아래 셋을 모두** 만족해야 합니다.
+
+					| | 조건 | 걸러지는 경우 |
+					|---|---|---|
+					| ① | 두 기수 모두에 그 개념이 있다 | 한쪽에만 있는 개념 |
+					| ② | 양쪽 모두 **교안 버전이 확인된다** | 개념이 교안에 매핑되지 않아 버전을 알 수 없는 경우 |
+					| ③ | 그 버전이 **같은 버전**이다 | 교안이 바뀐 개념 |
+
+					⚠️ **③은 버전 번호가 아니라 버전 식별자로 봅니다.** 번호는 교안마다 1부터 다시 매겨져
+					서로 다른 교안의 `v1`끼리도 같아 보이기 때문입니다. 그래서 `baselineVersionNo`와
+					`targetVersionNo`가 둘 다 `1`인데 걸러질 수 있습니다 — 다른 교안이라는 뜻이며
+					`baselineVersionId`·`targetVersionId`로 확인할 수 있습니다.
+
+					⚠️ **②가 화면에서 가장 놀랍습니다** — 표에는 `v1 · 그대로`로 보이는데 한쪽 버전이
+					확인되지 않아 빠지는 경우입니다. 결과가 갑자기 비면 이쪽을 먼저 보세요.
 
 					## 응답 (200)
 
@@ -642,7 +677,9 @@ public class AnalyticsController {
 			@Parameter(description = """
 					같은 교안 버전을 쓴 개념만 남깁니다.
 					교안이 바뀌면 평균 차이가 교육생 변화인지 교안 변화인지 갈라 볼 수 없어 걸러냅니다.
-					한쪽 기수에 없던 개념도 함께 제외됩니다.
+
+					남으려면 ① 두 기수 모두에 개념이 있고 ② 양쪽 교안 버전이 확인되며
+					③ 그 버전이 같아야 합니다(12차 R2). ③은 버전 번호가 아니라 **버전 식별자** 기준입니다.
 					""", example = "false")
 			@RequestParam(required = false, defaultValue = "false") boolean sameCurriculumOnly,
 			@Parameter(hidden = true)
