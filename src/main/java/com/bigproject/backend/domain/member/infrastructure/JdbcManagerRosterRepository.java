@@ -33,7 +33,7 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 
 	/**
 	 * 플레이스홀더 순서가 곧 인자 순서라 {@link #selectArgs(UUID)}와 <b>반드시 짝을 맞춰야 한다</b>.
-	 * 목적 4개 뒤에 기수 4개(담당 반·담당 인원 서브쿼리가 각각 2개씩), 마지막에 목적 1개(대기 토큰)가 온다.
+	 * 컬럼이 나오는 순서대로 인자를 적어 두었으니 SELECT 절을 고치면 그쪽도 함께 고쳐야 한다.
 	 *
 	 * <p>담당 반·담당 인원은 {@code ?::uuid IS NULL} 관용구로 기수를 건다. 기수를 안 넘기면 기관 전체가
 	 * 되도록 인자 개수를 항상 고정해, 조건부로 인자를 넣고 빼다 순서가 밀리는 일을 없앤다.
@@ -53,15 +53,43 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 			         JOIN app_user inviter ON inviter.user_id = ui.invited_by
 			         WHERE t.user_id = u.user_id AND t.purpose = ?
 			         ORDER BY ui.invited_at ASC LIMIT 1) AS invited_by_name,
-			       (SELECT ui.target_cohort_id FROM one_time_token t
-			         JOIN user_invitation ui ON ui.invitation_id = t.invitation_id
-			         WHERE t.user_id = u.user_id AND t.purpose = ?
-			         ORDER BY ui.invited_at DESC LIMIT 1) AS cohort_id,
-			       (SELECT co.name FROM one_time_token t
-			         JOIN user_invitation ui ON ui.invitation_id = t.invitation_id
-			         JOIN cohort co ON co.cohort_id = ui.target_cohort_id
-			         WHERE t.user_id = u.user_id AND t.purpose = ?
-			         ORDER BY ui.invited_at DESC LIMIT 1) AS cohort_name,
+			       /*
+			        * 소속 기수(11차 R4). 예전에는 초대의 target_cohort_id 하나만 봤는데, 초대 이력 없이
+			        * 만들어진 계정은 그 값이 없어 담당 반이 멀쩡한 매니저까지 전부 null이었다.
+			        *
+			        * 지금은 목록을 거를 때 쓰는 COHORT_SCOPE_CONDITION과 같은 순서로 본다 —
+			        * ① 지금 맡고 있는 반의 기수, 없으면 ② 초대받은 기수.
+			        * 배정이 먼저인 이유는 그것이 현재 사실이기 때문이다. 초대는 아직 반을 못 받은
+			        * '가입 대기 · 미배정' 매니저를 위한 것이다.
+			        *
+			        * 여러 기수의 반을 맡고 있으면 최근 기수 하나를 고른다. 기수로 걸러 조회하면
+			        * 그 기수가 잡히므로 화면이 보고 있는 기수와 어긋나지 않는다.
+			        */
+			       COALESCE(
+			         (SELECT c.cohort_id FROM manager_assignment ma
+			           JOIN class c ON c.class_id = ma.class_id
+			           JOIN cohort aco ON aco.cohort_id = c.cohort_id AND aco.deleted_at IS NULL
+			           WHERE ma.manager_user_id = u.user_id AND ma.status = 'ACTIVE' AND ma.unassigned_at IS NULL
+			             AND (?::uuid IS NULL OR c.cohort_id = ?::uuid)
+			           ORDER BY aco.start_date DESC NULLS LAST, aco.name DESC LIMIT 1),
+			         (SELECT ui.target_cohort_id FROM one_time_token t
+			           JOIN user_invitation ui ON ui.invitation_id = t.invitation_id
+			           WHERE t.user_id = u.user_id AND t.purpose = ?
+			           ORDER BY ui.invited_at DESC LIMIT 1)
+			       ) AS cohort_id,
+			       COALESCE(
+			         (SELECT aco.name FROM manager_assignment ma
+			           JOIN class c ON c.class_id = ma.class_id
+			           JOIN cohort aco ON aco.cohort_id = c.cohort_id AND aco.deleted_at IS NULL
+			           WHERE ma.manager_user_id = u.user_id AND ma.status = 'ACTIVE' AND ma.unassigned_at IS NULL
+			             AND (?::uuid IS NULL OR c.cohort_id = ?::uuid)
+			           ORDER BY aco.start_date DESC NULLS LAST, aco.name DESC LIMIT 1),
+			         (SELECT co.name FROM one_time_token t
+			           JOIN user_invitation ui ON ui.invitation_id = t.invitation_id
+			           JOIN cohort co ON co.cohort_id = ui.target_cohort_id
+			           WHERE t.user_id = u.user_id AND t.purpose = ?
+			           ORDER BY ui.invited_at DESC LIMIT 1)
+			       ) AS cohort_name,
 			       (SELECT ARRAY_AGG(c.name ORDER BY c.name) FROM manager_assignment ma
 			         JOIN class c ON c.class_id = ma.class_id
 			         WHERE ma.manager_user_id = u.user_id AND ma.status = 'ACTIVE' AND ma.unassigned_at IS NULL
@@ -189,13 +217,15 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 	 */
 	private List<Object> selectArgs(UUID cohortId) {
 		return Arrays.asList(
-				MANAGER_INVITE_PURPOSE,
-				MANAGER_INVITE_PURPOSE,
-				MANAGER_INVITE_PURPOSE,
-				MANAGER_INVITE_PURPOSE,
-				cohortId, cohortId,
-				cohortId, cohortId,
-				MANAGER_INVITE_PURPOSE);
+				MANAGER_INVITE_PURPOSE,          // invited_at
+				MANAGER_INVITE_PURPOSE,          // invited_by_name
+				cohortId, cohortId,              // cohort_id — 담당 반 쪽
+				MANAGER_INVITE_PURPOSE,          // cohort_id — 초대 쪽 대체값
+				cohortId, cohortId,              // cohort_name — 담당 반 쪽
+				MANAGER_INVITE_PURPOSE,          // cohort_name — 초대 쪽 대체값
+				cohortId, cohortId,              // classroom_names
+				cohortId, cohortId,              // assigned_trainee_count
+				MANAGER_INVITE_PURPOSE);         // pending_invitation_token_id
 	}
 
 	/**

@@ -1,16 +1,22 @@
 package com.bigproject.backend.domain.academicoperations.presentation.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
-import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 import java.time.LocalDate;
-import java.util.List;
 import java.util.UUID;
 
+/**
+ * 기수 생성 요청.
+ *
+ * <p>11차 Q3 — {@code initialTrainees}를 <b>스키마에서 뺐다.</b> "요청에 넣어도 저장되지 않는다"고
+ * 적어 둔 채 남겨 두었더니 화면이 입력 칸을 만들었다가 지웠고, 생성 타입에 남아 있으면 다음 사람이
+ * 다시 채워 넣는다. 교육생 등록은 행별 실패를 돌려줘야 해서({@code failures[]}) 기수 생성 응답에
+ * 얹기에 맞지 않는다 — {@code POST /cohorts/{cohortId}/trainees}(CSV)와
+ * {@code .../trainees/invitations}(직접 입력)가 그 자리다.
+ */
 @Schema(description = "기수 생성 요청")
 public record CreateCohortRequest(
         @Schema(description = "기수를 개설할 기관 ID. 액세스 토큰의 기관과 다르면 403", example = "123e4567-e89b-12d3-a456-426614174000")
@@ -23,26 +29,11 @@ public record CreateCohortRequest(
         @NotNull LocalDate startDate,
 
         @Schema(description = "기수 종료일. startDate보다 빠르면 400", example = "2026-08-28")
-        @NotNull LocalDate endDate,
-
-        @Schema(description = "⚠ 요청에 넣어도 저장되지 않는다. 교육생 등록은 POST /cohorts/{cohortId}/trainees(CSV) " +
-                "또는 .../trainees/invitations(직접 입력)로 별도 처리한다.", nullable = true)
-        List<@Valid InitialTrainee> initialTrainees
+        @NotNull LocalDate endDate
 ) {
-    public CreateCohortRequest {
-        initialTrainees = initialTrainees == null ? List.of() : List.copyOf(initialTrainees);
-    }
-
     @AssertTrue(message = "종료일은 시작일보다 빠를 수 없습니다.")
     @Schema(hidden = true)
     public boolean isValidPeriod() {
         return startDate == null || endDate == null || !endDate.isBefore(startDate);
-    }
-
-    @Schema(description = "초기 교육생 한 명(⚠ 현재 서버가 사용하지 않음)")
-    public record InitialTrainee(
-            @Schema(description = "교육생 이름") @NotBlank String name,
-            @Schema(description = "교육생 이메일") @NotBlank @Email String email
-    ) {
     }
 }

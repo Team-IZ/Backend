@@ -39,9 +39,20 @@ public record ManagerRosterResponse(
 			String name,
 			String email,
 			@Schema(description = "계정 상태. INVITED(초대 대기) / ACTIVE(활성) / INACTIVE(정지)") AccountStatus status,
-			@Schema(description = "담당할 기수 ID. 가장 최근 매니저 초대의 target_cohort_id 기준", nullable = true)
+			@Schema(description = """
+					소속 기수입니다. **① 지금 맡고 있는 반의 기수**, 그것이 없으면 **② 초대받은 기수**로 채웁니다(11차 R4).
+
+					목록을 `cohortId`로 거를 때 쓰는 조건과 같은 순서라, 걸러 나온 행의 이 값이 비는 일이 없습니다 —
+					예전에는 초대의 `target_cohort_id`만 봐서 초대 이력 없이 만들어진 계정은 담당 반이 멀쩡해도
+					`null`이었습니다.
+
+					여러 기수의 반을 맡고 있으면 최근 기수 하나가 옵니다. `cohortId`로 걸러 조회하면
+					**그 기수**가 오므로 화면이 보고 있는 기수와 어긋나지 않습니다.
+
+					담당 반도 없고 초대 이력도 없으면 여전히 `null`입니다.
+					""", nullable = true)
 			UUID cohortId,
-			@Schema(description = "담당할 기수명", nullable = true) String cohortName,
+			@Schema(description = "소속 기수명. `cohortId`와 같은 규칙으로 채웁니다", nullable = true) String cohortName,
 			@Schema(description = "현재 담당 반 이름 목록. 담당이 없으면 빈 배열(화면에서는 `미배정`)")
 			List<String> classroomNames,
 			@Schema(description = "담당 반들에 소속된 재학(ACTIVE) 교육생 합계. 담당이 없으면 0", example = "50")

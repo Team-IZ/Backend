@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.member.presentation.dto;
 
 import com.bigproject.backend.domain.member.domain.AccountStatus;
+import com.bigproject.backend.domain.member.domain.InactivationReasonCode;
 import com.bigproject.backend.domain.member.domain.TraineeRosterRepository;
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -47,8 +48,11 @@ public record TraineeRosterResponse(
 					CONTRACT_ENDED(계약 종료) · SECURITY_ACTION(보안 조치) · OTHER(기타).
 					계정이 INACTIVE일 때만 값이 있으며 그때는 **항상 채워져 있습니다** —
 					ck_app_user_status_3이 INACTIVE인 행에 이 값을 NOT NULL로 강제하기 때문입니다.
+
+					11차 R6 — 타입이 `string`에서 **enum**으로 바뀌었습니다. 다섯 값은 DB의
+					`ck_app_user_inactivated_reason_code`가 못 박고 있는 것과 같습니다.
 					""", example = "ADMIN_SUSPENDED", nullable = true)
-			String inactivatedReasonCode,
+			InactivationReasonCode inactivatedReasonCode,
 			@Schema(description = """
 					비활성화 상세 사유이며 상태 변경 요청의 reason이 그대로 들어갑니다.
 					사유 코드와 달리 **INACTIVE여도 null일 수 있습니다**(요청에서 생략 가능).
@@ -65,7 +69,16 @@ public record TraineeRosterResponse(
 					""", example = "김오퍼레이터", nullable = true)
 			String inactivatedByName,
 			@Schema(description = "계정이 비활성화된 시각. 활성이면 null", nullable = true)
-			OffsetDateTime inactivatedAt
+			OffsetDateTime inactivatedAt,
+
+			@Schema(description = """
+					아직 수락·취소되지 않은 초대 토큰입니다(11차 R2). `null`이 아닐 때만 **재발송 버튼을 켭니다** —
+					매니저·오퍼레이터 목록의 `pendingInvitationTokenId`와 같은 규칙입니다.
+
+					예전에는 이 값이 없어 화면이 `status === 'INVITED'`로 유추해야 했습니다.
+					이미 활성화됐거나 초대가 취소된 계정은 넘길 토큰이 없어 `null`입니다.
+					""", nullable = true)
+			UUID pendingInvitationTokenId
 	) {
 		public static Trainee from(TraineeRosterRepository.RosterRow row) {
 			return new Trainee(
@@ -77,11 +90,12 @@ public record TraineeRosterResponse(
 					row.className(),
 					row.joinedAt(),
 					row.leftAt(),
-					row.inactivatedReasonCode(),
+					InactivationReasonCode.from(row.inactivatedReasonCode()),
 					row.inactivatedReason(),
 					row.inactivatedById(),
 					row.inactivatedByName(),
-					row.inactivatedAt()
+					row.inactivatedAt(),
+					row.pendingInvitationTokenId()
 			);
 		}
 

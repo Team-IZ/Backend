@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -44,4 +45,14 @@ public interface ProjectRepository extends JpaRepository<Project, UUID> {
     // "미프 N차" 라벨 계산용 — MINI_PROJECT만, 삭제 제외, sequence_no 순서대로
     List<Project> findByCohortIdAndOrgIdAndProjectCategoryAndDeletedAtIsNullOrderBySequenceNoAsc(
             UUID cohortId, UUID orgId, ProjectCategory projectCategory);
+
+    /**
+     * 위 조회의 여러 기수 판. 라벨을 한 건 만들 때마다 기수의 미니프로젝트 전량을 다시 읽던 것을
+     * 한 번으로 접기 위한 것이다(11차 R1) — 교안 섹션 조회가 이 반복 때문에 10초 가까이 걸렸다.
+     */
+    List<Project> findByCohortIdInAndOrgIdAndProjectCategoryAndDeletedAtIsNullOrderBySequenceNoAsc(
+            Collection<UUID> cohortIds, UUID orgId, ProjectCategory projectCategory);
+
+    /** 라벨 대상 프로젝트를 ID 목록으로 한 번에 읽는다(11차 R1). 삭제된 회차는 라벨을 만들지 않는다. */
+    List<Project> findByProjectIdInAndOrgIdAndDeletedAtIsNull(Collection<UUID> projectIds, UUID orgId);
 }

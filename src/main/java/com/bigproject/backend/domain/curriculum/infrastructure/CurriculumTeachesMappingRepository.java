@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -63,4 +64,10 @@ public interface CurriculumTeachesMappingRepository extends JpaRepository<Curric
      * 이 쿼리 자체는 섹션 안의 후보 전체만 돌려준다.
      */
     List<CurriculumTeachesMapping> findAllBySectionIdOrderBySequenceNoAsc(UUID sectionId);
+
+    /**
+     * 위 조회의 여러 섹션 판(11차 R1). 섹션 목록 화면이 섹션마다 이것을 부르고 있었다 —
+     * 섹션 수만큼 쿼리가 나가므로 한 번에 읽고 호출부에서 섹션별로 나눈다.
+     */
+    List<CurriculumTeachesMapping> findAllBySectionIdInOrderBySequenceNoAsc(Collection<UUID> sectionIds);
 }
