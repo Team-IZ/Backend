@@ -102,7 +102,7 @@ public class ReportRunFinalizer {
 				&& items.stream().noneMatch(item -> Boolean.TRUE.equals(item.getNarrativeFailed()));
 
 		ReportSnapshot snapshot = writeSnapshot(run, report, items, full, now);
-		writeEvidence(snapshot, items, report);
+		int evidenceWritten = writeEvidence(snapshot, items, report);
 
 		run.markCompleted(full ? ReportGenerationRunStatus.COMPLETED : ReportGenerationRunStatus.PARTIAL, now);
 		runRepository.save(run);
@@ -111,8 +111,11 @@ public class ReportRunFinalizer {
 		report.publish(now);
 		reportRepository.save(report);
 
-		log.info("리포트 발행: reportId={}, runId={}, 문제 {}건 중 {}건 성공, completion={}",
-				report.getReportId(), generationRunId, items.size(), succeeded, full ? "FULL" : "PARTIAL");
+		// 개념 카드 수를 함께 남긴다. completion 은 AI 성공 여부만 보므로 FULL 인데 카드가 모자란
+		// 경우가 있고, 그때 화면과 이 로그가 어긋난다 — 한 줄에서 바로 보이게 둔다.
+		log.info("리포트 발행: reportId={}, runId={}, 문제 {}건 중 {}건 성공, 개념 카드 {}건, completion={}",
+				report.getReportId(), generationRunId, items.size(), succeeded, evidenceWritten,
+				full ? "FULL" : "PARTIAL");
 		return true;
 	}
 
@@ -183,22 +186,52 @@ public class ReportRunFinalizer {
 	 *
 	 * <p>실패한 item도 카드를 만든다 — 세션 기록만으로 도달 단계와 답변 발췌는 사실이고,
 	 * 빠뜨리면 그 문제가 리포트에서 통째로 사라진다.
+	 *
+	 * <h2>🔴 건너뛴 카드는 어디에도 남지 않는다</h2>
+	 *
+	 * <p>stage를 못 찾아 건너뛴 문제는 {@code run.status}에도 {@code completion_status}에도
+	 * 반영되지 않는다 — 그 둘은 <b>AI 생성 성공 여부</b>만 본다. AI가 다 성공했는데 카드가 빠지면
+	 * 리포트는 {@code COMPLETED}·{@code FULL}로 닫히고, 화면에서만 그 문제가 사라진다.
+	 * 뷰가 {@code report_evidence}를 INNER JOIN하기 때문이다.
+	 *
+	 * <p>그래서 로그가 유일한 신호다. 건너뛴 것이 있으면 {@code WARN}이 아니라 {@code ERROR}로
+	 * 올린다 — 이건 "봐 두면 좋은 것"이 아니라 <b>학생이 볼 리포트에 구멍이 난 것</b>이다.
+	 * 한 장도 못 만들면 발행은 되는데 뷰가 0건을 내므로 더 강하게 남긴다.
+	 *
+	 * @return 실제로 저장한 카드 수
 	 */
-	private void writeEvidence(ReportSnapshot snapshot, List<ReportGenerationItem> items, Report report) {
+	private int writeEvidence(ReportSnapshot snapshot, List<ReportGenerationItem> items, Report report) {
+		int written = 0;
 		for (ReportGenerationItem item : items) {
-			payloadRepository.findConceptContext(item.getSessionId(), item.getProblemId())
-					.ifPresentOrElse(context -> {
-						ReportEvidence evidence = evidenceFactory.create(
-								snapshot.getSnapshotId(),
-								item.getProblemId(),
-								context,
-								readResult(item),
-								report.getCohortId(),
-								report.getAssessmentRoundId());
-						evidenceRepository.save(evidence);
-					}, () -> log.warn("근거를 만들 stage가 없어 개념 카드를 건너뛴다: problemId={}, sessionId={}",
-							item.getProblemId(), item.getSessionId()));
+			Optional<JdbcReportPayloadRepository.ConceptContext> context =
+					payloadRepository.findConceptContext(item.getSessionId(), item.getProblemId());
+
+			if (context.isEmpty()) {
+				// 원인은 대개 세션이 다룬 문제의 stage가 준비되지 않은 것이다(한계 3).
+				// problemId·sessionId를 함께 남겨야 어느 문제가 사라졌는지 되짚을 수 있다.
+				log.error("근거를 만들 stage가 없어 개념 카드를 건너뛴다 — 이 문제는 화면에서 사라진다: "
+								+ "problemId={}, sessionId={}, reportId={}",
+						item.getProblemId(), item.getSessionId(), report.getReportId());
+				continue;
+			}
+
+			evidenceRepository.save(evidenceFactory.create(
+					snapshot.getSnapshotId(),
+					item.getProblemId(),
+					context.get(),
+					readResult(item),
+					report.getCohortId(),
+					report.getAssessmentRoundId()));
+			written++;
 		}
+
+		if (written == 0 && !items.isEmpty()) {
+			log.error("개념 카드를 한 장도 만들지 못했다. 발행은 되지만 화면은 빈 리포트를 그린다"
+							+ "(trainee_report_problem_view가 report_evidence를 INNER JOIN한다): "
+							+ "reportId={}, snapshotId={}, 문제 {}건",
+					report.getReportId(), snapshot.getSnapshotId(), items.size());
+		}
+		return written;
 	}
 
 	/** item에 담아 둔 AI {@code result}. 없거나 깨졌으면 null이다. */

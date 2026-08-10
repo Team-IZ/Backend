@@ -7,7 +7,24 @@ import com.bigproject.backend.domain.usagemetering.application.AiUsageAttributio
 import java.util.UUID;
 
 /**
- * 리포트 1건을 AI에 만들게 하고 <b>끝날 때까지 기다린다</b>. FastAPI로 나가는 실제 호출 지점이다.
+ * 리포트 1건을 AI에 만들게 하고 <b>끝날 때까지 기다린다</b>. FastAPI로 나가는 동기 호출 경로다.
+ *
+ * <h2>🔴 현재 호출자가 없다 — 쓰기 전에 이 절을 읽을 것</h2>
+ *
+ * <p>리포트 생성은 {@link ReportBatchService}의 <b>dispatch/poll 2단계 비동기</b>로 돈다.
+ * 이 동기 경로는 그 앞에 있던 것이고, 지금은 아무도 부르지 않는다. 지우지 않고 남긴 이유는
+ * <b>왜 안 쓰는지가 기록으로 남아야</b> 해서다.
+ *
+ * <ol>
+ *   <li><b>되살리려면 {@code ai.report.poll-max-attempts}를 180 이상으로 올려야 한다.</b>
+ *       기본값 {@code PT2S × 60 = 120초}는 <b>2026-08-09 실측 {@code latencyMs=129108}</b>
+ *       (2분 9초)에 이미 못 미친다 — 그대로 두면 <b>성공한 job을 타임아웃으로 처리한다.</b>
+ *       180이라는 숫자도 그 실측에서 나온 것이라 언제든 또 넘을 수 있다. 되살릴 때 다시 재고 정할 것.</li>
+ *   <li><b>단건 재생성이 필요하면 이 경로가 아니다.</b> {@link ReportBatchService}의 단건
+ *       진입점을 쓴다 — 202만 받고 끊으므로 스레드를 붙들지 않고, 기존 poll이 결과를 회수한다.
+ *       "단건이니까 동기로 부르면 되겠네"가 이 클래스를 되살리는 가장 흔한 경로인데,
+ *       회차당 75건 규모에서 그렇게 하면 타임아웃이 아니라 <b>스레드 고갈</b>로 나타난다.</li>
+ * </ol>
  *
  * <h2>왜 기다려야 하나</h2>
  *
@@ -21,10 +38,12 @@ import java.util.UUID;
  * <h2>이 서비스가 하지 않는 일</h2>
  *
  * <p><b>요청 본문 조립</b>({@code transcript}·{@code analysisDocuments}·{@code teaches})과
- * <b>결과 저장</b>({@code report_snapshot})은 여기 없다. 둘 다 이 저장소에 아직 코드가 없는
- * 도메인({@code assessment}·{@code codeanalysis}·{@code curriculum})의 데이터를 읽거나
- * 매핑되지 않은 테이블({@code report_generation_run})을 써야 해서, 추측으로 만들면 틀린 SQL이
- * 남는다. 호출부가 조립한 요청을 받고 종료된 job을 그대로 돌려준다.
+ * <b>결과 저장</b>({@code report_snapshot}·{@code report_evidence})은 여기 없다. 호출부가 조립한
+ * 요청을 받고 종료된 job을 그대로 돌려줄 뿐이다.
+ *
+ * <p>이 클래스가 만들어질 당시엔 그 두 가지를 쓸 코드가 없었지만, 지금은
+ * {@code JdbcReportPayloadRepository}(조립)와 {@code ReportRunFinalizer}(저장)에 있다.
+ * 되살릴 일이 있어도 <b>그쪽을 다시 만들지 말 것.</b>
  */
 public interface ReportGenerationService {
 
