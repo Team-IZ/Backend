@@ -78,6 +78,11 @@ public class CohortController {
 					content[].traineeCount는 **재적 교육생 수**다 — 이 기수에 등록돼 있고 아직 나가지 않은 인원이며,
 					중도 이탈자는 빠진다(10차 R3). 그래서 교육생 명단 조회의 전체 건수보다 작을 수 있다.
 
+					content[].classroomCount는 **반 개수**이며 삭제된 반은 빠진다(13차 Q1).
+					화면의 `10반 250명`이 이 둘이다 — 반 개수 때문에 기수마다
+					`GET /cohorts/{cohortId}/classrooms`를 부르지 않아도 된다.
+					둘 다 이 페이지의 기수 전체를 한 번에 세므로 기수가 늘어도 조회가 늘지 않는다.
+
 					**아직 채워지지 않는 값** — content[].managers는 항상 빈 배열이다.
 					담당 매니저는 classroom 도메인 조인이 필요해 아직 연결되지 않았다.
 					반 목록·담당 매니저가 필요하면 `GET /cohorts/{cohortId}/classrooms`를 함께 호출한다.
@@ -110,14 +115,17 @@ public class CohortController {
 		Page<Cohort> cohorts = cohortService.findCohorts(
 				organizationId, status, query, PageRequest.of(page, size));
 
-		// 기수마다 COUNT를 날리지 않도록 이 페이지의 기수 전체를 한 번에 센다(10차 R3).
-		Map<UUID, Integer> traineeCounts = cohortService.countActiveTrainees(
-				cohorts.getContent().stream().map(Cohort::getCohortId).toList(), organizationId);
+		// 기수마다 COUNT를 날리지 않도록 이 페이지의 기수 전체를 한 번에 센다(10차 R3 · 13차 Q1).
+		List<UUID> cohortIds = cohorts.getContent().stream().map(Cohort::getCohortId).toList();
+		Map<UUID, Integer> traineeCounts = cohortService.countActiveTrainees(cohortIds, organizationId);
+		Map<UUID, Integer> classroomCounts = cohortService.countClassrooms(cohortIds, organizationId);
 
 		CohortListResponse response = new CohortListResponse(
 				cohorts.getContent().stream()
 						.map(cohort -> CohortResponse.from(
-								cohort, traineeCounts.getOrDefault(cohort.getCohortId(), 0)))
+								cohort,
+								traineeCounts.getOrDefault(cohort.getCohortId(), 0),
+								classroomCounts.getOrDefault(cohort.getCohortId(), 0)))
 						.toList(),
 				cohorts.getNumber(),
 				cohorts.getSize(),
@@ -145,6 +153,7 @@ public class CohortController {
 					- status: PLANNED(개설 예정) / RUNNING(진행 중) / CLOSED(종료)
 					- startDate / endDate: 기수 기간
 					- traineeCount: 재적 교육생 수(등록돼 있고 아직 나가지 않은 인원. 중도 이탈자 제외)
+					- classroomCount: 반 개수(삭제된 반 제외) — 13차 Q1
 					- managers[]: 담당 매니저 목록
 
 					**아직 채워지지 않는 값** — managers는 항상 빈 배열이다(목록 조회와 동일).
@@ -164,9 +173,7 @@ public class CohortController {
 	) {
 		UUID organizationId = extractOrganizationId(authentication);
 		Cohort cohort = cohortService.findCohort(cohortId, organizationId);
-		int traineeCount = cohortService.countActiveTrainees(List.of(cohortId), organizationId)
-				.getOrDefault(cohortId, 0);
-		return ResponseEntity.ok(CohortResponse.from(cohort, traineeCount));
+		return ResponseEntity.ok(toResponse(cohort, cohortId, organizationId));
 	}
 
 	@Operation(
@@ -301,9 +308,7 @@ public class CohortController {
 		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
 		Cohort cohort = cohortService.updateCohort(
 				cohortId, organizationId, request.name(), request.startDate(), request.endDate(), actorUserId);
-		int traineeCount = cohortService.countActiveTrainees(List.of(cohortId), organizationId)
-				.getOrDefault(cohortId, 0);
-		return ResponseEntity.ok(CohortResponse.from(cohort, traineeCount));
+		return ResponseEntity.ok(toResponse(cohort, cohortId, organizationId));
 	}
 
 	@Operation(
@@ -354,6 +359,15 @@ public class CohortController {
 		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
 		cohortService.deleteCohort(cohortId, organizationId, actorUserId);
 		return ResponseEntity.noContent().build();
+	}
+
+	/** 기수 한 건 응답. 재적 인원·반 개수를 함께 채운다(10차 R3 · 13차 Q1). */
+	private CohortResponse toResponse(Cohort cohort, UUID cohortId, UUID organizationId) {
+		List<UUID> ids = List.of(cohortId);
+		return CohortResponse.from(
+				cohort,
+				cohortService.countActiveTrainees(ids, organizationId).getOrDefault(cohortId, 0),
+				cohortService.countClassrooms(ids, organizationId).getOrDefault(cohortId, 0));
 	}
 
 	private UUID extractOrganizationId(Authentication authentication) {

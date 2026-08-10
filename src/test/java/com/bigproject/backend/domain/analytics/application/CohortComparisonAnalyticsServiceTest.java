@@ -231,6 +231,80 @@ class CohortComparisonAnalyticsServiceTest {
 		assertThat(conceptNamed(response, "REST 설계").curriculumVersion().versionChanged()).isFalse();
 	}
 
+	/**
+	 * 12차 R2 — 버전 <b>번호</b>가 같아도 교안이 다르면 바뀐 것이다.
+	 *
+	 * <p>번호는 교안마다 1부터 다시 매겨지므로 서로 다른 교안의 v1끼리도 번호로는 같아 보인다.
+	 * 그 상태에서 {@code sameCurriculumOnly}를 켜면 교안이 바뀐 개념이 걸러지지 않고 남아,
+	 * 이 옵션이 막으려던 혼동(교육생 변화인지 교안 변화인지)이 그대로 들어온다.
+	 */
+	@Test
+	void treatsSameVersionNumberOfDifferentCurriculaAsChanged() {
+		levels.add(curriculumRow(targetCohortId, "Graph 구성", "Spring 백엔드 설계", 1));
+		levels.add(curriculumRow(baselineCohortId, "Graph 구성", "Spring 테스트와 운영", 1));
+
+		CohortComparisonResponse.CurriculumVersionChange version =
+				conceptNamed(compare(), "Graph 구성").curriculumVersion();
+
+		// 번호는 둘 다 1이지만 교안이 다르므로 바뀐 것으로 본다.
+		assertThat(version.baselineVersionNo()).isEqualTo(1);
+		assertThat(version.targetVersionNo()).isEqualTo(1);
+		assertThat(version.baselineVersionId()).isNotEqualTo(version.targetVersionId());
+		assertThat(version.versionChanged()).isTrue();
+
+		// 그래서 sameCurriculumOnly 가 이 개념을 걸러낸다.
+		assertThat(compareSameCurriculumOnly().concepts()).isEmpty();
+	}
+
+	/** 양쪽 교안 버전이 같으면 sameCurriculumOnly 를 켜도 남는다(12차 R2). */
+	@Test
+	void keepsConceptWhenBothCohortsUsedTheSameCurriculumVersion() {
+		levels.add(curriculumRow(targetCohortId, "Graph 구성", "Spring 백엔드 설계", 1));
+		levels.add(curriculumRow(baselineCohortId, "Graph 구성", "Spring 백엔드 설계", 1));
+
+		assertThat(compareSameCurriculumOnly().concepts())
+				.extracting(CohortComparisonResponse.ConceptComparison::conceptName)
+				.containsExactly("Graph 구성");
+	}
+
+	/** 한쪽 교안 버전을 알 수 없으면 같은지 판정할 수 없어 걸러진다(12차 R2 ②). */
+	@Test
+	void dropsConceptWhenOneSideHasNoKnownCurriculumVersion() {
+		levels.add(curriculumRow(targetCohortId, "Graph 구성", "Spring 백엔드 설계", 1));
+		levels.add(curriculumRow(baselineCohortId, "Graph 구성", null, null));
+
+		assertThat(compare().concepts()).hasSize(1);
+		assertThat(compareSameCurriculumOnly().concepts()).isEmpty();
+	}
+
+	private CohortComparisonResponse compareSameCurriculumOnly() {
+		return service.findCohortComparison(
+				targetCohortId, baselineCohortId, ComparisonSort.WORSENED, true, ACTOR_EMAIL);
+	}
+
+	/** 교안 이름과 버전을 지정해 한 행을 만든다. 교안이 null이면 교안에 매핑되지 않은 개념이다. */
+	private CohortComparisonQueryRepository.ConceptLevelRow curriculumRow(
+			UUID cohortId, String conceptName, String curriculumTitle, Integer versionNo) {
+		return new CohortComparisonQueryRepository.ConceptLevelRow(
+				cohortId,
+				teachesIdOf(conceptName),
+				conceptName,
+				"ACTIVE",
+				null,
+				new BigDecimal("60"),
+				24,
+				0,
+				"SINGLE_SOURCE",
+				curriculumTitle == null ? null : curriculumVersionIdOf(curriculumTitle, versionNo),
+				versionNo,
+				curriculumTitle,
+				null,
+				null,
+				null,
+				null
+		);
+	}
+
 	@Test
 	void returnsCandidatesOnlyWhenNoBaselineWasChosen() {
 		givenCandidates(new CohortComparisonQueryRepository.BaselineCandidateRow(baselineCohortId, "6기", true));
@@ -387,7 +461,7 @@ class CohortComparisonAnalyticsServiceTest {
 				participantCount,
 				0,
 				aggregationStatus,
-				UUID.randomUUID(),
+				curriculumVersionIdOf("AI_LLMOps", versionNo),
 				versionNo,
 				"AI_LLMOps",
 				null,
@@ -409,7 +483,7 @@ class CohortComparisonAnalyticsServiceTest {
 				24,
 				0,
 				"SINGLE_SOURCE",
-				UUID.randomUUID(),
+				curriculumVersionIdOf("AI_LLMOps", 1),
 				1,
 				"AI_LLMOps",
 				sectionSequenceNo,
@@ -422,6 +496,17 @@ class CohortComparisonAnalyticsServiceTest {
 	/** 같은 개념은 두 기수에서 같은 teaches_id를 가져야 매칭되므로 이름에서 결정적으로 만든다. */
 	private UUID teachesIdOf(String conceptName) {
 		return UUID.nameUUIDFromBytes(conceptName.getBytes());
+	}
+
+	/**
+	 * 교안 버전 식별자도 (교안, 버전)에서 결정적으로 만든다.
+	 *
+	 * <p>12차 R2로 {@code versionChanged} 판정이 버전 <b>번호</b>에서 <b>식별자</b> 기준으로 바뀌었다.
+	 * 예전처럼 행마다 {@code UUID.randomUUID()}를 넣으면 같은 버전을 쓴 두 기수도 서로 다른 식별자를
+	 * 갖게 되어 <b>테스트가 실제와 다른 상황을 고정</b>한다.
+	 */
+	private UUID curriculumVersionIdOf(String curriculumTitle, Integer versionNo) {
+		return UUID.nameUUIDFromBytes((curriculumTitle + "#v" + versionNo).getBytes());
 	}
 
 	private void givenOperator() {

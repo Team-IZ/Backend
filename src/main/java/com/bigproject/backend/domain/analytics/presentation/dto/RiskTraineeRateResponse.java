@@ -44,15 +44,30 @@ public record RiskTraineeRateResponse(
 	@Schema(description = """
 			회차 열 정의.
 
-			roundNo는 ProjectAssessmentRound.round_no이며 (project_id, round_no) UNIQUE라
-			프로젝트마다 1부터 다시 시작합니다. 기수에 미니프로젝트가 여러 건이면 같은 roundNo가
-			여러 열에 나타나므로 열을 구분할 때 projectId를 함께 보아야 합니다.
+			## 회차 번호가 두 축입니다 (12차 R1)
+
+			| 필드 | 무엇 | 어디서 유일한가 |
+			|---|---|---|
+			| `cohortRoundNo` | **기수 안의 회차 순번** | 기수 안에서 유일 — **열 키로 쓰세요** |
+			| `roundNo` | 프로젝트 안의 응시 번호 | 프로젝트 안에서만 유일 |
+
+			**`cohortRoundNo`가 요청의 `fromRoundNo`·`toRoundNo`와 같은 축입니다.**
+			받은 값을 그대로 범위 조건에 다시 넣을 수 있습니다.
+
+			`roundNo`는 `(project_id, round_no)` UNIQUE라 프로젝트마다 1부터 다시 시작하며,
+			미니프로젝트는 프로젝트당 이해도 확인 회차가 1건뿐이라 **늘 1**입니다.
+			그래서 이것을 격자의 열 키로 쓰면 여섯 열이 전부 같은 키가 됩니다.
 			""")
 	public record RoundColumn(
 			@Schema(description = "회차 ID이며 ProjectAssessmentRound.assessment_round_id입니다.")
 			UUID assessmentRoundId,
-			@Schema(description = "회차 번호이며 프로젝트 안에서만 유일합니다.", example = "1")
+			@Schema(description = "프로젝트 안의 응시 번호이며 **프로젝트 안에서만 유일합니다**. "
+					+ "미니프로젝트는 늘 1이라 열 키로 쓸 수 없습니다 — `cohortRoundNo`를 쓰세요.", example = "1")
 			int roundNo,
+			@Schema(description = "**기수 안의 회차 순번.** 요청의 `fromRoundNo`·`toRoundNo`와 같은 축이라 "
+					+ "받은 값을 그대로 범위 조건에 다시 넣을 수 있습니다. 격자의 열 키로 쓰기에 알맞습니다(12차 R1).",
+					example = "4")
+			int cohortRoundNo,
 			@Schema(description = "회차 이름", example = "K8s 배포 실습")
 			String roundName,
 			@Schema(description = "회차가 속한 프로젝트 ID입니다.")
@@ -66,10 +81,15 @@ public record RiskTraineeRateResponse(
 
 	@Schema(description = "회차 격자 한 칸")
 	public record RiskCell(
-			@Schema(description = "이 칸이 속한 회차 ID이며 rounds[].assessmentRoundId와 짝을 이룹니다.")
+			@Schema(description = "이 칸이 속한 회차 ID이며 rounds[].assessmentRoundId와 짝을 이룹니다. "
+					+ "칸을 열에 잇는 것은 이 값으로 하세요.")
 			UUID assessmentRoundId,
-			@Schema(description = "회차 번호이며 프로젝트 안에서만 유일합니다.", example = "2")
+			@Schema(description = "프로젝트 안의 응시 번호이며 **프로젝트 안에서만 유일합니다**(rounds[].roundNo와 같은 값).",
+					example = "1")
 			int roundNo,
+			@Schema(description = "**기수 안의 회차 순번**이며 rounds[].cohortRoundNo와 같은 값입니다(12차 R1).",
+					example = "4")
+			int cohortRoundNo,
 			@Schema(description = "NOT_STARTED(시작 전) / NOT_AGGREGATED(리포트 미발행) / AGGREGATED(발행 완료)")
 			RoundAggregationStatus aggregationStatus,
 			@Schema(description = "미집계 인원을 제외한 분모입니다.", example = "24")

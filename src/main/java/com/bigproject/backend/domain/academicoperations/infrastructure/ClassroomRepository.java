@@ -2,6 +2,8 @@ package com.bigproject.backend.domain.academicoperations.infrastructure;
 
 import com.bigproject.backend.domain.academicoperations.domain.Classroom;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -24,4 +26,28 @@ public interface ClassroomRepository extends JpaRepository<Classroom, UUID> {
     // 반 이름 수정용 중복 확인. 자기 자신은 빼고 본다 — 이름은 그대로 두고 정원만 고치는 경우가 흔한데,
     // 자기 자신을 세면 그때마다 409가 난다(9차 R6).
     boolean existsByCohortIdAndNameAndDeletedAtIsNullAndClassIdNot(UUID cohortId, String name, UUID classId);
+
+    /**
+     * 여러 기수의 반 개수를 기수 ID별로 한 번에 센다(13차 Q1).
+     *
+     * <p>기수 목록이 한 화면에 여러 건 나오므로 기수마다 반 목록을 부르면 조회가 그만큼 늘어난다 —
+     * 화면이 `반` 열 하나 때문에 {@code findClassrooms}를 기수 수만큼 부르던 자리다.
+     * {@code CohortMemberRepository.countActiveByCohortIdIn}과 같은 방식이다.
+     */
+    @Query("""
+            SELECT c.cohortId AS cohortId, COUNT(c) AS count
+            FROM Classroom c
+            WHERE c.cohortId IN :cohortIds
+                AND c.orgId = :orgId
+                AND c.deletedAt IS NULL
+            GROUP BY c.cohortId
+            """)
+    List<CohortClassroomCount> countByCohortIdIn(@Param("cohortIds") List<UUID> cohortIds,
+                                                 @Param("orgId") UUID orgId);
+
+    interface CohortClassroomCount {
+        UUID getCohortId();
+
+        long getCount();
+    }
 }

@@ -43,13 +43,17 @@ public interface CurriculumCatalogRepository {
 	Optional<CurriculumCatalogRow> findOne(UUID orgId, UUID materialId);
 
 	/**
-	 * @param query  파일명·교안 제목 부분검색(대소문자 무시). null·공백이면 전체
-	 * @param status 최신 버전의 <b>가장 최근 분석 시도</b> 상태로 좁힌다. null이면 전체
+	 * @param query           파일명·교안 제목 부분검색(대소문자 무시). null·공백이면 전체
+	 * @param status          최신 버전의 <b>가장 최근 분석 시도</b> 상태로 좁힌다. null이면 전체
+	 * @param notAnalyzedOnly <b>한 번도 분석하지 않은</b> 교안만 남긴다(13차 R2).
+	 *                        그런 교안은 분석 상태가 없어 {@code status}로는 고를 수 없다 —
+	 *                        그래서 상태 축이 아니라 별도 조건이다({@code status}와 함께 쓸 수 없다)
 	 */
 	record CurriculumCatalogCriteria(
 			UUID orgId,
 			String query,
 			CurriculumAnalysisStatus status,
+			boolean notAnalyzedOnly,
 			CurriculumCatalogSort sort) {
 	}
 

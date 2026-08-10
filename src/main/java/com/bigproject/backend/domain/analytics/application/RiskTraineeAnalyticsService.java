@@ -172,6 +172,7 @@ public class RiskTraineeAnalyticsService {
 						.map(round -> new RiskTraineeRateResponse.RoundColumn(
 								round.assessmentRoundId(),
 								round.roundNo(),
+								round.cohortRoundNo(),
 								round.roundName(),
 								round.projectId(),
 								round.projectName(),
@@ -331,6 +332,7 @@ public class RiskTraineeAnalyticsService {
 			result.add(new RiskTraineeRateResponse.RiskCell(
 					round.assessmentRoundId(),
 					round.roundNo(),
+					round.cohortRoundNo(),
 					status,
 					eligibleCount,
 					riskCount,
