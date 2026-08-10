@@ -464,8 +464,10 @@ class RiskTraineeAnalyticsServiceTest {
 			String status,
 			boolean reportPublished
 	) {
+		// roundNo(프로젝트 안 응시 번호)와 cohortRoundNo(기수 안 회차 순번)는 다른 축이다(12차 R1).
+		// 여기서는 두 값을 같게 두어 기존 기대값을 유지한다.
 		return new RiskTraineeQueryRepository.RoundRow(
-				assessmentRoundId, roundNo, "K8s 배포 실습", projectId, "미니프로젝트", status, reportPublished);
+				assessmentRoundId, roundNo, roundNo, "K8s 배포 실습", projectId, "미니프로젝트", status, reportPublished);
 	}
 
 	private void givenOperator() {

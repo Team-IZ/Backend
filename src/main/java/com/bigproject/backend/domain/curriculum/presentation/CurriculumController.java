@@ -224,10 +224,21 @@ public class CurriculumController {
 					이 기수가 쓴 교안과 하나라도 겹치는 교안을 쓴 다른 기수 ID 목록을 조회한다.
 
 					**요청**
-					- cohortId (쿼리, 필수): 기준 기수 ID
+					- cohortId (**쿼리**, 필수): 기준 기수 ID
 
 					**응답 (200)**
 					- UUID 배열. 겹치는 교안이 없으면 빈 배열
+
+					⚠️ **기수 간 비교(`GET /cohorts/{cohortId}/analytics/cohort-comparison`)와 헷갈리기 쉽다**(12차 Q1).
+					이름이 비슷하지만 다른 오퍼레이션이고 `cohortId`를 받는 자리도 다르다.
+
+					| | 이 API | 기수 간 비교 |
+					|---|---|---|
+					| 경로 | `/curricula/comparable-cohorts` | `/cohorts/{cohortId}/analytics/cohort-comparison` |
+					| `cohortId` | **쿼리** 파라미터 | **경로** 파라미터 |
+					| 돌려주는 것 | 비교 후보 기수 ID 배열 | 개념별 비교 격자 |
+
+					이쪽은 **후보를 고르기 전** 드롭다운을 채우는 용도다.
 					"""
     )
     @ApiResponses({

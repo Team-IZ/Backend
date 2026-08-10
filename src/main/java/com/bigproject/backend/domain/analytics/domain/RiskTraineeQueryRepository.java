@@ -63,9 +63,17 @@ public interface RiskTraineeQueryRepository {
 	) {
 	}
 
+	/**
+	 * @param roundNo       {@code project_assessment_round.round_no} — <b>프로젝트 안에서만</b> 유일하다.
+	 *                      미니프로젝트는 회차가 1건뿐이라 늘 1이다
+	 * @param cohortRoundNo {@code project.sequence_no} — 기수 안의 회차 순번이며
+	 *                      <b>{@link RoundCriteria#fromRoundNo()}·{@link RoundCriteria#toRoundNo()}와 같은 축</b>이다(12차 R1).
+	 *                      요청과 응답이 같은 이름의 다른 축을 쓰고 있어 화면이 열 번호를 다시 세고 있었다
+	 */
 	record RoundRow(
 			UUID assessmentRoundId,
 			int roundNo,
+			int cohortRoundNo,
 			String roundName,
 			UUID projectId,
 			String projectName,
