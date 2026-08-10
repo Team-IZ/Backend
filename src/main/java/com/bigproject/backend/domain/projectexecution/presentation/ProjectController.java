@@ -49,7 +49,6 @@ import java.util.List;
 import java.util.UUID;
 
 @Tag(name = "Project Execution", description = "프로젝트 구성·일정·요구사항 API")
-@Tag(name = "Project", description = "프로젝트 진행 현황 조회")
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController
@@ -168,6 +167,58 @@ public class ProjectController {
 		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
 		ProjectService.ProjectList list = projectService.findProjectList(
 				cohortId, orgId, new ProjectService.ProjectListCriteria(search, curriculumId, status, sort));
+		return ResponseEntity.ok(ProjectListResponse.from(list));
+	}
+
+	@Operation(
+			operationId = "findProjectsForManager",
+			summary = "담당 반 프로젝트 목록 | ",
+			description = """
+					매니저가 자기 코호트의 회차 목록을 조회한다(MG-01 대시보드, MG-07 프로젝트 목록).
+
+					**응답 계약은 `GET /cohorts/{cohortId}/projects`와 완전히 같다** — 매니저 전용
+					진입점만 새로 낸 것이지 조회 로직을 새로 만들지 않았다. `search`·`curriculumId`·
+					`status`·`sort`·`counts`·`readiness` 전부 그대로 동작한다.
+
+					## 요청 (쿼리 파라미터)
+
+					| 파라미터 | 필수 | 타입 | 설명 |
+					|---|---|---|---|
+					| `cohort` | **필수** | UUID | 조회할 기수 ID |
+					| `search` / `curriculumId` / `status` / `sort` | 선택 | — | `GET /cohorts/{cohortId}/projects`와 동일 |
+
+					MG-01 "마감이 있는 것부터"는 `sort=DUE_SOON`으로, MG-07 기본 정렬은
+					`sort=READINESS`(생략 시 기본값)로 그대로 커버된다.
+
+					⚠️ **아직 없는 것** — 정의 문서(MG-07)의 "담당 반 합계"·"진행 58/71"·"A반 미제출 2팀"
+					같은 반별·제출별 집계는 이 응답에 없다. `Project`에는 반(class) 연관이 없고,
+					제출 현황은 Submission 도메인(현재 미착수)에서 와야 한다. 지금은 회차 목록과
+					`readiness`·교안/개념 집계까지만 내려주고, 반별 진행 집계는 Submission 도메인
+					착수 후 별도로 얹는다.
+					"""
+	)
+	@PreAuthorize("hasAnyRole('MANAGER')")
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "프로젝트 목록 조회 성공"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED status·sort에 없는 값을 지정함"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 매니저가 아님"),
+	})
+	@GetMapping("/projects")
+	public ResponseEntity<ProjectListResponse> findProjectsForManager(
+			@Parameter(description = "기수 ID") @RequestParam UUID cohort,
+			@Parameter(description = "회차 이름 부분검색(대소문자 무시)", example = "미니")
+			@RequestParam(required = false) String search,
+			@Parameter(description = "교안으로 좁힌다. 교안 버전 ID와 자료(material) ID를 모두 받는다")
+			@RequestParam(required = false) UUID curriculumId,
+			@Parameter(description = "상태로 좁힌다. 생략하면 전체")
+			@RequestParam(required = false) ProjectLifecycleStatus status,
+			@Parameter(description = "정렬 기준", example = "READINESS")
+			@RequestParam(required = false, defaultValue = "READINESS") ProjectListSort sort
+	) {
+		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
+		ProjectService.ProjectList list = projectService.findProjectList(
+				cohort, orgId, new ProjectService.ProjectListCriteria(search, curriculumId, status, sort));
 		return ResponseEntity.ok(ProjectListResponse.from(list));
 	}
 

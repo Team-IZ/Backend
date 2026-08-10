@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 화면 하나 대 API 하나가 아니라 화면이 필요로 하는 조합을 그대로 내려주는 BFF(Backend for Frontend) 성격
  * 엔드포인트를 모은 컨트롤러다. {@code /bff/} 하위는 특정 도메인 리소스가 아니라 화면 단위로 묶인다.
  */
-@Tag(name = "BFF", description = "화면 조합용 BFF API")
+@Tag(name = "Project Execution", description = "프로젝트 구성·일정·요구사항 API")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
 @RequiredArgsConstructor

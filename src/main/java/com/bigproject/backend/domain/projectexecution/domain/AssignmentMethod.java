@@ -1,9 +1,12 @@
 package com.bigproject.backend.domain.projectexecution.domain;
 
-// 팀 배정 방식. 매니저가 수동으로 배정했는지, 실력 균형 맞춰 자동 배정했는지,
-// 무작위 배정했는지를 구분 — 나중에 "왜 이 조합이 됐는지" 추적할 때 필요
+/**
+ * 팀 배정 방식. DB CHECK(ck_team_membership_assignment_method)가 이 셋만 허용한다(확인 완료).
+ * AUTO(자동 배분) · MANUAL(매니저가 손으로 배정) · TRANSFER(제출 시작 후 팀 이동 — 정의 문서 ⑤
+ * "제출 시작됨: [팀 이동]만 남는다"가 이 값이다).
+ */
 public enum AssignmentMethod {
+    AUTO,
     MANUAL,
-    BALANCED,
-    RANDOM
+    TRANSFER
 }
