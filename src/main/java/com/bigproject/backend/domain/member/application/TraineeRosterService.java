@@ -12,6 +12,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -26,6 +27,80 @@ public class TraineeRosterService {
 	private static final String RAW_INACTIVE = "INACTIVE";
 
 	private final TraineeRosterRepository traineeRosterRepository;
+	private final com.bigproject.backend.domain.auth.domain.PasswordResetRepository accountRepository;
+	private final com.bigproject.backend.domain.auth.application.InvitationResendDispatcher resendDispatcher;
+
+	/**
+	 * 교육생 초대 재발송(11차 R2). 명단에서 고른 여러 명을 <b>한 번에</b> 받는다.
+	 *
+	 * <p>지금까지는 교육생만 받는 사람용 {@code POST /auth/invitations/resend}를 써야 했다.
+	 * 그쪽은 계정 존재 여부를 숨기려 <b>항상 같은 202</b>를 주므로 오퍼레이터가 눌러도 나갔는지 알 수 없고,
+	 * 이메일 하나씩만 받아 고른 사람 수만큼 호출이 나갔다. 이 경로는 오퍼레이터 인증을 거치므로
+	 * 숨길 것이 없어 <b>실제로 나간 수</b>를 답한다.
+	 *
+	 * <p>행별 부분 성공을 허용한다 — 20명 중 하나가 이미 활성이라고 나머지 19명을 막을 이유가 없다.
+	 *
+	 * @return 요청 수·실제 발송 수·실패한 행
+	 */
+	@Transactional
+	public InvitationResendResult resendInvitations(
+			UUID cohortId, UUID orgId, java.util.List<UUID> traineeIds, String requestId) {
+
+		verifyCohortScope(cohortId, orgId);
+
+		java.util.List<InvitationResendFailure> failures = new java.util.ArrayList<>();
+		int sentCount = 0;
+
+		for (UUID traineeId : traineeIds) {
+			TraineeRosterRepository.RosterRow row =
+					traineeRosterRepository.findTrainee(traineeId, cohortId, orgId).orElse(null);
+			if (row == null) {
+				failures.add(new InvitationResendFailure(traineeId, null, InvitationResendStatus.NOT_FOUND));
+				continue;
+			}
+			// 이미 활성화된 계정에는 보낼 초대가 없다. 대기 토큰이 있는지로 판정한다 —
+			// status만 보면 초대가 취소돼 토큰이 없는 계정까지 대상이 된다.
+			if (!RAW_PENDING.equals(row.rawAccountStatus()) || row.pendingInvitationTokenId() == null) {
+				failures.add(new InvitationResendFailure(traineeId, row.email(), InvitationResendStatus.NOT_PENDING));
+				continue;
+			}
+
+			var account = accountRepository.findAccountByNormalizedEmail(row.email().trim().toLowerCase(java.util.Locale.ROOT))
+					.orElse(null);
+			if (account == null || account.invitationId() == null) {
+				failures.add(new InvitationResendFailure(traineeId, row.email(), InvitationResendStatus.NO_INVITATION));
+				continue;
+			}
+
+			resendDispatcher.resend(account, requestId);
+			sentCount++;
+		}
+
+		return new InvitationResendResult(traineeIds.size(), sentCount, List.copyOf(failures));
+	}
+
+	/**
+	 * @param requestedCount      요청에 담긴 교육생 수
+	 * @param invitationSentCount <b>실제로 메일이 나간 수</b>. {@code registerTrainees}의 같은 이름 필드와 같은 뜻이다
+	 */
+	public record InvitationResendResult(
+			int requestedCount,
+			int invitationSentCount,
+			java.util.List<InvitationResendFailure> failures) {
+	}
+
+	public record InvitationResendFailure(UUID traineeId, String email, InvitationResendStatus status) {
+	}
+
+	/** 재발송이 걸린 이유. 화면이 행마다 다른 문구를 붙일 수 있어야 한다. */
+	public enum InvitationResendStatus {
+		/** 이 기수에 없는 교육생이다. 명단이 낡았다는 뜻이라 화면은 목록을 다시 읽어야 한다. */
+		NOT_FOUND,
+		/** 이미 활성화됐거나 초대가 취소돼 보낼 초대가 없다. */
+		NOT_PENDING,
+		/** 초대 원장이 없다. 계정만 만들어지고 초대가 발행되지 않은 상태다. */
+		NO_INVITATION
+	}
 
 	public RosterResult findRoster(
 			UUID cohortId,

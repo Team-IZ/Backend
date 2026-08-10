@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.curriculum.domain;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -25,6 +26,18 @@ public interface CurriculumCatalogRepository {
 
 	/** 같은 필터를 적용한 전체 건수. */
 	long count(CurriculumCatalogCriteria criteria);
+
+	/**
+	 * 분석 상태별 교안 수(11차 R7). 목록과 <b>같은 모집단</b>(삭제되지 않은 이 기관의 교안)을 쓰되
+	 * 검색·상태 필터는 걸지 않는다 — 상태 칩이 자기 자신을 필터링하면 언제나 자기 개수만 남는다.
+	 *
+	 * <p>교안 탭만 이 값이 없어서 헤더에 `12개 · 분석 완료 9 · 실패 1`을 못 그리고 있었다.
+	 * 기수({@code counts})·매니저({@code statusCounts})가 이미 같은 모양을 준다.
+	 *
+	 * <p>한 번도 분석하지 않은 교안은 상태 자체가 없다. 그런 교안은 어느 키에도 들어가지 않으므로
+	 * <b>상태별 합이 전체와 다를 수 있다</b> — 호출부가 {@code NOT_ANALYZED} 자리를 따로 만든다.
+	 */
+	Map<CurriculumAnalysisStatus, Long> countByAnalysisStatus(UUID orgId);
 
 	/** 교안 하나. 목록과 <b>같은 SELECT</b>를 쓰므로 두 응답의 필드가 어긋날 수 없다. */
 	Optional<CurriculumCatalogRow> findOne(UUID orgId, UUID materialId);

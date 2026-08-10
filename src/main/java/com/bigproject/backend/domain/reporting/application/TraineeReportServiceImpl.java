@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.reporting.application;
 
+import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
 import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
 import com.bigproject.backend.domain.reporting.domain.ReportException;
 import com.bigproject.backend.domain.reporting.domain.TraineeReportQueryRepository;
@@ -100,36 +101,39 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 			Map<UUID, Map<UUID, List<StageAnswerRow>>> answersByReport
 	) {
 		String id = round.assessmentRoundId().toString();
+		// 회차당 리포트는 최대 1건이다(uq_report_active_user). 아직 만들어지지 않은 회차는 null이고,
+		// @JsonInclude(NON_NULL)이라 그때는 키 자체가 빠진다.
+		String reportId = round.reportId() == null ? null : round.reportId().toString();
 		String label = round.roundName();
 
 		// ① 무효 응시 — PENDING(검토 중)과 CONFIRMED_INVALID(무효 확정)를 같이 묶는다.
 		//    화면 문구가 `확인 필요` 하나라 구분이 필요 없다(labels.ts VOID_ATTEMPT).
 		String validity = round.validityReviewStatus();
 		if ("PENDING".equals(validity) || "CONFIRMED_INVALID".equals(validity)) {
-			return statusOnly(id, label, "VOID_ATTEMPT");
+			return statusOnly(id, reportId, label, "VOID_ATTEMPT");
 		}
 
 		// ② 미응시 — 응시 기록이 없거나 제출·출석이 없는 채로 끝났다.
 		String terminal = round.terminalReasonCode();
 		if (round.attemptId() == null || "NOT_SUBMITTED".equals(terminal) || "NOT_ATTENDED".equals(terminal)) {
-			return statusOnly(id, label, "NOT_ATTEMPTED");
+			return statusOnly(id, reportId, label, "NOT_ATTEMPTED");
 		}
 
 		// ③ 중단 — 세션을 시작했지만 끝내지 못했다.
 		if ("SESSION_INCOMPLETE".equals(terminal)) {
-			return statusOnly(id, label, "STOPPED");
+			return statusOnly(id, reportId, label, "STOPPED");
 		}
 
 		// ④ 발행 전 — 리포트 행이 없거나 published_at이 비어 있다.
 		//    publishAfter는 회차가 정해 둔 "이 시각 전에는 발행하지 않는다" 값이다.
 		if (round.reportId() == null || round.publishedAt() == null) {
-			return new RoundReportResponse(id, label, "PENDING_PUBLISH",
-					iso(round.reportPublishNotBeforeAt()), null, null, null, null, null, null);
+			return new RoundReportResponse(id, reportId, label, "PENDING_PUBLISH",
+					iso(round.reportPublishNotBeforeAt()), null, null, null, null, null, null, null);
 		}
 
 		// ⑤ 발행됐지만 공개 범위 미지정 — 발행과 공개는 다른 사건이다.
 		if (!round.canViewReport()) {
-			return statusOnly(id, label, "PENDING_VISIBILITY");
+			return statusOnly(id, reportId, label, "PENDING_VISIBILITY");
 		}
 
 		// ⑥ 공개됨.
@@ -141,15 +145,23 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				.toList();
 
 		return new RoundReportResponse(
-				id, label, "PUBLISHED",
+				id, reportId, label, "PUBLISHED",
 				null,
 				iso(round.publishedAt()),
 				round.projectName(),
+				// 값 집합은 DB CHECK(ck_report_trainee_disclosure_scope)가 강제하므로 모르는 값을
+				// 만나면 조용히 넘길 데이터가 아니다 — valueOf가 그대로 터지게 둔다
+				// (ManagedReportListResponse.scope와 같은 판단).
+				scope(round.traineeDisclosureScope()),
 				concepts,
 				retryState(round),
 				iso(round.reviewDueAt()),
 				iso(round.reviewCompletedAt())
 		);
+	}
+
+	private static DisclosureScope scope(String value) {
+		return value == null ? null : DisclosureScope.valueOf(value);
 	}
 
 	private ConceptReportResponse toConcept(ConceptRow row, List<StageAnswerRow> answerRows) {
@@ -160,6 +172,9 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				.toList();
 
 		return new ConceptReportResponse(
+				// 개념 이름은 회차마다 반복되므로(`예외 처리와 롤백 전략`이 1·2·4차에 모두 나온다)
+				// 화면이 개념을 지목할 안정 키가 필요하다.
+				row.problemId() == null ? null : row.problemId().toString(),
 				row.conceptDisplayName(),
 				reachLevel(row.reachDisplayCode()),
 				row.resultExplanation(),
@@ -277,8 +292,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	}
 
 	/** 본문이 없는 상태들. 화면은 status만 보고 그린다. */
-	private static RoundReportResponse statusOnly(String id, String label, String status) {
-		return new RoundReportResponse(id, label, status, null, null, null, null, null, null, null);
+	private static RoundReportResponse statusOnly(String id, String reportId, String label, String status) {
+		return new RoundReportResponse(id, reportId, label, status, null, null, null, null, null, null, null, null);
 	}
 
 	private static String iso(Instant instant) {

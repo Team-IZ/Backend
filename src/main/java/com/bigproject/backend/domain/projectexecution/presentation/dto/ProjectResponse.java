@@ -24,7 +24,11 @@ public record ProjectResponse(
         // 화면의 4값은 `status === 'PLANNED' ? readiness : status` 한 줄로 만들어진다.
         ProjectReadiness readiness,
         @Schema(description = "시작일") LocalDate startDate,
-        @Schema(description = "종료일. **날짜만이며 시각 의미가 없다** — 9차 Q2 참고", nullable = true) LocalDate endDate,
+        // 10차 R4 — nullable=true를 뺐다. project.end_date가 DB에서 NOT NULL이고 생성·수정 요청도
+        // 둘 다 @NotNull이라 null인 회차는 만들 방법이 없다. 타입만 null을 허용하고 있어서 화면이
+        // `마감 미설정` 분기를 그려 놓고 영원히 확인하지 못했다.
+        @Schema(description = "종료일. **날짜만이며 시각 의미가 없다** — 9차 Q2 참고. "
+                + "항상 값이 있다(생성·수정 모두 필수이며 DB도 NOT NULL이다)") LocalDate endDate,
 
         // ── 9차 R1: 목록 화면이 셀마다 그리는 세 숫자 ────────────────────────────
         // 목록에 회차가 6~8건인데 화면이 직접 세려면 회차마다 교안·개념·후보를 따로 물어야 한다.

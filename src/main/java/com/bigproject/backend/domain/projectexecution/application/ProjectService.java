@@ -10,6 +10,7 @@ import com.bigproject.backend.domain.projectexecution.domain.ProjectCurriculum;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -25,7 +26,40 @@ public interface ProjectService {
 
     List<String> findRoundLabelsUsingTeaches(UUID teachesId, UUID orgId);
 
+    /**
+     * 여러 개념이 각각 어느 회차에 쓰였는지 <b>한 번에</b> 조회한다(11차 R1).
+     *
+     * <p>교안 섹션 화면은 항목이 수십 개고 항목마다 이 값이 필요하다. 한 건씩 부르면
+     * 개념 → 세트 → 프로젝트 → 기수의 미니프로젝트 전량까지 매번 다시 읽어 쿼리가 수백 건이 됐다.
+     *
+     * <p>돌려주는 라벨은 <b>중복 없이</b>, 그리고 <b>기수 이름이 붙어</b> 온다(11차 R5).
+     * 교안 하나가 여러 기수에 쓰이면 `미프 1차`가 기수 수만큼 나오는데, 기수를 떼면
+     * 서로 다른 회차가 같은 이름으로 합쳐져 어느 기수 것인지 알 수 없다.
+     *
+     * @return 개념 ID → 그 개념이 쓰인 회차 라벨. 쓰이지 않은 개념은 <b>키가 없다</b>
+     */
+    Map<UUID, List<String>> findRoundLabelsByTeaches(Collection<UUID> teachesIds, UUID orgId);
+
     List<String> findRoundLabelsUsingCurriculum(UUID curriculumVersionId, UUID orgId);
+
+    /**
+     * 이 교안 버전을 쓰는 회차들(11차 R3). 이름만으로는 재분석 경고를 좁힐 수 없어
+     * 응시 인원과 식별자를 함께 준다.
+     *
+     * @param attendedCount 응시를 <b>시작한</b> 인원. 0이면 아직 아무도 응시하지 않은 회차라
+     *                      재분석해도 발행된 리포트가 어긋나지 않는다
+     */
+    List<CurriculumUsingProject> findProjectsUsingCurriculum(UUID curriculumVersionId, UUID orgId);
+
+    record CurriculumUsingProject(
+            UUID projectId,
+            String name,
+            String roundLabel,
+            UUID cohortId,
+            String cohortName,
+            int attendedCount,
+            List<String> conceptNames) {
+    }
 
     Project createProject(UUID orgId, UUID cohortId, String name, ProjectCategory category,
                           LocalDate startDate, LocalDate endDate, UUID actorUserId);
@@ -94,13 +128,16 @@ public interface ProjectService {
     }
 
     /**
-     * @param projects 필터·정렬이 적용된 목록
-     * @param counts   <b>필터를 적용하지 않은</b> 기수 전체 모집단의 상태별 개수.
-     *                 상태 칩이 자기 자신을 필터링하면 안 되므로 걸러진 목록에서는 만들 수 없다
+     * @param projects        필터·정렬이 적용된 목록
+     * @param counts          <b>필터를 적용하지 않은</b> 기수 전체 모집단의 상태별 개수.
+     *                        상태 칩이 자기 자신을 필터링하면 안 되므로 걸러진 목록에서는 만들 수 없다
+     * @param readinessCounts 같은 모집단에서 <b>{@code PLANNED}만</b> 준비 상태로 다시 가른 개수(10차 Q1).
+     *                        {@code PREP + READY == counts.get(PLANNED)}이다
      */
     record ProjectList(
             List<ProjectSummary> projects,
-            Map<ProjectLifecycleStatus, Long> counts) {
+            Map<ProjectLifecycleStatus, Long> counts,
+            Map<ProjectReadiness, Long> readinessCounts) {
     }
 
     /** 생성·수정 응답처럼 이미 손에 든 프로젝트 하나를 목록 항목과 같은 모양으로 만든다. */
@@ -148,8 +185,13 @@ public interface ProjectService {
             int conceptCandidateCount) {
 
         /**
-         * 준비가 덜 된 정도 — 교안·확정 개념·마감 셋 중 <b>비어 있는 개수</b>다.
+         * 준비가 덜 된 정도 — 교안·확정 개념 <b>둘 중 비어 있는 개수</b>다.
          * {@link ProjectListSort#READINESS} 정렬이 이 값의 내림차순을 쓴다.
+         *
+         * <p>예전에는 {@code endDate == null}도 한 몫으로 셌는데 <b>절대 성립하지 않는 조건</b>이었다 —
+         * {@code project.end_date}가 DB에서 NOT NULL이고 생성·수정 요청도 둘 다 필수라 null이 될 수 없다(10차 R4).
+         * 없는 분기를 규칙인 것처럼 두면 "마감을 지우면 준비 중으로 돌아간다"고 읽히므로 걷어냈다.
+         * 판정 결과는 달라지지 않는다.
          */
         public int unreadyCount() {
             int count = 0;
@@ -157,9 +199,6 @@ public interface ProjectService {
                 count++;
             }
             if (conceptCount == 0) {
-                count++;
-            }
-            if (project.getEndDate() == null) {
                 count++;
             }
             return count;

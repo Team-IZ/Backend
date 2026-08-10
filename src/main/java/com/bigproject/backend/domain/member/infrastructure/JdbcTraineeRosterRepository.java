@@ -29,7 +29,17 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 			       c.class_id AS classroom_id, c.name AS class_name,
 			       cm.joined_at, cm.left_at,
 			       u.inactivated_reason_code, u.inactivated_reason, u.inactivated_at,
-			       u.inactivated_by AS inactivated_by_id, actor.name AS inactivated_by_name
+			       u.inactivated_by AS inactivated_by_id, actor.name AS inactivated_by_name,
+			       /*
+			        * 대기 중 초대 토큰(11차 R2). 재발송이 토큰 단위라 목록에 없으면 화면이 버튼을
+			        * status='INVITED'로 유추해야 했다. 매니저·오퍼레이터 목록과 같은 방식으로 상관
+			        * 서브쿼리로 둔다 — 조인하면 계정 한 명이 토큰 수만큼 중복 행으로 늘어난다.
+			        */
+			       (SELECT t.token_id FROM one_time_token t
+			         WHERE t.user_id = cm.user_id AND t.purpose = 'INVITE_TRAINEE'
+			           AND t.used_at IS NULL AND t.invalidated_at IS NULL
+			         ORDER BY t.issued_at DESC
+			         LIMIT 1) AS pending_invitation_token_id
 			FROM cohort_member cm
 			JOIN app_user u ON u.user_id = cm.user_id AND u.deleted_at IS NULL
 			LEFT JOIN class_membership csm ON csm.cohort_member_id = cm.cohort_member_id AND csm.unassigned_at IS NULL
@@ -198,7 +208,8 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				rs.getString("inactivated_reason"),
 				toOffsetDateTime(rs.getTimestamp("inactivated_at")),
 				rs.getObject("inactivated_by_id", UUID.class),
-				rs.getString("inactivated_by_name")
+				rs.getString("inactivated_by_name"),
+				rs.getObject("pending_invitation_token_id", UUID.class)
 		);
 	}
 

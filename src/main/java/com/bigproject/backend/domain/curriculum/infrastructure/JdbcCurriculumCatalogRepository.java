@@ -12,7 +12,9 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -103,6 +105,36 @@ public class JdbcCurriculumCatalogRepository implements CurriculumCatalogReposit
 				""" + filter.where();
 		Long total = jdbcTemplate.queryForObject(sql, Long.class, filter.args().toArray());
 		return total == null ? 0 : total;
+	}
+
+	/**
+	 * 11차 R7. 목록과 같은 모집단(삭제되지 않은 이 기관의 교안 = 최신 버전 한 행)을 쓰되
+	 * 검색·상태 필터는 걸지 않는다. 한 번도 분석하지 않은 교안은 상태가 NULL이라 결과에서 빠진다.
+	 */
+	@Override
+	public Map<CurriculumAnalysisStatus, Long> countByAnalysisStatus(UUID orgId) {
+		String sql = """
+				SELECT (SELECT a.status FROM curriculum_analysis a
+				         WHERE a.version_id = v.version_id
+				         ORDER BY a.requested_at DESC
+				         LIMIT 1) AS analysis_status,
+				       COUNT(*) AS material_count
+				FROM curriculum_material m
+				JOIN curriculum_version v ON v.material_id = m.material_id
+				 AND v.version_no = (SELECT MAX(v2.version_no) FROM curriculum_version v2
+				                      WHERE v2.material_id = m.material_id)
+				WHERE m.org_id = ? AND m.deleted_at IS NULL
+				GROUP BY 1
+				""";
+
+		Map<CurriculumAnalysisStatus, Long> counts = new LinkedHashMap<>();
+		jdbcTemplate.query(sql, (ResultSet rs) -> {
+			String status = rs.getString("analysis_status");
+			if (status != null) {
+				counts.put(CurriculumAnalysisStatus.valueOf(status), rs.getLong("material_count"));
+			}
+		}, orgId);
+		return counts;
 	}
 
 	@Override

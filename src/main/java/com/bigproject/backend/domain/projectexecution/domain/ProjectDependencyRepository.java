@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.projectexecution.domain;
 
+import java.util.Collection;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -25,4 +27,23 @@ public interface ProjectDependencyRepository {
 	 * 회차 삭제와 같은 성격이라 함께 막는다.
 	 */
 	boolean hasConfirmedConceptsFromCurriculum(UUID projectId, UUID curriculumVersionId);
+
+	/**
+	 * 기수 ID → 기수 이름(11차 R5). 회차 라벨에 기수를 붙이는 데 쓴다 —
+	 * 교안 하나가 여러 기수에 쓰이면 `미프 1차`만으로는 어느 기수 것인지 알 수 없다.
+	 *
+	 * <p>cohort는 이 도메인의 엔티티가 아니라 이름 하나만 읽는다.
+	 */
+	Map<UUID, String> findCohortNames(Collection<UUID> cohortIds);
+
+	/**
+	 * 회차별 <b>응시를 시작한</b> 인원(11차 R3). 재분석 경고를 좁히는 기준값이다 —
+	 * 0이면 아직 아무도 응시하지 않아 다시 분석해도 발행된 리포트가 어긋나지 않는다.
+	 *
+	 * <p>"응시 시작"은 {@code primary_attempt_id}가 잡힌 것으로 본다. 완료(COMPLETED)만 세면
+	 * 진행 중인 응시가 빠져 <b>경고를 놓친다</b> — 이미 문항을 받은 학생이 있다는 뜻이기 때문이다.
+	 *
+	 * @return 응시자가 한 명도 없는 회차는 <b>키가 없다</b>
+	 */
+	Map<UUID, Integer> countAttendedByProject(Collection<UUID> projectIds);
 }

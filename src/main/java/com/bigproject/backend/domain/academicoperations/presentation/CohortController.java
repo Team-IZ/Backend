@@ -9,6 +9,7 @@ import com.bigproject.backend.domain.academicoperations.presentation.dto.CohortL
 import com.bigproject.backend.domain.academicoperations.presentation.dto.CohortResponse;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.CreateCohortRequest;
 import com.bigproject.backend.domain.academicoperations.presentation.dto.EndCohortRequest;
+import com.bigproject.backend.domain.academicoperations.presentation.dto.UpdateCohortRequest;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -29,6 +30,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -39,6 +41,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Tag(name = "Academic Operations", description = "기수, 반, 교육생 소속 이력, 매니저 반 배정 API")
@@ -71,8 +75,11 @@ public class CohortController {
 					- totalElements: 조건에 맞는 전체 기수 수
 					- totalPages: 전체 페이지 수
 
-					**아직 채워지지 않는 값** — content[].traineeCount는 항상 0, content[].managers는 항상 빈 배열이다.
-					교육생 수와 담당 매니저는 member·classroom 도메인 조인이 필요해 아직 연결되지 않았다.
+					content[].traineeCount는 **재적 교육생 수**다 — 이 기수에 등록돼 있고 아직 나가지 않은 인원이며,
+					중도 이탈자는 빠진다(10차 R3). 그래서 교육생 명단 조회의 전체 건수보다 작을 수 있다.
+
+					**아직 채워지지 않는 값** — content[].managers는 항상 빈 배열이다.
+					담당 매니저는 classroom 도메인 조인이 필요해 아직 연결되지 않았다.
 					반 목록·담당 매니저가 필요하면 `GET /cohorts/{cohortId}/classrooms`를 함께 호출한다.
 					"""
 	)
@@ -103,8 +110,15 @@ public class CohortController {
 		Page<Cohort> cohorts = cohortService.findCohorts(
 				organizationId, status, query, PageRequest.of(page, size));
 
+		// 기수마다 COUNT를 날리지 않도록 이 페이지의 기수 전체를 한 번에 센다(10차 R3).
+		Map<UUID, Integer> traineeCounts = cohortService.countActiveTrainees(
+				cohorts.getContent().stream().map(Cohort::getCohortId).toList(), organizationId);
+
 		CohortListResponse response = new CohortListResponse(
-				cohorts.getContent().stream().map(CohortResponse::from).toList(),
+				cohorts.getContent().stream()
+						.map(cohort -> CohortResponse.from(
+								cohort, traineeCounts.getOrDefault(cohort.getCohortId(), 0)))
+						.toList(),
 				cohorts.getNumber(),
 				cohorts.getSize(),
 				cohorts.getTotalElements(),
@@ -130,10 +144,10 @@ public class CohortController {
 					- name: 기수명
 					- status: PLANNED(개설 예정) / RUNNING(진행 중) / CLOSED(종료)
 					- startDate / endDate: 기수 기간
-					- traineeCount: 소속 교육생 수
+					- traineeCount: 재적 교육생 수(등록돼 있고 아직 나가지 않은 인원. 중도 이탈자 제외)
 					- managers[]: 담당 매니저 목록
 
-					**아직 채워지지 않는 값** — traineeCount는 항상 0, managers는 항상 빈 배열이다(목록 조회와 동일).
+					**아직 채워지지 않는 값** — managers는 항상 빈 배열이다(목록 조회와 동일).
 					"""
 	)
 	@ApiResponses({
@@ -148,8 +162,11 @@ public class CohortController {
 			@PathVariable UUID cohortId,
 			Authentication authentication
 	) {
-		Cohort cohort = cohortService.findCohort(cohortId, extractOrganizationId(authentication));
-		return ResponseEntity.ok(CohortResponse.from(cohort));
+		UUID organizationId = extractOrganizationId(authentication);
+		Cohort cohort = cohortService.findCohort(cohortId, organizationId);
+		int traineeCount = cohortService.countActiveTrainees(List.of(cohortId), organizationId)
+				.getOrDefault(cohortId, 0);
+		return ResponseEntity.ok(CohortResponse.from(cohort, traineeCount));
 	}
 
 	@Operation(
@@ -168,8 +185,10 @@ public class CohortController {
 					**응답 (201)**
 					- 생성된 기수 정보(응답 필드는 "기수 상세 조회"와 동일). status는 PLANNED로 시작한다
 
-					⚠️ `initialTrainees`를 요청에 넣어도 저장되지 않는다. 스키마에는 남아 있지만 서버가 사용하지 않으며,
-					교육생 등록은 `POST /cohorts/{cohortId}/trainees`(CSV) 또는 `.../trainees/invitations`(직접 입력)로 한다.
+					⚠️ **11차 Q3 — `initialTrainees`를 요청 스키마에서 뺐다.** 저장되지 않는 필드를 남겨 두면
+					화면이 "보내도 아무 일이 안 일어나는 칸"을 그리게 된다. 교육생 등록은
+					`POST /cohorts/{cohortId}/trainees`(CSV) 또는 `.../trainees/invitations`(직접 입력)로 한다 —
+					행별 실패를 돌려줘야 해서 기수 생성 응답에 얹기에 맞지 않는다.
 					"""
 	)
 	@ApiResponses({
@@ -236,6 +255,105 @@ public class CohortController {
 		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
 		Cohort cohort = cohortService.closeCohort(cohortId, extractOrganizationId(authentication), actorUserId);
 		return ResponseEntity.ok(CohortResponse.from(cohort));
+	}
+
+	@Operation(
+			operationId = "updateCohort",
+			summary = "기수 수정 | ✅ 사용 가능",
+			description = """
+					기수의 이름·기간을 고친다(11차 Q2). **개강 전(`PLANNED`)에만 열려 있다.**
+
+					지금까지 기수는 만들고 종료하는 것만 있어서 **기수명 오타 하나를 고칠 수 없었다.**
+					반은 9차 R6로 수정·삭제가 생겼는데 기수에는 없던 자리다.
+
+					**요청** — 세 필드 모두 선택이며 **보낸 것만 바뀐다**(반 수정과 같은 규칙).
+					- name (선택): 새 기수명. 같은 기관 안에서 중복되면 409. 공백만 보내면 "안 바꾼다"로 본다
+					- startDate / endDate (선택): 새 기간
+
+					**셋 다 생략하면 400** `COHORT_UPDATE_EMPTY`다 — 아무 일도 하지 않는 요청이 200으로
+					돌아오면 화면은 저장됐다고 오해한다.
+
+					## 개강 후를 막는 이유
+
+					기간은 이미 발행된 리포트와 회차 일정의 기준이다. 개강 후에 바꾸면 그것들이 가리키는
+					기간과 어긋난다. 진행 중·종료된 기수는 409 `COHORT_NOT_MUTABLE`이다.
+
+					**응답 (200)** — 수정 후의 기수 한 건(상세 조회와 같은 모양).
+					"""
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "수정 성공"),
+			@ApiResponse(responseCode = "400", description = "COHORT_UPDATE_EMPTY 바꿀 값이 없음 · COHORT_PERIOD_INVALID 종료일이 시작일보다 빠름"),
+			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터 권한이 아님"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없거나 다른 기관의 기수"),
+			@ApiResponse(responseCode = "409", description = "COHORT_NOT_MUTABLE 개강한 기수 · COHORT_NAME_TAKEN 이미 있는 기수명"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
+	})
+	@PreAuthorize("hasRole('OPERATOR')")
+	@PatchMapping("/{cohortId}")
+	public ResponseEntity<CohortResponse> updateCohort(
+			@Parameter(description = "수정할 기수 ID") @PathVariable UUID cohortId,
+			@Valid @RequestBody UpdateCohortRequest request,
+			Authentication authentication
+	) {
+		UUID organizationId = extractOrganizationId(authentication);
+		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
+		Cohort cohort = cohortService.updateCohort(
+				cohortId, organizationId, request.name(), request.startDate(), request.endDate(), actorUserId);
+		int traineeCount = cohortService.countActiveTrainees(List.of(cohortId), organizationId)
+				.getOrDefault(cohortId, 0);
+		return ResponseEntity.ok(CohortResponse.from(cohort, traineeCount));
+	}
+
+	@Operation(
+			operationId = "deleteCohort",
+			summary = "기수 삭제 | ✅ 사용 가능",
+			description = """
+					잘못 만든 기수를 되돌린다(11차 Q2). **개강 전이고 아무것도 붙지 않은 기수만** 지운다.
+
+					운영 중인 기수를 정리하는 수단이 아니다 — 그쪽은 `PATCH /cohorts/{cohortId}/end`(종료)다.
+
+					## 서버가 판정한다
+
+					반 삭제(9차 R6)와 같은 방식이다. 화면도 `PLANNED`에서만 버튼을 열겠지만
+					**클라이언트 검증만 있으면 우회된다.** 상태만 보고 열어 주지도 않는다 — 상태는 운영자가
+					손으로 바꾸는 값이라 개강 전으로 되돌려 두고 지울 수 있기 때문이다.
+
+					| 막는 조건 | 이유 |
+					|---|---|
+					| 상태가 `PLANNED`가 아님 | 개강했거나 종료된 기수다 |
+					| 등록된 교육생이 있음 | **이탈자도 센다** — 지나간 등록도 사실이다 |
+					| 만들어진 반이 있음 | 지운 기수를 가리키는 반이 남는다 |
+					| 만들어진 회차가 있음 | 회차·제출·리포트가 끊긴다 |
+
+					전부 409 `COHORT_NOT_DELETABLE` 하나로 답한다 — 어느 쪽이든 화면이 할 일은
+					"지울 수 없습니다"를 보여주고 버튼을 잠그는 것 하나다. **무엇이 걸렸는지는 `message`에 담는다**
+					(예: `등록된 교육생·만들어진 반이(가) 있어 삭제할 수 없습니다`).
+
+					**소프트 삭제다.** 행은 남고 목록·조회에서만 빠진다.
+
+					**응답 (204)** — 본문 없음.
+					"""
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "204", description = "삭제 성공"),
+			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터 권한이 아님"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없거나 다른 기관의 기수"),
+			@ApiResponse(responseCode = "409", description = "COHORT_NOT_DELETABLE 개강했거나 명단·반·회차가 붙어 있음"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
+	})
+	@PreAuthorize("hasRole('OPERATOR')")
+	@DeleteMapping("/{cohortId}")
+	public ResponseEntity<Void> deleteCohort(
+			@Parameter(description = "삭제할 기수 ID") @PathVariable UUID cohortId,
+			Authentication authentication
+	) {
+		UUID organizationId = extractOrganizationId(authentication);
+		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
+		cohortService.deleteCohort(cohortId, organizationId, actorUserId);
+		return ResponseEntity.noContent().build();
 	}
 
 	private UUID extractOrganizationId(Authentication authentication) {

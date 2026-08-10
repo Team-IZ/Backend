@@ -111,6 +111,26 @@ public class Cohort {
         this.updatedBy = actorUserId;
     }
 
+    /**
+     * 이름·기간 부분 수정(11차 Q2). null인 값은 <b>바꾸지 않는다</b> — 반 수정과 같은 규칙이라
+     * 이름만 고쳐도 기간이 덮이지 않는다.
+     *
+     * <p>개강 여부는 호출부가 판정한다. 엔티티는 값의 정합성(시작일 ≤ 종료일)만 지킨다.
+     */
+    public void edit(String newName, LocalDate newStartDate, LocalDate newEndDate, UUID actorUserId) {
+        LocalDate resolvedStart = newStartDate == null ? this.startDate : newStartDate;
+        LocalDate resolvedEnd = newEndDate == null ? this.endDate : newEndDate;
+        if (resolvedStart != null && resolvedEnd != null && resolvedEnd.isBefore(resolvedStart)) {
+            throw new IllegalArgumentException("종료일은 시작일보다 빠를 수 없습니다.");
+        }
+        if (newName != null) {
+            this.name = newName;
+        }
+        this.startDate = resolvedStart;
+        this.endDate = resolvedEnd;
+        this.updatedBy = actorUserId;
+    }
+
     /** 소프트 삭제 */
     public void softDelete(UUID actorUserId) {
         this.deletedAt = OffsetDateTime.now();

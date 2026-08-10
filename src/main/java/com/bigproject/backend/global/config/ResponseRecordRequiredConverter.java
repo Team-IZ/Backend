@@ -93,6 +93,11 @@ public class ResponseRecordRequiredConverter implements ModelConverter {
 	/**
 	 * 응답 DTO 판정. 이 프로젝트의 {@code presentation/dto}는 {@code *Request} / {@code *Response}로
 	 * 갈리며, 중첩 record는 바깥 타입을 따라간다({@code OrganizationResponse.Operator} 등).
+	 *
+	 * <p>이름 규칙을 따르지 않는 응답 DTO도 있다 — 여러 응답이 공유하려고 중첩에서 꺼내면서
+	 * {@code *Response}를 뗀 것들이다. {@code academicoperations}의 {@code Manager}가 그 경우이며,
+	 * 그래서 이 스키마만 {@code required} 없이 나갔다(11차 R8). 요청 DTO는 위에서 이미 걸러졌으므로
+	 * <b>{@code presentation.dto}에 있는 나머지 record는 응답으로 본다.</b>
 	 */
 	private boolean isResponseType(Class<?> raw) {
 		for (Class<?> current = raw; current != null; current = current.getEnclosingClass()) {
@@ -103,7 +108,8 @@ public class ResponseRecordRequiredConverter implements ModelConverter {
 				return true;
 			}
 		}
-		return false;
+		Package declaredPackage = raw.getPackage();
+		return declaredPackage != null && declaredPackage.getName().endsWith(".presentation.dto");
 	}
 
 	private boolean omitsKeys(Class<?> raw) {

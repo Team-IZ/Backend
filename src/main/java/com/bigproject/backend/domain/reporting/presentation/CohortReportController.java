@@ -34,7 +34,7 @@ public class CohortReportController {
 
 	@Operation(
 			operationId = "findClassDiagnosis",
-			summary = "수업 진단 리포트 조회 | ⚠️ 사용 불가",
+			summary = "수업 진단 리포트 조회 | ✅ 사용 가능",
 			description = """
 					OP-05 `리포트` 화면 전체를 이 응답 하나로 그린다. **섹션 5개가 한 문서**다 —
 					① 요약 · ② 회차별 · ③ 개념별 도달 분포 · ④ 반별 위험자·집단 미달 · ⑤ 우수 교육생.

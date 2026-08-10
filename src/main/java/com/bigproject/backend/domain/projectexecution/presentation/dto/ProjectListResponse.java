@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.projectexecution.presentation.dto;
 
 import com.bigproject.backend.domain.projectexecution.application.ProjectService.ProjectList;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectLifecycleStatus;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectReadiness;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.util.List;
@@ -31,12 +32,27 @@ public record ProjectListResponse(
                 PLANNED · RUNNING · CLOSED 세 키가 **항상 모두 있고**, 0건인 상태는 0으로 옵니다 —
                 키가 빠지는 것과 0건인 것은 다릅니다. 세 값을 더하면 이 기수의 전체 회차 수입니다.
                 """, example = "{\"PLANNED\": 2, \"RUNNING\": 1, \"CLOSED\": 2}")
-        Map<ProjectLifecycleStatus, Long> counts
+        Map<ProjectLifecycleStatus, Long> counts,
+
+        @Schema(description = """
+                `counts`의 **PLANNED만** 준비 상태로 다시 가른 개수입니다(10차 Q1).
+                화면의 상태 필터는 4값(`준비 중`·`준비됨`·`진행 중`·`종료`)인데 `counts`는 3키라
+                앞의 둘만 개수를 쓸 수 없었습니다 — 그 두 칩이 쓸 값입니다.
+
+                `PREP`·`READY` 두 키가 **항상 모두 있고**, 0건이면 0으로 옵니다.
+                **`PREP + READY == counts.PLANNED`** 이며, 따라서
+                `PREP + READY + counts.RUNNING + counts.CLOSED`가 이 기수의 전체 회차 수입니다.
+                `counts`와 더해서 세면 PLANNED를 두 번 세게 되니 주의하세요.
+
+                RUNNING·CLOSED는 준비 상태를 가르지 않습니다 — 화면이
+                `status === 'PLANNED' ? readiness : status`로 겹치는 것과 같은 이유입니다.
+                """, example = "{\"PREP\": 1, \"READY\": 1}")
+        Map<ProjectReadiness, Long> readinessCounts
 ) {
     public static ProjectListResponse from(ProjectList list) {
         List<ProjectResponse> projects = list.projects().stream()
                 .map(ProjectResponse::from)
                 .toList();
-        return new ProjectListResponse(projects, projects.size(), list.counts());
+        return new ProjectListResponse(projects, projects.size(), list.counts(), list.readinessCounts());
     }
 }

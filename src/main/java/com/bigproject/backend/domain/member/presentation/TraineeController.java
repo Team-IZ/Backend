@@ -9,6 +9,8 @@ import com.bigproject.backend.domain.member.domain.TraineeRosterRepository;
 import com.bigproject.backend.domain.member.domain.TraineeRosterSort;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
+import com.bigproject.backend.domain.member.presentation.dto.ResendTraineeInvitationsRequest;
+import com.bigproject.backend.domain.member.presentation.dto.ResendTraineeInvitationsResponse;
 import com.bigproject.backend.domain.member.presentation.dto.TraineeRosterResponse;
 import com.bigproject.backend.domain.member.presentation.dto.UpdateTraineeStatusRequest;
 import com.bigproject.backend.global.exception.ApiException;
@@ -513,6 +515,77 @@ public class TraineeController {
 				cohortId, organizationId, traineeId, request.status().toAccountStatus(),
 				request.reason(), actorUserId);
 		return ResponseEntity.ok(TraineeRosterResponse.Trainee.from(updated));
+	}
+
+	@Operation(
+			operationId = "resendTraineeInvitations",
+			summary = "교육생 초대 재발송 | ✅ 사용 가능",
+			description = """
+					OP-06 `명단` 탭의 `초대 재발송` 액션. **고른 여러 명에게 한 번에** 다시 보낸다(11차 R2).
+
+					## 받는 사람용 API와 다르다
+
+					지금까지 교육생만 `POST /auth/invitations/resend`를 써야 했다. 그쪽은 **받는 사람용**이라
+					계정 존재 여부를 숨기려 **항상 같은 202**를 주고, 쿨다운에 걸리면 202를 받고도 메일이 안 나간다 —
+					오퍼레이터가 눌러도 나갔는지 알 수 없었다.
+
+					이 API는 **운영자용**이다. 이미 인증으로 기관·권한을 확인했으므로 숨길 것이 없고,
+					`invitationSentCount`로 **실제로 나간 수**를 답한다. 쿨다운도 없다.
+					오퍼레이터·매니저 재발송과 같은 성격의 경로다.
+
+					## 요청
+
+					| 변수 | 필수 | 타입 | 설명 |
+					|---|---|---|---|
+					| `cohortId` | **필수** | UUID | 경로. 기수 식별자 |
+					| `traineeIds` | **필수** | UUID[] | 본문. 1~200명. 명단 응답의 `traineeId` |
+
+					**헤더 (선택)** — `X-Request-Id: {문자열}` 추적용. 생략하면 서버가 만든다.
+
+					재발송 버튼은 명단 응답의 **`pendingInvitationTokenId`가 `null`이 아닌 행**에서만 켜면 된다
+					(같은 차수에 추가한 필드다). 예전처럼 `status === 'INVITED'`로 유추하지 않아도 된다.
+
+					## 동작
+
+					- **이전 토큰을 무효화하고 새로 발급한다** — 재발송 뒤에도 옛 링크가 살아 있으면 유효한 가입 링크가 둘이 된다
+					- **초대 원장은 새로 만들지 않는다** — 재발송 횟수가 정확히 쌓인다
+					- **만료된 초대도 대상이다** — 만료야말로 재발송이 필요한 주된 상황이다
+
+					## 응답 (200) — 행별 부분 성공
+
+					| 필드 | 설명 |
+					|---|---|
+					| `requestedCount` | 요청에 담긴 수 |
+					| `invitationSentCount` | **실제로 메일이 나간 수** |
+					| `failures[]` | 재발송하지 못한 행만. 전부 성공하면 빈 배열 |
+
+					20명 중 하나가 이미 활성이라고 나머지 19명을 막지 않는다. **실패가 있어도 200**이므로
+					`failures`를 확인해야 한다 — `NOT_FOUND`(명단이 낡음) · `NOT_PENDING`(이미 활성/취소됨) ·
+					`NO_INVITATION`(초대 원장 없음).
+					"""
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "재발송 처리 완료(행별 실패는 failures 참고)"),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED traineeIds가 비었거나 200명을 넘음"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터 권한이 아님"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없거나 다른 기관의 기수"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 기관을 확인할 수 없음"),
+			@ApiResponse(responseCode = "502", description = "INVITE_MAIL_FAILED 메일 발송 실패")
+	})
+	@PreAuthorize("hasRole('OPERATOR')")
+	@PostMapping(path = "/invitations/resend", consumes = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<ResendTraineeInvitationsResponse> resendTraineeInvitations(
+			@Parameter(description = "대상 교육생이 속한 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID cohortId,
+			@Valid @RequestBody ResendTraineeInvitationsRequest request,
+			@Parameter(description = "재발송 요청 추적용 식별자이며 생략 시 서버가 생성합니다.", example = "resend-trainee-001")
+			@RequestHeader(value = REQUEST_ID_HEADER, required = false) String requestId,
+			Authentication authentication
+	) {
+		UUID organizationId = extractOrganizationId(authentication);
+		return ResponseEntity.ok(ResendTraineeInvitationsResponse.from(
+				traineeRosterService.resendInvitations(cohortId, organizationId, request.traineeIds(), requestId)));
 	}
 
 	private UUID extractOrganizationId(Authentication authentication) {

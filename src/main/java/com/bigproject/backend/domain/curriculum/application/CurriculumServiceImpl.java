@@ -36,8 +36,11 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -73,11 +76,17 @@ public class CurriculumServiceImpl implements CurriculumService {
     @Override
     public List<SectionItemView> findSectionItems(UUID sectionId, UUID orgId) {
         List<CurriculumTeachesMapping> mappings = mappingRepository.findAllBySectionIdOrderBySequenceNoAsc(sectionId);
-        return mappings.stream()
-                .map(mapping -> toSectionItemView(mapping, orgId))
-                .toList();
+        return toSectionItemViews(mappings, orgId);
     }
 
+    /**
+     * 교안의 섹션 전부 + 각 섹션의 가르친 항목.
+     *
+     * <p>11차 R1 — 예전에는 섹션마다 매핑을 따로 읽고, <b>항목마다</b> "쓰인 회차"를 물었다.
+     * 그 조회가 내부에서 다시 개념·세트·프로젝트·기수의 회차 전량을 한 건씩 읽어서,
+     * 항목 34개짜리 교안 하나에 쿼리가 수백 건 나가고 응답이 10초에 육박했다.
+     * 지금은 <b>섹션 수·항목 수와 무관하게</b> 고정된 수의 조회로 끝난다.
+     */
     @Override
     public List<SectionView> findSections(UUID versionId, UUID orgId) {
         CurriculumAnalysis latestSuccess = analysisRepository
@@ -86,15 +95,40 @@ public class CurriculumServiceImpl implements CurriculumService {
 
         List<CurriculumSection> sections = sectionRepository
                 .findAllBySourceAnalysisIdOrderBySequenceNoAsc(latestSuccess.getAnalysisId());
+        if (sections.isEmpty()) {
+            return List.of();
+        }
+
+        List<UUID> sectionIds = sections.stream().map(CurriculumSection::getSectionId).toList();
+        Map<UUID, List<CurriculumTeachesMapping>> mappingsBySectionId = mappingRepository
+                .findAllBySectionIdInOrderBySequenceNoAsc(sectionIds).stream()
+                .collect(Collectors.groupingBy(CurriculumTeachesMapping::getSectionId,
+                        LinkedHashMap::new, Collectors.toList()));
+
+        // 항목 전부의 "쓰인 회차"를 한 번에 받는다.
+        Map<UUID, List<String>> roundLabelsByTeachesId = projectService.findRoundLabelsByTeaches(
+                mappingsBySectionId.values().stream()
+                        .flatMap(List::stream)
+                        .map(CurriculumTeachesMapping::getTeachesId)
+                        .collect(Collectors.toSet()),
+                orgId);
 
         return sections.stream()
-                .map(section -> toSectionView(section, orgId))
+                .map(section -> new SectionView(
+                        section.getSectionId(),
+                        section.getTitle(),
+                        section.getPageStart(),
+                        section.getPageEnd(),
+                        mappingsBySectionId.getOrDefault(section.getSectionId(), List.of()).stream()
+                                .map(mapping -> toSectionItemView(mapping,
+                                        roundLabelsByTeachesId.getOrDefault(mapping.getTeachesId(), List.of())))
+                                .toList()))
                 .toList();
     }
 
     @Override
-    public List<String> findUsedProjects(UUID versionId, UUID orgId) {
-        return projectService.findRoundLabelsUsingCurriculum(versionId, orgId);
+    public List<ProjectService.CurriculumUsingProject> findUsedProjects(UUID versionId, UUID orgId) {
+        return projectService.findProjectsUsingCurriculum(versionId, orgId);
     }
 
     @Override
@@ -179,10 +213,25 @@ public class CurriculumServiceImpl implements CurriculumService {
         List<CurriculumCatalogRepository.CurriculumCatalogRow> content =
                 catalogRepository.findPage(criteria, size, (long) page * size);
 
+        // 상태별 개수는 필터와 무관한 기관 전체 모집단이다(11차 R7). 헤더의
+        // `12개 · 분석 완료 9 · 실패 1`이 이 값이며, 걸러진 목록으로는 만들 수 없다.
+        Map<CurriculumAnalysisStatus, Long> statusCounts =
+                new LinkedHashMap<>(catalogRepository.countByAnalysisStatus(orgId));
+        for (CurriculumAnalysisStatus value : CurriculumAnalysisStatus.values()) {
+            statusCounts.putIfAbsent(value, 0L);
+        }
+
+        // 한 번도 분석하지 않은 교안은 상태가 없어 어느 키에도 안 들어간다. 전체에서 빼서 따로 센다 —
+        // `분석 완료 + 실패`가 전체와 안 맞는 이유를 화면이 알 수 있어야 한다.
+        long analyzed = statusCounts.values().stream().mapToLong(Long::longValue).sum();
+        long notAnalyzedCount = Math.max(0, catalogRepository.count(
+                new CurriculumCatalogRepository.CurriculumCatalogCriteria(orgId, null, null, criteria.sort())) - analyzed);
+
         // 0건일 때 totalPages를 1로 만들지 않는다 — 빈 목록에 페이지가 하나 있다고 하면
         // 화면의 페이저가 존재하지 않는 페이지를 그린다.
         int totalPages = (int) ((totalElements + size - 1) / size);
-        return new CurriculumCatalogPage(content, page, size, totalElements, totalPages);
+        return new CurriculumCatalogPage(
+                content, page, size, totalElements, totalPages, statusCounts, notAnalyzedCount);
     }
 
     @Override
@@ -229,26 +278,22 @@ public class CurriculumServiceImpl implements CurriculumService {
     }
     */
 
-    private SectionView toSectionView(CurriculumSection section, UUID orgId) {
-        List<CurriculumTeachesMapping> mappings = mappingRepository
-                .findAllBySectionIdOrderBySequenceNoAsc(section.getSectionId());
+    /** 섹션 하나짜리 경로. 여기서도 회차 라벨은 한 번에 받는다(11차 R1). */
+    private List<SectionItemView> toSectionItemViews(List<CurriculumTeachesMapping> mappings, UUID orgId) {
+        if (mappings.isEmpty()) {
+            return List.of();
+        }
+        Map<UUID, List<String>> roundLabelsByTeachesId = projectService.findRoundLabelsByTeaches(
+                mappings.stream().map(CurriculumTeachesMapping::getTeachesId).collect(Collectors.toSet()), orgId);
 
-        List<SectionItemView> items = mappings.stream()
-                .map(mapping -> toSectionItemView(mapping, orgId))
+        return mappings.stream()
+                .map(mapping -> toSectionItemView(mapping,
+                        roundLabelsByTeachesId.getOrDefault(mapping.getTeachesId(), List.of())))
                 .toList();
-
-        return new SectionView(
-                section.getSectionId(),
-                section.getTitle(),
-                section.getPageStart(),
-                section.getPageEnd(),
-                items
-        );
     }
 
-    private SectionItemView toSectionItemView(CurriculumTeachesMapping mapping, UUID orgId) {
+    private SectionItemView toSectionItemView(CurriculumTeachesMapping mapping, List<String> usedRoundLabels) {
         boolean definitionMissing = mapping.getSourceDescription() == null || mapping.getSourceDescription().isBlank();
-        List<String> usedRoundLabels = projectService.findRoundLabelsUsingTeaches(mapping.getTeachesId(), orgId);
 
         return new SectionItemView(
                 mapping.getMappingId(),
