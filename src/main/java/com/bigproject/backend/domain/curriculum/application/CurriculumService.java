@@ -19,8 +19,12 @@ public interface CurriculumService {
     /**
      * 이 교안을 쓰는 회차들(11차 R3). 이름 배열이던 것을 회차 객체로 바꿨다 —
      * 화면이 재분석 경고를 <b>응시가 시작된 회차만</b>으로 좁힐 수 있어야 한다.
+     *
+     * <p>13차 R1 — 받는 값이 <b>교안 ID(materialId)</b>다. 예전에는 같은 자리를 교안 버전 ID로
+     * 읽어서, 경로 이름대로 교안 ID를 넣으면 늘 빈 배열이었다. 교안 목록의
+     * {@code usedProjectCount}·형제 엔드포인트 {@code /sections}와 같은 축으로 맞췄다.
      */
-    List<ProjectService.CurriculumUsingProject> findUsedProjects(UUID versionId, UUID orgId);
+    List<ProjectService.CurriculumUsingProject> findUsedProjects(UUID materialId, UUID orgId);
 
     /**
      * GET /curricula/comparable-cohorts?cohortId= — 이 기수가 쓴 교안들과 겹치는 교안을 쓴
@@ -35,11 +39,16 @@ public interface CurriculumService {
 
     // ── 9차 R8: 기관 전체 교안 목록 · 단건 상세 ────────────────────────────────
 
-    /** 교안 탭이 보는 기관 전체 목록 한 페이지. */
+    /**
+     * 교안 탭이 보는 기관 전체 목록 한 페이지.
+     *
+     * @param notAnalyzedOnly 한 번도 분석하지 않은 교안만(13차 R2). {@code status}와 함께 오면 400이다
+     */
     CurriculumCatalogPage findCatalog(
             UUID orgId,
             String query,
             com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus status,
+            boolean notAnalyzedOnly,
             com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogSort sort,
             int page,
             int size);

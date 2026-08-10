@@ -126,9 +126,27 @@ public class CurriculumServiceImpl implements CurriculumService {
                 .toList();
     }
 
+    /**
+     * 13차 R1 — 받는 값이 <b>교안 ID</b>이며 그 교안의 <b>모든 버전</b>을 쓰는 회차를 모은다.
+     *
+     * <p>예전에는 이 자리를 교안 버전 ID로 읽었다. 경로가 {@code /curricula/{materialId}/projects}이고
+     * 목록 응답도 {@code materialId}를 주므로 화면은 교안 ID를 넣었는데, 두 ID는 값이 겹치지 않아
+     * <b>늘 빈 배열</b>이 됐다. 같은 화면의 {@code usedProjectCount}는 교안 기준으로 세고 있어
+     * "목록은 24개 회차가 쓴다는데 상세는 0건"이 됐다.
+     *
+     * <p>모든 버전을 모으는 것은 {@code usedProjectCount}와 <b>같은 기준</b>이기 때문이다.
+     * 최신 버전만 보면 지난 버전으로 연결된 회차가 빠져 두 숫자가 다시 갈린다.
+     */
     @Override
-    public List<ProjectService.CurriculumUsingProject> findUsedProjects(UUID versionId, UUID orgId) {
-        return projectService.findProjectsUsingCurriculum(versionId, orgId);
+    public List<ProjectService.CurriculumUsingProject> findUsedProjects(UUID materialId, UUID orgId) {
+        List<UUID> versionIds = curriculumVersionRepository
+                .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId).stream()
+                .map(CurriculumVersion::getVersionId)
+                .toList();
+        if (versionIds.isEmpty()) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND);
+        }
+        return projectService.findProjectsUsingCurricula(versionIds, orgId);
     }
 
     @Override
@@ -204,10 +222,17 @@ public class CurriculumServiceImpl implements CurriculumService {
 
     @Override
     public CurriculumCatalogPage findCatalog(UUID orgId, String query, CurriculumAnalysisStatus status,
+                                             boolean notAnalyzedOnly,
                                              CurriculumCatalogSort sort, int page, int size) {
+        // 둘은 서로를 배제한다 — `분석 전`은 상태가 없는 교안이라 어떤 상태로도 좁혀지지 않는다(13차 R2).
+        // 빈 목록을 조용히 주면 화면이 "그런 교안이 없다"로 읽으므로 입력 오류로 끊는다.
+        if (status != null && notAnalyzedOnly) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILTER_CONFLICT);
+        }
+
         CurriculumCatalogRepository.CurriculumCatalogCriteria criteria =
                 new CurriculumCatalogRepository.CurriculumCatalogCriteria(
-                        orgId, query, status, sort == null ? CurriculumCatalogSort.RECENT : sort);
+                        orgId, query, status, notAnalyzedOnly, sort == null ? CurriculumCatalogSort.RECENT : sort);
 
         long totalElements = catalogRepository.count(criteria);
         List<CurriculumCatalogRepository.CurriculumCatalogRow> content =
@@ -225,7 +250,8 @@ public class CurriculumServiceImpl implements CurriculumService {
         // `분석 완료 + 실패`가 전체와 안 맞는 이유를 화면이 알 수 있어야 한다.
         long analyzed = statusCounts.values().stream().mapToLong(Long::longValue).sum();
         long notAnalyzedCount = Math.max(0, catalogRepository.count(
-                new CurriculumCatalogRepository.CurriculumCatalogCriteria(orgId, null, null, criteria.sort())) - analyzed);
+                new CurriculumCatalogRepository.CurriculumCatalogCriteria(
+                        orgId, null, null, false, criteria.sort())) - analyzed);
 
         // 0건일 때 totalPages를 1로 만들지 않는다 — 빈 목록에 페이지가 하나 있다고 하면
         // 화면의 페이저가 존재하지 않는 페이지를 그린다.

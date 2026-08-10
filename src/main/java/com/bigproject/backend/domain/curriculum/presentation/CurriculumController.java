@@ -63,6 +63,7 @@ public class CurriculumController {
 					| `organizationId` | **필수**(경로) | UUID | 기관 식별자. 호출자의 소속 기관과 다르면 403 |
 					| `query` | 선택 | string | 파일명·교안 제목 부분검색(대소문자 무시) |
 					| `status` | 선택 | enum | `PENDING` · `RUNNING` · `SUCCEEDED` · `FAILED`. 최신 버전의 **가장 최근 분석 시도** 기준 |
+					| `notAnalyzedOnly` | 선택 | boolean | **한 번도 분석하지 않은 교안만.** 기본 `false`(13차 R2) |
 					| `sort` | 선택 | enum | `RECENT`(최근 업로드 순, **기본**) · `NAME`(파일명순) · `USAGE`(사용 회차 많은 순) |
 					| `page` | 선택 | int | 0부터 시작. 기본 `0` |
 					| `size` | 선택 | int | 페이지당 개수. 기본 `20`, 최대 `100` |
@@ -87,13 +88,28 @@ public class CurriculumController {
 					값을 만들어 넣지 않는다. `POST /curricula/{materialId}/analyses`로 재분석을 건 뒤
 					이 값을 폴링하면 진행 중인지 실패했는지 알 수 있다.
 
+					## `분석 전`만 골라 보기 (13차 R2)
+
+					위 이유로 그런 교안은 **`status`로 고를 수 없다** — 상태가 없기 때문이다.
+					`notAnalyzedOnly=true`가 그 자리다. 헤더의 `notAnalyzedCount`와 **같은 기준**이라
+					그 숫자를 눌러 좁히면 그만큼 나온다.
+
+					`status`를 `NOT_ANALYZED` 같은 값으로 늘리지 않은 이유는 그 enum이 **응답의
+					`analysisStatus`와 같은 타입**이기 때문이다. 넣으면 응답이 절대 갖지 않는 값을
+					타입이 허용하게 된다. 명단의 `unassignedOnly`와 같은 모양으로 뒀다.
+
+					⚠️ **`status`와 `notAnalyzedOnly=true`를 함께 보내면 400** `CURRICULUM_FILTER_CONFLICT`다 —
+					서로를 배제하는 조건이라 결과가 항상 비는데, 빈 목록을 조용히 주면 화면이
+					"그런 교안이 없다"로 읽는다.
+
 					💡 **한 행이 교안(material) 하나다.** 버전은 같은 자리의 새 파일이지 별도 항목이 아니라서,
 					값은 전부 최신 버전 기준이고 `usedProjectCount`만 모든 버전을 합쳐 센다.
 					"""
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "기관 교안 목록 조회 성공"),
-            @ApiResponse(responseCode = "400", description = "VALIDATION_FAILED page·size 값이 올바르지 않음"),
+            @ApiResponse(responseCode = "400", description = "VALIDATION_FAILED page·size 값이 올바르지 않음 · "
+                    + "CURRICULUM_FILTER_CONFLICT status와 notAnalyzedOnly를 함께 지정함"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
             @ApiResponse(responseCode = "403", description = "ORG_ACCESS_DENIED 다른 기관의 교안은 조회할 수 없음"),
     })
@@ -103,8 +119,20 @@ public class CurriculumController {
             @PathVariable UUID organizationId,
             @Parameter(description = "파일명·교안 제목 부분검색", example = "spring")
             @RequestParam(required = false) String query,
-            @Parameter(description = "분석 상태 필터. 최신 버전의 가장 최근 분석 시도 기준")
+            @Parameter(description = "분석 상태 필터. 최신 버전의 가장 최근 분석 시도 기준. "
+                    + "`notAnalyzedOnly=true`와 함께 보내면 400이다")
             @RequestParam(required = false) CurriculumAnalysisStatus status,
+            @Parameter(description = """
+                    한 번도 분석하지 않은 교안만 남깁니다(13차 R2).
+
+                    그런 교안은 분석 상태가 **없어서** `status`로는 고를 수 없습니다 —
+                    그래서 상태 축이 아니라 별도 조건이며, 명단의 `unassignedOnly`와 같은 모양입니다.
+                    응답 헤더의 `notAnalyzedCount`가 세는 것과 **같은 기준**이라 그 숫자를 누르면
+                    그만큼 나옵니다.
+
+                    `status`와 함께 보내면 서로를 배제하므로 400 `CURRICULUM_FILTER_CONFLICT`입니다.
+                    """, example = "false")
+            @RequestParam(required = false, defaultValue = "false") boolean notAnalyzedOnly,
             @Parameter(description = "정렬 기준", example = "RECENT")
             @RequestParam(required = false, defaultValue = "RECENT") CurriculumCatalogSort sort,
             @Parameter(description = "0부터 시작하는 페이지 번호", example = "0")
@@ -116,7 +144,7 @@ public class CurriculumController {
         assertOwnOrganization(organizationId, orgId);
 
         CurriculumService.CurriculumCatalogPage catalogPage =
-                curriculumService.findCatalog(orgId, query, status, sort, page, size);
+                curriculumService.findCatalog(orgId, query, status, notAnalyzedOnly, sort, page, size);
 
         return ResponseEntity.ok(new CurriculumCatalogResponse(
                 catalogPage.content().stream().map(CurriculumCatalogItemResponse::from).toList(),
@@ -170,15 +198,32 @@ public class CurriculumController {
     @Operation(
             summary = "쓰인 회차 | ✅ 사용 가능",
             description = """
-					이 교안 버전을 연결한 회차 목록을 조회한다. **재분석 경고를 좁히는 데 쓴다.**
+					이 **교안**을 연결한 회차 목록을 조회한다. **재분석 경고를 좁히는 데 쓴다.**
+
+					🔴 **13차 R1 — 경로 변수를 교안 ID로 읽도록 고쳤습니다.**
+					예전에는 같은 자리를 **교안 버전 ID**로 읽었습니다. 경로 이름이 `materialId`이고
+					목록 응답도 `materialId`를 주므로 화면은 교안 ID를 넣었는데, 두 ID는 값이 겹치지 않아
+					**늘 빈 배열**이 됐습니다 — 목록이 `24개 회차에서 사용 중`이라고 쓰는데 상세는
+					`쓰는 회차가 아직 없습니다`라고 답하던 원인입니다.
 
 					⚠️ **11차 R3 — 응답이 문자열 배열에서 객체 배열로 바뀌었습니다.**
 					예전에는 `["미니프로젝트 4차", …]` 였습니다.
 
 					**요청**
-					- materialId (경로): 교안 버전 ID
+					- materialId (경로): **교안 ID**(버전이 바뀌어도 유지되는 고정 식별자).
+					  교안 목록 응답의 `materialId`와 형제 엔드포인트 `GET /curricula/{materialId}/sections`가
+					  받는 값과 **같은 것**이다
 
 					**응답 (200)** — 연결된 회차가 없으면 빈 배열
+
+					## 목록의 `usedProjectCount`와 같은 기준이다
+
+					이 교안의 **모든 버전**을 쓰는 회차를 모은다. 삭제된 회차는 뺀다.
+					교안 목록의 `usedProjectCount`가 세는 것과 같은 모집단이라
+					**`usedProjectCount`와 이 배열의 길이가 일치한다.**
+
+					최신 버전만 보지 않는 이유는 지난 버전으로 연결된 회차가 빠지면 두 숫자가 다시
+					갈리기 때문이다 — 화면이 어느 쪽을 믿어야 할지 정할 수 없게 된다.
 
 					| 필드 | 설명 |
 					|---|---|
@@ -207,10 +252,11 @@ public class CurriculumController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "쓰인 회차 조회 성공"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 교안을 찾을 수 없음(다른 기관의 교안 포함)"),
     })
     @GetMapping("/curricula/{materialId}/projects")
     public ResponseEntity<List<CurriculumUsingProjectResponse>> findUsedProjects(
-            @Parameter(description = "교안 버전 ID") @PathVariable UUID materialId
+            @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
         return ResponseEntity.ok(curriculumService.findUsedProjects(materialId, orgId).stream()
