@@ -92,6 +92,67 @@ class SessionTurnStoreTest {
 				org.mockito.ArgumentMatchers.anyInt(), eq(false), eq("NOT_PASSED"), anyLong());
 	}
 
+	/** 임계값 경계. 3점은 통과다 — DB CHECK의 {@code score >= 3}과 같은 값이어야 한다. */
+	@Test
+	void 삼점이면_통과다() {
+		store.applyGrading(input(AnswerSlot.QUESTION), result(3, true, cursorAt("L2")), "답변");
+
+		verify(repository).applyAnswer(any(), any(), anyString(), eq(3), eq(true), eq("PASSED"), anyLong());
+	}
+
+	@Test
+	void 삼점_미만이면_실패다() {
+		store.applyGrading(input(AnswerSlot.QUESTION), result(2, false, cursorAt("L1")), "답변");
+
+		verify(repository).applyAnswer(any(), any(), anyString(), eq(2), eq(false), eq("IN_PROGRESS"),
+				anyLong());
+	}
+
+	/**
+	 * AI가 점수와 어긋나는 통과 판정을 보내도 <b>점수를 따른다.</b> 그대로 옮겨 적으면
+	 * {@code ck_problem_stage_question_score_2}가 UPDATE를 거절해 학생이 쓴 답이 통째로 사라진다.
+	 */
+	@Test
+	void AI의_통과_판정이_점수와_어긋나면_점수를_따른다() {
+		store.applyGrading(input(AnswerSlot.QUESTION), result(2, true, cursorAt("L1")), "답변");
+
+		verify(repository).applyAnswer(any(), any(), anyString(), eq(2), eq(false), eq("IN_PROGRESS"),
+				anyLong());
+	}
+
+	/** 0~5 밖은 CHECK가 거절한다. 저장 전에 걸러야 학생이 같은 답을 다시 제출할 수 있다. */
+	@Test
+	void 범위를_벗어난_점수는_저장하지_않는다() {
+		GradingInput input = input(AnswerSlot.QUESTION);
+
+		assertThatThrownBy(() -> store.applyGrading(input, result(9, true, cursorAt("L2")), "답변"))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.GRADING_FAILED);
+		verify(repository, never()).applyAnswer(any(), any(), anyString(),
+				org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(), anyString(),
+				anyLong());
+	}
+
+	/**
+	 * 채점 결과가 없으면 <b>0점 실패로 적지 않는다.</b> AI가 답을 읽지도 못한 답변이 미달로 기록되면
+	 * 학생은 쓰지도 않은 힌트를 하나 잃는다.
+	 */
+	@Test
+	void 채점_결과가_없으면_저장하지_않고_재제출을_요구한다() {
+		GradingInput input = input(AnswerSlot.QUESTION);
+		AnswerResult noTurn = new AnswerResult(SESSION_ID, "IN_PROGRESS", null, cursorAt("L1"), null, null,
+				null, null, List.of());
+
+		assertThatThrownBy(() -> store.applyGrading(input, noTurn, "답변"))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.GRADING_FAILED);
+		verify(repository, never()).applyAnswer(any(), any(), anyString(),
+				org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(), anyString(),
+				anyLong());
+	}
+
 	/** AI가 커서를 비우면 "더 물을 것이 없다"는 뜻이다. 백엔드가 커서 변화로 역추론하지 않는다. */
 	@Test
 	void 커서가_비면_세션을_닫는다() {

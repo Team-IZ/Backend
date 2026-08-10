@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.assessment.application;
 
 import com.bigproject.backend.domain.assessment.application.AnswerGradingContract.AnswerResult;
+import com.bigproject.backend.domain.assessment.domain.AnswerGrade;
 import com.bigproject.backend.domain.assessment.domain.AnswerSlot;
 import com.bigproject.backend.domain.assessment.domain.SessionErrorCode;
 import com.bigproject.backend.domain.assessment.domain.SessionException;
@@ -10,6 +11,7 @@ import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionStag
 import com.bigproject.backend.domain.assessment.infrastructure.JdbcSessionRepository;
 import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +28,7 @@ import java.util.UUID;
  * <p>왜 굳이 나누느냐 — 채점이 4.5~7.7초다. 한 트랜잭션으로 묶으면 그동안 DB 커넥션이 잠겨
  * 동시 응시 인원만큼 풀이 마른다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SessionTurnStore {
@@ -58,11 +61,10 @@ public class SessionTurnStore {
 	@Transactional
 	public AnswerSubmitResponse applyGrading(GradingInput input, AnswerResult result, String answerText) {
 		SessionStage stage = input.stage();
-		int score = result.turn() == null ? 0 : result.turn().score();
-		boolean passed = result.turn() != null && result.turn().passed();
+		AnswerGrade grade = gradeOf(result);
 
-		if (repository.applyAnswer(stage.problemStageId(), input.slot(), answerText, score, passed,
-				stageStatus(input.slot(), passed), stage.rowVersion()) == 0) {
+		if (repository.applyAnswer(stage.problemStageId(), input.slot(), answerText, grade.score(),
+				grade.passed(), stageStatus(input.slot(), grade.passed()), stage.rowVersion()) == 0) {
 			throw new SessionException(SessionErrorCode.ANSWER_ALREADY_SUBMITTED);
 		}
 
@@ -77,7 +79,28 @@ public class SessionTurnStore {
 					input.head().isReview() ? "ALL_REVIEW_TARGETS_TERMINAL" : "ALL_PROBLEMS_TERMINAL",
 					result.endedLevel());
 		}
-		return AnswerSubmitResponse.of(result, score, passed);
+		return AnswerSubmitResponse.of(result, grade.score(), grade.passed());
+	}
+
+	/**
+	 * 채점 결과를 판정으로 바꾼다. <b>통과 여부는 점수에서 도출한다</b>({@link AnswerGrade}) —
+	 * 3점 미만이면 실패다.
+	 *
+	 * <p>{@code turn}이 없으면 채점이 되지 않은 것이다. 예전에는 이때 0점·실패로 적었는데, 그러면
+	 * <b>AI가 답을 읽지도 못한 답변이 "0점 실패"로 기록되고</b> 학생은 힌트를 하나 잃는다. 저장하지 않고
+	 * 재제출을 요구하는 편이 맞다 — 멱등키가 자리마다 고정이라 같은 답을 다시 보내도 비용이 늘지 않는다.
+	 */
+	private AnswerGrade gradeOf(AnswerResult result) {
+		if (result.turn() == null) {
+			throw new SessionException(SessionErrorCode.GRADING_FAILED);
+		}
+		AnswerGrade grade = AnswerGrade.of(result.turn().score());
+		if (grade.passed() != result.turn().passed()) {
+			// 저장은 점수 기준으로 한다. 어긋난다는 것은 AI의 임계값이 우리와 다르다는 뜻이라 계약 문제다.
+			log.warn("AI 통과 판정이 점수와 어긋난다. 점수 기준으로 저장한다: score={}, aiPassed={}, 임계값={}",
+					result.turn().score(), result.turn().passed(), AnswerGrade.PASS_SCORE);
+		}
+		return grade;
 	}
 
 	/**
