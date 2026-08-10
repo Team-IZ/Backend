@@ -11,9 +11,16 @@ import java.util.UUID;
 /**
  * 코드 분석에 쓸 AI 모델을 카탈로그({@code ai_model})에서 찾는다.
  *
- * <p><b>왜 설정값 하나로 끝내지 않는가.</b> AI에 보낼 값({@code provider_model_code})과 우리가 원장에
+ * <p><b>왜 설정값 하나로 끝내지 않는가.</b> AI에 보낼 값({@code model_code})과 우리가 원장에
  * 남길 값({@code model_id})이 서로 다른 컬럼이라, 어느 쪽이든 코드에 문자열로 박으면 둘이 어긋날 수
  * 있다. 카탈로그를 한 번 읽어 둘을 함께 가져오면 그 어긋남이 구조적으로 생기지 않는다.
+ *
+ * <p><b>2026-08-10 정정.</b> {@code /analyses} 요청의 {@code providerModelCode} 필드에는
+ * {@code provider_model_code}(공급자 원본 식별자, 예: {@code nemotron-3-ultra-550b-a55b})가 아니라
+ * {@code model_code}(전체 코드, 예: {@code nvidia/nemotron-3-ultra-550b-a55b})를 보내야 AI가 모델을
+ * 인식한다. 필드 이름은 그대로 두고 값만 바꾼다 — AI 쪽 요청 스키마의 필드명을 이쪽에서 정할 수는
+ * 없다. {@code reporting.application.ReportBatchService}는 아직 {@code provider_model_code}를
+ * 쓴다(별개 확인 필요, 이 정정의 범위 밖).
  *
  * <p><b>왜 model_code로 찾는가.</b> {@code model_code}에만 UNIQUE가 있다
  * ({@code uq_ai_model_model_code}). {@code provider_model_code}는 {@code (provider, ...)} 복합
@@ -34,6 +41,7 @@ public interface AnalysisModelRepository extends Repository<AnalysisJob, UUID> {
 	 */
 	@Query(value = """
 			SELECT m.model_id            AS modelId,
+			       m.model_code          AS modelCode,
 			       m.provider_model_code AS providerModelCode
 			  FROM ai_model m
 			 WHERE m.model_code = :modelCode
@@ -46,7 +54,15 @@ public interface AnalysisModelRepository extends Repository<AnalysisJob, UUID> {
 		/** {@code analysis_job.requested_model_id}에 남길 값. */
 		UUID getModelId();
 
-		/** AI 요청 본문 {@code providerModelCode}로 보낼 값. */
+		/**
+		 * {@code /analyses} 요청 본문 {@code providerModelCode} 필드로 보낼 값.
+		 *
+		 * <p>이름과 달리 {@code provider_model_code}가 아니라 <b>전체 코드({@code model_code})</b>를
+		 * 돌려준다 — AI가 그 값이어야 모델을 인식한다(2026-08-10 정정).
+		 */
+		String getModelCode();
+
+		/** {@code provider_model_code}. 지금은 {@code reporting.application.ReportBatchService}만 쓴다. */
 		String getProviderModelCode();
 	}
 }

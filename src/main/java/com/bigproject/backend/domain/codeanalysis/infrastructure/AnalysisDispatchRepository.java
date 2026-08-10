@@ -83,14 +83,18 @@ public interface AnalysisDispatchRepository extends Repository<AnalysisJob, UUID
 			       s.org_id             AS orgId,
 			       s.team_id            AS teamId,
 			       s.assessment_round_id AS assessmentRoundId,
+			       pr.project_id        AS projectId,
 			       s.method             AS method,
 			       s.requested_branch   AS requestedBranch,
 			       r.repo_url           AS repositoryUrl,
 			       art.storage_uri      AS artifactStorageUri,
-			       art.original_file_name AS artifactFileName
+			       art.original_file_name AS artifactFileName,
+			       u.commit_email       AS commitEmail
 			  FROM submission s
+			  JOIN project_assessment_round pr ON pr.assessment_round_id = s.assessment_round_id
 			  LEFT JOIN repository r ON r.repository_id = s.repository_id
 			  LEFT JOIN submission_artifact art ON art.submission_id = s.submission_id
+			  LEFT JOIN app_user u ON u.user_id = s.submitted_by
 			 WHERE s.submission_id = :submissionId
 			   AND s.is_current    = TRUE
 			   AND s.status        = 'ACCEPTED'
@@ -118,17 +122,20 @@ public interface AnalysisDispatchRepository extends Repository<AnalysisJob, UUID
 			       s.org_id             AS orgId,
 			       s.team_id            AS teamId,
 			       s.assessment_round_id AS assessmentRoundId,
+			       pr.project_id        AS projectId,
 			       s.method             AS method,
 			       s.requested_branch   AS requestedBranch,
 			       r.repo_url           AS repositoryUrl,
 			       art.storage_uri      AS artifactStorageUri,
-			       art.original_file_name AS artifactFileName
+			       art.original_file_name AS artifactFileName,
+			       u.commit_email       AS commitEmail
 			  FROM submission s
 			  JOIN project_assessment_round pr
 			    ON pr.assessment_round_id = s.assessment_round_id
 			   AND pr.deleted_at IS NULL
 			  LEFT JOIN repository r ON r.repository_id = s.repository_id
 			  LEFT JOIN submission_artifact art ON art.submission_id = s.submission_id
+			  LEFT JOIN app_user u ON u.user_id = s.submitted_by
 			 WHERE s.is_current = TRUE
 			   AND s.status     = 'ACCEPTED'
 			   AND NOT\s""" + BLOCKING_JOB_EXISTS + """
@@ -158,6 +165,9 @@ public interface AnalysisDispatchRepository extends Repository<AnalysisJob, UUID
 
 		UUID getAssessmentRoundId();
 
+		/** 요구사항·교안·검증 개념을 조회하는 스코프 키. {@code project_assessment_round.project_id}. */
+		UUID getProjectId();
+
 		String getMethod();
 
 		String getRequestedBranch();
@@ -177,5 +187,15 @@ public interface AnalysisDispatchRepository extends Repository<AnalysisJob, UUID
 
 		/** 업로드 당시 파일 이름. multipart 로 실어 보낼 때 파트 파일명으로 쓴다. */
 		String getArtifactFileName();
+
+		/**
+		 * 제출자(submitted_by) 한 명의 {@code app_user.commit_email}.
+		 *
+		 * <p>🔴 <b>지금은 어디에도 쓰지 않는다.</b> {@code /analyses} 요청의 {@code commitEmail}은
+		 * {@code INDIVIDUAL_OWN_COMMIT}(개인 모드, P5·미구현)에서만 보내야 하고, 지금 유일하게
+		 * 지원하는 {@code TEAM_SHARED_PROBLEM}에서는 보내면 안 된다(2026-08-10 AI팀 확인 — 팀 모드
+		 * 예시 어디에도 이 필드가 없다). 개인 모드를 만들 때 쓸 자리라 남겨 둔다.
+		 */
+		String getCommitEmail();
 	}
 }

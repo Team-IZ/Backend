@@ -4,6 +4,7 @@ import com.bigproject.backend.domain.codeanalysis.domain.AnalysisFailureCode;
 import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJobStatus;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -45,23 +46,47 @@ public interface AnalysisServerClient {
 	 *
 	 * @param method            {@code GITHUB_URL} 또는 {@code ZIP_WITH_GITLOG}. AI 요청 본문에서
 	 *                          <b>유일한 필수 필드</b>다.
+	 * @param problemScope      {@code TEAM_SHARED_PROBLEM} 또는 {@code INDIVIDUAL_OWN_COMMIT}. AI가
+	 *                          이 값과 {@code teaches}/{@code focusItems}의 존재 여부를 상호 배타로
+	 *                          검증한다(2026-08-10 AI팀 확인) — {@code TEAM_SHARED_PROBLEM}인데
+	 *                          {@code teaches}가 없으면, {@code INDIVIDUAL_OWN_COMMIT}인데
+	 *                          {@code teaches}가 있으면 거부한다. 지금은 {@code TEAM_SHARED_PROBLEM}만
+	 *                          지원한다.
 	 * @param providerModelCode 🔴 <b>반드시 채운다.</b> 생략하면 AI가 자기 기본 모델을 쓰는데, 그 모델의
 	 *                          {@code modelCode}가 응답 {@code aiUsage[]}에 실려 돌아온다.
 	 *                          {@code ai_usage.model_code}는 {@code ai_model}을 참조하는 FK라
 	 *                          우리 카탈로그에 없는 모델이면 사용량 행이 통째로 적재 실패한다.
-	 *                          값은 {@code ai_model.provider_model_code}이며 화면 선택값인
-	 *                          {@code model_code}가 아니다.
+	 *                          🔴 <b>2026-08-10 정정:</b> 필드 이름과 달리 값은
+	 *                          {@code ai_model.provider_model_code}가 아니라 <b>전체 코드
+	 *                          {@code ai_model.model_code}</b>다({@code provider || '/' ||
+	 *                          provider_model_code} 형태, 예: {@code nvidia/nemotron-3-ultra-550b-a55b}).
+	 *                          이걸 보내야 AI가 모델을 인식한다 — 공급자 원본 식별자만 보내면
+	 *                          AI가 모델을 못 찾는다.
+	 * @param requirements      {@code project_requirement}(프로젝트 스코프, {@code active=TRUE}).
+	 *                          2026-08-10 확인: {@code GITHUB_URL}일 때만 보낸다. ZIP 제출은 null.
+	 * @param focusItems        {@code TEAM_SHARED_PROBLEM}에서는 <b>항상 null.</b> teaches가 이미
+	 *                          "무엇을 물을지"를 정하므로 기준이 둘이 되는 걸 피한다(2026-08-10 결정).
+	 *                          {@code INDIVIDUAL_OWN_COMMIT}(P5, 미구현)에서 AI가 코드 분석 후 출제
+	 *                          방향을 잡을 때 참고할 선택 항목이다.
+	 * @param teaches           {@code TEAM_SHARED_PROBLEM}에서 <b>필수, 비면 안 된다</b> — AI가 거부한다.
+	 *                          이 회차에 적용되는 검증 개념 집합
+	 *                          ({@code project_assessment_round.concept_set_id}, 없으면 프로젝트의
+	 *                          ACTIVE {@code project_verification_concept_set})의 {@code teaches} +
+	 *                          {@code curriculum_teaches_mapping}. {@code INDIVIDUAL_OWN_COMMIT}에서는
+	 *                          <b>항상 null</b>이어야 한다(있으면 AI가 거부).
 	 */
 	record AnalysisRequest(
 			String method,
 			UUID submissionId,
-			UUID attemptId,
 			String repositoryUrl,
 			String requestedBranch,
+			String problemScope,
 			String extractionScope,
 			String commitEmail,
 			int questionBudget,
-			UUID curriculumVersionId,
+			List<RequirementItem> requirements,
+			List<FocusItem> focusItems,
+			List<TeachItem> teaches,
 			String providerModelCode,
 			String artifactStorageUri,
 			String artifactFileName,
@@ -79,6 +104,33 @@ public interface AnalysisServerClient {
 		public boolean requiresArtifactUpload() {
 			return "ZIP_WITH_GITLOG".equals(method) && artifactStorageUri != null;
 		}
+	}
+
+	/** {@code project_requirement.requirement_id}/{@code .title}. */
+	record RequirementItem(String requirementId, String text) {
+	}
+
+	/** {@code question_focus_item.question_focus_item_id}/{@code .name}/{@code .description}. */
+	record FocusItem(String focusItemId, String name, String description) {
+	}
+
+	/**
+	 * {@code teaches} 한 건. {@code id}·{@code label}은 {@code teaches} 테이블(canonical) 값이고,
+	 * {@code unitId}·{@code sourcePages}는 이 회차의 {@code curriculum_teaches_mapping}(source,
+	 * 프로젝트별 교안 인스턴스) 값이다.
+	 *
+	 * <p>{@code unitId}는 리포트 생성 요청이 이미 쓰는 것과 같은 컨벤션이다
+	 * ({@code JdbcReportPayloadRepository.findTeaches}: {@code unitId = section_id}).
+	 *
+	 * <p>2026-08-10 확인된 AI 스키마 예시가 {@code kind}·{@code evidence}·{@code siblingNames}를
+	 * 쓰지 않아 뺐다 — 매핑에서 값 자체는 여전히 구할 수 있으니, AI가 나중에 필요하다면 다시 붙이면 된다.
+	 */
+	record TeachItem(
+			String id,
+			String label,
+			String unitId,
+			List<Integer> sourcePages
+	) {
 	}
 
 	/**

@@ -2,6 +2,8 @@ package com.bigproject.backend.domain.codeanalysis.application;
 
 import com.bigproject.backend.domain.codeanalysis.application.AnalysisServerClient.AnalysisProgress;
 import com.bigproject.backend.domain.codeanalysis.application.AnalysisServerClient.AnalysisRequest;
+import com.bigproject.backend.domain.codeanalysis.application.AnalysisServerClient.RequirementItem;
+import com.bigproject.backend.domain.codeanalysis.application.AnalysisServerClient.TeachItem;
 import com.bigproject.backend.domain.codeanalysis.domain.AnalysisFailureCode;
 import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJob;
 import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJobStatus;
@@ -11,13 +13,15 @@ import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepo
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository.AnalysisModel;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAiUsageRecorder;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisRequestContextRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAssessmentSessionPreparer;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisResultRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
@@ -58,6 +62,15 @@ public class AnalysisBatchService {
 	/** 추출 범위. 회차별 {@code project_extraction_scope}를 읽기 전까지는 팀 전체 기준이다. */
 	private static final String EXTRACTION_SCOPE_TOTAL = "TOTAL";
 
+	/**
+	 * AI 요청의 {@code problemScope}. 지금은 이 값 하나만 보낸다 —
+	 * {@code INDIVIDUAL_OWN_COMMIT}(개인 모드)은 P5에서 다룬다. {@code project.project_category}로
+	 * 나눠 읽기 전까지는 미니프로젝트만 이 배치가 처리한다는 전제와 같은 선상의 고정값이다.
+	 */
+	private static final String PROBLEM_SCOPE_TEAM_SHARED_PROBLEM = "TEAM_SHARED_PROBLEM";
+
+	private static final String METHOD_GITHUB_URL = "GITHUB_URL";
+
 	private final AnalysisDispatchRepository dispatchRepository;
 	private final AnalysisJobRepository analysisJobRepository;
 	private final AnalysisModelRepository analysisModelRepository;
@@ -65,6 +78,20 @@ public class AnalysisBatchService {
 	private final JdbcAiUsageRecorder aiUsageRecorder;
 	private final JdbcAssessmentSessionPreparer sessionPreparer;
 	private final AnalysisServerClient analysisServerClient;
+	private final JdbcAnalysisRequestContextRepository requestContextRepository;
+
+	/**
+	 * 쓰기 단위마다 트랜잭션을 여닫는다.
+	 *
+	 * <p>{@code @Transactional}이 아니라 이걸 쓰는 이유: 필요한 경계가 <b>메서드 하나가 아니라 메서드
+	 * 안의 여러 구간</b>이다({@link #pollActiveJobs} 참조). 애너테이션으로 나누려면 구간마다 별도 빈으로
+	 * 쪼개야 하는데 — 같은 클래스 안의 자기 호출에는 프록시가 끼지 않아 조용히 무시된다 —
+	 * 그렇게 나눈 빈들은 폴링 흐름을 읽기 어렵게만 만든다.
+	 *
+	 * <p>빈 주입이 아니라 생성자에서 직접 만든다. {@code TransactionTemplate} 빈은 자동 구성에 기대는
+	 * 값이라, 없으면 컨텍스트가 뜨지 않는 실패를 런타임까지 미루게 된다.
+	 */
+	private final TransactionTemplate transactions;
 
 	/**
 	 * 코드 분석에 쓸 모델의 {@code ai_model.model_code}.
@@ -97,6 +124,8 @@ public class AnalysisBatchService {
 			JdbcAiUsageRecorder aiUsageRecorder,
 			JdbcAssessmentSessionPreparer sessionPreparer,
 			AnalysisServerClient analysisServerClient,
+			JdbcAnalysisRequestContextRepository requestContextRepository,
+			PlatformTransactionManager transactionManager,
 			@Value("${ai.analysis.model-code}") String analysisModelCode,
 			@Value("${ai.analysis.max-attempts}") int maxAttempts) {
 		this.dispatchRepository = dispatchRepository;
@@ -106,6 +135,8 @@ public class AnalysisBatchService {
 		this.aiUsageRecorder = aiUsageRecorder;
 		this.sessionPreparer = sessionPreparer;
 		this.analysisServerClient = analysisServerClient;
+		this.requestContextRepository = requestContextRepository;
+		this.transactions = new TransactionTemplate(transactionManager);
 		this.analysisModelCode = analysisModelCode;
 		this.maxAttempts = maxAttempts;
 	}
@@ -183,6 +214,10 @@ public class AnalysisBatchService {
 		// 모델 미설정은 특정 제출의 문제가 아니라 기관 전체가 못 도는 설정 문제이므로,
 		// 제출을 재시도 가능한 상태로 남겨 두는 편이 맞다.
 		AnalysisModel model = resolveAnalysisModel();
+		// teaches도 모델과 같은 이유로 job 생성보다 먼저 확정한다 — TEAM_SHARED_PROBLEM은 teaches가
+		// 비면 AI가 거부하므로(2026-08-10 확인), 검증 개념 미설정은 그 제출의 문제가 아니라 프로젝트
+		// 설정 문제다. job 행을 남기면 설정을 고쳐도 재시도 대상에서 영구히 빠진다.
+		List<TeachItem> teaches = requireTeaches(target);
 
 		AnalysisJob job = AnalysisJob.queued(
 				target.getOrgId(),
@@ -201,14 +236,19 @@ public class AnalysisBatchService {
 			UUID externalJobId = analysisServerClient.requestAnalysis(new AnalysisRequest(
 					target.getMethod(),
 					target.getSubmissionId(),
-					null,
 					target.getRepositoryUrl(),
 					target.getRequestedBranch(),
+					PROBLEM_SCOPE_TEAM_SHARED_PROBLEM,
 					EXTRACTION_SCOPE_TOTAL,
+					// TEAM_SHARED_PROBLEM에서는 보내지 않는다 — 개인 모드(P5) 전용 필드다(2026-08-10 확인).
 					null,
 					QUESTION_BUDGET,
+					requirementsFor(target),
+					// focusItems도 TEAM_SHARED_PROBLEM에서는 항상 null이다 — teaches가 이미 출제 기준을
+					// 정해서, 초점 후보까지 얹으면 기준이 둘로 갈린다.
 					null,
-					model.getProviderModelCode(),
+					teaches,
+					model.getModelCode(),
 					target.getArtifactStorageUri(),
 					target.getArtifactFileName(),
 					idempotencyKeyOf(target.getSubmissionId(), job.getExecutionNo()),
@@ -230,12 +270,27 @@ public class AnalysisBatchService {
 	/**
 	 * 진행 중인 실행의 상태를 갱신한다.
 	 *
+	 * <h2>이 메서드에 {@code @Transactional}을 걸지 않는다 (2026-08-11)</h2>
+	 *
+	 * <p>종전에는 이 메서드 전체가 하나의 트랜잭션이었고, 안에서 <b>예외를 삼켰다.</b> 그 조합이
+	 * Postgres에서는 성립하지 않는다 — 문 하나가 실패하는 순간 트랜잭션 전체가 abort 상태가 되어
+	 * 이후 모든 문이 {@code current transaction is aborted}로 거부되고, 자바 쪽에서 예외를 잡아 둔들
+	 * 커밋 시점에 전부 롤백된다. 결과적으로 <b>제약 위반 하나가 그 회차 폴링의 모든 job과
+	 * 이미 적재된 분석 결과까지 통째로 되돌렸다.</b> "이 job만 건너뛰고 계속한다"는 의도가 실제로는
+	 * 지켜지지 않았다.
+	 *
+	 * <p>그래서 트랜잭션을 job 단위, 그리고 job 안에서도 <b>독립적인 쓰기 단위</b>로 쪼갠다.
+	 * 삼킨 예외마다 그 단위만 롤백되므로 격리 의도가 실제로 성립한다.
+	 *
+	 * <p>덤으로 <b>AI 서버 HTTP 호출이 트랜잭션 밖으로 나왔다.</b> 종전에는 job 수만큼의 순차 HTTP
+	 * 왕복 내내 DB 커넥션을 붙들고 있었다 — {@link #dispatchOne}이 같은 이유로 피하던 것을 폴링에서는
+	 * 하고 있었던 셈이다.
+	 *
 	 * <p>AI 서버가 job을 메모리에만 두어 재시작하면 404가 난다(스펙 명시). 그건 오류가 아니라 재요청
 	 * 신호이므로 실패로 기록하지 않고 {@code external_job_id}를 지워 다음 배치가 다시 보내게 한다.
 	 *
 	 * @return 상태가 바뀐 실행 수
 	 */
-	@Transactional
 	public int pollActiveJobs() {
 		List<AnalysisJob> active = analysisJobRepository.findByStatusIn(
 				List.of(AnalysisJobStatus.QUEUED, AnalysisJobStatus.RUNNING));
@@ -244,20 +299,26 @@ public class AnalysisBatchService {
 			if (job.getExternalJobId() == null) {
 				continue;
 			}
-			if (applyProgress(job)) {
-				updated++;
+			try {
+				if (applyProgress(job)) {
+					updated++;
+				}
+			} catch (RuntimeException exception) {
+				log.error("분석 상태 갱신 실패. 이 job만 건너뛰고 계속한다: jobId={}", job.getJobId(), exception);
 			}
 		}
 		return updated;
 	}
 
 	private boolean applyProgress(AnalysisJob job) {
+		// 트랜잭션 밖이다. 이 호출이 5분 걸려도 붙들고 있는 DB 커넥션이 없다.
 		AnalysisProgress progress = analysisServerClient.fetchProgress(job.getExternalJobId()).orElse(null);
 		if (progress == null) {
 			// AI 서버가 모르는 job이다. 재시작으로 유실됐다는 뜻이라 같은 execution_no로 다시 보낸다.
 			log.warn("AI 서버가 모르는 작업이다. 재요청 대상으로 되돌린다: jobId={}, externalJobId={}",
 					job.getJobId(), job.getExternalJobId());
 			job.acceptExternalJob(null);
+			saveJob(job);
 			return true;
 		}
 		// 사용량은 성공·실패를 가리지 않고 먼저 적재한다. 실패한 분석도 토큰은 이미 썼고,
@@ -271,12 +332,14 @@ public class AnalysisBatchService {
 					yield false;
 				}
 				job.markRunning(progress.startedAt() == null ? Instant.now() : progress.startedAt());
+				saveJob(job);
 				yield true;
 			}
 			case SUCCEEDED, PARTIAL -> {
 				recordResult(job, progress);
 				job.markCompleted(progress.status(), progress.startedAt(),
 						progress.completedAt() == null ? Instant.now() : progress.completedAt());
+				saveJob(job);
 				yield true;
 			}
 			case FAILED -> {
@@ -289,9 +352,21 @@ public class AnalysisBatchService {
 								? "AI 서버가 실패 사유를 주지 않았다." : progress.failureReason(),
 						progress.startedAt(),
 						progress.completedAt() == null ? Instant.now() : progress.completedAt());
+				saveJob(job);
 				yield true;
 			}
 		};
+	}
+
+	/**
+	 * 상태 전이를 원장에 반영한다. <b>자기 트랜잭션</b>이다.
+	 *
+	 * <p>{@code pollActiveJobs}에 트랜잭션이 없어져 더티 체킹이 걸리지 않으므로 명시적으로 저장한다 —
+	 * 종전에는 메서드 전체를 감싼 트랜잭션이 커밋될 때 자동으로 나갔다. 엔티티는 준영속 상태라
+	 * {@code save()}가 merge로 처리한다.
+	 */
+	private void saveJob(AnalysisJob job) {
+		transactions.executeWithoutResult(status -> analysisJobRepository.save(job));
 	}
 
 	/**
@@ -312,7 +387,10 @@ public class AnalysisBatchService {
 			return;
 		}
 		try {
-			sessionPreparer.markAttemptsAnalysisFailed(job.getAssessmentRoundId(), job.getTeamId());
+			// 자기 트랜잭션이라야 이 catch 가 실제로 "상태 전이는 막지 않는다"가 된다. 같은
+			// 트랜잭션에서 실패하면 삼켜도 뒤따르는 상태 전이가 함께 롤백된다.
+			transactions.executeWithoutResult(status ->
+					sessionPreparer.markAttemptsAnalysisFailed(job.getAssessmentRoundId(), job.getTeamId()));
 		} catch (RuntimeException exception) {
 			log.error("응시 실패 표시 실패: jobId={}", job.getJobId(), exception);
 		}
@@ -329,7 +407,8 @@ public class AnalysisBatchService {
 			return;
 		}
 		try {
-			aiUsageRecorder.record(job, progress.aiUsage());
+			// 자기 트랜잭션. FK 위반이 나도 이 단위만 롤백되고 결과 적재·상태 전이는 그대로 간다.
+			transactions.executeWithoutResult(status -> aiUsageRecorder.record(job, progress.aiUsage()));
 		} catch (RuntimeException exception) {
 			log.error("AI 사용량 적재 실패: jobId={}", job.getJobId(), exception);
 		}
@@ -342,6 +421,16 @@ public class AnalysisBatchService {
 	 * 이미 나갔다. FAILED 로 쓰면 재시도 대상이 되어 같은 분석을 또 돌리게 되는데, 적재가 깨진 원인이
 	 * 우리 스키마·매핑이면 몇 번을 다시 불러도 같은 자리에서 깨진다. 상태는 사실대로 두고 적재 실패는
 	 * 로그로 드러낸다 -- {@code analysis_id} 가 비어 있는 SUCCEEDED job 이 곧 그 신호다.
+	 *
+	 * <p><b>적재는 자기 트랜잭션에서 통째로 성공하거나 통째로 실패한다.</b> {@code code_analysis} 만
+	 * 남고 문제가 없는 상태는 "분석은 됐는데 문항이 없다"로 보여 실패보다 나쁘다
+	 * ({@link JdbcAnalysisResultRepository#record} 참조). 상태 전이를 같은 트랜잭션에 넣지 않는 것은
+	 * 위 문단 때문이다 — 적재 실패로 전이까지 롤백되면 job 이 RUNNING 에 머물러 다음 폴링이 같은
+	 * 실패를 무한히 반복한다.
+	 *
+	 * <p>{@code analysisId} 가 이미 있으면 건너뛴다. 적재는 성공했는데 그 뒤 상태 전이가 실패해 job 이
+	 * 다음 폴링에 다시 걸리는 좁은 창이 있는데, 그때 다시 적재하면 {@code assessment_problem} 이
+	 * AI 가 준 {@code problemId} 를 PK 로 쓰므로 같은 id 로 충돌한다.
 	 */
 	private void recordResult(AnalysisJob job, AnalysisProgress progress) {
 		if (!progress.hasResult()) {
@@ -349,8 +438,14 @@ public class AnalysisBatchService {
 					job.getJobId(), progress.status());
 			return;
 		}
+		if (job.getAnalysisId() != null) {
+			log.warn("이미 적재된 결과가 있어 건너뛴다. 직전 상태 전이가 실패했을 수 있다: jobId={}, analysisId={}",
+					job.getJobId(), job.getAnalysisId());
+			return;
+		}
 		try {
-			UUID analysisId = analysisResultRepository.record(job, progress.result());
+			UUID analysisId = transactions.execute(status ->
+					analysisResultRepository.record(job, progress.result()));
 			job.attachAnalysis(analysisId);
 		} catch (RuntimeException exception) {
 			log.error("분석 결과 적재 실패. job 은 성공으로 남긴다: jobId={}", job.getJobId(), exception);
@@ -401,5 +496,28 @@ public class AnalysisBatchService {
 		return analysisModelRepository.findActiveByModelCode(analysisModelCode)
 				.orElseThrow(() -> new AnalysisServerException(AnalysisFailureCode.TEMPORARY_ERROR,
 						"ai.analysis.model-code 가 가리키는 ACTIVE 모델이 ai_model 에 없다: " + analysisModelCode));
+	}
+
+	/**
+	 * TEAM_SHARED_PROBLEM 요청의 필수 재료. 비어 있으면 AI가 요청 자체를 거부하므로(2026-08-10 확인)
+	 * 호출 전에 막는다. 원인은 특정 제출이 아니라 그 회차에 검증 개념(concept_set)이 아예 설정되지
+	 * 않은 것이라 {@link #resolveAnalysisModel}과 같은 이유로 job 행을 남기지 않는다.
+	 */
+	private List<TeachItem> requireTeaches(DispatchTarget target) {
+		List<TeachItem> teaches = requestContextRepository.findTeaches(
+				target.getAssessmentRoundId(), target.getProjectId());
+		if (teaches.isEmpty()) {
+			throw new AnalysisServerException(AnalysisFailureCode.TEMPORARY_ERROR,
+					"이 회차에 적용된 검증 개념(teaches)이 없다. TEAM_SHARED_PROBLEM은 teaches가 비면 AI가 "
+							+ "거부한다: assessmentRoundId=" + target.getAssessmentRoundId());
+		}
+		return teaches;
+	}
+
+	/** 2026-08-10 확인: GitHub 제출에만 requirements를 싣는다. ZIP 제출은 null. */
+	private List<RequirementItem> requirementsFor(DispatchTarget target) {
+		return METHOD_GITHUB_URL.equals(target.getMethod())
+				? requestContextRepository.findRequirements(target.getProjectId())
+				: null;
 	}
 }

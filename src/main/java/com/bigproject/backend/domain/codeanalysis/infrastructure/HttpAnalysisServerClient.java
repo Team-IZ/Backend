@@ -22,6 +22,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -226,38 +227,86 @@ public class HttpAnalysisServerClient implements AnalysisServerClient {
 		return new AnalysesRequestBody(
 				request.method(),
 				request.submissionId(),
-				request.attemptId(),
-				new AnalysisSource(request.repositoryUrl(), request.requestedBranch()),
+				// ZIP 제출은 저장소가 없다 — source를 아예 생략한다("source": {}가 아니라 키 자체가 없어야
+				// 2026-08-10 확인된 케이스3(ZIP)과 일치한다).
+				request.repositoryUrl() == null
+						? null
+						: new AnalysisSource(request.repositoryUrl(), request.requestedBranch()),
+				request.problemScope(),
 				request.extractionScope(),
 				request.commitEmail(),
 				request.questionBudget(),
-				request.curriculumVersionId(),
+				toRequirementBodies(request.requirements()),
+				toFocusItemBodies(request.focusItems()),
+				toTeachBodies(request.teaches()),
 				request.providerModelCode());
+	}
+
+	private static List<FocusItemBody> toFocusItemBodies(List<AnalysisServerClient.FocusItem> items) {
+		return items == null ? null : items.stream()
+				.map(item -> new FocusItemBody(item.focusItemId(), item.name(), item.description()))
+				.toList();
+	}
+
+	private static List<RequirementBody> toRequirementBodies(List<AnalysisServerClient.RequirementItem> items) {
+		return items == null ? null : items.stream()
+				.map(item -> new RequirementBody(item.requirementId(), item.text()))
+				.toList();
+	}
+
+	private static List<TeachBody> toTeachBodies(List<AnalysisServerClient.TeachItem> items) {
+		return items == null ? null : items.stream()
+				.map(item -> new TeachBody(item.id(), item.label(), item.unitId(), item.sourcePages()))
+				.toList();
 	}
 
 	/**
 	 * {@code POST /analyses} 요청 본문.
 	 *
-	 * <p>{@code NON_NULL}로 비는 필드를 아예 빼는 이유: {@code focusItems}·{@code requirements}·
-	 * {@code teaches}는 아직 채우지 않는데, {@code null}을 명시로 보내면 AI 쪽 기본값(빈 배열)을
-	 * {@code null}로 덮어쓸 수 있다. 필드를 생략하면 기본값이 그대로 적용된다.
+	 * <p>{@code NON_NULL}로 비는 필드를 아예 빼는 이유: 값이 없을 때 {@code null}을 명시로 보내면
+	 * AI 쪽 기본값(빈 배열)을 {@code null}로 덮어쓸 수 있다. 필드를 생략하면 기본값이 그대로 적용된다.
+	 * {@code TEAM_SHARED_PROBLEM}과 {@code INDIVIDUAL_OWN_COMMIT}은 {@code teaches}·{@code focusItems}
+	 * 존재 여부를 AI가 상호 배타로 검증하므로(2026-08-10 확인), 이 생략이 단순 최적화가 아니라
+	 * <b>필수</b>다 — 해당 없는 쪽에 빈 배열이라도 실리면 AI가 거부한다.
+	 *
+	 * <p>{@code curriculumVersionId}·{@code attemptId} 필드가 없는 이유: AI가 이 값을 읽는 코드가
+	 * 없다고 확인돼(2026-08-10) 계약에서 아예 뺐다.
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	private record AnalysesRequestBody(
 			String method,
 			UUID submissionId,
-			UUID attemptId,
 			AnalysisSource source,
+			String problemScope,
 			String extractionScope,
 			String commitEmail,
 			Integer questionBudget,
-			UUID curriculumVersionId,
+			List<RequirementBody> requirements,
+			List<FocusItemBody> focusItems,
+			List<TeachBody> teaches,
 			String providerModelCode
 	) {
 	}
 
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	private record AnalysisSource(String repoUrl, String branch) {
+	}
+
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	private record RequirementBody(String requirementId, String text) {
+	}
+
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	private record FocusItemBody(String focusItemId, String name, String description) {
+	}
+
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	private record TeachBody(
+			String id,
+			String label,
+			String unitId,
+			List<Integer> sourcePages
+	) {
 	}
 
 	/** 202 응답. {@code status}는 항상 {@code QUEUED}라 읽지 않는다. */
@@ -278,7 +327,7 @@ public class HttpAnalysisServerClient implements AnalysisServerClient {
 			Instant startedAt,
 			Instant completedAt,
 			AnalysisResultPayload result,
-			java.util.List<AiUsageEntry> aiUsage
+			List<AiUsageEntry> aiUsage
 	) {
 	}
 }
