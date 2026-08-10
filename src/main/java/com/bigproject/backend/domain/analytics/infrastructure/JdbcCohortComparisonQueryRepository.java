@@ -18,11 +18,19 @@ public class JdbcCohortComparisonQueryRepository implements CohortComparisonQuer
 	// 수업 진단 리포트의 발행된 활성 스냅샷. 기수당 한 건만 남긴다.
 	// 같은 기수에 활성 스냅샷이 둘 이상 남아 있어도 분포 합계가 두 배로 계상되지 않도록
 	// DISTINCT ON으로 최신 한 건을 고정한다.
+	//
+	// completion_status는 여기서 거르지 않고 그대로 올린다. 이 값의 PARTIAL은 "리포트 생성이
+	// 일부 실패했다"가 아니라 "미응시·무효·중단이 있어 모수에서 빠진 응시 건이 있다"는 뜻이라,
+	// 걸러내면 그런 기수가 비교 대상에서 통째로 사라진다(미응시가 0인 기수는 거의 없다).
+	// 합의 문서 결정 11 — 발행하되 구분해서 알린다. 교육생 화면과 analytics가 같은 원칙이다.
 	private static final String ACTIVE_SNAPSHOT_CTE = """
 			WITH active_snapshot AS (
 				SELECT DISTINCT ON (rpt.cohort_id)
 					rs.snapshot_id,
-					rpt.cohort_id
+					rpt.cohort_id,
+					rs.completion_status,
+					rs.sample_count,
+					rs.missing_count
 				FROM report rpt
 				JOIN report_snapshot rs ON rs.report_id = rpt.report_id AND rs.is_active
 				WHERE rpt.org_id = ?
@@ -105,6 +113,32 @@ public class JdbcCohortComparisonQueryRepository implements CohortComparisonQuer
 				organizationId
 		);
 		return count != null && count > 0;
+	}
+
+	/**
+	 * 비교에 쓰는 두 기수의 스냅샷 완전성을 읽는다.
+	 *
+	 * 격자 수치 자체는 PARTIAL 스냅샷도 포함해 계산하므로, 화면이 "이 기수는 N건이 모수에서
+	 * 빠졌다"를 함께 표시할 수 있도록 판단 재료만 올린다. 값은 DB에 이미 있었고 응답에만
+	 * 실리지 않던 것이라 집계 결과는 이 변경으로 달라지지 않는다.
+	 */
+	@Override
+	public List<SnapshotCompletionRow> findSnapshotCompletion(UUID organizationId, List<UUID> cohortIds) {
+		String sql = (ACTIVE_SNAPSHOT_CTE + """
+				SELECT cohort_id, completion_status, sample_count, missing_count
+				FROM active_snapshot
+				""").formatted(placeholders(cohortIds.size()));
+
+		return jdbcTemplate.query(
+				sql,
+				(rs, rowNum) -> new SnapshotCompletionRow(
+						rs.getObject("cohort_id", UUID.class),
+						rs.getString("completion_status"),
+						rs.getLong("sample_count"),
+						rs.getLong("missing_count")
+				),
+				snapshotParameters(organizationId, cohortIds)
+		);
 	}
 
 	/**

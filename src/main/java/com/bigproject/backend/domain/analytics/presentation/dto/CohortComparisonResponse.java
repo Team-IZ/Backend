@@ -43,8 +43,28 @@ public record CohortComparisonResponse(
 	public record CohortRef(
 			UUID cohortId,
 			@Schema(description = "기수 표시명이며 cohort에는 기수 번호 컬럼이 없어 이름을 그대로 씁니다.", example = "7기")
-			String cohortName
+			String cohortName,
+			@Schema(description = """
+					비교에 쓴 진단 스냅샷의 완전성입니다. FULL / PARTIAL 두 값이며 아직 스냅샷을 읽지 않은
+					단계(비교 대상 미선택, 리포트 미발행)의 응답에서는 null입니다.
+					PARTIAL은 리포트 생성이 실패했다는 뜻이 아니라 미응시·무효·중단으로 모수에서 빠진
+					응시 건이 있다는 뜻입니다. 평균은 남은 모수로 계산되므로 값 자체는 유효하며,
+					화면은 두 기수의 모수가 다를 수 있다는 것만 함께 알리면 됩니다.
+					""", example = "PARTIAL", nullable = true)
+			String completionStatus,
+			@Schema(description = "평균의 모수가 된 채점 응시 건수이며 값이 없으면 null입니다.", example = "72", nullable = true)
+			Long sampleCount,
+			@Schema(description = """
+					미응시·무효·중단으로 모수에서 빠진 응시 건수이며 값이 없으면 null입니다.
+					교육생 수가 아니라 응시 건수 단위입니다.
+					""", example = "3", nullable = true)
+			Long missingCount
 	) {
+
+		/** 완전성을 아직 읽지 않은 단계(격자를 그리지 않는 응답)에서 쓴다. */
+		public static CohortRef of(UUID cohortId, String cohortName) {
+			return new CohortRef(cohortId, cohortName, null, null, null);
+		}
 	}
 
 	@Schema(description = "비교 후보 기수")
