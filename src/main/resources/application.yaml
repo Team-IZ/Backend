@@ -191,15 +191,18 @@ ai:
 
   # 교안 분석 연동. develop 머지 때 파일 아래쪽에 `ai:` 블록이 하나 더 생겨
   # YAML 중복 키로 기동이 통째로 실패했다(snakeyaml: found duplicate key ai).
-  # 값과 환경변수 이름은 그대로 두고 이 블록 안으로 옮기기만 했다.
   #
-  # ⚠️ 위 공통 설정과 어긋나는 점이 둘 있다. 의도한 것인지 확인이 필요하다.
-  #   - base-url에 `/api/v0`가 없다(공통은 붙어 있다)
-  #   - 같은 공유 비밀인데 환경변수가 AI_INTERNAL_API_KEY다(공통은 AI_INTERNAL_KEY)
-  #     두 이름을 다 관리하면 한쪽만 채워 넣는 사고가 난다.
+  # [2026-08-10] 공통 설정과 어긋나던 둘을 맞췄다. 종전에는 AI_CURRICULUM_BASE_URL ·
+  # AI_INTERNAL_API_KEY 라는 이름을 따로 썼는데, 같은 AI 서버의 같은 공유 비밀을 가리키면서
+  # 환경변수만 둘이라 한쪽만 채워 넣는 사고가 나기 쉬웠다.
+  #
+  # base-url 에 `/api/v0` 를 붙인 것도 이때다. 종전에는 프리픽스가 없고
+  # AiCurriculumClient 가 경로에 직접 `/api/v0/curricula` 를 적었는데, 그대로 두고 이름만
+  # 바꾸면 AI_BASE_URL(프리픽스 포함)이 들어올 때 `/api/v0/api/v0/curricula` 가 된다.
+  # 프리픽스를 설정 한 곳으로 모으고 클라이언트는 `/curricula` 만 적는다.
   curriculum:
-    base-url: ${AI_CURRICULUM_BASE_URL:http://localhost:8000}
-    x-internal-key: ${AI_INTERNAL_API_KEY:}
+    base-url: ${AI_BASE_URL:http://localhost:8000/api/v0}
+    x-internal-key: ${AI_INTERNAL_KEY:}
 
 jwt:
   secret: ${JWT_SECRET}
