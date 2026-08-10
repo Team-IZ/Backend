@@ -155,6 +155,78 @@ class AnalysisBatchServiceTest {
 	}
 
 	@Test
+	void skipsOnlyTheJobThatFailsToParseAndStillUpdatesTheRest() {
+		AnalysisJob broken = jobWithExternalId();
+		AnalysisJob healthy = jobWithExternalId();
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(broken, healthy));
+		// AI가 값 집합 밖의 status를 주면 클라이언트 구현체가 AnalysisServerException을 던진다.
+		when(client.fetchProgress(broken.getExternalJobId()))
+				.thenThrow(new AnalysisServerException(AnalysisFailureCode.MODEL_ERROR, "알 수 없는 status"));
+		when(client.fetchProgress(healthy.getExternalJobId())).thenReturn(Optional.of(new AnalysisProgress(
+				AnalysisJobStatus.FAILED, NOW, NOW, AnalysisFailureCode.REPO_NOT_FOUND, "저장소 없음", null, null)));
+
+		int updated = service.pollActiveJobs();
+
+		// 문제가 있는 job 하나 때문에 나머지 job의 정상 갱신까지 막히면 안 된다.
+		assertThat(updated).isEqualTo(1);
+		assertThat(healthy.getStatus()).isEqualTo(AnalysisJobStatus.FAILED);
+		assertThat(healthy.getFailureCode()).isEqualTo(AnalysisFailureCode.REPO_NOT_FOUND);
+		// broken은 예외가 난 시점 이전이라 아무 것도 바뀌지 않은 채 QUEUED로 남아 다음 폴링에서 다시 시도된다.
+		assertThat(broken.getStatus()).isEqualTo(AnalysisJobStatus.QUEUED);
+	}
+
+	/**
+	 * 적재가 깨져도 상태 전이는 나간다.
+	 *
+	 * <p>종전에는 {@code pollActiveJobs} 전체가 한 트랜잭션이라 이 catch 가 실제로는 무의미했다 —
+	 * Postgres 는 문 하나가 실패하면 트랜잭션을 abort 시켜 뒤따르는 상태 전이까지 커밋 시점에 함께
+	 * 롤백한다. 쓰기 단위마다 트랜잭션을 나눈 뒤라야 "적재 실패로 job 을 FAILED 로 되돌리지 않는다"가
+	 * 성립한다.
+	 */
+	@Test
+	void marksTheJobCompletedEvenWhenLoadingTheResultBlowsUp() {
+		AnalysisJob job = jobWithExternalId();
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any())).thenReturn(Optional.of(new AnalysisProgress(
+				AnalysisJobStatus.SUCCEEDED, NOW, NOW, null, null, resultPayload(), null)));
+		when(resultRepository.record(any(), any()))
+				.thenThrow(new IllegalStateException("problem_stage 제약 위반"));
+
+		int updated = service.pollActiveJobs();
+
+		assertThat(updated).isEqualTo(1);
+		// 적재를 실제로 시도했는지부터 못박는다. 건너뛰었다면 아래 단언들이 같은 값으로 통과해
+		// 테스트가 엉뚱한 이유로 초록이 된다.
+		verify(resultRepository).record(any(), any());
+		// 분석은 실제로 성공했고 비용도 나갔다. FAILED 로 쓰면 같은 분석을 또 돌린다.
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.SUCCEEDED);
+		// analysis_id 가 비어 있는 SUCCEEDED job 이 곧 "적재가 깨졌다"는 신호다.
+		assertThat(job.getAnalysisId()).isNull();
+		verify(jobRepository).save(job);
+	}
+
+	/** 적재가 이미 끝난 job 을 다시 적재하지 않는다 — problemId 가 PK 라 재적재는 충돌한다. */
+	@Test
+	void doesNotLoadTheResultTwiceWhenTheJobComesBackWithAnAnalysisAlreadyAttached() {
+		AnalysisJob job = jobWithExternalId();
+		job.attachAnalysis(UUID.randomUUID());
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any())).thenReturn(Optional.of(new AnalysisProgress(
+				AnalysisJobStatus.SUCCEEDED, NOW, NOW, null, null, resultPayload(), null)));
+
+		service.pollActiveJobs();
+
+		verify(resultRepository, never()).record(any(), any());
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.SUCCEEDED);
+	}
+
+	/** 적재 경로를 타게 하는 최소 payload. 내용은 resultRepository 를 모킹해서 보지 않는다. */
+	private static AnalysisResultPayload resultPayload() {
+		return new AnalysisResultPayload(null, null, "TOTAL", null, null, null, null,
+				null, List.of(), null, null, null, null, null, null, null);
+	}
+
+	@Test
 	void skipsJobsThatWereNeverAccepted() {
 		AnalysisJob notSent = AnalysisJob.queued(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
 				UUID.randomUUID(), "batch-key", "CODE_ANALYSIS", 1, "trace-1");
