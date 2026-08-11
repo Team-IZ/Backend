@@ -1,13 +1,11 @@
 package com.bigproject.backend.domain.auth.infrastructure;
 
-import com.bigproject.backend.domain.auth.domain.InvitationRecipient;
 import com.bigproject.backend.domain.auth.domain.InvitationResolveRepository;
+import com.bigproject.backend.domain.auth.domain.InvitationState;
 import com.bigproject.backend.domain.auth.infrastructure.jpa.OneTimeTokenJpaRepository;
-import com.bigproject.backend.domain.member.domain.Role;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
-import java.time.Instant;
 import java.util.Optional;
 
 @Repository
@@ -16,12 +14,7 @@ public class JpaInvitationResolveRepository implements InvitationResolveReposito
 	private final OneTimeTokenJpaRepository repository;
 
 	@Override
-	public Optional<InvitationRecipient> findResolvableByTokenHash(String tokenHash, Instant resolvedAt) {
-		return repository.findResolvableInvitation(tokenHash, resolvedAt)
-				.map(row -> new InvitationRecipient(
-						row.getUserId(),
-						row.getEmail(),
-						Role.valueOf(row.getRoleCode())
-				));
+	public Optional<InvitationState> findStateByTokenHash(String tokenHash) {
+		return repository.findInvitationState(tokenHash).map(InvitationStateMapper::toState);
 	}
 }
