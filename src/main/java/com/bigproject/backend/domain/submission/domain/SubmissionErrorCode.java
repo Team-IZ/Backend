@@ -51,7 +51,17 @@ public enum SubmissionErrorCode {
 	 * {@code GET /submissions/{submissionId}/analysis}의 {@code phase}를 본다.
 	 */
 	ANALYSIS_RESULT_NOT_FOUND(HttpStatus.NOT_FOUND, "분석 결과가 아직 없습니다."),
-	SUBMISSION_ACCESS_DENIED(HttpStatus.FORBIDDEN, "다른 팀의 제출은 조회할 수 없습니다.");
+	SUBMISSION_ACCESS_DENIED(HttpStatus.FORBIDDEN, "다른 팀의 제출은 조회할 수 없습니다."),
+
+	// ── AI 연동 ──
+	/**
+	 * 제출 접수 전 AI 프록시 헬스체크가 실패했다(2026-08-11).
+	 *
+	 * <p>제출 자체는 DB 작업이라 받아 둘 수도 있지만, 받아 두면 분석이 조용히 실패하고 교육생은 마감이
+	 * 지난 뒤에야 안다. 지금 막으면 즉시 알고 다시 시도한다 — 그래서 4xx가 아니라 <b>재시도하라는</b>
+	 * 503이다.
+	 */
+	AI_SERVER_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "AI 서버에 연결할 수 없어 지금은 제출할 수 없습니다.");
 
 	private final HttpStatus status;
 	private final String defaultMessage;

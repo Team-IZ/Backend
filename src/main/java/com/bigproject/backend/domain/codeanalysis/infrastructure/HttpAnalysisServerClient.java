@@ -10,8 +10,10 @@ import com.bigproject.backend.domain.submission.application.SubmissionArtifactSt
 import com.bigproject.backend.domain.submission.domain.SubmissionException;
 import com.bigproject.backend.global.ai.AiCallException;
 import com.bigproject.backend.global.ai.AiClient;
+import com.bigproject.backend.global.ai.AiClientConfig;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -33,8 +35,8 @@ import java.util.UUID;
  * <p>이 빈이 등록되면 {@link AnalysisServerClientConfig}의 "항상 실패하는" 폴백이
  * {@code @ConditionalOnMissingBean}에 의해 물러난다.
  *
- * <p><b>경로에 {@code /api/v0}를 붙이지 않는다.</b> {@code ai.base-url}이 이미 그 접두어를 포함한다
- * ({@code application.yaml}의 {@code AI_BASE_URL} 기본값 참조). 여기서 또 붙이면 {@code /api/v0/api/v0}가 된다.
+ * <p><b>대상은 원본 서버({@code ai.origin-base-url})다</b>(2026-08-11). 코드 제출 분석은 프록시를
+ * 거치지 않는다. 경로에는 {@link AiClient#API_V0}를 직접 붙인다 — base-url에는 호스트만 있다.
  *
  * <h2>실패를 우리 값 집합으로 접는다</h2>
  *
@@ -46,12 +48,14 @@ import java.util.UUID;
 @Component
 public class HttpAnalysisServerClient implements AnalysisServerClient {
 
-	private static final String ANALYSES_PATH = "/analyses";
+	private static final String ANALYSES_PATH = AiClient.API_V0 + "/analyses";
 
 	private final AiClient aiClient;
 	private final SubmissionArtifactStorage artifactStorage;
 
-	public HttpAnalysisServerClient(AiClient aiClient, SubmissionArtifactStorage artifactStorage) {
+	public HttpAnalysisServerClient(
+			@Qualifier(AiClientConfig.AI_ORIGIN_CLIENT) AiClient aiClient,
+			SubmissionArtifactStorage artifactStorage) {
 		this.aiClient = aiClient;
 		this.artifactStorage = artifactStorage;
 	}

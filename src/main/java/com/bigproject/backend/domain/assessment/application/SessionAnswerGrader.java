@@ -17,8 +17,9 @@ import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionStag
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SlotState;
 import com.bigproject.backend.global.ai.AiCallException;
 import com.bigproject.backend.global.ai.AiClient;
-import lombok.RequiredArgsConstructor;
+import com.bigproject.backend.global.ai.AiClientConfig;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -41,14 +42,20 @@ import java.util.UUID;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class SessionAnswerGrader {
 
 	/** 결정론적 멱등키의 이름공간. 값 자체는 의미가 없고 다른 도메인 키와 겹치지 않기만 하면 된다. */
 	private static final UUID IDEMPOTENCY_NAMESPACE =
 			UUID.fromString("6f0b5f4a-6c31-4a1c-9a2e-4f4e0f1f7a10");
 
+	/** 세션 채점은 프록시로 나간다. base-url에 프리픽스가 없어 경로에서 붙인다. */
+	private static final String ANSWERS_PATH_PREFIX = AiClient.API_V0 + "/sessions/";
+
 	private final AiClient aiClient;
+
+	public SessionAnswerGrader(@Qualifier(AiClientConfig.AI_PROXY_CLIENT) AiClient aiClient) {
+		this.aiClient = aiClient;
+	}
 
 	/** 채점 모델. 비우면 AI 서버 기본값을 쓴다 — 다른 경로(analyses·curricula)와 같은 규칙이다. */
 	@Value("${ai.session.provider-model-code:}")
@@ -70,7 +77,7 @@ public class SessionAnswerGrader {
 				providerModelCode == null || providerModelCode.isBlank() ? null : providerModelCode);
 
 		try {
-			return aiClient.post("/sessions/" + head.sessionId() + "/answers", body, AnswerResult.class,
+			return aiClient.post(ANSWERS_PATH_PREFIX + head.sessionId() + "/answers", body, AnswerResult.class,
 					body.clientRequestId(), traceId);
 		} catch (AiCallException exception) {
 			log.warn("채점 실패: sessionId={}, stageId={}, slot={}, retryable={}",

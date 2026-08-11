@@ -98,9 +98,25 @@ springdoc:
     disable-swagger-default-url: true
     persist-authorization: true
 
-# AI(FastAPI) 연동. AI 저장소 app/config.py의 API_V0_PREFIX가 /api/v0라 base-url에 붙여 둔다.
+# AI(FastAPI) 연동.
+#
+# [2026-08-11] 대상 서버가 둘로 갈라졌다.
+#   proxy-base-url  : 리포트 생성, 세션 채점 — 아래 origin 대상이 아닌 전부
+#   origin-base-url : 교안 제출, 코드 제출(GitHub·ZIP) 분석
+#
+# 🔴 두 값 모두 호스트만 담고 `/api/v0`를 붙이지 않는다. 종전에는 AI_BASE_URL 값 자체에
+# 프리픽스가 들어 있었는데, 환경변수가 둘로 늘어난 이상 그 규약은 한쪽만 빠뜨리는 사고를 부른다
+# (그러면 그 경로만 404가 나고, 설정 파일만 봐서는 무엇이 잘못됐는지 드러나지 않는다).
+# 프리픽스는 코드 한 곳(AiClient.API_V0)에 있다. 여기에 다시 붙이면 /api/v0/api/v0가 된다.
 ai:
-  base-url: ${AI_BASE_URL:http://localhost:8000/api/v0}
+  proxy-base-url: ${AI_PROXY_BASE_URL:http://localhost:8000}
+  origin-base-url: ${AI_ORIGIN_BASE_URL:http://localhost:8000}
+
+  # 코드 제출 접수 전 프록시 생존 확인(GET /api/health)에 쓰는 상한.
+  # 공용 read-timeout(150초)을 쓰면 프록시가 멈춰 있을 때 제출 요청 하나가 2분 30초 동안
+  # 톰캣 스레드를 붙든다 — "빨리 실패시켜 교육생에게 알린다"는 목적과 정반대다.
+  health:
+    timeout: ${AI_HEALTH_TIMEOUT:PT2S}
   # AI의 require_internal_key가 읽는 공유 비밀(X-Internal-Key).
   # 비워 두면 헤더를 아예 붙이지 않는다 — AI 쪽도 "키 미설정 = 로컬 개발"로 검증을 건너뛴다.
   internal-key: ${AI_INTERNAL_KEY:}
@@ -196,12 +212,10 @@ ai:
   # AI_INTERNAL_API_KEY 라는 이름을 따로 썼는데, 같은 AI 서버의 같은 공유 비밀을 가리키면서
   # 환경변수만 둘이라 한쪽만 채워 넣는 사고가 나기 쉬웠다.
   #
-  # base-url 에 `/api/v0` 를 붙인 것도 이때다. 종전에는 프리픽스가 없고
-  # AiCurriculumClient 가 경로에 직접 `/api/v0/curricula` 를 적었는데, 그대로 두고 이름만
-  # 바꾸면 AI_BASE_URL(프리픽스 포함)이 들어올 때 `/api/v0/api/v0/curricula` 가 된다.
-  # 프리픽스를 설정 한 곳으로 모으고 클라이언트는 `/curricula` 만 적는다.
+  # [2026-08-11] base-url 을 여기서 없앴다. 교안 제출은 원본 서버로 나가므로
+  # AiCurriculumClient 가 위쪽 ai.origin-base-url 을 직접 읽는다. 남은 x-internal-key 는
+  # 위 ai.internal-key 와 같은 값을 가리키는 중복이라 정리 후보다.
   curriculum:
-    base-url: ${AI_BASE_URL:http://localhost:8000/api/v0}
     x-internal-key: ${AI_INTERNAL_KEY:}
 
 jwt:

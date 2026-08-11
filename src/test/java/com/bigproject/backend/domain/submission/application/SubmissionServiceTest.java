@@ -6,6 +6,8 @@ import com.bigproject.backend.domain.submission.domain.Repository;
 import com.bigproject.backend.domain.submission.domain.RepositoryStatus;
 import com.bigproject.backend.domain.submission.domain.Submission;
 import com.bigproject.backend.domain.submission.domain.SubmissionAcceptedEvent;
+import com.bigproject.backend.domain.submission.domain.SubmissionErrorCode;
+import com.bigproject.backend.domain.submission.domain.SubmissionException;
 import com.bigproject.backend.domain.submission.infrastructure.GithubRepositoryRepository;
 import com.bigproject.backend.domain.submission.infrastructure.JdbcMeasurementAttemptOpener;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionArtifactRepository;
@@ -13,6 +15,7 @@ import com.bigproject.backend.domain.submission.infrastructure.SubmissionContext
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionContextRepository.SubmissionContext;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionRepository;
 import com.bigproject.backend.domain.submission.presentation.dto.CreateGithubSubmissionRequest;
+import com.bigproject.backend.global.ai.AiProxyHealthChecker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -27,6 +30,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -53,6 +57,7 @@ class SubmissionServiceTest {
 	private SubmissionArtifactRepository submissionArtifactRepository;
 	private SubmissionArtifactStorage artifactStorage;
 	private ApplicationEventPublisher eventPublisher;
+	private AiProxyHealthChecker aiProxyHealthChecker;
 	private SubmissionService service;
 
 	@BeforeEach
@@ -64,11 +69,13 @@ class SubmissionServiceTest {
 		AnalysisJobRepository analysisJobRepository = mock(AnalysisJobRepository.class);
 		artifactStorage = mock(SubmissionArtifactStorage.class);
 		eventPublisher = mock(ApplicationEventPublisher.class);
+		aiProxyHealthChecker = mock(AiProxyHealthChecker.class);
+		when(aiProxyHealthChecker.isHealthy()).thenReturn(true);
 
 		service = new SubmissionService(submissionRepository, githubRepositoryRepository,
 				submissionArtifactRepository, submissionContextRepository, analysisJobRepository,
 				artifactStorage, mock(JdbcAnalysisResultQueryRepository.class),
-				mock(JdbcMeasurementAttemptOpener.class), eventPublisher);
+				mock(JdbcMeasurementAttemptOpener.class), eventPublisher, aiProxyHealthChecker);
 		ReflectionTestUtils.setField(service, "maxZipBytes", 52428800L);
 	}
 
@@ -191,5 +198,38 @@ class SubmissionServiceTest {
 		assertThat(response.status()).isEqualTo(SubmissionStatus.ACCEPTED);
 		// 보류가 풀린 뒤로 ZIP 도 GitHub 과 같은 트리거를 쓴다.
 		verify(eventPublisher).publishEvent(any(SubmissionAcceptedEvent.class));
+	}
+
+	/**
+	 * AI 프록시가 죽어 있으면 접수 자체를 막는다(2026-08-11).
+	 *
+	 * <p>제출 행이 남지 않는 것까지 확인하는 이유: 남으면 분석이 걸리지 않은 채 "제출됨"으로 보여
+	 * 교육생이 재제출하지 않는다. 그 상태는 마감이 지나야 드러난다.
+	 */
+	@Test
+	void rejectsGithubSubmissionWhenAiProxyIsDown() {
+		when(aiProxyHealthChecker.isHealthy()).thenReturn(false);
+
+		assertThatThrownBy(() -> service.submitGithubUrl(USER_ID, request(UUID.randomUUID()), UUID.randomUUID()))
+				.isInstanceOf(SubmissionException.class)
+				.hasFieldOrPropertyWithValue("errorCode", SubmissionErrorCode.AI_SERVER_UNAVAILABLE);
+
+		verify(submissionRepository, never()).save(any());
+		verify(eventPublisher, never()).publishEvent(any(SubmissionAcceptedEvent.class));
+	}
+
+	@Test
+	void rejectsZipSubmissionWhenAiProxyIsDown() {
+		when(aiProxyHealthChecker.isHealthy()).thenReturn(false);
+
+		assertThatThrownBy(() -> service.submitZip(USER_ID, ROUND_ID,
+				new MockMultipartFile("file", "project.zip", "application/zip", zipWithOneEntry()),
+				UUID.randomUUID()))
+				.isInstanceOf(SubmissionException.class)
+				.hasFieldOrPropertyWithValue("errorCode", SubmissionErrorCode.AI_SERVER_UNAVAILABLE);
+
+		// 업로드 저장까지 가면 안 된다. 접수하지 않을 파일을 S3에 남기는 셈이다.
+		verify(artifactStorage, never()).store(any(), any(), any(), any());
+		verify(submissionRepository, never()).save(any());
 	}
 }

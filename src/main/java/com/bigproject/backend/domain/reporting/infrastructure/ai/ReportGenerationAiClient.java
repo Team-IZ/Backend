@@ -3,8 +3,9 @@ package com.bigproject.backend.domain.reporting.infrastructure.ai;
 import com.bigproject.backend.domain.usagemetering.application.AiUsageAttribution;
 import com.bigproject.backend.domain.usagemetering.application.AiUsageRecorder;
 import com.bigproject.backend.global.ai.AiClient;
-import lombok.RequiredArgsConstructor;
+import com.bigproject.backend.global.ai.AiClientConfig;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
@@ -32,13 +33,20 @@ import java.util.UUID;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ReportGenerationAiClient {
 
-	private static final String GENERATE_PATH = "/reports";
+	/** 리포트 생성은 프록시로 나간다. base-url에 프리픽스가 없어 여기서 붙인다. */
+	private static final String GENERATE_PATH = AiClient.API_V0 + "/reports";
 
 	private final AiClient aiClient;
 	private final AiUsageRecorder aiUsageRecorder;
+
+	public ReportGenerationAiClient(
+			@Qualifier(AiClientConfig.AI_PROXY_CLIENT) AiClient aiClient,
+			AiUsageRecorder aiUsageRecorder) {
+		this.aiClient = aiClient;
+		this.aiUsageRecorder = aiUsageRecorder;
+	}
 
 	/**
 	 * 생성을 요청하고 jobId를 받는다. 202라 결과는 아직 없다.

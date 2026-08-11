@@ -23,6 +23,7 @@ import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisRes
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResultResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
+import com.bigproject.backend.global.ai.AiProxyHealthChecker;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
@@ -64,6 +65,7 @@ public class SubmissionService {
 	private final JdbcAnalysisResultQueryRepository analysisResultQueryRepository;
 	private final JdbcMeasurementAttemptOpener measurementAttemptOpener;
 	private final ApplicationEventPublisher eventPublisher;
+	private final AiProxyHealthChecker aiProxyHealthChecker;
 
 	/**
 	 * 파일당 상한. 정의서에 원천 컬럼이 없어 애플리케이션 상수로 두고 적용값을
@@ -91,6 +93,7 @@ public class SubmissionService {
 	@Transactional
 	public SubmissionResponse submitGithubUrl(
 			UUID userId, CreateGithubSubmissionRequest request, UUID idempotencyKey) {
+		requireAiProxyHealthy();
 		SubmissionContext context = requireSubmittableRound(userId, request.assessmentRoundId());
 		if (!context.getAllowGithubIntegration()) {
 			throw new SubmissionException(SubmissionErrorCode.SUBMISSION_METHOD_NOT_ALLOWED);
@@ -145,6 +148,23 @@ public class SubmissionService {
 	 * <p>{@link #supersedeCurrentSubmission}이 이미 같은 이유로 flush를 강제하고 있다 — JPA 지연 쓰기와
 	 * 생 JDBC를 섞는 자리마다 이 경계가 필요하다.
 	 */
+	/**
+	 * AI 프록시가 살아 있을 때만 제출을 받는다(2026-08-11).
+	 *
+	 * <p>이 서비스가 AI로 직접 나가지는 않는다는 원칙은 그대로다 — 여기서 하는 것은 생존 확인 한 번이고
+	 * 분석 요청은 여전히 커밋 후 이벤트가 보낸다. 그런데도 접수 시점에 확인하는 이유는, AI가 죽어 있으면
+	 * 제출은 200으로 응답되고 실패는 한참 뒤 분석 화면에만 나타나기 때문이다. 그때는 마감이 지나
+	 * 교육생이 할 수 있는 일이 없다.
+	 *
+	 * <p>⚠️ 트랜잭션 안에서 나가는 HTTP 호출이다. {@code ai.health.timeout}(기본 2초)이 그 상한이며,
+	 * 이 값을 늘리면 마감 직전 동시 제출에서 커넥션 점유 시간이 그만큼 길어진다.
+	 */
+	private void requireAiProxyHealthy() {
+		if (!aiProxyHealthChecker.isHealthy()) {
+			throw new SubmissionException(SubmissionErrorCode.AI_SERVER_UNAVAILABLE);
+		}
+	}
+
 	private void openAttempts(SubmissionContext context, UUID assessmentRoundId, Submission submission) {
 		submissionRepository.flush();
 		measurementAttemptOpener.openForTeam(context.getOrgId(), context.getTeamId(),
@@ -193,6 +213,7 @@ public class SubmissionService {
 	@Transactional
 	public SubmissionResponse submitZip(
 			UUID userId, UUID assessmentRoundId, MultipartFile file, UUID idempotencyKey) {
+		requireAiProxyHealthy();
 		SubmissionContext context = requireSubmittableRound(userId, assessmentRoundId);
 		if (!context.getAllowZipSubmission()) {
 			throw new SubmissionException(SubmissionErrorCode.SUBMISSION_METHOD_NOT_ALLOWED);
