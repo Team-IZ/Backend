@@ -141,8 +141,13 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		List<ConceptRow> conceptRows = conceptsByReport.getOrDefault(round.reportId(), List.of());
 		Map<UUID, List<StageAnswerRow>> answers = answersByReport.getOrDefault(round.reportId(), Map.of());
 
+		// 두 값 다 회차 단위다. 개념 카드마다 다시 계산하지 않고 한 번 정해 넘긴다.
+		boolean fullScope = DisclosureScope.FULL == scope(round.traineeDisclosureScope());
+		boolean retryPending = isRetryPending(round);
+
 		List<ConceptReportResponse> concepts = conceptRows.stream()
-				.map(row -> toConcept(row, answers.getOrDefault(row.problemId(), List.of())))
+				.map(row -> toConcept(row, answers.getOrDefault(row.problemId(), List.of()),
+						fullScope, retryPending))
 				.toList();
 
 		return new RoundReportResponse(
@@ -178,8 +183,31 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		return value == null ? null : ReportCompletionStatus.valueOf(value);
 	}
 
-	private ConceptReportResponse toConcept(ConceptRow row, List<StageAnswerRow> answerRows) {
-		List<QaEntryResponse> qa = answerRows.isEmpty()
+	/**
+	 * 개념 카드 하나.
+	 *
+	 * <h2>🔴 자기 답변을 언제 보여주는가</h2>
+	 *
+	 * <p>두 가지가 함께 막는다.
+	 * <ol>
+	 *   <li><b>공개 범위</b> — {@code FULL}이 아니면 답변을 보여주지 않는다. 뷰의
+	 *       {@code can_view_own_answers}와 같은 판정이다</li>
+	 *   <li><b>다시 보기 진행 상태</b> — 다시 보기 대상인데 <b>아직 안 했으면</b> 막는다.
+	 *       다시 풀어야 할 문제의 답을 먼저 보여주면 다시 보기가 성립하지 않는다</li>
+	 * </ol>
+	 *
+	 * <p>2번은 공개 범위와 무관하다. {@code FULL}로 공개된 리포트에서도 다시 보기 전이면 막는다 —
+	 * 매니저가 전부 공개했다고 해서 다시 풀 문제의 답이 열려야 할 이유는 없다.
+	 *
+	 * @param fullScope    이 리포트의 공개 범위가 {@code FULL}인가
+	 * @param retryPending 이 회차에 <b>아직 끝내지 않은</b> 다시 보기가 있는가
+	 */
+	private ConceptReportResponse toConcept(ConceptRow row, List<StageAnswerRow> answerRows,
+			boolean fullScope, boolean retryPending) {
+
+		boolean hideOwnAnswers = !fullScope || (row.reviewRequired() && retryPending);
+
+		List<QaEntryResponse> qa = (hideOwnAnswers || answerRows.isEmpty())
 				? null
 				: answerRows.stream()
 				.map(a -> new QaEntryResponse(slotLabel(a.axisCode(), a.slotCode()), a.questionText(), a.answerText()))
@@ -195,7 +223,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				row.reviewRequired(),
 				row.canViewExplanation() ? curriculumRef(row.curriculumLocationJson()) : null,
 				qa,
-				explain(row),
+				explain(row, fullScope, retryPending),
 				comparedReach(row.reviewBeforeAfterItemsJson())
 		);
 	}
@@ -267,15 +295,35 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	}
 
 	/** 막힌 이유 해설. 다시 보기 대상이고 근거 문장이 있을 때만 붙는다. */
-	private static List<String> explain(ConceptRow row) {
+	private static List<String> explain(ConceptRow row, boolean fullScope, boolean retryPending) {
 		if (!row.reviewRequired() || !row.canViewExplanation()) {
 			return null;
 		}
+		// 공개 범위가 FULL이 아니면 해설을 내보내지 않는다. SUMMARY는 "무엇을 어디까지 했는지"까지고,
+		// 막힌 이유를 풀어 주는 것은 그보다 한 단계 더 여는 것이다.
+		if (!fullScope) {
+			return null;
+		}
+		// 다시 보기 전에는 해설도 막는다 — 다시 풀 문제의 해설을 먼저 주면 다시 보기가 성립하지 않는다.
+		// 마친 뒤(retryState=DONE)에는 학습 자료로 열어 준다.
+		if (retryPending) {
+			return null;
+		}
+
 		List<String> lines = new ArrayList<>();
 		if (row.resultExplanation() != null && !row.resultExplanation().isBlank()) {
 			lines.add(row.resultExplanation());
 		}
-		if (row.answerExcerpt() != null && !row.answerExcerpt().isBlank()) {
+		/*
+		 * 🔴 answer_excerpt 는 학생이 실제로 입력한 답변이다
+		 * (problem_stage 의 second_hint/first_hint/question_answer_text 를 COALESCE 한 값이
+		 *  report_evidence.quote_excerpt 로 저장된 것).
+		 *
+		 * 그래서 qa 와 같은 기준으로 막아야 한다. 위 !fullScope 로 이미 걸리지만 조건을 따로 둔다 —
+		 * 그 조건이 나중에 완화되면 여기로 답변이 새기 때문이다. 실제로 종전 코드가 그 상태였다:
+		 * SUMMARY 에서 qa 는 막으면서 이 줄로 같은 답변의 발췌를 내보내고 있었다.
+		 */
+		if (fullScope && row.answerExcerpt() != null && !row.answerExcerpt().isBlank()) {
 			lines.add(row.answerExcerpt());
 		}
 		return lines.isEmpty() ? null : lines;
