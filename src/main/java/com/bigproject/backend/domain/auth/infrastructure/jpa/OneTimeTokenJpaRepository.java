@@ -38,9 +38,13 @@ public interface OneTimeTokenJpaRepository extends JpaRepository<OneTimeTokenJpa
 				(o.org_id IS NOT NULL AND o.deleted_at IS NOT NULL) AS "organizationDeleted",
 				EXISTS (
 					SELECT 1
-					FROM cohort_member cm
-					WHERE cm.user_id = u.user_id
-						AND cm.status IN ('INVITED', 'ACTIVE')
+					FROM cohort c
+					WHERE c.cohort_id = ui.target_cohort_id
+						AND c.org_id = ui.org_id
+						AND ui.target_role_code = 'TRAINEE'
+						AND ui.org_id IS NOT DISTINCT FROM ott.org_id
+						AND c.status <> 'CLOSED'
+						AND c.deleted_at IS NULL
 				) AS "onRoster"
 			FROM one_time_token ott
 			JOIN user_invitation ui ON ui.invitation_id = ott.invitation_id
@@ -67,8 +71,9 @@ public interface OneTimeTokenJpaRepository extends JpaRepository<OneTimeTokenJpa
 	 *       INNER 면 결과가 항상 0건이라 수락이 막힌다. {@code FOR UPDATE OF} 에서도 뺀다.</li>
 	 *   <li>{@code IS NOT DISTINCT FROM} — {@code NULL = NULL} 은 참이 아니라 UNKNOWN 이다.
 	 *       기관이 있는 초대에서는 {@code =} 와 동작이 같다.</li>
-	 *   <li>명단 검사는 EXISTS 하위 질의다. 집계 함수를 같은 질의 층에 두면 FOR UPDATE 와
-	 *       함께 쓸 수 없다.</li>
+	 *   <li>교육생 명단 범위는 초대 원장의 기수가 아직 수락 가능한지로 판정한다. 실제
+	 *       {@code cohort_member} 행은 수락 트랜잭션에서 생성하므로 여기서 요구하면 모든 신규 초대가
+	 *       명단 외로 거절된다.</li>
 	 * </ul>
 	 */
 	@Query(value = INVITATION_STATE_SELECT + "\nFOR UPDATE OF ott, ui, u", nativeQuery = true)

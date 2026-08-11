@@ -66,7 +66,7 @@ public class JpaAccountActivationRepository implements AccountActivationReposito
 
 	@Override
 	public boolean activateTraineeMembership(UUID userId, UUID invitationTokenId, Instant activatedAt) {
-		return cohortMemberRepository.activateByUserId(userId, activatedAt) == 1;
+		return cohortMemberRepository.createActiveFromInvitation(userId, invitationTokenId, activatedAt) == 1;
 	}
 
 	@Override
