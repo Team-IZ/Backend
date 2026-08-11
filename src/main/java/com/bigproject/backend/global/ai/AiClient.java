@@ -51,7 +51,7 @@ public class AiClient {
 	 * 설정 파일에는 드러나지 않는다. 프리픽스를 코드로 옮겨 환경변수는 호스트만 담는다.
 	 *
 	 * <p>단, 헬스체크({@code GET /api/health})는 이 프리픽스 밖이다.
-	 * {@link AiProxyHealthChecker} 참조.
+	 * {@link AiProxyWarmUp} 참조.
 	 */
 	public static final String API_V0 = "/api/v0";
 

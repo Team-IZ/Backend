@@ -51,6 +51,14 @@ public enum CurriculumErrorCode implements ApiErrorCode {
      */
     CURRICULUM_FILE_UNREADABLE(HttpStatus.SERVICE_UNAVAILABLE, "저장된 파일을 읽을 수 없습니다."),
 
+    /**
+     * AI 프록시를 깨우지 못해 교안을 보내지 못했다(2026-08-11).
+     *
+     * <p>전에는 웜업 실패가 전송 계층 예외 그대로 올라가 코드 없는 500으로 나갔다. 사용자가 할 수
+     * 있는 일이 재시도뿐이라는 점에서 {@code CURRICULUM_FILE_UNREADABLE}과 같은 성격의 503이다.
+     */
+    CURRICULUM_AI_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "AI 서버에 연결할 수 없어 지금은 분석을 요청할 수 없습니다."),
+
     /** 위 셋으로 갈라지지 않는 나머지 "불러오기 실패". 새 호출부는 가급적 구체 코드를 쓴다. */
     CURRICULUM_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "불러오지 못했습니다.");
 

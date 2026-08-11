@@ -98,25 +98,24 @@ springdoc:
     disable-swagger-default-url: true
     persist-authorization: true
 
-# AI(FastAPI) 연동.
-#
-# [2026-08-11] 대상 서버가 둘로 갈라졌다.
-#   proxy-base-url  : 리포트 생성, 세션 채점 — 아래 origin 대상이 아닌 전부
-#   origin-base-url : 교안 제출, 코드 제출(GitHub·ZIP) 분석
-#
-# 🔴 두 값 모두 호스트만 담고 `/api/v0`를 붙이지 않는다. 종전에는 AI_BASE_URL 값 자체에
-# 프리픽스가 들어 있었는데, 환경변수가 둘로 늘어난 이상 그 규약은 한쪽만 빠뜨리는 사고를 부른다
-# (그러면 그 경로만 404가 나고, 설정 파일만 봐서는 무엇이 잘못됐는지 드러나지 않는다).
-# 프리픽스는 코드 한 곳(AiClient.API_V0)에 있다. 여기에 다시 붙이면 /api/v0/api/v0가 된다.
+# AI(FastAPI) 연동. 서버가 둘이 아니라 딱 둘이다 -- 프록시(wake/sleep Lambda, 항상 이걸로
+# 먼저/보통 부른다)와 origin(App Runner 컨테이너 원본, PAUSED를 못 깨우지만 Lambda Function
+# URL의 6MB 동기 페이로드 상한이 없다 -- PDF·ZIP처럼 큰 본문은 여기로 직접 보낸다).
+# 예전엔 이게 AI_BASE_URL/AI_CURRICULUM_BASE_URL/AI_CURRICULUM_ORIGIN_BASE_URL 셋으로
+# 갈라져 있었는데(그중 둘은 완전히 같은 프록시를 가리키면서 이름만 달랐다), 2026-08-11
+# 프록시 하나·origin 하나로 통합했다 -- 두 물리 서버에 env var도 정확히 둘.
 ai:
   proxy-base-url: ${AI_PROXY_BASE_URL:http://localhost:8000}
-  origin-base-url: ${AI_ORIGIN_BASE_URL:http://localhost:8000}
-
-  # 코드 제출 접수 전 프록시 생존 확인(GET /api/health)에 쓰는 상한.
-  # 공용 read-timeout(150초)을 쓰면 프록시가 멈춰 있을 때 제출 요청 하나가 2분 30초 동안
-  # 톰캣 스레드를 붙든다 — "빨리 실패시켜 교육생에게 알린다"는 목적과 정반대다.
-  health:
-    timeout: ${AI_HEALTH_TIMEOUT:PT2S}
+  # App Runner 원본 도메인. 안 정하면 프록시와 같은 값으로 fallback(로컬 개발처럼
+  # 프록시/원본 구분이 없는 환경 대응).
+  origin-base-url: ${AI_ORIGIN_BASE_URL:${AI_PROXY_BASE_URL:http://localhost:8000}}
+  proxy:
+    # 원본으로 직접 보내기 전(교안 PDF·코드 제출) 프록시를 깨우는 GET /api/health의 상한.
+    #
+    # 🔴 짧게 잡으면 안 된다. 이 호출은 생존 확인이 아니라 기동 요청이고, 프록시가 원본이
+    # RUNNING이 될 때까지 동기로 기다린다(유휴 후 첫 호출 ~80초 관측). 2초 같은 값을 쓰면
+    # "잠들어 있는 정상 상태"가 전부 실패로 읽혀 AI가 멀쩡한데도 제출이 거부된다.
+    warm-up-timeout: ${AI_PROXY_WARM_UP_TIMEOUT:PT150S}
   # AI의 require_internal_key가 읽는 공유 비밀(X-Internal-Key).
   # 비워 두면 헤더를 아예 붙이지 않는다 — AI 쪽도 "키 미설정 = 로컬 개발"로 검증을 건너뛴다.
   internal-key: ${AI_INTERNAL_KEY:}
