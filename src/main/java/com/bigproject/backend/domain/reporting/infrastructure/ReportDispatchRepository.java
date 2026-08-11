@@ -92,6 +92,45 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 	 *
 	 * <p>{@link #BLOCKING_RUN_EXISTS}에는 같은 조건을 <b>넣지 않는다</b> — 이유는 그쪽 javadoc의 표.
 	 */
+	/**
+	 * 아직 진행 중인 단계가 남아 있는 세션인가. <b>남아 있으면 리포트를 만들지 않는다.</b>
+	 *
+	 * <h2>왜 세션 상태만으로는 모자란가</h2>
+	 *
+	 * <p>대상 선별은 {@code assessment_session.status='COMPLETED'}를 보는데, 그것과 개별
+	 * {@code problem_stage}의 정리는 다른 사건이다. 세션이 끝났다고 표시됐어도 stage가
+	 * {@code PREPARED}·{@code IN_PROGRESS}로 남아 있을 수 있다 — 세션 종료 로직이 남은 단계를
+	 * {@code NOT_REACHED}/{@code NOT_ANSWERED}로 정리한다는 <b>전제</b>에 기대고 있을 뿐이다
+	 * (Assessment 지속 의무 2번).
+	 *
+	 * <h2>정리가 안 된 채로 보내면 두 곳이 동시에 틀린다</h2>
+	 *
+	 * <ol>
+	 *   <li><b>AI</b> — {@code transcript[].status}를 <b>그대로 사용한다</b>(2026-08-10 AI 확인).
+	 *       "아직 진행 중"이 리포트에 그대로 찍힌다</li>
+	 *   <li><b>대표 축 판정</b> — {@code JdbcReportPayloadRepository.findConceptContext}의 미통과
+	 *       집합에 그 둘이 없어 {@code block_level}이 NULL이 되고 <b>L4가 대표 축</b>이 된다.
+	 *       학생이 도달조차 못 한 축을 "여기서 막혔다"고 보여주게 된다(한계 4)</li>
+	 * </ol>
+	 *
+	 * <h2>안 보내는 쪽을 택한 이유</h2>
+	 *
+	 * <p>보내면 <b>틀린 리포트가 학생에게 가고</b>, 안 보내면 대상에서 빠져 로그로 드러난다.
+	 * 뒤쪽은 고칠 수 있는 실패다. 다만 정리가 영영 안 되면 그 세션은 리포트가 없는 채로 남으므로,
+	 * {@code ReportBatchService}가 <b>미정리 세션 수를 경고로 남긴다</b> — 조용히 묻히면 안 된다.
+	 *
+	 * <p>⚠️ {@link #BLOCKING_RUN_EXISTS}·{@link #UNDER_ATTEMPT_LIMIT}와 성격이 다르다. 그 둘은
+	 * "얼마나 자주"를 막는 <b>조절기</b>라 운영자 수동 재생성이 넘어가지만, 이것은 "만들어도 되는
+	 * 데이터인가"를 보는 <b>유효성 규칙</b>이다. 그래서 {@link #findTargetBySession}에도 그대로 있다.
+	 */
+	String NO_UNFINISHED_STAGE = """
+			NOT EXISTS (
+			    SELECT 1 FROM problem_stage ps2
+			     WHERE ps2.session_id = s.session_id
+			       AND ps2.status IN ('PREPARED', 'IN_PROGRESS')
+			)
+			""";
+
 	String UNDER_ATTEMPT_LIMIT = """
 			(SELECT count(*) FROM report rp2
 			   JOIN report_generation_run run2 ON run2.report_id = rp2.report_id
@@ -137,6 +176,7 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			           'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
 			           'REVIEW_DUE_AT_EXPIRED', 'DATA_INTEGRITY_INVALID',
 			           'ADMIN_INVALIDATED', 'TECHNICAL_FAILURE'))
+			   AND\s""" + NO_UNFINISHED_STAGE + """
 			   AND NOT\s""" + BLOCKING_RUN_EXISTS + """
 			   AND\s""" + UNDER_ATTEMPT_LIMIT + """
 			 ORDER BY r.assessment_due_at, ma.user_id
@@ -199,8 +239,40 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			           'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
 			           'REVIEW_DUE_AT_EXPIRED', 'DATA_INTEGRITY_INVALID',
 			           'ADMIN_INVALIDATED', 'TECHNICAL_FAILURE'))
+			   AND\s""" + NO_UNFINISHED_STAGE + """
 			""", nativeQuery = true)
 	java.util.Optional<ReportTarget> findTargetBySession(UUID sessionId);
+
+	/**
+	 * 정리되지 않은 stage 때문에 대상에서 빠진 세션 수. 경고에만 쓴다.
+	 *
+	 * <p>{@link #NO_UNFINISHED_STAGE}가 조용히 걸러 버리면 "리포트가 왜 안 생기지"를 되짚을
+	 * 단서가 없다. 대상 조회와 같은 유효성 규칙을 적용한 뒤 <b>그 조건 하나만 뒤집어</b> 센다 —
+	 * 이미 리포트를 만든 세션까지 세면 숫자가 늘 커서 신호가 되지 않으므로 실행 게이트도 함께 본다.
+	 */
+	@Query(value = """
+			SELECT count(*)
+			  FROM assessment_session s
+			  JOIN measurement_attempt ma
+			    ON ma.attempt_id = s.attempt_id
+			  JOIN project_assessment_round r
+			    ON r.assessment_round_id = ma.assessment_round_id
+			   AND r.deleted_at IS NULL
+			 WHERE s.status  = 'COMPLETED'
+			   AND ma.status = 'COMPLETED'
+			   AND s.ended_at IS NOT NULL
+			   AND r.assessment_due_at IS NOT NULL
+			   AND s.ended_at < r.assessment_due_at
+			   AND now() >= COALESCE(r.report_publish_not_before_at, r.assessment_due_at)
+			   AND ma.validity_review_status <> 'CONFIRMED_INVALID'
+			   AND (s.end_reason_code IS NULL OR s.end_reason_code NOT IN (
+			           'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
+			           'REVIEW_DUE_AT_EXPIRED', 'DATA_INTEGRITY_INVALID',
+			           'ADMIN_INVALIDATED', 'TECHNICAL_FAILURE'))
+			   AND NOT\s""" + NO_UNFINISHED_STAGE + """
+			   AND NOT\s""" + BLOCKING_RUN_EXISTS + """
+			""", nativeQuery = true)
+	long countSessionsWithUnfinishedStages();
 
 	/**
 	 * 이 세션의 문제 목록. AI를 문제마다 부르므로 이 수만큼 item이 생긴다.

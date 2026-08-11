@@ -151,6 +151,7 @@ public class ReportBatchService {
 	 */
 	public int dispatchDueSessions() {
 		List<ReportTarget> targets = dispatchRepository.findDueSessions(maxAttempts);
+		warnAboutUnfinishedStages();
 		if (targets.isEmpty()) {
 			return 0;
 		}
@@ -180,6 +181,29 @@ public class ReportBatchService {
 			}
 		}
 		return dispatched;
+	}
+
+	/**
+	 * 정리되지 않은 stage 때문에 빠진 세션이 있으면 남긴다.
+	 *
+	 * <p>{@code NO_UNFINISHED_STAGE}가 조용히 걸러 버리면 "왜 리포트가 안 생기지"를 되짚을 단서가
+	 * 없다. 세션은 끝났다고 표시됐는데 단계가 {@code PREPARED}/{@code IN_PROGRESS}로 남았다는 뜻이라
+	 * <b>세션 종료 로직 쪽 문제</b>이고, 이쪽에서 고칠 수 있는 것이 아니다 — 그래서 대상 수가 아니라
+	 * 원인을 로그에 적는다.
+	 *
+	 * <p>세는 것 자체가 실패해도 배치는 계속 간다. 경고를 못 남긴 것이 요청을 막을 이유는 없다.
+	 */
+	private void warnAboutUnfinishedStages() {
+		try {
+			long blocked = dispatchRepository.countSessionsWithUnfinishedStages();
+			if (blocked > 0) {
+				log.warn("정리되지 않은 단계가 남아 리포트를 만들지 않은 세션 {}건. "
+						+ "세션 종료 시 남은 problem_stage 가 NOT_REACHED/NOT_ANSWERED 로 "
+						+ "정리되지 않았다 — 그대로 보내면 도달하지 못한 축이 대표로 잡힌다", blocked);
+			}
+		} catch (RuntimeException exception) {
+			log.warn("미정리 세션 수를 세지 못했다", exception);
+		}
 	}
 
 	/**
@@ -493,7 +517,23 @@ public class ReportBatchService {
 				target.getSessionId(),
 				// scoreRunId는 run을 만든 뒤에 채운다. 지금은 generation_run_id가 없다.
 				null,
-				model.getProviderModelCode(),
+				/*
+				 * 🔴 model.getProviderModelCode() 가 아니라 설정값(ai.report.model-code)을 보낸다.
+				 *
+				 * 정의상으로는 provider_model_code 가 맞다(DDL: "공급자 원본 모델 식별자").
+				 * 그런데 운영 DB의 그 컬럼에는 접두어가 빠져 있고(minimax-m3), 공급자가 요구하는
+				 * 형식은 접두어 포함이다(minimaxai/minimax-m3 — OpenRouter 슬러그).
+				 * 설정값이 마침 그 형식이라 그대로 쓴다.
+				 *
+				 * ai_model 조회는 그대로 둔다 — "그 모델이 ACTIVE 로 존재하는가"를 확인하는 값이고,
+				 * 그게 없으면 아예 요청하지 않는 편이 맞다.
+				 *
+				 * 데이터가 정리되면(provider_model_code 에 접두어 반영) getProviderModelCode() 로
+				 * 되돌리는 것이 맞다. model_code 는 "화면·API·집계용 불변 키"라 우리 사정으로 바뀔
+				 * 수 있고, 그때 두 값이 갈라지면 AI 에 우리 키가 나간다.
+				 * 되돌릴 때는 sendsThePrefixedModelCode... 테스트를 먼저 고칠 것.
+				 */
+				modelCode,
 				payloadRepository.findTranscript(target.getSessionId(), problem.getProblemId()),
 				payloadRepository.findAnalysisDocuments(target.getCodeAnalysisId()),
 				payloadRepository.findTeaches(problem.getProblemId())

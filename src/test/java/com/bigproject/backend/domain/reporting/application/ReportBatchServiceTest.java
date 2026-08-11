@@ -147,6 +147,38 @@ class ReportBatchServiceTest {
 		assertThat(requests.getValue().idempotencyKey()).endsWith(":" + runId);
 	}
 
+	/**
+	 * 🔴 AI에 보내는 모델 식별자는 <b>접두어가 붙은 쪽</b>이어야 한다.
+	 *
+	 * <p>필드 이름은 {@code providerModelCode}지만 값은 설정값({@code ai.report.model-code})을 쓴다 —
+	 * 운영 DB의 {@code provider_model_code}에 접두어가 빠져 있고({@code minimax-m3}),
+	 * 공급자가 요구하는 형식은 {@code minimaxai/minimax-m3}이기 때문이다.
+	 *
+	 * <p>이 테스트가 그 의도적 어긋남을 고정한다. 데이터가 정리되면 이 테스트를 먼저 고치고
+	 * {@code getProviderModelCode()}로 되돌리면 된다 — 그 전에 되돌리면 AI가 모델을 못 찾는데
+	 * 응답이 200이라 조용히 기본 모델로 대체될 수 있다.
+	 */
+	@Test
+	void sendsThePrefixedModelCodeBecauseProviderModelCodeLacksIt() {
+		catalogHasTheConfiguredModel();
+		ReportTarget target = target();
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target));
+		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of(problem(1)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
+		when(aiClient.requestGeneration(any(), any()))
+				.thenReturn(new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		service.dispatchDueSessions();
+
+		ArgumentCaptor<ReportGenerationRequest> requests =
+				ArgumentCaptor.forClass(ReportGenerationRequest.class);
+		verify(aiClient).requestGeneration(requests.capture(), any());
+		assertThat(requests.getValue().providerModelCode())
+				.as("접두어가 빠지면 AI가 모델을 못 찾는다")
+				.isEqualTo(MODEL_CODE)
+				.isNotEqualTo(PROVIDER_MODEL_CODE);
+	}
+
 	/** 모델을 못 찾으면 아무 행도 남기지 않는다. run을 만들면 설정을 고쳐도 재시도 상한만 깎인다. */
 	@Test
 	void writesNothingWhenTheConfiguredModelIsMissingFromTheCatalog() {
@@ -230,6 +262,42 @@ class ReportBatchServiceTest {
 		ArgumentCaptor<ReportGenerationRun> runs = ArgumentCaptor.forClass(ReportGenerationRun.class);
 		verify(runRepository, times(2)).save(runs.capture());
 		assertThat(runs.getAllValues().get(0).getReportId()).isEqualTo(existing.getReportId());
+	}
+
+	/**
+	 * 정리되지 않은 stage 때문에 빠진 세션은 <b>반드시 로그로 드러나야 한다.</b>
+	 *
+	 * <p>{@code NO_UNFINISHED_STAGE}는 네이티브 SQL 안에 있어 이 테스트로 검증되지 않는다.
+	 * 검증할 수 있는 것은 <b>"조용히 걸러지지 않는가"</b>뿐이고, 그게 실제로 중요한 부분이다 —
+	 * 대상이 0건이어도 원인을 세러 가야 한다. 세션 종료 쪽 문제라 이쪽에서 고칠 수 없고,
+	 * 로그가 유일한 단서이기 때문이다.
+	 */
+	@Test
+	void countsBlockedSessionsEvenWhenThereIsNothingToDispatch() {
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of());
+		when(dispatchRepository.countSessionsWithUnfinishedStages()).thenReturn(4L);
+
+		assertThat(service.dispatchDueSessions()).isZero();
+
+		verify(dispatchRepository).countSessionsWithUnfinishedStages();
+	}
+
+	/** 경고를 못 남긴 것이 요청을 막을 이유는 없다. */
+	@Test
+	void keepsDispatchingWhenTheBlockedSessionCountFails() {
+		catalogHasTheConfiguredModel();
+		ReportTarget target = target();
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target));
+		when(dispatchRepository.countSessionsWithUnfinishedStages())
+				.thenThrow(new IllegalStateException("집계 실패"));
+		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of(problem(1)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
+		when(aiClient.requestGeneration(any(), any()))
+				.thenReturn(new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		assertThat(service.dispatchDueSessions()).isEqualTo(1);
+
+		verify(aiClient).requestGeneration(any(), any());
 	}
 
 	// ------------------------------------------------------------- 운영자 재생성
