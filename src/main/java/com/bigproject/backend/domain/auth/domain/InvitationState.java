@@ -26,7 +26,8 @@ import java.util.UUID;
  * @param purpose            {@code one_time_token.purpose} 원문. enum으로 변환하지 않는다 —
  *                           DB에 새 목적이 생겼을 때 {@code valueOf}가 던지면 판정 자체가 불가능해진다.
  * @param organizationStatus 기관이 없으면(슈퍼어드민 초대) {@code null}이다.
- * @param onRoster           교육생 명단({@code cohort_member})에 살아 있는 행이 있는가.
+ * @param onRoster           교육생 초대가 삭제·종료되지 않은 유효한 기수를 가리키는가. 실제
+ *                           {@code cohort_member} 행은 수락할 때 생성한다.
  */
 public record InvitationState(
 		UUID tokenId,

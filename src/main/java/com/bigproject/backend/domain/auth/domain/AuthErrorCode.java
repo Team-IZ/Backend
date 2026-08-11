@@ -97,11 +97,11 @@ public enum AuthErrorCode implements ApiErrorCode {
 	 */
 	INVITATION_ALREADY_ACCEPTED(HttpStatus.CONFLICT, "이미 수락된 초대입니다."),
 	/**
-	 * 교육생 초대인데 명단({@code cohort_member})에 살아 있는 자리가 없다 — 초대가 취소됐거나
-	 * 기수에서 빠졌다.
+	 * 교육생 초대가 가리키는 명단 범위가 더는 유효하지 않다 — 초대가 취소됐거나 대상 기수가
+	 * 종료·삭제됐다. 실제 {@code cohort_member} 행은 이 판정을 통과한 수락 트랜잭션에서 만든다.
 	 *
 	 * <p><b>{@code ACTIVATION_STATE_CHANGED}와 갈라야 한다.</b> 전에는 이 상황이 비밀번호를
-	 * 쓴 뒤 멤버십 갱신 단계에서 터져 "다시 시도해 주세요"(409)로 나갔다. 다시 시도해도 결과가
+	 * 쓴 뒤 멤버십 생성 단계에서 터져 "다시 시도해 주세요"(409)로 나갔다. 다시 시도해도 결과가
 	 * 같은 상황에 재시도를 권하는 오답이었다. 지금은 활성화를 시작하기 전에 막는다.
 	 */
 	INVITATION_NOT_IN_ROSTER(HttpStatus.FORBIDDEN, "명단에 등록되지 않은 계정입니다."),
