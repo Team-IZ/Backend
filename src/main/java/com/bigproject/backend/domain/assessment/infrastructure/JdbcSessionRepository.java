@@ -305,6 +305,27 @@ public class JdbcSessionRepository {
 	}
 
 	/**
+	 * 문제가 접힐 때 <b>아직 손대지 않은</b> 축을 {@code NOT_REACHED}로 닫는다.
+	 *
+	 * <p>그냥 두면 그 축들이 {@code PREPARED}로 남아 리포트가 "도달했는데 못 풀었다"와 "여기까지
+	 * 오지도 못했다"를 구분하지 못한다({@code JdbcReportPayloadRepository}가 세 상태를 함께 읽는다).
+	 *
+	 * <p>답이 하나라도 들어간 축은 건드리지 않는다 — {@code ck_problem_stage_status_2}의
+	 * {@code NOT_REACHED} 분기가 답변·점수·통과가 <b>모두</b> NULL일 것을 요구한다.
+	 */
+	public int markNotReached(UUID sessionId, UUID problemId) {
+		return jdbc.update("""
+				UPDATE problem_stage
+				   SET status = 'NOT_REACHED', updated_at = now(), row_version = row_version + 1
+				 WHERE session_id = ? AND problem_id = ?
+				   AND status IN ('PREPARED', 'IN_PROGRESS')
+				   AND question_answer_text IS NULL
+				   AND first_hint_answer_text IS NULL
+				   AND second_hint_answer_text IS NULL
+				""", sessionId, problemId);
+	}
+
+	/**
 	 * 연결 끊김을 <b>세션 단위로만</b> 누적한다.
 	 *
 	 * <p>답변 슬롯에 나누지 않는 것은 DDL 주석(v08)의 판단을 따른 것이다 — 무효 응시 판정

@@ -115,7 +115,14 @@ public final class SessionModels {
 			return firstHintPresentedAt != null ? 1 : 0;
 		}
 
-		/** 다음 답변이 들어갈 슬롯. 연 힌트 수가 곧 슬롯이다. */
+		/**
+		 * 다음 답변이 들어갈 슬롯. <b>연 힌트 수가 곧 슬롯이다</b> — 힌트를 하나 보고 쓴 답은
+		 * {@code first_hint_*}에 들어간다.
+		 *
+		 * <p>힌트가 열리는 경로는 둘이고 이 계산은 둘 다에 같게 적용된다 — 학생이 `다시 설명해 주세요`를
+		 * 눌러 <b>미리</b> 연 경우와, 답변이 3점 미만이라 <b>자동으로</b> 열린 경우다.
+		 * 이탈·첫 타이핑 지연을 쌓을 컬럼 묶음도 이 슬롯으로 고른다.
+		 */
 		public AnswerSlot nextSlot() {
 			return AnswerSlot.ofHintsUsed(hintsUsed());
 		}

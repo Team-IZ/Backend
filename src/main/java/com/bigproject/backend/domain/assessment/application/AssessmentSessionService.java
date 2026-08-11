@@ -142,15 +142,13 @@ public class AssessmentSessionService {
 			throw new SessionException(SessionErrorCode.HINT_EXHAUSTED);
 		}
 
-		// 힌트는 <b>직전 답변이 채점되어 미달일 때만</b> 열린다(정의서: 3점 미만이면 실패이고 그때 힌트를
-		// 보여준다). 통과한 단계를 막는 것만으로는 부족하다 — 아직 답하지 않은 슬롯은 passed 가 NULL 이라
-		// "통과 아님"으로 통과해 버리고, 그러면 학생이 질문에 답하기도 전에 힌트를 두 번 열 수 있다.
+		// 힌트가 열리는 경로는 둘이다 — 미달이면 자동으로 열리고(SessionTurnStore.autoHint), 학생이
+		// 원할 때 이 경로로 직접 연다. 화면의 `다시 설명해 주세요`는 답변란이 비어 있어도 `2번 남음`과
+		// 함께 활성이므로, 여기서 "먼저 답해야 한다"를 요구하면 정상 흐름이 409로 막힌다.
 		//
-		// 그렇게 건너뛴 슬롯은 영영 NULL 로 남는데, 마지막 힌트까지 미달일 때 쓰는 NOT_PASSED 는
-		// ck_problem_stage_status_2 가 "슬롯 셋이 모두 FALSE"를 요구한다. 즉 사고는 힌트를 열 때가 아니라
-		// 30분 뒤 마지막 제출에서 CHECK 위반 500 으로 터진다. 여기서 순서를 강제해야 그 자리가 생기지 않는다.
-		SlotState answered = stage.slot(AnswerSlot.ofHintsUsed(hintsUsed));
-		if (!answered.isAnswered() || Boolean.TRUE.equals(answered.passed())) {
+		// 그래서 막을 것은 <b>이미 끝난 질문</b>뿐이다. 통과했으면 더 설명할 것이 없고, 마지막 힌트까지
+		// 쓰고 미달이면 그 질문은 NOT_PASSED로 닫혀 있다.
+		if (stage.isTerminal()) {
 			throw new SessionException(SessionErrorCode.HINT_NOT_AVAILABLE);
 		}
 

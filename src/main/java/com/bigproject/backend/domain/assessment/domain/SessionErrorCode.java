@@ -43,9 +43,9 @@ public enum SessionErrorCode {
 	/** 단계당 2회를 다 썼다. 화면은 버튼을 문구로 바꾸므로 정상 흐름에서는 오지 않는다. */
 	HINT_EXHAUSTED(HttpStatus.CONFLICT, "더 이상 설명해 드릴 수 없습니다."),
 	/**
-	 * 직전 답변이 <b>채점되어 미달</b>일 때만 힌트가 열린다. 아직 답하지 않았거나 이미 통과한 단계는
-	 * 여기로 걸린다. DB CHECK({@code ck_problem_stage_*_hint_presented_at})와 같은 규칙이되, 그쪽은
-	 * NULL 비교라 "아직 채점 전"을 걸러 주지 못해 여기서 막는다.
+	 * 힌트는 답하기 전에도 열 수 있고 미달 후에는 자동으로도 열린다. 그래서 여기로 걸리는 것은
+	 * <b>끝난 질문</b>(통과했거나 마지막 힌트까지 쓰고 미달이라 {@code NOT_PASSED}로 닫혔다)과
+	 * 다시 보기뿐이다 — 둘 다 보여 줄 화면이 없다.
 	 */
 	HINT_NOT_AVAILABLE(HttpStatus.CONFLICT, "지금은 다시 설명을 받을 수 없습니다."),
 
