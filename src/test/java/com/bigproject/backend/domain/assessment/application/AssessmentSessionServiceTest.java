@@ -72,15 +72,42 @@ class AssessmentSessionServiceTest {
 	}
 
 	/**
-	 * 힌트는 "3점 미만이면 실패이고 그때 보여준다"는 순서를 지킨다. 답하기 전에 열리면 질문 슬롯이
-	 * 비어 있는 채로 힌트만 소모되고, 마지막에 {@code NOT_PASSED}를 쓸 때
-	 * {@code ck_problem_stage_status_2}가 "슬롯 셋이 모두 FALSE"를 요구해 CHECK 위반으로 터진다.
+	 * 재진술은 <b>답하기 전에</b> 여는 것이다. 화면의 `다시 설명해 주세요`는 답변란이 비어 있어도
+	 * `2번 남음`과 함께 활성이고, 질문을 이해하지 못했을 때 누른다 — 채점 미달의 결과가 아니다.
 	 */
 	@Test
-	void 답하기_전에는_힌트를_열_수_없다() {
+	void 답하기_전에도_재진술을_열_수_있다() {
 		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
-		when(repository.findStage(STAGE_ID))
-				.thenReturn(Optional.of(stage(0, new SlotState(null, null, null, null))));
+		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(stage(0)));
+		when(repository.openHint(any(), any(), anyLong())).thenReturn(1);
+
+		HintResponse response = service.openHint(USER_ID, SESSION_ID);
+
+		assertThat(response.hintText()).isEqualTo("힌트1");
+		verify(repository).openHint(STAGE_ID, AnswerSlot.FIRST_HINT, 3L);
+	}
+
+	/**
+	 * 미달로 답한 뒤에도 열린다 — 그 자리가 바로 힌트를 보고 다시 답하는 자리다. 자동으로 이미
+	 * 열렸다면 {@code hintsUsed}가 올라가 있어 이 경로는 두 번째 힌트를 준다.
+	 */
+	@Test
+	void 미달로_답한_뒤에도_재진술을_열_수_있다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
+		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(stage(0, failed())));
+		when(repository.openHint(any(), any(), anyLong())).thenReturn(1);
+
+		HintResponse response = service.openHint(USER_ID, SESSION_ID);
+
+		assertThat(response.hintText()).isEqualTo("힌트1");
+		verify(repository).openHint(STAGE_ID, AnswerSlot.FIRST_HINT, 3L);
+	}
+
+	/** 통과한 질문에는 더 설명할 것이 없다. 힌트가 남아 있어도 열지 않는다. */
+	@Test
+	void 끝난_질문에는_재진술을_열_수_없다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
+		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(passedStage()));
 
 		assertThatThrownBy(() -> service.openHint(USER_ID, SESSION_ID))
 				.isInstanceOf(SessionException.class)
@@ -89,22 +116,9 @@ class AssessmentSessionServiceTest {
 		verify(repository, never()).openHint(any(), any(), anyLong());
 	}
 
-	/** 3점 이상으로 통과한 단계에는 더 설명할 것이 없다. */
+	/** 한 번 열었으면 두 번째가 남아 있다. 답변 여부와 무관하게 축당 2회다. */
 	@Test
-	void 통과한_단계에는_힌트를_열_수_없다() {
-		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
-		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(
-				stage(0, new SlotState("답", (short) 4, true, Instant.now()))));
-
-		assertThatThrownBy(() -> service.openHint(USER_ID, SESSION_ID))
-				.isInstanceOf(SessionException.class)
-				.extracting(exception -> ((SessionException) exception).getErrorCode())
-				.isEqualTo(SessionErrorCode.HINT_NOT_AVAILABLE);
-	}
-
-	/** 첫 힌트 재답변도 미달이면 마지막 힌트가 열린다. */
-	@Test
-	void 첫_힌트_재답변도_미달이면_마지막_힌트를_준다() {
+	void 재진술을_한_번_썼으면_두_번째를_준다() {
 		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
 		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(stage(1)));
 		when(repository.openHint(any(), any(), anyLong())).thenReturn(1);
@@ -274,19 +288,24 @@ class AssessmentSessionServiceTest {
 	}
 
 	/**
-	 * 힌트를 {@code hintsUsed}개 연 단계. 힌트는 <b>직전 답변이 미달일 때만</b> 열리므로 질문 슬롯은
-	 * 언제나 답해서 미달인 상태이고, 힌트를 하나 더 열었다면 첫 힌트 슬롯도 그렇다.
+	 * 힌트를 {@code hintsUsed}개 연 단계. 질문 슬롯은 <b>비워 둔다</b> — 힌트는 미달 후 자동으로도,
+	 * 학생이 원할 때 직접도 열리므로 "먼저 답했다"가 전제가 아니다.
 	 */
 	private static SessionStage stage(int hintsUsed) {
-		return stage(hintsUsed, failed());
+		return stage(hintsUsed, new SlotState(null, null, null, null));
+	}
+
+	/** 첫 답에 통과해 닫힌 단계. 힌트는 둘 다 남아 있지만 열 이유가 없다. */
+	private static SessionStage passedStage() {
+		SlotState empty = new SlotState(null, null, null, null);
+		return new SessionStage(STAGE_ID, PROBLEM_ID, 1, "L1", 1, "질문", "힌트1", "힌트2", "PASSED",
+				new SlotState("답", (short) 4, true, Instant.now()), empty, empty, null, null, 3L);
 	}
 
 	private static SessionStage stage(int hintsUsed, SlotState question) {
 		SlotState empty = new SlotState(null, null, null, null);
 		return new SessionStage(STAGE_ID, PROBLEM_ID, 1, "L1", 1, "질문", "힌트1", "힌트2", "IN_PROGRESS",
-				question,
-				hintsUsed >= 1 ? failed() : empty,
-				empty,
+				question, empty, empty,
 				hintsUsed >= 1 ? Instant.now() : null,
 				hintsUsed >= 2 ? Instant.now() : null,
 				3L);

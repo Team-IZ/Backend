@@ -232,9 +232,38 @@ public class AssessmentSessionController {
 
 					| 필드 | 타입 | 설명 |
 					|---|---|---|
-					| `outcome` | enum | `NEXT_TURN` · `NEXT_PROBLEM` · `PROBLEM_CLOSED` · `SESSION_ENDED` |
+					| `outcome` | enum | `RETRY_WITH_HINT` · `NEXT_TURN` · `NEXT_PROBLEM` · `PROBLEM_CLOSED` · `SESSION_ENDED` |
 					| `nextProblemNo` | int? | 다음에 설 문제 번호. 세션이 끝났으면 `null` |
 					| `next` | object? | 다음 질문. 세션이 끝났으면 `null` |
+					| `hint` | object? | 3점 미만이라 **자동으로 열린** 힌트. 아니면 `null` |
+
+					**hint** — `{ hintText, hintsUsed, hintsLeft }`
+
+					⚠️ **`hint`가 오면 같은 질문에 다시 답하는 것이다.** 화면은 새 질문 말풍선을 쌓지 말고
+					힌트를 덧붙인 뒤 같은 자리에서 답을 다시 받는다(`outcome=RETRY_WITH_HINT`).
+					`POST /hints`와 **같은 UPDATE로 표시 시각까지 남긴 뒤** 내려오므로, 이 응답을 받고
+					`POST /hints`를 따로 부르면 힌트를 두 개 쓰게 된다.
+
+					`hint`가 `null`인 경우는 넷 — 통과했다 · 힌트를 다 썼다 · AI가 이 질문을 닫았다 ·
+					다시 보기다. 앞의 셋은 `outcome`으로 갈린다.
+
+					💡 **이것이 점수를 알려주지 않으면서 미달을 전하는 유일한 신호다.** 점수·통과 여부는
+					응답에 없다(정의서 §7).
+
+					## 한 질문의 수명
+
+					```
+					답변 ─3점 이상→ 통과. AI가 정한 다음 자리로 (NEXT_TURN · NEXT_PROBLEM · SESSION_ENDED)
+					     └3점 미만→ 힌트 자동 공개 + 같은 질문 재도전 (RETRY_WITH_HINT)  ← 최대 2회
+					                └ 힌트 2개 다 쓰고도 미달 → **다음 문제로** (PROBLEM_CLOSED)
+					```
+
+					⚠️ **마지막 줄은 축과 무관하다.** `L1`에서 힌트 2개를 쓰고 미달이어도 `L2`를 묻지 않고
+					곧바로 다음 문제로 넘어간다 — 두 번 설명하고도 닿지 않았으면 같은 코드에 더 물어도
+					얻을 것이 없다는 학습 정책이다. **이 판정만 백엔드가 AI 커서를 덮어쓴다**(나머지
+					진행은 전부 AI가 정한다). 접힌 문제의 남은 축은 `NOT_REACHED`로 닫힌다.
+
+					다음 문제가 없으면 `SESSION_ENDED`다.
 
 					**next**
 
@@ -291,6 +320,17 @@ public class AssessmentSessionController {
 					이미 동결돼 DB에 있고 세션은 꺼내 보여줄 뿐이다("힌트는 재진술만 — 질문을 다르게 말할 뿐
 					코드 위치·선택지·답의 방향을 주지 않는다"). 즉답이다.
 
+					💡 **힌트가 열리는 경로는 둘이다.** 답변이 3점 미만이면 `POST /answers`의 응답에
+					`hint`로 **자동으로** 열려 내려오고, 학생이 원할 때는 이 경로로 **직접** 연다.
+					둘은 같은 횟수(질문당 2회)를 나눠 쓰며 같은 UPDATE를 탄다.
+
+					답변란이 비어 있어도 부를 수 있다 — 질문을 이해하지 못했을 때 미리 보는 용도다.
+					반대로 **끝난 질문에는 열리지 않는다**(통과했거나, 마지막 힌트까지 쓰고 미달이라
+					`NOT_PASSED`로 닫혔다).
+
+					⚠️ `POST /answers`가 `hint`를 함께 준 뒤에 이 경로를 또 부르면 **두 번째 힌트가 열린다.**
+					자동으로 받은 힌트는 이미 소진된 것이므로 화면은 그것을 그리기만 하고 다시 부르지 않는다.
+
 					## 요청 (경로 파라미터)
 
 					| 파라미터 | 필수 | 타입 | 설명 |
@@ -317,7 +357,7 @@ public class AssessmentSessionController {
 					| 코드 | 상태 | 언제 |
 					|---|---|---|
 					| `HINT_EXHAUSTED` | 409 | 단계당 2회를 다 썼다 |
-					| `HINT_NOT_AVAILABLE` | 409 | 다시 보기이거나, 이미 통과한 단계다 |
+					| `HINT_NOT_AVAILABLE` | 409 | 다시 보기이거나, 이미 답을 제출한 질문이다 |
 					| `SESSION_NOT_STARTED` | 409 | `POST /start`를 아직 부르지 않았다 |
 
 					다시 보기에서 막는 근거는 정의서 §6+다 — "이번에는 다시 설명해 드리지 않아요. 지난번과 같은

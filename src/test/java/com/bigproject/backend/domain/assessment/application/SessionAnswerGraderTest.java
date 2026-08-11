@@ -70,6 +70,9 @@ class SessionAnswerGraderTest {
 	/**
 	 * 확정된 답변만 transcript에 들어간다. 힌트를 열어 두기만 하고 답하지 않은 슬롯은 답이 없으므로
 	 * 나오면 안 된다 — {@code answerText}가 필수 필드라 빈 턴을 보내면 계약 위반이다.
+	 *
+	 * <p>한 축에서 턴이 둘 나오는 것은 미달 후 힌트를 보고 <b>같은 질문에 다시 답했기</b> 때문이고,
+	 * {@code hintsUsed}가 몇 번째 시도인지를 말한다.
 	 */
 	@Test
 	void 확정된_답변만_transcript에_넣는다() {
@@ -86,27 +89,42 @@ class SessionAnswerGraderTest {
 	/** 커서는 지금 답하는 자리를 가리킨다. 이게 어긋나면 AI가 다른 축의 기준으로 채점한다. */
 	@Test
 	void 커서는_지금_답하는_자리를_가리킨다() {
-		grader.grade(head(), List.of(problem()), stageL2(), AnswerSlot.FIRST_HINT, "답변", "trace");
+		grader.grade(head(), List.of(problem()), stageL2(), AnswerSlot.QUESTION, "답변", "trace");
 
 		AnswerSubmit body = capture();
 		assertThat(body.cursor().problemId()).isEqualTo(PROBLEM_ID);
 		assertThat(body.cursor().axisCode()).isEqualTo("L2");
-		assertThat(body.cursor().hintsUsed()).isEqualTo(1);
+		assertThat(body.cursor().hintsUsed()).isZero();
+	}
+
+	/**
+	 * 커서의 {@code hintsUsed}는 <b>답변 슬롯이 아니라 재진술 횟수</b>다. 슬롯에서 뽑으면 답변이
+	 * 언제나 질문 슬롯인 지금 모델에서 항상 0이 나가고, 재진술을 본 사실이 AI에 전달되지 않는다.
+	 */
+	@Test
+	void 커서의_힌트_수는_연_재진술_횟수다() {
+		grader.grade(head(), List.of(problem()), stageL2AfterOneHint(), AnswerSlot.QUESTION, "답변", "trace");
+
+		assertThat(capture().cursor().hintsUsed()).isEqualTo(1);
 	}
 
 	/**
 	 * 같은 자리에 대한 재전송은 같은 멱등키여야 한다. 다르면 AI가 새 요청으로 보고 LLM 비용을 다시 쓴다 —
 	 * 네트워크 타임아웃 후 재시도가 정확히 이 경우다.
+	 *
+	 * <p>재진술을 몇 번 열었는지는 키에 넣지 않는다. 넣으면 재전송 사이에 학생이 `다시 설명해 주세요`를
+	 * 한 번 더 누른 것만으로 키가 바뀌어 같은 답이 두 번 과금된다.
 	 */
 	@Test
 	void 같은_자리_재전송은_같은_멱등키를_쓴다() {
 		String first = SessionAnswerGrader.idempotencyKey(SESSION_ID, stageL2(), AnswerSlot.QUESTION).toString();
-		String again = SessionAnswerGrader.idempotencyKey(SESSION_ID, stageL2(), AnswerSlot.QUESTION).toString();
-		String afterHint = SessionAnswerGrader.idempotencyKey(SESSION_ID, stageL2(), AnswerSlot.FIRST_HINT)
+		String again = SessionAnswerGrader.idempotencyKey(SESSION_ID, stageL2AfterOneHint(), AnswerSlot.QUESTION)
+				.toString();
+		String otherAxis = SessionAnswerGrader.idempotencyKey(SESSION_ID, stageL1(), AnswerSlot.QUESTION)
 				.toString();
 
 		assertThat(first).isEqualTo(again);
-		assertThat(first).isNotEqualTo(afterHint);
+		assertThat(first).isNotEqualTo(otherAxis);
 	}
 
 	/** AI 실패는 학생 화면에서 할 수 있는 일이 "다시 제출"뿐이라 코드 하나로 접는다. */
@@ -142,12 +160,20 @@ class SessionAnswerGraderTest {
 				List.of(stageL1(), stageL2(), stage("L3", 3), stage("L4", 4)));
 	}
 
+	/** 첫 답이 미달이라 힌트가 열렸고, 힌트를 보고 쓴 두 번째 답으로 통과한 축. 턴이 둘 나온다. */
 	private static SessionStage stageL1() {
 		SlotState empty = new SlotState(null, null, null, null);
 		return new SessionStage(STAGE_L1, PROBLEM_ID, 1, "L1", 1, "L1 질문", "L1 힌트1", "L1 힌트2", "PASSED",
 				new SlotState("L1 답", (short) 2, false, Instant.now()),
 				new SlotState("L1 힌트 뒤 답", (short) 4, true, Instant.now()),
 				empty, Instant.now(), null, 2L);
+	}
+
+	/** 재진술을 한 번 연 채 아직 답하지 않은 L2. 커서의 {@code hintsUsed}가 1이어야 한다. */
+	private static SessionStage stageL2AfterOneHint() {
+		SlotState empty = new SlotState(null, null, null, null);
+		return new SessionStage(STAGE_L2, PROBLEM_ID, 1, "L2", 2, "L2 질문", "L2 힌트1", "L2 힌트2",
+				"IN_PROGRESS", empty, empty, empty, Instant.now(), null, 0L);
 	}
 
 	private static SessionStage stageL2() {

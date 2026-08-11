@@ -47,6 +47,7 @@ class SessionTurnStoreTest {
 	private static final UUID SESSION_ID = UUID.randomUUID();
 	private static final UUID USER_ID = UUID.randomUUID();
 	private static final UUID PROBLEM_ID = UUID.randomUUID();
+	private static final UUID OTHER_PROBLEM_ID = UUID.randomUUID();
 	private static final UUID STAGE_ID = UUID.randomUUID();
 
 	private JdbcSessionRepository repository;
@@ -73,8 +74,8 @@ class SessionTurnStoreTest {
 	}
 
 	/**
-	 * 미달인데 힌트가 남아 있으면 아직 끝난 단계가 아니다. 여기서 NOT_PASSED로 닫으면
-	 * {@code ck_problem_stage_status_2}가 "슬롯 셋이 모두 FALSE"를 요구해 CHECK 위반으로 터진다.
+	 * 미달인데 힌트가 남아 있으면 아직 끝난 질문이 아니다. 여기서 NOT_PASSED로 닫으면 학생이 힌트를
+	 * 보고 다시 답할 자리가 사라진다.
 	 */
 	@Test
 	void 미달이어도_힌트가_남았으면_IN_PROGRESS로_둔다() {
@@ -86,6 +87,53 @@ class SessionTurnStoreTest {
 				eq(false), eq("IN_PROGRESS"), anyLong());
 	}
 
+	/**
+	 * 힌트 2개를 다 쓰고도 미달이면 <b>축과 무관하게</b> 그 문제를 접고 다음 문제로 간다.
+	 * L1이든 L4든 같다 — 두 번 설명하고도 닿지 않았으면 같은 코드에 더 물을 것이 없다.
+	 *
+	 * <p>AI 커서를 덮어쓴다. AI가 같은 문제의 L2를 가리켜도 우리는 다음 문제로 옮긴다 —
+	 * 이 규칙이 모델 응답에 따라 흔들리면 리포트의 "도달 축"이 학생마다 다른 뜻이 된다.
+	 */
+	@Test
+	void 힌트를_다_쓰고_미달이면_다음_문제로_넘어간다() {
+		when(repository.findStages(SESSION_ID)).thenReturn(List.of(stage(), nextProblemStage()));
+		GradingInput input = new GradingInput(head("IN_PROGRESS", "INITIAL", null), List.of(problem()),
+				stageWithHints(2), AnswerSlot.SECOND_HINT);
+
+		AnswerSubmitResponse response = store.applyGrading(input, result(1, false, cursorAt("L2")), "답변");
+
+		assertThat(response.outcome()).isEqualTo("PROBLEM_CLOSED");
+		assertThat(response.nextProblemNo()).isEqualTo(2);
+		assertThat(response.next().questionText()).isEqualTo("2번 문제 질문");
+		assertThat(response.hint()).isNull();
+		verify(repository).moveCursor(eq(SESSION_ID), eq(OTHER_PROBLEM_ID), any());
+	}
+
+	/** 접힌 문제의 남은 축은 NOT_REACHED로 닫는다 — PREPARED로 두면 리포트가 미도달을 못 그린다. */
+	@Test
+	void 문제를_접으면_남은_축을_NOT_REACHED로_닫는다() {
+		when(repository.findStages(SESSION_ID)).thenReturn(List.of(stage(), nextProblemStage()));
+		GradingInput input = new GradingInput(head("IN_PROGRESS", "INITIAL", null), List.of(problem()),
+				stageWithHints(2), AnswerSlot.SECOND_HINT);
+
+		store.applyGrading(input, result(1, false, cursorAt("L2")), "답변");
+
+		verify(repository).markNotReached(SESSION_ID, PROBLEM_ID);
+	}
+
+	/** 마지막 문제에서 접히면 갈 곳이 없다 — 세션을 닫는다. */
+	@Test
+	void 마지막_문제에서_접히면_세션을_닫는다() {
+		when(repository.findStages(SESSION_ID)).thenReturn(List.of(stage()));
+		GradingInput input = new GradingInput(head("IN_PROGRESS", "INITIAL", null), List.of(problem()),
+				stageWithHints(2), AnswerSlot.SECOND_HINT);
+
+		AnswerSubmitResponse response = store.applyGrading(input, result(1, false, cursorAt("L2")), "답변");
+
+		assertThat(response.outcome()).isEqualTo("SESSION_ENDED");
+		verify(repository).end(eq(SESSION_ID), eq("ALL_PROBLEMS_TERMINAL"), any());
+	}
+
 	@Test
 	void 두번째_힌트까지_쓰고_미달이면_NOT_PASSED다() {
 		GradingInput input = input(AnswerSlot.SECOND_HINT);
@@ -94,6 +142,74 @@ class SessionTurnStoreTest {
 
 		verify(repository).applyAnswer(any(), eq(AnswerSlot.SECOND_HINT), anyString(),
 				org.mockito.ArgumentMatchers.anyInt(), eq(false), eq("NOT_PASSED"), anyLong());
+	}
+
+	/**
+	 * 3점 미만이면 힌트를 <b>자동으로</b> 연다. 학생이 `다시 설명해 주세요`를 누르기를 기다리지 않는다.
+	 *
+	 * <p>표시 시각을 함께 남기는 것이 핵심이다 — 문구만 응답에 실으면 새로고침 복귀 때 hintsUsed가
+	 * 0으로 되돌아가 학생이 힌트를 세 번, 네 번 쓴다. row_version은 방금의 applyAnswer가 1 올렸다.
+	 */
+	@Test
+	void 미달이면_다음_힌트를_자동으로_연다() {
+		when(repository.openHint(any(), any(), anyLong())).thenReturn(1);
+		GradingInput input = input(AnswerSlot.QUESTION);
+
+		AnswerSubmitResponse response = store.applyGrading(input, result(1, false, cursorAt("L1")), "답변");
+
+		verify(repository).openHint(STAGE_ID, AnswerSlot.FIRST_HINT, 4L);
+		assertThat(response.outcome()).isEqualTo("RETRY_WITH_HINT");
+		assertThat(response.hint().hintText()).isEqualTo("힌트1");
+		assertThat(response.hint().hintsUsed()).isEqualTo(1);
+		assertThat(response.hint().hintsLeft()).isEqualTo(1);
+	}
+
+	/** 통과했으면 더 설명할 것이 없다. 힌트를 열면 학생이 쓰지도 않은 횟수를 잃는다. */
+	@Test
+	void 통과하면_힌트를_열지_않는다() {
+		AnswerSubmitResponse response = store.applyGrading(input(AnswerSlot.QUESTION),
+				result(5, true, cursorAt("L2")), "답변");
+
+		verify(repository, never()).openHint(any(), any(), anyLong());
+		assertThat(response.hint()).isNull();
+		assertThat(response.outcome()).isNotEqualTo("RETRY_WITH_HINT");
+	}
+
+	/** 힌트를 다 썼으면 미달이어도 열 것이 없다 — 그 질문은 NOT_PASSED로 닫힌다. */
+	@Test
+	void 힌트를_다_썼으면_미달이어도_열지_않는다() {
+		GradingInput input = input(AnswerSlot.SECOND_HINT);
+
+		AnswerSubmitResponse response = store.applyGrading(input, result(1, false, cursorAt("L1")), "답변");
+
+		verify(repository, never()).openHint(any(), any(), anyLong());
+		assertThat(response.hint()).isNull();
+	}
+
+	/**
+	 * 커서가 다른 자리로 옮겨 갔으면 AI가 "이 질문은 여기까지"라고 판정한 것이다. 닫힌 질문에
+	 * 힌트를 붙이면 화면이 다음 질문 옆에 이전 질문의 힌트를 그린다.
+	 */
+	@Test
+	void 커서가_옮겨_갔으면_힌트를_열지_않는다() {
+		GradingInput input = input(AnswerSlot.QUESTION);
+
+		AnswerSubmitResponse response = store.applyGrading(input, result(1, false, cursorAt("L2")), "답변");
+
+		verify(repository, never()).openHint(any(), any(), anyLong());
+		assertThat(response.hint()).isNull();
+		assertThat(response.outcome()).isEqualTo("NEXT_TURN");
+	}
+
+	/** 다시 보기는 힌트가 없다(정의서 §6+). 미달이어도 자동으로 열리지 않는다. */
+	@Test
+	void 다시_보기에서는_자동_힌트도_열리지_않는다() {
+		GradingInput input = input(AnswerSlot.QUESTION, "REVIEW");
+
+		AnswerSubmitResponse response = store.applyGrading(input, result(1, false, cursorAt("L1")), "답변");
+
+		verify(repository, never()).openHint(any(), any(), anyLong());
+		assertThat(response.hint()).isNull();
 	}
 
 	/** 임계값 경계. 3점은 통과다 — DB CHECK의 {@code score >= 3}과 같은 값이어야 한다. */
@@ -271,8 +387,30 @@ class SessionTurnStoreTest {
 		return input(slot, "INITIAL");
 	}
 
+	/**
+	 * 슬롯과 단계를 <b>짝이 맞게</b> 만든다. 운영에서는 답변 슬롯이 {@code ofHintsUsed(hintsUsed)}로
+	 * 계산되므로 SECOND_HINT 슬롯이면 표시 시각 두 개가 반드시 차 있다 — 픽스처가 이 관계를 깨면
+	 * 자동 힌트 판정이 실제와 다른 조건으로 시험된다.
+	 */
 	private GradingInput input(AnswerSlot slot, String attemptType) {
-		return new GradingInput(head("IN_PROGRESS", attemptType, null), List.of(), stage(), slot);
+		return new GradingInput(head("IN_PROGRESS", attemptType, null), List.of(),
+				stageWithHints(slot.hintsUsed()), slot);
+	}
+
+	/** 다음 문제(problemNo=2)의 첫 축. 문제가 접혔을 때 커서가 옮겨 갈 자리다. */
+	private static SessionStage nextProblemStage() {
+		SlotState empty = new SlotState(null, null, null, null);
+		return new SessionStage(UUID.randomUUID(), OTHER_PROBLEM_ID, 2, "L1", 1, "2번 문제 질문",
+				"힌트1", "힌트2", "PREPARED", empty, empty, empty, null, null, 0L);
+	}
+
+	private static SessionStage stageWithHints(int hintsUsed) {
+		SlotState empty = new SlotState(null, null, null, null);
+		return new SessionStage(STAGE_ID, PROBLEM_ID, 1, "L1", 1, "질문", "힌트1", "힌트2", "IN_PROGRESS",
+				empty, empty, empty,
+				hintsUsed >= 1 ? Instant.now() : null,
+				hintsUsed >= 2 ? Instant.now() : null,
+				3L);
 	}
 
 	/** 축별 하이라이트 두 벌을 단 문제. L4에는 일부러 없다. */
