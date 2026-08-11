@@ -36,7 +36,7 @@ public class AiClientConfig {
 
 	@Bean(AI_REST_CLIENT)
 	public RestClient aiRestClient(
-			@Value("${ai.base-url:http://localhost:8000}") String baseUrl,
+			@Value("${ai.proxy-base-url:http://localhost:8000}") String proxyBaseUrl,
 			@Value("${ai.internal-key:}") String internalKey,
 			@Value("${ai.connect-timeout:PT5S}") Duration connectTimeout,
 			@Value("${ai.read-timeout:PT150S}") Duration readTimeout
@@ -45,8 +45,10 @@ public class AiClientConfig {
 		factory.setConnectTimeout(connectTimeout);
 		factory.setReadTimeout(readTimeout);
 
+		// AI 저장소 app/config.py의 API_V0_PREFIX가 /api/v0라 여기서 붙여 둔다 -- 이 빈을
+		// 쓰는 AiClient/ReportGenerationAiClient는 "/analyses"처럼 접두어 없는 상대경로만 쓴다.
 		RestClient.Builder builder = RestClient.builder()
-				.baseUrl(baseUrl)
+				.baseUrl(proxyBaseUrl + "/api/v0")
 				.requestFactory(factory);
 
 		// 키가 비면 헤더 자체를 붙이지 않는다. AI 쪽 require_internal_key가 "키 미설정 = 로컬 개발"로

@@ -33,19 +33,21 @@ public class AiCurriculumClient {
      * (Team-IZ-AI HANDOFF 참조) proxyClient로 먼저 깨운 뒤에만 써야 한다.
      */
     public AiCurriculumClient(
-            @Value("${ai.curriculum.base-url:http://localhost:8000}") String proxyBaseUrl,
-            @Value("${ai.curriculum.origin-base-url:${ai.curriculum.base-url:http://localhost:8000}}") String originBaseUrl,
+            @Value("${ai.proxy-base-url:http://localhost:8000}") String proxyBaseUrl,
+            @Value("${ai.origin-base-url:http://localhost:8000}") String originBaseUrl,
             @Value("${ai.curriculum.x-internal-key:}") String internalKey) {
+        // 프록시는 /api/health(v0 접두어 밖)만 부르므로 raw host 그대로 둔다.
         SimpleClientHttpRequestFactory proxyFactory = new SimpleClientHttpRequestFactory();
         proxyFactory.setConnectTimeout(Duration.ofSeconds(5));
         // 유휴 후 첫 웜업은 프록시가 ResumeService+RUNNING 대기를 동기로 하므로 최대 ~80초 관측됨.
         proxyFactory.setReadTimeout(Duration.ofSeconds(150));
         this.proxyClient = RestClient.builder().baseUrl(proxyBaseUrl).requestFactory(proxyFactory).build();
 
+        // origin은 /api/v0/curricula를 부르므로 접두어를 여기서 붙인다 -- AiClientConfig와 같은 컨벤션.
         SimpleClientHttpRequestFactory originFactory = new SimpleClientHttpRequestFactory();
         originFactory.setConnectTimeout(Duration.ofSeconds(5));
         originFactory.setReadTimeout(Duration.ofSeconds(60));
-        this.originClient = RestClient.builder().baseUrl(originBaseUrl).requestFactory(originFactory).build();
+        this.originClient = RestClient.builder().baseUrl(originBaseUrl + "/api/v0").requestFactory(originFactory).build();
 
         this.internalKey = internalKey;
     }
@@ -69,7 +71,7 @@ public class AiCurriculumClient {
         });
 
         return originClient.post()
-                .uri("/api/v0/curricula")
+                .uri("/curricula")
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .header("Idempotency-Key", idempotencyKey)
                 .header("X-Internal-Key", internalKey)
