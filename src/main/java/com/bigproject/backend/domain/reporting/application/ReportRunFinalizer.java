@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.reporting.application;
 
+import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
 import com.bigproject.backend.domain.reporting.domain.Report;
 import com.bigproject.backend.domain.reporting.domain.ReportCompletionStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportEvidence;
@@ -8,6 +9,7 @@ import com.bigproject.backend.domain.reporting.domain.ReportGenerationItemStatus
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRun;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRunStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportSnapshot;
+import com.bigproject.backend.domain.reporting.domain.TraineeReleaseStatus;
 import com.bigproject.backend.domain.reporting.infrastructure.JdbcReportPayloadRepository;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportEvidenceRepository;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportGenerationItemRepository;
@@ -18,8 +20,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,7 +42,6 @@ import java.util.UUID;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ReportRunFinalizer {
 
 	/** 집계 로직 버전. 산식이 바뀌면 올려서 과거 스냅샷과 구분한다. */
@@ -57,6 +58,85 @@ public class ReportRunFinalizer {
 	private final JdbcReportPayloadRepository payloadRepository;
 	private final ReportEvidenceFactory evidenceFactory;
 	private final ObjectMapper objectMapper;
+
+	/**
+	 * 자동 공개의 <b>행위자</b>. 비어 있으면 자동 공개를 하지 않는다(기본값).
+	 *
+	 * <h2>왜 설정값이어야 하나</h2>
+	 *
+	 * <p>{@code ck_report_trainee_release_status_2}가 {@code RELEASED}에 {@code trainee_released_by}
+	 * NOT NULL을 요구하고, 그 컬럼은 {@code app_user} FK다. 배치에는 "누가 공개했는가"에 넣을
+	 * 사용자가 없으므로 <b>밖에서 받아야</b> 한다.
+	 *
+	 * <p>운영에서는 자동화 전용 시스템 계정을 가리켜야 한다 — 그래야 조회로 "자동 공개된 건"이
+	 * 구분되고 감사 기록이 사람을 잘못 지목하지 않는다. 그 계정은 Member 도메인에 요청해 둔 상태다.
+	 * 로컬 확인용으로는 아무 계정이나 넣어도 동작한다.
+	 *
+	 * <h2>🔴 기본값이 비어 있는 이유</h2>
+	 *
+	 * <p>켜져 있으면 <b>매니저의 판단 없이</b> 리포트가 학생에게 나간다. {@code PARTIAL}(AI가 일부
+	 * 실패해 개념 카드가 빠진) 리포트도 그대로 나가므로, 켤지는 운영이 정할 일이지 기본값이 정할
+	 * 일이 아니다. 값이 없으면 종전대로 {@code NOT_CONFIGURED}로 남고 매니저가 연다.
+	 */
+	private final String autoReleaseActorId;
+
+	/** 자동 공개할 때 쓸 범위. {@code PRIVATE}은 {@link Report#release}가 거부한다. */
+	private final DisclosureScope autoReleaseScope;
+
+	/**
+	 * {@code @RequiredArgsConstructor}를 쓰지 않고 생성자를 직접 쓴다 — 이 프로젝트에 lombok.config가
+	 * 없어 {@link Value}가 생성자 파라미터로 복사되지 않기 때문이다({@code ReportBatchService}와 같은
+	 * 이유로 그쪽도 명시 생성자다).
+	 */
+	public ReportRunFinalizer(
+			ReportRepository reportRepository,
+			ReportGenerationRunRepository runRepository,
+			ReportGenerationItemRepository itemRepository,
+			ReportSnapshotRepository snapshotRepository,
+			ReportEvidenceRepository evidenceRepository,
+			JdbcReportPayloadRepository payloadRepository,
+			ReportEvidenceFactory evidenceFactory,
+			ObjectMapper objectMapper,
+			@Value("${app.report.auto-release.actor-user-id:}") String autoReleaseActorId,
+			@Value("${app.report.auto-release.scope:FULL}") DisclosureScope autoReleaseScope) {
+
+		this.reportRepository = reportRepository;
+		this.runRepository = runRepository;
+		this.itemRepository = itemRepository;
+		this.snapshotRepository = snapshotRepository;
+		this.evidenceRepository = evidenceRepository;
+		this.payloadRepository = payloadRepository;
+		this.evidenceFactory = evidenceFactory;
+		this.objectMapper = objectMapper;
+		this.autoReleaseActorId = autoReleaseActorId;
+		this.autoReleaseScope = autoReleaseScope;
+	}
+
+	/**
+	 * 발행 직후 공개까지 한다. 설정에 행위자가 없으면 아무것도 하지 않는다.
+	 *
+	 * <p>매니저가 이미 정한 리포트는 건드리지 않는다 — 재생성으로 이 자리에 다시 와도
+	 * {@code WITHHELD}(보류)나 이미 정해진 범위를 자동화가 뒤집으면 안 된다.
+	 * 대상은 <b>아무도 정하지 않은</b>({@code NOT_CONFIGURED}) 리포트뿐이다.
+	 */
+	private void autoRelease(Report report, Instant now) {
+		if (autoReleaseActorId == null || autoReleaseActorId.isBlank()) {
+			return;
+		}
+		if (report.getTraineeReleaseStatus() != TraineeReleaseStatus.NOT_CONFIGURED) {
+			return;
+		}
+		try {
+			report.release(autoReleaseScope, UUID.fromString(autoReleaseActorId), now);
+			log.info("리포트 자동 공개: reportId={}, scope={}, actor={}",
+					report.getReportId(), autoReleaseScope, autoReleaseActorId);
+		} catch (IllegalArgumentException exception) {
+			// UUID가 아니면 설정 오류다. 발행까지는 끝났으므로 여기서 예외를 올리면
+			// 이미 만든 스냅샷·근거가 롤백된다 — 공개만 포기하고 매니저 몫으로 남긴다.
+			log.error("app.report.auto-release.actor-user-id 가 UUID 형식이 아니다. "
+					+ "자동 공개를 건너뛴다: value={}", autoReleaseActorId);
+		}
+	}
 
 	/**
 	 * item이 전부 종료됐으면 실행을 닫는다. 아직이면 아무것도 하지 않는다.
@@ -109,6 +189,8 @@ public class ReportRunFinalizer {
 
 		// 발행은 마지막이다. 스냅샷과 근거가 다 들어간 뒤에야 화면이 그릴 것이 생긴다.
 		report.publish(now);
+		// 발행과 공개는 다른 사건이다. 설정이 있을 때만 공개까지 간다.
+		autoRelease(report, now);
 		reportRepository.save(report);
 
 		// 개념 카드 수를 함께 남긴다. completion 은 AI 성공 여부만 보므로 FULL 인데 카드가 모자란

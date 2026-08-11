@@ -257,6 +257,24 @@ password-reset:
   request-cooldown: ${PASSWORD_RESET_REQUEST_COOLDOWN:PT1M}
 
 app:
+  report:
+    # 리포트를 발행하면서 교육생 공개까지 자동으로 할지.
+    #
+    # 🔴 기본은 꺼 둔다(actor-user-id 가 비면 동작하지 않는다). 켜면 매니저의 판단 없이 리포트가
+    # 학생에게 나가고, AI가 일부 실패한 PARTIAL 리포트(개념 카드가 빠진 것)도 그대로 나간다.
+    # 켤지는 운영이 정할 일이라 기본값으로 정하지 않는다.
+    #
+    # actor-user-id 가 필요한 이유: ck_report_trainee_release_status_2 가 RELEASED 에
+    # trainee_released_by NOT NULL 을 요구하고 그 컬럼이 app_user FK 다. 배치에는 "누가
+    # 공개했는가"에 넣을 사용자가 없어서 밖에서 받아야 한다.
+    #
+    # 운영에서는 자동화 전용 시스템 계정을 가리켜야 한다 — 사람 계정을 넣으면 감사 기록이
+    # 그 사람을 지목한다. 로컬 확인용으로는 아무 계정 UUID 나 넣어도 동작한다.
+    auto-release:
+      actor-user-id: ${REPORT_AUTO_RELEASE_ACTOR:}
+      # SUMMARY 는 문답 원문을 닫는다. PRIVATE 은 Report.release 가 거부한다(비공개는 withhold).
+      scope: ${REPORT_AUTO_RELEASE_SCOPE:FULL}
+
   submission:
     # ZIP 제출물 저장 위치. 지금은 로컬 파일시스템이며 경로는 <root>/<orgId>/<teamId>/<submissionId>.zip 이다.
     # 인스턴스가 여러 대가 되거나 분석 배치가 별도 프로세스로 분리되면 이 경로로는 파일을 찾을 수 없으므로
