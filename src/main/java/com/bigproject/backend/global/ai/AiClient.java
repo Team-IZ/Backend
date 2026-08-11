@@ -201,6 +201,11 @@ public class AiClient {
 			}
 			if (node.hasNonNull("message")) {
 				message = node.get("message").asText();
+			} else if (node.hasNonNull("detail")) {
+				// FastAPI 기본 오류 봉투는 message가 아니라 detail을 쓴다. 이를 버리면
+				// 프록시의 404·502가 상태 코드만 남아 실제 장애 원인을 구분할 수 없다.
+				JsonNode detail = node.get("detail");
+				message = detail.isTextual() ? detail.asText() : detail.toString();
 			}
 			if (node.hasNonNull("retryable")) {
 				retryable = node.get("retryable").asBoolean();

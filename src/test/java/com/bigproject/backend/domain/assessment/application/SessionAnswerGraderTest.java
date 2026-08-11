@@ -11,6 +11,7 @@ import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionStag
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SlotState;
 import com.bigproject.backend.global.ai.AiCallException;
 import com.bigproject.backend.global.ai.AiClient;
+import com.bigproject.backend.global.ai.AiProxyWarmUp;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -26,6 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -44,12 +46,14 @@ class SessionAnswerGraderTest {
 	private static final UUID STAGE_L2 = UUID.randomUUID();
 
 	private AiClient aiClient;
+	private AiProxyWarmUp proxyWarmUp;
 	private SessionAnswerGrader grader;
 
 	@BeforeEach
 	void setUp() {
 		aiClient = mock(AiClient.class);
-		grader = new SessionAnswerGrader(aiClient);
+		proxyWarmUp = mock(AiProxyWarmUp.class);
+		grader = new SessionAnswerGrader(aiClient, proxyWarmUp);
 		when(aiClient.post(anyString(), any(), eq(AnswerResult.class), anyString(), any()))
 				.thenReturn(new AnswerResult(SESSION_ID, "IN_PROGRESS", null, null, null, null, null, null,
 						List.of()));
@@ -138,6 +142,23 @@ class SessionAnswerGraderTest {
 				.isInstanceOf(SessionException.class)
 				.extracting(exception -> ((SessionException) exception).getErrorCode())
 				.isEqualTo(SessionErrorCode.GRADING_FAILED);
+	}
+
+	@Test
+	void 게이트웨이_실패는_웜업_후_같은_요청을_한_번_재시도한다() {
+		AnswerResult recovered = new AnswerResult(SESSION_ID, "IN_PROGRESS", null, null, null, null,
+				null, null, List.of());
+		when(aiClient.post(anyString(), any(), eq(AnswerResult.class), anyString(), any()))
+				.thenThrow(new AiCallException(HttpStatus.BAD_GATEWAY, null, true, "게이트웨이 실패"))
+				.thenReturn(recovered);
+		when(proxyWarmUp.warmUp()).thenReturn(true);
+
+		AnswerResult result = grader.grade(head(), List.of(problem()), stageL2(), AnswerSlot.SECOND_HINT,
+				"답변", "trace");
+
+		assertThat(result).isSameAs(recovered);
+		verify(proxyWarmUp).warmUp();
+		verify(aiClient, times(2)).post(anyString(), any(), eq(AnswerResult.class), anyString(), any());
 	}
 
 	private AnswerSubmit capture() {

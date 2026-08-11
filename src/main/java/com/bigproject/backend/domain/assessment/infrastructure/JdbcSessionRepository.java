@@ -439,9 +439,15 @@ public class JdbcSessionRepository {
 	private static SlotState slot(ResultSet rs, String prefix) throws SQLException {
 		return new SlotState(
 				rs.getString(prefix + "_answer_text"),
-				(Short) rs.getObject(prefix + "_score"),
+				nullableShort(rs, prefix + "_score"),
 				(Boolean) rs.getObject(prefix + "_passed"),
 				instant(rs, prefix + "_answered_at"));
+	}
+
+	/** JDBC 드라이버가 SMALLINT를 Short 또는 Integer 어느 쪽으로 돌려줘도 같은 값으로 읽는다. */
+	static Short nullableShort(ResultSet rs, String column) throws SQLException {
+		Number value = (Number) rs.getObject(column);
+		return value == null ? null : value.shortValue();
 	}
 
 	private static Instant instant(ResultSet rs, String column) throws SQLException {

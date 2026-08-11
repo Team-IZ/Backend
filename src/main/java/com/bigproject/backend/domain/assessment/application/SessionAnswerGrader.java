@@ -18,6 +18,7 @@ import com.bigproject.backend.domain.assessment.domain.SessionModels.SlotState;
 import com.bigproject.backend.global.ai.AiCallException;
 import com.bigproject.backend.global.ai.AiClient;
 import com.bigproject.backend.global.ai.AiClientConfig;
+import com.bigproject.backend.global.ai.AiProxyWarmUp;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -52,9 +53,12 @@ public class SessionAnswerGrader {
 	private static final String ANSWERS_PATH_PREFIX = AiClient.API_V0 + "/sessions/";
 
 	private final AiClient aiClient;
+	private final AiProxyWarmUp proxyWarmUp;
 
-	public SessionAnswerGrader(@Qualifier(AiClientConfig.AI_PROXY_CLIENT) AiClient aiClient) {
+	public SessionAnswerGrader(@Qualifier(AiClientConfig.AI_PROXY_CLIENT) AiClient aiClient,
+			AiProxyWarmUp proxyWarmUp) {
 		this.aiClient = aiClient;
+		this.proxyWarmUp = proxyWarmUp;
 	}
 
 	/** 채점 모델. 비우면 AI 서버 기본값을 쓴다 — 다른 경로(analyses·curricula)와 같은 규칙이다. */
@@ -73,20 +77,45 @@ public class SessionAnswerGrader {
 				answerText,
 				problems.stream().map(SessionAnswerGrader::toProblem).toList(),
 				transcript(problems),
-				// hintsUsed는 답변 슬롯이 아니라 <b>이 답을 쓰기 전에 질문을 몇 번 다시 들었는가</b>다.
-				// slot은 언제나 QUESTION이므로 여기서 slot.hintsUsed()를 쓰면 항상 0이 나가고,
-				// AI는 재진술을 두 번 보고 쓴 답을 도움 없이 쓴 답과 같게 채점한다.
+				// hintsUsed는 <b>이 답을 쓰기 전에 질문을 몇 번 다시 들었는가</b>다.
+				// 표시 시각에서 복원한 값을 써야 새로고침 뒤에도 AI가 같은 도움 수준으로 채점한다.
 				new Cursor(currentStage.problemId(), currentStage.axisCode(), currentStage.hintsUsed(), null),
 				providerModelCode == null || providerModelCode.isBlank() ? null : providerModelCode);
 
+		String path = ANSWERS_PATH_PREFIX + head.sessionId() + "/answers";
 		try {
-			return aiClient.post(ANSWERS_PATH_PREFIX + head.sessionId() + "/answers", body, AnswerResult.class,
-					body.clientRequestId(), traceId);
-		} catch (AiCallException exception) {
+			return post(path, body, traceId);
+		} catch (AiCallException firstFailure) {
+			AiCallException finalFailure = firstFailure;
+			if (isGatewayFailure(firstFailure) && proxyWarmUp.warmUp()) {
+				log.warn("AI 게이트웨이 복구 후 채점을 한 번 재시도합니다: sessionId={}, status={}",
+						head.sessionId(), firstFailure.status());
+				try {
+					return post(path, body, traceId);
+				} catch (AiCallException retryFailure) {
+					finalFailure = retryFailure;
+				}
+			}
 			log.warn("채점 실패: sessionId={}, stageId={}, slot={}, retryable={}",
-					head.sessionId(), currentStage.problemStageId(), slot, exception.retryable(), exception);
-			throw new SessionException(SessionErrorCode.GRADING_FAILED, exception);
+					head.sessionId(), currentStage.problemStageId(), slot, finalFailure.retryable(), finalFailure);
+			throw new SessionException(SessionErrorCode.GRADING_FAILED, finalFailure);
 		}
+	}
+
+	private AnswerResult post(String path, AnswerSubmit body, String traceId) {
+		return aiClient.post(path, body, AnswerResult.class, body.clientRequestId(), traceId);
+	}
+
+	/** 프록시·원본 사이의 일시 장애만 웜업 후 재시도한다. 요청 오류인 4xx는 그대로 실패시킨다. */
+	private static boolean isGatewayFailure(AiCallException exception) {
+		if (!exception.retryable()) {
+			return false;
+		}
+		if (exception.status() == null) {
+			return true;
+		}
+		int status = exception.status().value();
+		return status == 502 || status == 503 || status == 504;
 	}
 
 	/**
