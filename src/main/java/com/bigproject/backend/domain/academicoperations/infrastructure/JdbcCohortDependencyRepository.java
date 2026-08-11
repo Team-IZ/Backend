@@ -19,8 +19,15 @@ public class JdbcCohortDependencyRepository implements CohortDependencyRepositor
 
 	@Override
 	public boolean hasMembers(UUID cohortId) {
-		// 이탈자(left_at IS NOT NULL)도 센다 — 지나간 등록도 지우면 안 되는 사실이다.
-		return exists("SELECT EXISTS (SELECT 1 FROM cohort_member WHERE cohort_id = ?)", cohortId);
+		// 이탈자와 초대 이력도 센다 — 수락 전에는 cohort_member가 없지만 명단을 올린 사실은 남는다.
+		return exists("""
+				SELECT EXISTS (
+					SELECT 1 FROM cohort_member WHERE cohort_id = ?
+					UNION ALL
+					SELECT 1 FROM user_invitation
+					WHERE target_cohort_id = ? AND target_role_code = 'TRAINEE'
+				)
+				""", cohortId, cohortId);
 	}
 
 	@Override
@@ -35,7 +42,7 @@ public class JdbcCohortDependencyRepository implements CohortDependencyRepositor
 				"SELECT EXISTS (SELECT 1 FROM project WHERE cohort_id = ? AND deleted_at IS NULL)", cohortId);
 	}
 
-	private boolean exists(String sql, UUID cohortId) {
-		return Boolean.TRUE.equals(jdbcTemplate.queryForObject(sql, Boolean.class, cohortId));
+	private boolean exists(String sql, Object... arguments) {
+		return Boolean.TRUE.equals(jdbcTemplate.queryForObject(sql, Boolean.class, arguments));
 	}
 }
