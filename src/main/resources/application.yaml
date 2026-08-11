@@ -120,6 +120,10 @@ ai:
   #     두 이름을 다 관리하면 한쪽만 채워 넣는 사고가 난다.
   curriculum:
     base-url: ${AI_CURRICULUM_BASE_URL:http://localhost:8000}
+    # PDF 업로드 실체는 여기(App Runner 원본 도메인)로 직접 간다 -- base-url(프록시)은
+    # Lambda Function URL 동기 페이로드 상한이 6MB라 PDF 멀티파트를 못 태운다. 안 정하면
+    # base-url과 같은 값으로 fallback(로컬 개발처럼 프록시/원본 구분이 없는 환경 대응).
+    origin-base-url: ${AI_CURRICULUM_ORIGIN_BASE_URL:${AI_CURRICULUM_BASE_URL:http://localhost:8000}}
     x-internal-key: ${AI_INTERNAL_API_KEY:}
 
 jwt:
