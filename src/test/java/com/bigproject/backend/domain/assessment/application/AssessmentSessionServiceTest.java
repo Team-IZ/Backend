@@ -10,6 +10,7 @@ import com.bigproject.backend.domain.assessment.domain.SessionModels.SlotState;
 import com.bigproject.backend.domain.assessment.infrastructure.JdbcSessionRepository;
 import com.bigproject.backend.domain.assessment.presentation.dto.HintResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.ProblemActivityResponse;
+import com.bigproject.backend.domain.assessment.presentation.dto.SessionActivityRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -205,11 +206,71 @@ class AssessmentSessionServiceTest {
 				.isEqualTo(SessionErrorCode.SESSION_NOT_ACCESSIBLE);
 	}
 
+	/**
+	 * 이탈은 <b>지금 답을 쓰고 있는 슬롯</b>에 붙는다(TR-03 §4 "이탈은 세션이 아니라 답변에 붙인다").
+	 * 슬롯을 클라이언트가 지목하게 두면 이미 닫힌 단계에 기록이 붙는다.
+	 */
+	@Test
+	void 창_이탈은_지금_답을_쓰는_슬롯에_붙는다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
+		// 힌트를 하나 연 상태 — 다음 답변이 들어갈 자리는 첫 힌트 슬롯이다.
+		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(stage(1)));
+
+		service.recordActivity(USER_ID, SESSION_ID, new SessionActivityRequest(42, null, 3500));
+
+		verify(repository).recordAway(SESSION_ID, STAGE_ID, AnswerSlot.FIRST_HINT, 42);
+		verify(repository).recordFirstKeystroke(STAGE_ID, AnswerSlot.FIRST_HINT, 3500);
+	}
+
+	/** 네트워크 장애는 특정 답변에 귀속시킬 성질이 아니다(DDL v08 주석). 세션 합계에만 쌓는다. */
+	@Test
+	void 연결_끊김은_슬롯에_나누지_않고_세션에만_쌓는다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
+		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(stage(0)));
+
+		service.recordActivity(USER_ID, SESSION_ID, new SessionActivityRequest(null, 8, null));
+
+		verify(repository).recordConnectionLoss(SESSION_ID, 8);
+		verify(repository, never()).recordAway(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt());
+	}
+
+	/** 빈 요청은 세션을 조회하기도 전에 막는다 — 받아 봐야 쓸 곳이 없고 화면 쪽 버그가 묻힌다. */
+	@Test
+	void 신호가_하나도_없으면_세션을_보지도_않고_거절한다() {
+		assertThatThrownBy(() ->
+				service.recordActivity(USER_ID, SESSION_ID, new SessionActivityRequest(null, null, null)))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.ACTIVITY_SIGNAL_REQUIRED);
+		verifyNoInteractions(repository);
+	}
+
+	/**
+	 * 세션을 닫은 뒤 도착한 복귀 비콘까지 받아 주면 종료 시각 이후의 이탈이 합계에 섞이고,
+	 * 그 합계를 무효 응시 판정({@code EXCESSIVE_WINDOW_LEAVE})이 읽는다.
+	 */
+	@Test
+	void 끝난_세션의_신호는_받지_않는다() {
+		when(repository.findOwned(SESSION_ID, USER_ID))
+				.thenReturn(Optional.of(head("INITIAL", "COMPLETED")));
+
+		assertThatThrownBy(() ->
+				service.recordActivity(USER_ID, SESSION_ID, new SessionActivityRequest(42, null, null)))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.SESSION_ALREADY_ENDED);
+		verify(repository, never()).recordAway(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt());
+	}
+
 	// ── 픽스처 ──
 
 	private static SessionHead head(String attemptType) {
+		return head(attemptType, "IN_PROGRESS");
+	}
+
+	private static SessionHead head(String attemptType, String status) {
 		return new SessionHead(SESSION_ID, UUID.randomUUID(), UUID.randomUUID(), USER_ID, UUID.randomUUID(),
-				attemptType, "IN_PROGRESS", PROBLEM_ID, STAGE_ID, Instant.now(), null, null, UUID.randomUUID());
+				attemptType, status, PROBLEM_ID, STAGE_ID, Instant.now(), null, null, UUID.randomUUID());
 	}
 
 	/**

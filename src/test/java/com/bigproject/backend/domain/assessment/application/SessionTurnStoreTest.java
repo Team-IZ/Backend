@@ -2,16 +2,20 @@ package com.bigproject.backend.domain.assessment.application;
 
 import com.bigproject.backend.domain.assessment.application.AnswerGradingContract.AnswerResult;
 import com.bigproject.backend.domain.assessment.application.AnswerGradingContract.Cursor;
+import com.bigproject.backend.domain.assessment.application.AnswerGradingContract.Question;
 import com.bigproject.backend.domain.assessment.application.AnswerGradingContract.TranscriptTurn;
 import com.bigproject.backend.domain.assessment.application.SessionTurnStore.GradingInput;
 import com.bigproject.backend.domain.assessment.domain.AnswerSlot;
 import com.bigproject.backend.domain.assessment.domain.SessionErrorCode;
 import com.bigproject.backend.domain.assessment.domain.SessionException;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionHead;
+import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionProblem;
+import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionProblemReference;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionStage;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SlotState;
 import com.bigproject.backend.domain.assessment.infrastructure.JdbcSessionRepository;
 import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitResponse;
+import com.bigproject.backend.domain.assessment.presentation.dto.ProblemActivityResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -227,6 +231,40 @@ class SessionTurnStoreTest {
 		verify(repository).end(SESSION_ID, "POLICY_TIME_LIMIT_EXCEEDED", null);
 	}
 
+	/**
+	 * 질문은 축마다 다른 줄을 가리킨다(화면 목업: 질문 1 → {@code 5–8}, 질문 2 → {@code 39–41}).
+	 * 다음 질문 문구만 주고 구간을 빼면 화면은 이전 질문의 구간을 강조한 채 다음 질문을 묻는다.
+	 */
+	@Test
+	void 다음_질문의_강조_구간이_축을_따라_옮겨간다() {
+		GradingInput input = new GradingInput(head("IN_PROGRESS", "INITIAL", null), List.of(problem()),
+				stage(), AnswerSlot.QUESTION);
+
+		AnswerSubmitResponse response = store.applyGrading(input,
+				new AnswerResult(SESSION_ID, "IN_PROGRESS", turn(5, true), cursorAt("L2"),
+						new Question(PROBLEM_ID, "L2", 2, "질문2", null, 0), null, null, null, List.of()),
+				"답변");
+
+		assertThat(response.next().axisCode()).isEqualTo("L2");
+		assertThat(response.next().highlight())
+				.isEqualTo(new ProblemActivityResponse.Highlight("graph.py", 39, 41));
+	}
+
+	/** 그 축에 하이라이트가 없으면 문제의 대표 구간으로 떨어진다 — 강조가 사라지지는 않는다. */
+	@Test
+	void 축에_하이라이트가_없으면_대표_구간을_쓴다() {
+		GradingInput input = new GradingInput(head("IN_PROGRESS", "INITIAL", null), List.of(problem()),
+				stage(), AnswerSlot.QUESTION);
+
+		AnswerSubmitResponse response = store.applyGrading(input,
+				new AnswerResult(SESSION_ID, "IN_PROGRESS", turn(5, true), cursorAt("L2"),
+						new Question(PROBLEM_ID, "L4", 4, "질문4", null, 0), null, null, null, List.of()),
+				"답변");
+
+		assertThat(response.next().highlight())
+				.isEqualTo(new ProblemActivityResponse.Highlight("graph.py", 1, 60));
+	}
+
 	// ── 픽스처 ──
 
 	private GradingInput input(AnswerSlot slot) {
@@ -235,6 +273,15 @@ class SessionTurnStoreTest {
 
 	private GradingInput input(AnswerSlot slot, String attemptType) {
 		return new GradingInput(head("IN_PROGRESS", attemptType, null), List.of(), stage(), slot);
+	}
+
+	/** 축별 하이라이트 두 벌을 단 문제. L4에는 일부러 없다. */
+	private static SessionProblem problem() {
+		return new SessionProblem(PROBLEM_ID, 1, "Graph 구성", "DESIGN_CHOICE", null, null, null,
+				"snippet-1", "python", "graph.py", 1, 60, "hash", 1, "코드 전체", "content-hash",
+				List.of(new SessionProblemReference("QUESTION_HIGHLIGHT", 1, "graph.py", 5, 8, "L1", null, "h1"),
+						new SessionProblemReference("QUESTION_HIGHLIGHT", 2, "graph.py", 39, 41, "L2", null, "h2")),
+				List.of(stage(), nextStage()));
 	}
 
 	private static SessionHead head(String status, String attemptType, Instant timeLimitAt) {

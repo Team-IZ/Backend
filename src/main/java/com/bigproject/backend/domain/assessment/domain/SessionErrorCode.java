@@ -35,6 +35,10 @@ public enum SessionErrorCode {
 	/** 같은 단계에 두 번 제출됐다. 낙관적 잠금(row_version) 충돌이므로 다시 불러오면 된다. */
 	ANSWER_ALREADY_SUBMITTED(HttpStatus.CONFLICT, "이미 제출된 답변입니다."),
 
+	// ── 관찰 신호 ──
+	/** 이탈·연결 끊김·첫 타이핑 지연이 하나도 없는 요청이다. 받아 봐야 쓸 곳이 없다. */
+	ACTIVITY_SIGNAL_REQUIRED(HttpStatus.BAD_REQUEST, "기록할 관찰 신호가 없습니다."),
+
 	// ── 힌트 ──
 	/** 단계당 2회를 다 썼다. 화면은 버튼을 문구로 바꾸므로 정상 흐름에서는 오지 않는다. */
 	HINT_EXHAUSTED(HttpStatus.CONFLICT, "더 이상 설명해 드릴 수 없습니다."),

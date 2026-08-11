@@ -79,7 +79,7 @@ public class SessionTurnStore {
 					input.head().isReview() ? "ALL_REVIEW_TARGETS_TERMINAL" : "ALL_PROBLEMS_TERMINAL",
 					result.endedLevel());
 		}
-		return AnswerSubmitResponse.of(result, grade.score(), grade.passed());
+		return AnswerSubmitResponse.of(result, input.problems(), grade.score(), grade.passed());
 	}
 
 	/**

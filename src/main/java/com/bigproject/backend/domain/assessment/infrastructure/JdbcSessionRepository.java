@@ -304,6 +304,23 @@ public class JdbcSessionRepository {
 				""", awaySeconds, awaySeconds, sessionId);
 	}
 
+	/**
+	 * 연결 끊김을 <b>세션 단위로만</b> 누적한다.
+	 *
+	 * <p>답변 슬롯에 나누지 않는 것은 DDL 주석(v08)의 판단을 따른 것이다 — 무효 응시 판정
+	 * ({@code measurement_attempt}의 {@code EXCESSIVE_CONNECTION_LOSS})이 세션 합계를 보고,
+	 * 네트워크 장애는 특정 답변에 귀속시킬 성질이 아니다. 창 이탈만 슬롯에 함께 쌓는다.
+	 */
+	public void recordConnectionLoss(UUID sessionId, int disconnectedSeconds) {
+		jdbc.update("""
+				UPDATE assessment_session
+				   SET connection_loss_count = connection_loss_count + 1,
+				       total_disconnected_seconds = total_disconnected_seconds + ?,
+				       updated_at = now()
+				 WHERE session_id = ?
+				""", disconnectedSeconds, sessionId);
+	}
+
 	/** 첫 타이핑 지연은 슬롯당 한 번만 남긴다 — 이미 있으면 덮어쓰지 않는다. */
 	public void recordFirstKeystroke(UUID problemStageId, AnswerSlot slot, int delayMs) {
 		String column = slot.columnPrefix() + "_first_keystroke_delay_ms";

@@ -134,11 +134,24 @@ public record ProblemActivityResponse(
 		return last.problemStageId().equals(stage.problemStageId());
 	}
 
-	/** 지금 질문이 가리키는 줄. 축별 하이라이트가 있으면 그것을 쓰고 없으면 문제의 대표 구간을 쓴다. */
 	private static Highlight highlight(SessionProblem problem, SessionStage stage) {
+		return highlightOf(problem, stage.axisCode());
+	}
+
+	/**
+	 * 축 하나가 가리키는 줄. 축별 하이라이트가 있으면 그것을 쓰고 없으면 문제의 대표 구간을 쓴다.
+	 *
+	 * <p>질문은 축마다 다른 줄을 가리킨다 — 화면 목업의 `질문 1 → 5–8`, `질문 2 → 39–41`이 그것이다.
+	 * 연결 고리는 {@code axis_code} 하나뿐이라({@code assessment_problem_reference}에 단계 FK가 없다)
+	 * 축을 받아 푸는 이 자리가 유일한 해석 지점이다.
+	 *
+	 * <p>{@link AnswerSubmitResponse}도 같은 규칙으로 <b>다음</b> 질문의 구간을 풀어야 해서 공개한다 —
+	 * 두 벌로 두면 한쪽만 고쳐져 같은 질문이 화면마다 다른 줄을 가리키게 된다.
+	 */
+	public static Highlight highlightOf(SessionProblem problem, String axisCode) {
 		return problem.references().stream()
 				.filter(reference -> "QUESTION_HIGHLIGHT".equals(reference.referenceType())
-						&& stage.axisCode().equals(reference.axisCode()))
+						&& axisCode != null && axisCode.equals(reference.axisCode()))
 				.findFirst()
 				.map(reference -> new Highlight(reference.sourcePath(), reference.lineStart(), reference.lineEnd()))
 				.orElseGet(() -> new Highlight(problem.sourcePath(), problem.lineStart(), problem.lineEnd()));

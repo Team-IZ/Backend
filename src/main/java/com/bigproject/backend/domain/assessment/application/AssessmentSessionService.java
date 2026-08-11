@@ -14,6 +14,7 @@ import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitReq
 import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.HintResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.ProblemActivityResponse;
+import com.bigproject.backend.domain.assessment.presentation.dto.SessionActivityRequest;
 import com.bigproject.backend.domain.assessment.presentation.dto.SessionResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -160,6 +161,39 @@ public class AssessmentSessionService {
 		String hintText = opening == AnswerSlot.FIRST_HINT ? stage.firstHintText() : stage.secondHintText();
 		return new HintResponse(stage.problemId(), stage.axisCode(), hintText,
 				hintsUsed + 1, 2 - (hintsUsed + 1));
+	}
+
+	/**
+	 * 응시 중 관찰 신호를 남긴다. AI를 부르지 않고 진행 상태도 바꾸지 않는다 — 오직 기록이다.
+	 *
+	 * <p><b>왜 별도 경로인가.</b> 이탈은 답변 제출과 짝이 맞지 않는다. 학생은 답을 쓰지 않고도 창을
+	 * 열 번 드나들 수 있고, 그 답변이 영영 제출되지 않을 수도 있다. 제출에 실어 보내면 그때 전부
+	 * 사라진다 — 정작 의심스러운 응시일수록 기록이 안 남는다.
+	 *
+	 * <p><b>귀속 자리는 서버 커서가 정한다.</b> 창 이탈과 첫 타이핑 지연은 지금 답을 쓰고 있는
+	 * 슬롯({@link SessionStage#nextSlot()})에 붙는다. 화면 정의서 TR-03 §4의 "이탈은 세션이 아니라
+	 * 답변에 붙인다"가 이것이고, 세션 합계는 무효 응시 판정이 따로 보므로 함께 올린다.
+	 *
+	 * <p>다시 보기(REVIEW)도 막지 않는다. 판정에 반영되지 않을 뿐 매니저 브리프는 같은 값을 읽는다.
+	 */
+	@Transactional
+	public void recordActivity(UUID userId, UUID sessionId, SessionActivityRequest request) {
+		if (request.isEmpty()) {
+			throw new SessionException(SessionErrorCode.ACTIVITY_SIGNAL_REQUIRED);
+		}
+		SessionHead head = guard.running(userId, sessionId);
+		SessionStage stage = guard.currentStage(head);
+		AnswerSlot slot = stage.nextSlot();
+
+		if (request.awaySeconds() != null) {
+			repository.recordAway(sessionId, stage.problemStageId(), slot, request.awaySeconds());
+		}
+		if (request.disconnectedSeconds() != null) {
+			repository.recordConnectionLoss(sessionId, request.disconnectedSeconds());
+		}
+		if (request.firstKeystrokeDelayMs() != null) {
+			repository.recordFirstKeystroke(stage.problemStageId(), slot, request.firstKeystrokeDelayMs());
+		}
 	}
 
 	/**
