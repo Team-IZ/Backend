@@ -99,6 +99,10 @@ public record ProblemActivityResponse(
 				toCode(problem), turns, current);
 	}
 
+	/**
+	 * 확정된 턴 하나. 한 축에서 최대 셋 나온다 — 미달이면 힌트가 열리고 <b>같은 질문에 다시 답하기</b>
+	 * 때문이다. {@code hintText}는 그 답 직전에 보여 준 힌트이며, 첫 시도면 {@code null}이다.
+	 */
 	private static void addTurn(List<Turn> turns, SessionStage stage, AnswerSlot slot, String hintText,
 			SessionProblem problem) {
 		SlotState state = stage.slot(slot);

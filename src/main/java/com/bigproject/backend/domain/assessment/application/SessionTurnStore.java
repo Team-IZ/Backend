@@ -44,6 +44,7 @@ public class SessionTurnStore {
 		}
 		SessionHead head = guard.running(userId, sessionId);
 		SessionStage stage = guard.currentStage(head);
+
 		AnswerSlot slot = stage.nextSlot();
 		if (stage.slot(slot).isAnswered()) {
 			throw new SessionException(SessionErrorCode.ANSWER_ALREADY_SUBMITTED);
@@ -69,6 +70,10 @@ public class SessionTurnStore {
 		}
 
 		UUID sessionId = input.head().sessionId();
+		if (input.slot() == AnswerSlot.SECOND_HINT && !grade.passed()) {
+			return closeProblem(input, result);
+		}
+
 		if (result.cursor() != null && result.cursor().problemId() != null) {
 			repository.moveCursor(sessionId, result.cursor().problemId(),
 					resolveStageId(sessionId, result.cursor().problemId(), result.cursor().axisCode()));
@@ -79,8 +84,84 @@ public class SessionTurnStore {
 					input.head().isReview() ? "ALL_REVIEW_TARGETS_TERMINAL" : "ALL_PROBLEMS_TERMINAL",
 					result.endedLevel());
 		}
-		return AnswerSubmitResponse.of(result, input.problems(), grade.score(), grade.passed());
+		return AnswerSubmitResponse.of(result, input.problems(), autoHint(input, result, grade));
 	}
+
+	/**
+	 * 힌트를 둘 다 쓰고도 미달이면 <b>그 문제를 접고 다음 문제로 넘어간다.</b> 축이 L1이든 L4든 같다 —
+	 * 두 번 설명하고도 닿지 않았다면 같은 코드에 대해 더 물어도 얻을 것이 없다.
+	 *
+	 * <p><b>AI 커서를 덮어쓴다.</b> 종료 판정은 원래 AI가 소유하고 백엔드는 커서를 따르기만 했다
+	 * ({@link #applyGrading}의 다른 분기). 여기만 예외인 이유는 이 규칙이 <b>학습 정책</b>이라
+	 * 모델 응답에 따라 흔들리면 안 되기 때문이다 — 같은 상황에서 어떤 학생은 다음 질문을 받고 어떤
+	 * 학생은 다음 문제로 가면, 리포트의 "도달 축"이 사람마다 다른 뜻이 된다.
+	 *
+	 * <p>남은 축은 {@code NOT_REACHED}로 닫는다. 그러지 않으면 {@code PREPARED}로 남아 리포트가
+	 * "여기까지 오지도 못했다"를 표현할 수 없다.
+	 */
+	private AnswerSubmitResponse closeProblem(GradingInput input, AnswerResult result) {
+		UUID sessionId = input.head().sessionId();
+		UUID closedProblemId = input.stage().problemId();
+		repository.markNotReached(sessionId, closedProblemId);
+
+		SessionStage nextStage = repository.findStages(sessionId).stream()
+				.filter(stage -> !stage.problemId().equals(closedProblemId))
+				.filter(stage -> stage.problemNo() > input.stage().problemNo())
+				.findFirst()
+				.orElse(null);
+
+		if (nextStage == null) {
+			// 마지막 문제였다. 세션을 닫는다 — 이때는 AI의 endedLevel을 그대로 쓴다(도달 축 판정은
+			// 여전히 AI 것이고, 우리가 덮어쓴 것은 "다음에 무엇을 물을까"뿐이다).
+			repository.end(sessionId,
+					input.head().isReview() ? "ALL_REVIEW_TARGETS_TERMINAL" : "ALL_PROBLEMS_TERMINAL",
+					result.endedLevel());
+			return AnswerSubmitResponse.sessionEnded();
+		}
+
+		repository.moveCursor(sessionId, nextStage.problemId(), nextStage.problemStageId());
+		return AnswerSubmitResponse.problemClosed(nextStage, input.problems());
+	}
+
+	/**
+	 * 3점 미만이면 <b>다음 힌트를 자동으로 연다.</b> 학생이 `다시 설명해 주세요`를 누르기를 기다리지
+	 * 않는다 — 정의서 §6의 "미달이면 그때 힌트를 보여준다"가 이 경로다.
+	 *
+	 * <p>여는 방식은 {@code POST /hints}와 <b>같은 UPDATE</b>여야 한다. 표시 시각을 남기지 않고
+	 * 문구만 응답에 실으면, 새로고침 복귀 때 {@code hintsUsed}가 0으로 되돌아가 학생이 힌트를
+	 * 세 번, 네 번 쓴다.
+	 *
+	 * <p>열지 않는 경우 셋 — 통과했다(더 설명할 것이 없다), 힌트를 다 썼다, 커서가 다른 자리로
+	 * 옮겨 갔다. 마지막은 AI가 "이 질문은 여기까지"라고 판정한 것이므로 닫힌 질문에 힌트를 붙이지
+	 * 않는다. 다시 보기는 힌트가 없으므로({@code isReview}) 애초에 열지 않는다.
+	 */
+	private AnswerSubmitResponse.AutoHint autoHint(GradingInput input, AnswerResult result, AnswerGrade grade) {
+		SessionStage stage = input.stage();
+		int hintsUsed = stage.hintsUsed();
+		if (grade.passed() || input.head().isReview() || hintsUsed >= 2 || !staysOnSameStage(input, result)) {
+			return null;
+		}
+
+		AnswerSlot opening = AnswerSlot.ofHintsUsed(hintsUsed + 1);
+		// row_version은 방금의 applyAnswer가 1 올렸다. 읽어 둔 값 그대로 쓰면 어긋난다.
+		if (repository.openHint(stage.problemStageId(), opening, stage.rowVersion() + 1) == 0) {
+			// 같은 자리에 다른 요청이 끼어들었다. 답변 저장은 이미 끝났으므로 실패시키지 않고
+			// 힌트만 비운다 — 화면은 `다시 설명해 주세요`로 직접 열 수 있다.
+			log.warn("자동 힌트 열기가 낙관적 잠금에 걸렸다. 답변은 저장됐다: stageId={}, slot={}",
+					stage.problemStageId(), opening);
+			return null;
+		}
+		String hintText = opening == AnswerSlot.FIRST_HINT ? stage.firstHintText() : stage.secondHintText();
+		return new AnswerSubmitResponse.AutoHint(hintText, hintsUsed + 1, 2 - (hintsUsed + 1));
+	}
+
+	/** AI 커서가 방금 답한 그 질문에 그대로 서 있는가. 옮겨 갔으면 이 질문은 닫힌 것이다. */
+	private static boolean staysOnSameStage(GradingInput input, AnswerResult result) {
+		return result.cursor() != null
+				&& input.stage().problemId().equals(result.cursor().problemId())
+				&& input.stage().axisCode().equals(result.cursor().axisCode());
+	}
+
 
 	/**
 	 * 채점 결과를 판정으로 바꾼다. <b>통과 여부는 점수에서 도출한다</b>({@link AnswerGrade}) —
@@ -104,11 +185,11 @@ public class SessionTurnStore {
 	}
 
 	/**
-	 * 단계 상태. 통과면 {@code PASSED}, 두 번째 힌트까지 쓰고도 미달이면 {@code NOT_PASSED},
-	 * 그 사이는 {@code IN_PROGRESS}다.
+	 * 단계 상태. 통과면 {@code PASSED}, 마지막 슬롯까지 쓰고도 미달이면 {@code NOT_PASSED},
+	 * 그 사이는 {@code IN_PROGRESS}다 — 힌트가 남아 있으면 같은 질문에 다시 답할 수 있다.
 	 *
 	 * <p>{@code NOT_PASSED}를 마지막 슬롯에서만 쓰는 것은 취향이 아니라 제약이다 —
-	 * {@code ck_problem_stage_status_2}가 슬롯 셋이 <b>모두</b> FALSE일 것을 요구한다.
+	 * {@code ck_problem_stage_status_2}가 답한 슬롯 중 통과한 것이 없을 것을 요구한다.
 	 */
 	private static String stageStatus(AnswerSlot slot, boolean passed) {
 		if (passed) {

@@ -73,7 +73,10 @@ public class SessionAnswerGrader {
 				answerText,
 				problems.stream().map(SessionAnswerGrader::toProblem).toList(),
 				transcript(problems),
-				new Cursor(currentStage.problemId(), currentStage.axisCode(), slot.hintsUsed(), null),
+				// hintsUsed는 답변 슬롯이 아니라 <b>이 답을 쓰기 전에 질문을 몇 번 다시 들었는가</b>다.
+				// slot은 언제나 QUESTION이므로 여기서 slot.hintsUsed()를 쓰면 항상 0이 나가고,
+				// AI는 재진술을 두 번 보고 쓴 답을 도움 없이 쓴 답과 같게 채점한다.
+				new Cursor(currentStage.problemId(), currentStage.axisCode(), currentStage.hintsUsed(), null),
 				providerModelCode == null || providerModelCode.isBlank() ? null : providerModelCode);
 
 		try {
@@ -101,6 +104,9 @@ public class SessionAnswerGrader {
 	/**
 	 * 지금까지 확정된 턴 전부. {@code problem_stage}의 슬롯 셋을 펼치면 그대로 복원된다 —
 	 * 힌트를 열기만 하고 답하지 않은 슬롯은 답이 없으므로 나오지 않는다.
+	 *
+	 * <p>한 축에서 턴이 최대 셋 나온다. 미달이면 힌트가 열리고 <b>같은 질문에 다시 답하기</b> 때문이며,
+	 * {@code hintsUsed}가 몇 번째 시도인지를 말한다.
 	 */
 	private static List<TranscriptTurn> transcript(List<SessionProblem> problems) {
 		List<TranscriptTurn> turns = new ArrayList<>();

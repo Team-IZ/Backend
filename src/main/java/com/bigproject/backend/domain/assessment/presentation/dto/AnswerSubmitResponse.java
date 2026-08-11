@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.assessment.presentation.dto;
 
 import com.bigproject.backend.domain.assessment.application.AnswerGradingContract.AnswerResult;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionProblem;
+import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionStage;
 import com.bigproject.backend.domain.assessment.presentation.dto.ProblemActivityResponse.Highlight;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -24,15 +25,35 @@ import java.util.UUID;
 @Schema(description = "답변 제출 결과")
 public record AnswerSubmitResponse(
 		@Schema(description = """
-				NEXT_TURN(같은 문제의 다음 질문) · NEXT_PROBLEM(다음 문제로) ·
-				PROBLEM_CLOSED(이 문제는 여기까지) · SESSION_ENDED(세션 종료)""",
-				allowableValues = {"NEXT_TURN", "NEXT_PROBLEM", "PROBLEM_CLOSED", "SESSION_ENDED"})
+				RETRY_WITH_HINT(같은 질문에 다시 답한다 — 힌트가 열렸다) · NEXT_TURN(같은 문제의 다음 질문) ·
+				NEXT_PROBLEM(다음 문제로) · PROBLEM_CLOSED(이 문제는 여기까지) · SESSION_ENDED(세션 종료)""",
+				allowableValues = {"RETRY_WITH_HINT", "NEXT_TURN", "NEXT_PROBLEM", "PROBLEM_CLOSED",
+						"SESSION_ENDED"})
 		String outcome,
 
 		@Schema(description = "다음에 설 문제 번호. 세션이 끝났으면 null") Integer nextProblemNo,
 
-		@Schema(description = "다음 질문. 세션이 끝났으면 null") NextQuestion next
+		@Schema(description = "다음 질문. 세션이 끝났으면 null") NextQuestion next,
+
+		@Schema(description = """
+				3점 미만이라 자동으로 열린 힌트. 통과했거나 힌트를 다 썼거나 질문이 닫혔으면 null.
+				**점수를 알려주지 않으면서 미달을 전달하는 유일한 신호다**""")
+		AutoHint hint
 ) {
+
+	/**
+	 * 미달 직후 자동으로 열린 힌트.
+	 *
+	 * <p>{@code POST /hints}와 같은 UPDATE로 표시 시각까지 남긴 뒤 내려온다 — 새로고침 복귀 때
+	 * {@code hintsUsed}가 이 값으로 복원되므로 화면이 따로 세어 둘 필요가 없다.
+	 */
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	public record AutoHint(
+			@Schema(description = "힌트 문구. 분석 시점에 동결된 것을 그대로 준다") String hintText,
+			@Schema(description = "지금까지 쓴 힌트 수(1~2)") int hintsUsed,
+			@Schema(description = "남은 횟수. 0이면 화면은 버튼을 문구로 바꾼다") int hintsLeft
+	) {
+	}
 
 	/**
 	 * 다음 질문 한 벌. <b>{@code highlight}가 함께 온다</b> — 질문은 축마다 다른 줄을 가리키므로
@@ -53,15 +74,36 @@ public record AnswerSubmitResponse(
 	) {
 	}
 
+	/** 세션이 여기서 끝났다. 그릴 다음 질문이 없다. */
+	public static AnswerSubmitResponse sessionEnded() {
+		return new AnswerSubmitResponse("SESSION_ENDED", null, null, null);
+	}
+
+	/**
+	 * 힌트를 다 쓰고도 미달이라 문제가 접혔다. <b>AI의 {@code current}를 쓰지 않는다</b> —
+	 * 백엔드가 커서를 덮어썼으므로 AI가 말한 다음 질문은 이미 우리가 가지 않기로 한 자리다.
+	 *
+	 * @param nextStage 다음 문제의 첫 축. 백엔드가 고른 자리다
+	 * @param problems  강조 구간을 {@code axisCode}로 풀기 위한 문제들
+	 */
+	public static AnswerSubmitResponse problemClosed(SessionStage nextStage, List<SessionProblem> problems) {
+		NextQuestion next = new NextQuestion(
+				nextStage.problemId(),
+				nextStage.axisCode(),
+				nextStage.questionSequenceNo(),
+				nextStage.questionText(),
+				nextStage.hintsUsed(),
+				highlightOf(problems, nextStage.problemId(), nextStage.axisCode()));
+		return new AnswerSubmitResponse("PROBLEM_CLOSED", nextStage.problemNo(), next, null);
+	}
+
 	/**
 	 * @param problems 채점 직전에 읽어 둔 문제들. 다음 질문의 구간을 {@code axisCode}로 풀 때만 쓴다
-	 * @param score    AI가 준 점수. <b>응답에 싣지 않는다</b> — 저장은 이미 끝났고 여기서는 흐름만 정한다
-	 * @param passed   같은 이유로 싣지 않는다
+	 * @param hint     미달이라 자동으로 열린 힌트. 없으면 {@code null}
 	 */
-	public static AnswerSubmitResponse of(AnswerResult result, List<SessionProblem> problems, int score,
-			boolean passed) {
+	public static AnswerSubmitResponse of(AnswerResult result, List<SessionProblem> problems, AutoHint hint) {
 		if (result.cursor() == null || result.cursor().problemId() == null) {
-			return new AnswerSubmitResponse("SESSION_ENDED", null, null);
+			return new AnswerSubmitResponse("SESSION_ENDED", null, null, null);
 		}
 
 		boolean problemChanged = result.turn() != null
@@ -73,6 +115,10 @@ public record AnswerSubmitResponse(
 			outcome = result.terminationReason() != null && !result.terminationReason().startsWith("COMPLETED")
 					? "PROBLEM_CLOSED"
 					: "NEXT_PROBLEM";
+		} else if (hint != null) {
+			// 힌트가 열렸다는 것은 커서가 방금 답한 질문에 그대로 서 있다는 뜻이다(SessionTurnStore가
+			// 그때만 연다). 화면은 새 질문 말풍선을 쌓지 말고 힌트를 덧붙인 뒤 같은 자리에서 다시 받는다.
+			outcome = "RETRY_WITH_HINT";
 		} else {
 			outcome = "NEXT_TURN";
 		}
@@ -85,7 +131,7 @@ public record AnswerSubmitResponse(
 						result.current().questionText(),
 						result.current().hintsUsed() == null ? 0 : result.current().hintsUsed(),
 						highlightOf(problems, result.current().problemId(), result.current().axisCode()));
-		return new AnswerSubmitResponse(outcome, nextProblemNo, next);
+		return new AnswerSubmitResponse(outcome, nextProblemNo, next, hint);
 	}
 
 	/**
