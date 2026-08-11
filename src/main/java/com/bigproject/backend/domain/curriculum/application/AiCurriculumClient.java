@@ -3,27 +3,39 @@ package com.bigproject.backend.domain.curriculum.application;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
 @Component
 public class AiCurriculumClient {
 
-    private final RestClient restClient;
+    private final RestClient proxyClient;
+    private final RestClient originClient;
     private final String internalKey;
 
     public AiCurriculumClient(
-            @Value("${ai.curriculum.base-url:http://localhost:8000/api/v0}") String baseUrl,
+            @Value("${ai.proxy-base-url:http://localhost:8000}") String proxyBaseUrl,
+            @Value("${ai.origin-base-url:http://localhost:8000}") String originBaseUrl,
             @Value("${ai.curriculum.x-internal-key:}") String internalKey) {
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+        SimpleClientHttpRequestFactory proxyFactory = new SimpleClientHttpRequestFactory();
+        proxyFactory.setConnectTimeout(Duration.ofSeconds(5));
+        proxyFactory.setReadTimeout(Duration.ofSeconds(150));
+        this.proxyClient = RestClient.builder().baseUrl(proxyBaseUrl).requestFactory(proxyFactory).build();
+
+        SimpleClientHttpRequestFactory originFactory = new SimpleClientHttpRequestFactory();
+        originFactory.setConnectTimeout(Duration.ofSeconds(5));
+        originFactory.setReadTimeout(Duration.ofSeconds(60));
+        this.originClient = RestClient.builder().baseUrl(originBaseUrl + "/api/v0").requestFactory(originFactory).build();
+
         this.internalKey = internalKey;
-        System.out.println("### DEBUG baseUrl=[" + baseUrl + "] internalKey length=" + internalKey.length() + " value=[" + internalKey + "]");
     }
 
     public record CurriculumAccepted(String jobId, String status) {
@@ -41,8 +53,9 @@ public class AiCurriculumClient {
     public record AnalysisResult(String status, List<SectionResult> sections) {
     }
 
-    /** AI 서버(FastAPI) POST /api/v0/curricula 호출. PDF를 다시 전송한다. */
     public CurriculumAccepted requestAnalysis(UUID versionId, String courseLabel, byte[] pdfBytes, String idempotencyKey) {
+        warmUp();
+
         String payloadJson = "{\"versionId\":\"" + versionId + "\",\"courseLabel\":\"" + courseLabel + "\"}";
 
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
@@ -54,7 +67,7 @@ public class AiCurriculumClient {
             }
         });
 
-        return restClient.post()
+        return originClient.post()
                 .uri("/curricula")
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .header("Idempotency-Key", idempotencyKey)
@@ -64,12 +77,18 @@ public class AiCurriculumClient {
                 .body(CurriculumAccepted.class);
     }
 
-    /** AI 서버(FastAPI) GET /api/v0/curricula/{job_id} 호출. 분석 상태·결과 조회. */
     public AnalysisResult checkStatus(String jobId) {
-        return restClient.get()
+        return originClient.get()
                 .uri("/curricula/{jobId}", jobId)
                 .header("X-Internal-Key", internalKey)
                 .retrieve()
                 .body(AnalysisResult.class);
+    }
+
+    private void warmUp() {
+        proxyClient.get()
+                .uri("/api/health")
+                .retrieve()
+                .toBodilessEntity();
     }
 }
