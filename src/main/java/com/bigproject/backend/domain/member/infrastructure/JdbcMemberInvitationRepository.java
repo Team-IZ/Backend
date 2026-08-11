@@ -171,6 +171,7 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				AND t.used_at IS NULL
 				AND ui.status IN ('PENDING', 'SENT', 'DELIVERY_FAILED')
 				AND u.deleted_at IS NULL
+				AND (ui.target_cohort_id IS NULL OR (c.deleted_at IS NULL AND c.status <> 'CLOSED'))
 			""";
 	/** 재발송 성공 기록. DELIVERY_FAILED에서 올라올 수 있으므로 실패 컬럼 4개를 함께 비운다. */
 	private static final String MARK_INVITATION_RESENT = """
