@@ -149,7 +149,7 @@ class InvitationPersistenceServiceTest {
 	}
 
 	@Test
-	void createsTraineeInvitationWithoutClassroomAssignment() {
+	void defersTraineeMembershipUntilInvitationAcceptance() {
 		MemberInvitationRepository repository = mock(MemberInvitationRepository.class);
 		UUID memberId = UUID.randomUUID();
 		when(repository.createPendingUser(any(), any(), any(), any(), any(), any(), any()))
@@ -179,22 +179,13 @@ class InvitationPersistenceServiceTest {
 				"ACTIVE"
 		);
 
-		var invitation = service.createTraineeInvitation(
+		service.createTraineeInvitation(
 				new InvitationContext(organizationId, "AIVLE", cohortId, "7기"),
 				new RegisterTraineesRequest.Trainee("교육생", "trainee@example.com"),
 				actor,
 				"request-2"
 		);
 
-		verify(repository).saveTraineeMembership(
-				memberId,
-				invitation.tokenId(),
-				organizationId,
-				cohortId,
-				null,
-				actor.userId(),
-				invitation.invitedAt()
-		);
 		ArgumentCaptor<InvitationToken> tokenCaptor = ArgumentCaptor.forClass(InvitationToken.class);
 		verify(repository).saveToken(tokenCaptor.capture());
 		assertThat(tokenCaptor.getValue().payload())

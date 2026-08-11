@@ -179,15 +179,10 @@ public class InvitationPersistenceService {
 				requestId,
 				now
 		);
-		invitationRepository.saveTraineeMembership(
-				memberId,
-				invitation.tokenId(),
-				context.organizationId(),
-				context.cohortId(),
-				null,
-				actor.userId(),
-				now
-		);
+		/*
+		 * cohort_member는 실제 기수 소속만 표현한다. 초대 대기는 user_invitation.target_cohort_id에
+		 * 남기고, 교육생이 링크를 수락하는 트랜잭션에서 ACTIVE 소속을 만든다.
+		 */
 		return invitation;
 	}
 

@@ -55,6 +55,16 @@ public interface AuthUserJpaRepository extends JpaRepository<AuthUserJpaEntity, 
 				FROM user_invitation latest_ui
 				WHERE latest_ui.target_email_normalized = u.normalized_email
 					AND latest_ui.status IN ('PENDING', 'SENT', 'DELIVERY_FAILED', 'EXPIRED')
+					AND (
+						latest_ui.target_cohort_id IS NULL
+						OR EXISTS (
+							SELECT 1 FROM cohort invitation_cohort
+							WHERE invitation_cohort.cohort_id = latest_ui.target_cohort_id
+								AND invitation_cohort.org_id = latest_ui.org_id
+								AND invitation_cohort.status <> 'CLOSED'
+								AND invitation_cohort.deleted_at IS NULL
+						)
+					)
 				ORDER BY latest_ui.invited_at DESC, latest_ui.created_at DESC
 				LIMIT 1
 			)
