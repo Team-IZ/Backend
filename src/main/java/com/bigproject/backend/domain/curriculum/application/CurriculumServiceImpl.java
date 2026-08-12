@@ -27,6 +27,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.scheduling.annotation.Scheduled;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -39,6 +40,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.OffsetDateTime;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,7 +59,11 @@ public class CurriculumServiceImpl implements CurriculumService {
             .build();
 
     // 폴링 파라미터를 상수로 분리 — 값을 바꿀 때 루프 코드를 뒤지지 않게 한다.
-    private static final int POLL_MAX_ATTEMPTS = 30;
+    // AI 저장소 config.py 주석 실측: 교안 분석은 minimax-m3 기준 최대 25분 걸린다
+    // ("강사가 수업 전까지만 끝나면 되므로 허용"). 동기 요청 안에서 기다리는 건
+    // 애초에 불가능한 시간대라, 이 상수들은 requestAnalysis()가 아니라
+    // pollPendingCurriculumAnalyses() 스케줄러가 스케줄 주기 판단에만 참고한다.
+    private static final int POLL_MAX_ATTEMPTS = 100;
     private static final long POLL_INTERVAL_MS = 3000L;
 
     private final CurriculumVersionRepository curriculumVersionRepository;
@@ -71,6 +77,14 @@ public class CurriculumServiceImpl implements CurriculumService {
     private final CurriculumCatalogRepository catalogRepository;
     private final JdbcTemplate jdbcTemplate;
     private final TeachesRepository teachesRepository;
+
+    // self-invocation으로 @Transactional이 무시되는 문제 우회용.
+    // pollPendingCurriculumAnalyses()가 reconcileOne()을 같은 객체 안에서 직접 호출하면
+    // Spring AOP 프록시를 안 거쳐서 @Transactional이 통째로 무시된다 — 이게 실제로
+    // markAnalysisFailed()가 로그는 남기는데 DB에 반영 안 되던 버그의 원인이었다.
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private CurriculumServiceImpl self;
 
     @Override
     public List<CurriculumVersion> findLinkableCurricula(UUID orgId) {
@@ -189,6 +203,20 @@ public class CurriculumServiceImpl implements CurriculumService {
         return curriculumVersionRepository.save(version);
     }
 
+    /**
+     * 교안 재분석을 AI 서버에 요청한다.
+     *
+     * <p>🔴 정식 방식(2026-08-11 전환) — AI 저장소 config.py 실측 주석 기준
+     * 교안 분석은 minimax-m3로 <b>최대 25분</b> 걸린다("강사가 수업 전까지만
+     * 끝나면 되므로 허용"). 이 시간대는 하나의 HTTP 요청 안에서 동기로 기다릴
+     * 수 있는 범위가 아니다 — 실제로 임시 동기 폴링(90초→180초→300초로 늘려가며
+     * 시도)으로는 단 한 번도 정상 완료를 관측하지 못했고, 항상 MODEL_TIMEOUT
+     * 아니면 (드물게) 빈 결과로 끝났다.
+     *
+     * <p>그래서 이 메서드는 AI 서버에 분석을 요청하고 job_id를 저장한 뒤
+     * <b>즉시 리턴</b>한다. 실제 결과 회수는 {@link #pollPendingCurriculumAnalyses()}
+     * 스케줄러가 이 트랜잭션과 무관하게 별도 주기로 수행한다.
+     */
     @Override
     @Transactional
     public void requestAnalysis(UUID materialId, UUID orgId, UUID actorUserId) {
@@ -209,7 +237,7 @@ public class CurriculumServiceImpl implements CurriculumService {
         String idempotencyKeyString = version.getVersionId() + ":" + nextAnalysisVersion;
 
         AiCurriculumClient.CurriculumAccepted accepted =
-                aiCurriculumClient.requestAnalysis(version.getVersionId(), "AI", pdfBytes, idempotencyKeyString);
+                aiCurriculumClient.requestAnalysis(version.getVersionId(), "Spring", pdfBytes, idempotencyKeyString);
 
         // DB curriculum_analysis.idempotency_key는 UUID 타입 — 같은 문자열이면 항상 같은 UUID가 나오게 결정론적으로 변환
         UUID idempotencyKeyUuid = UUID.nameUUIDFromBytes(idempotencyKeyString.getBytes(StandardCharsets.UTF_8));
@@ -226,70 +254,111 @@ public class CurriculumServiceImpl implements CurriculumService {
         analysis.updateExternalJobId(accepted.jobId());
         analysisRepository.save(analysis);
 
-        // 임시: 동기 폴링으로 결과를 즉시 받아온다(최대 90초, 3초 간격).
-        // 정식 구현(콜백/스케줄러·재시도·RESULT_PERSISTENCE 실패 처리)은 별도 작업 필요.
-        pollUntilDoneOrTimeout(analysis, version, orgId, accepted.jobId());
+        // 여기서 끝. 폴링하지 않는다 — pollPendingCurriculumAnalyses() 스케줄러가 이어받는다.
     }
 
     /**
-     * AI 서버 상태를 폴링하며 SUCCEEDED/FAILED를 구분해 처리한다.
+     * 스케줄러 — PENDING/RUNNING 상태로 남은 교안 분석 건을 주기적으로 확인한다.
      *
-     * <p>기존 코드는 result가 비어있으면 무조건 "아직 안 끝났다"로 보고 계속 기다렸다.
-     * AI가 FAILED를 명시적으로 돌려줘도 그 값을 확인하지 않아, 실패한 요청도 90초
-     * 내내 재시도만 하다가 결국 PENDING 상태로 영원히 멈춰 있었다(started_at도 NULL로 남음).
-     * 이제는 매 응답의 status를 먼저 보고 SUCCEEDED/FAILED/그 외(진행중)를 구분한다.
+     * <p>AI 분석이 최대 25분 걸리므로, 이 메서드는 짧은 주기(예: 30초)로 계속
+     * 돌면서 "혹시 끝났나"만 가볍게 확인한다. 각 건은 개별 트랜잭션(reconcileOne)
+     * 으로 처리해 <b>하나가 오래 걸려도 나머지가 묶이지 않게</b> 한다.
+     *
+     * <p>⚠️ 이 메서드 자체에는 {@code @Transactional}을 걸지 않는다 — 걸면 순회
+     * 전체가 하나의 트랜잭션이 되어 DB 커넥션을 필요 이상으로 오래 잡는다.
      */
-    private void pollUntilDoneOrTimeout(CurriculumAnalysis analysis, CurriculumVersion version,
-                                        UUID orgId, String jobId) {
-        for (int attempt = 1; attempt <= POLL_MAX_ATTEMPTS; attempt++) {
-            try {
-                Thread.sleep(POLL_INTERVAL_MS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
+    @Scheduled(fixedDelay = 600000)  // 1분 간격 (AI 최대 25분 소요 감안, 최대 약 25회 확인)
+    public void pollPendingCurriculumAnalyses() {
+        List<CurriculumAnalysis> pendingList = analysisRepository
+                .findAllByStatusIn(List.of(CurriculumAnalysisStatus.PENDING, CurriculumAnalysisStatus.RUNNING));
 
-            AiCurriculumClient.AnalysisResult result;
+        log.info("### DEBUG 스케줄러 실행됨, 대기 중인 분석 건수={}", pendingList.size());
+
+        for (CurriculumAnalysis analysis : pendingList) {
+            log.info("### DEBUG 처리 시도: analysisId={}, status={}", analysis.getAnalysisId(), analysis.getStatus());
             try {
-                result = aiCurriculumClient.checkStatus(jobId);
+                self.reconcileOne(analysis);
             } catch (Exception e) {
-                // AI 서버 호출 자체가 예외를 던지는 경우(네트워크 오류, 4xx/5xx 등) —
-                // 조용히 삼키지 않고 로그를 남긴다. 다음 시도에서 계속 실패하면
-                // 마지막 시도에서 FAILED 처리로 떨어진다.
-                log.warn("AI 분석 상태 조회 실패 (jobId={}, attempt={}/{})", jobId, attempt, POLL_MAX_ATTEMPTS, e);
-                continue;
+                // 한 건의 예외가 나머지 건 처리를 막으면 안 된다 — 로그만 남기고 다음 건으로.
+                log.warn("교안 분석 스케줄러 폴링 중 오류: analysisId={}", analysis.getAnalysisId(), e);
             }
+        }
+    }
 
-            if (result == null) {
-                continue;
-            }
+    /**
+     * 분석 한 건의 상태를 확인하고, 끝났으면 결과를 저장한다.
+     *
+     * <p>짧은 트랜잭션 하나로 끝난다 — AI 서버 응답을 기다리는 동안은 트랜잭션
+     * 밖이라(checkStatus 호출 자체는 이 메서드가 시작하기 전 조건이 아니라
+     * 이 메서드 안에서 짧게 일어난다는 뜻), DB 커넥션을 오래 잡지 않는다.
+     */
 
-            String status = result.status();
+    // 스케줄러 확인 간격(1분) — AI팀 실측 최대 소요시간(25분, config.py 주석)에
+    // 맞춰 25분 넘게 응답이 없으면 포기한다.
+    private static final java.time.Duration MAX_WAIT_DURATION = java.time.Duration.ofMinutes(25);
 
-            if ("FAILED".equalsIgnoreCase(status)) {
-                markAnalysisFailed(analysis, "AI_ANALYSIS_FAILED", "AI 서버가 분석 실패를 반환했습니다. jobId=" + jobId);
-                return;
-            }
-
-            if (result.sections() == null || result.sections().isEmpty()) {
-                // SUCCEEDED인데 섹션이 비어 있는 경우도 실패로 취급한다 —
-                // 섹션 없는 SUCCEEDED를 그대로 두면 조회 쪽에서 빈 화면과
-                // "분석 진행중"을 구분할 수 없다.
-                if ("SUCCEEDED".equalsIgnoreCase(status)) {
-                    markAnalysisFailed(analysis, "EMPTY_ANALYSIS_RESULT", "AI 분석이 SUCCEEDED이나 섹션이 비어 있습니다. jobId=" + jobId);
-                    return;
-                }
-                continue; // 아직 RUNNING/PENDING 등 진행 중
-            }
-
-            persistAnalysisResult(analysis, version, orgId, result);
+    @Transactional
+    public void reconcileOne(CurriculumAnalysis analysis) {
+        UUID jobId = analysis.getExternalJobId();
+        if (jobId == null) {
             return;
         }
 
-        // 여기까지 왔다는 건 POLL_MAX_ATTEMPTS 동안 SUCCEEDED도 FAILED도 못 받았다는 뜻 —
-        // 이것도 무한 PENDING으로 방치하지 않고 명시적으로 실패 처리한다.
-        markAnalysisFailed(analysis, "ANALYSIS_TIMEOUT",
-                "최대 대기 시간(" + (POLL_MAX_ATTEMPTS * POLL_INTERVAL_MS / 1000) + "초) 동안 결과를 받지 못했습니다. jobId=" + jobId);
+        if (analysis.getRequestedAt() != null
+                && analysis.getRequestedAt().isBefore(OffsetDateTime.now().minus(MAX_WAIT_DURATION))) {
+            markAnalysisFailed(analysis, "MODEL_TIMEOUT",
+                    "최대 대기 시간(" + MAX_WAIT_DURATION.toMinutes() + "분)을 초과했습니다. jobId=" + jobId);
+            return;
+        }
+
+        AiCurriculumClient.AnalysisResult result;
+        try {
+            result = aiCurriculumClient.checkStatus(jobId.toString());
+        } catch (Exception e) {
+            log.warn("AI 분석 상태 조회 실패 (jobId={})", jobId, e);
+            return; // 다음 스케줄 주기에 재시도
+        }
+
+        if (result == null) {
+            log.warn("### DEBUG result가 null입니다. jobId={}", jobId);
+            return; // 아직 응답 없음, 다음 주기에 재시도
+        }
+
+        log.info("### DEBUG result 수신: status={}, sections size={}",
+                result.status(), result.sections() != null ? result.sections().size() : -1);
+
+        String status = result.status();
+
+        if ("FAILED".equalsIgnoreCase(status)) {
+            markAnalysisFailed(analysis, "PROVIDER_ERROR", "AI 서버가 분석 실패를 반환했습니다. jobId=" + jobId);
+            return;
+        }
+
+        if (result.sections() == null || result.sections().isEmpty()) {
+            if ("SUCCEEDED".equalsIgnoreCase(status)) {
+                markAnalysisFailed(analysis, "INVALID_AI_RESPONSE", "AI 분석이 SUCCEEDED이나 섹션이 비어 있습니다. jobId=" + jobId);
+            }
+            return; // 아직 RUNNING/QUEUED 등 진행 중이면 그냥 다음 주기로 넘어간다
+        }
+
+        // 성공 — 결과 저장. CurriculumAnalysis에는 orgId가 없으므로 version → material 경로로 조회한다.
+        CurriculumVersion version = curriculumVersionRepository.findById(analysis.getVersionId())
+                .orElse(null);
+        if (version == null) {
+            log.warn("교안 분석 결과 저장 실패: version을 찾을 수 없음 (analysisId={}, versionId={})",
+                    analysis.getAnalysisId(), analysis.getVersionId());
+            return;
+        }
+
+        CurriculumMaterial material = materialRepository.findById(version.getMaterialId())
+                .orElse(null);
+        if (material == null) {
+            log.warn("교안 분석 결과 저장 실패: material을 찾을 수 없음 (analysisId={}, versionId={})",
+                    analysis.getAnalysisId(), analysis.getVersionId());
+            return;
+        }
+
+        persistAnalysisResult(analysis, version, material.getOrgId(), result);
     }
 
     private void persistAnalysisResult(CurriculumAnalysis analysis, CurriculumVersion version,
@@ -348,10 +417,7 @@ public class CurriculumServiceImpl implements CurriculumService {
      *
      * <p>주의: {@code curriculum_analysis} 테이블 제약상 FAILED는
      * started_at·failed_at·failure_code·failure_stage·failure_reason·
-     * is_retryable·recovery_action이 모두 필수다. {@link CurriculumAnalysis}
-     * 도메인 객체에 이 값들을 채우는 메서드(예: fail(...))가 없다면
-     * 반드시 추가해야 컴파일·제약 둘 다 통과한다. 아래 호출은 그 메서드가
-     * 있다는 가정하에 작성했으니, 실제 시그니처에 맞춰 인자를 조정할 것.
+     * is_retryable·recovery_action이 모두 필수다.
      */
     private void markAnalysisFailed(CurriculumAnalysis analysis, String failureCode, String failureReason) {
         log.warn("교안 분석 실패 처리: analysisId={}, code={}, reason={}",
@@ -360,9 +426,7 @@ public class CurriculumServiceImpl implements CurriculumService {
         if (analysis.getStartedAt() == null) {
             analysis.start();
         }
-        // TODO: 아래 fail(...) 시그니처는 CurriculumAnalysis 도메인 클래스의 실제 메서드에 맞춰 조정.
-        // failure_stage, is_retryable, recovery_action 등 정의서상 FAILED 필수 컬럼을 채워야 한다.
-        analysis.fail(failureCode, "AI_POLLING", failureReason, /* isRetryable= */ true, /* recoveryAction= */ "RETRY");
+        analysis.fail(failureCode, "CONCEPT_EXTRACTION", failureReason, /* isRetryable= */ true, /* recoveryAction= */ "RETRY_SAME_FILE");
         analysisRepository.save(analysis);
     }
 
@@ -427,20 +491,10 @@ public class CurriculumServiceImpl implements CurriculumService {
     /**
      * 실제 업로드된 파일 바이트를 읽어 AI 서버로 전송한다.
      *
-     * <p>이전 코드는 S3 자격증명 문제를 우회한다며 실제 파일 대신
-     * {@code "dummy pdf content for testing"} 문자열을 그대로 반환하고 있었다.
-     * 그 결과 AI 서버는 PDF가 아닌 텍스트 한 줄을 받아 분석에 실패했고,
-     * 우리 쪽 폴링 루프는 그 실패를 구분하지 못해 90초 내내 재시도만 하다
-     * 끝났다. 최소한 로컬 디스크 경로는 실제로 읽도록 되돌린다.
-     *
      * <p>S3 경로({@code s3://...})는 자격증명이 준비되기 전까지는 명시적으로
-     * 예외를 던진다 — 조용히 더미 데이터를 반환하면 오늘 겪은 것과 같은 문제가
-     * 다시 재현되고 원인 파악이 훨씬 오래 걸린다.
+     * 예외를 던진다 — 조용히 더미 데이터를 반환하면 원인 파악이 훨씬 오래 걸린다.
      */
     private byte[] readFileBytes(String fileUri) {
-        // FileStorageService.store()가 targetPath.toUri().toString()을 그대로 fileUri로 저장하므로
-        // 항상 "file:///절대/경로/..." 형태의 완전한 file:// URI다. scheme이 항상 채워져 있어
-        // Paths.get(URI)로 바로 변환할 수 있다 (getPath() null 걱정을 할 필요가 없다).
         URI uri = URI.create(fileUri);
         try {
             if ("s3".equals(uri.getScheme())) {
