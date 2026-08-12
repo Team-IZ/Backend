@@ -87,8 +87,11 @@ public record TraineeReportsResponse(
 	 * @param problemId 이 개념을 물은 문항 식별자. <b>개념 이름은 회차마다 반복된다</b>
 	 *                  (`예외 처리와 롤백 전략`이 1·2·4차에 모두 나온다) — 이름으로 개념을 지목하면
 	 *                  다시 보기 대상을 잘못 짚을 수 있어 안정 키를 함께 내려준다.
+	 * @param asked 물었는가. <b>{@code false}면 이 개념은 그 학생 코드에 없어 문항이 만들어지지
+	 *              않았다</b>({@code assessment_problem.generation_status='NOT_GENERATED'}). 그때는
+	 *              {@code level}을 포함한 아래 값들이 전부 빠진다.
 	 * @param level 도달 단계 <b>0~4</b>. 0은 통과한 축이 하나도 없다는 뜻이며
-	 *              "안 물어본 것"이 아니라 "못한 것"이다 — 화면이 이 둘을 섞으면 안 된다.
+	 *              "안 물어본 것"({@code asked=false})이 아니라 "못한 것"이다 — 화면이 이 둘을 섞으면 안 된다.
 	 *              (DB {@code reach_display_code} L0~L4, AI {@code reachedStage} 0~4와 같은 눈금)
 	 * @param said  학생에게 보여주는 서술. 공개 범위가 SUMMARY 미만이면 비어 있다.
 	 * @param isRetryTarget 다시 보기 대상인가.
@@ -118,7 +121,21 @@ public record TraineeReportsResponse(
 	public record ConceptReportResponse(
 			String problemId,
 			String name,
-			int level,
+
+			/*
+			 * 🔴 문항 없음 — 제3의 값. level=0 과 합치면 안 된다.
+			 *
+			 * false 면 그 학생 코드에 이 개념이 없어 문항 자체가 만들어지지 않았다는 뜻이며,
+			 * 이때 level 을 포함한 아래 값들이 전부 빠진다. 0단(물었는데 통과한 축이 없다)과
+			 * 섞으면 학생에게 "못했다"고 말하게 되는데 사실은 묻지 않은 것이다.
+			 *
+			 * GET /reports/class-diagnosis 가 level0 과 unasked 를 엄격히 구분하는 것과 같은 규칙이다.
+			 */
+			boolean asked,
+
+			/** 도달 단계 0~4. {@code asked=false}면 키가 빠진다 — 물은 적이 없으므로 단계가 없다. */
+			Integer level,
+
 			String said,
 			boolean isRetryTarget,
 			CurriculumRefResponse curriculumRef,
@@ -126,6 +143,17 @@ public record TraineeReportsResponse(
 			List<String> explain,
 			ComparedReachResponse comparedReach
 	) {
+
+		/**
+		 * 묻지 못한 개념. <b>이름만 있고 판정이 없다.</b>
+		 *
+		 * <p>{@code isRetryTarget}이 항상 {@code false}인 이유는 다시 볼 문항이 없기 때문이다 —
+		 * 재시험 대상은 "물었는데 2단 미만"이지 "묻지 못함"이 아니다.
+		 */
+		public static ConceptReportResponse unasked(String problemId, String name) {
+			return new ConceptReportResponse(
+					problemId, name, false, null, null, false, null, null, null, null);
+		}
 	}
 
 	/** 교안 위치. 화면의 `교안 3장 · 36~46쪽` 줄을 만든다. */

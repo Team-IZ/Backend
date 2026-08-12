@@ -8,6 +8,7 @@ import com.bigproject.backend.domain.reporting.domain.TraineeReportQueryReposito
 import com.bigproject.backend.domain.reporting.domain.TraineeReportQueryRepository.ConceptRow;
 import com.bigproject.backend.domain.reporting.domain.TraineeReportQueryRepository.RoundRow;
 import com.bigproject.backend.domain.reporting.domain.TraineeReportQueryRepository.StageAnswerRow;
+import com.bigproject.backend.domain.reporting.domain.TraineeReportQueryRepository.UnaskedConceptRow;
 import com.bigproject.backend.domain.reporting.presentation.dto.TraineeReportsResponse;
 import com.bigproject.backend.domain.reporting.presentation.dto.TraineeReportsResponse.ComparedReachResponse;
 import com.bigproject.backend.domain.reporting.presentation.dto.TraineeReportsResponse.ConceptReportResponse;
@@ -50,6 +51,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	public TraineeReportsResponse findMyReports(UUID userId) {
 		List<RoundRow> rounds = queryRepository.findRounds(userId);
 		Map<UUID, List<ConceptRow>> conceptsByReport = conceptsByReport(userId);
+		Map<UUID, List<UnaskedConceptRow>> unaskedByReport = unaskedByReport(userId);
 		Map<UUID, Map<UUID, List<StageAnswerRow>>> answersByReport = answersByReport(userId);
 
 		List<RoundListItem> railItems = new ArrayList<>();
@@ -58,7 +60,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		for (RoundRow round : rounds) {
 			String roundId = round.assessmentRoundId().toString();
 			railItems.add(new RoundListItem(roundId, round.roundName(), isRetryPending(round)));
-			reportsById.put(roundId, toRoundReport(round, conceptsByReport, answersByReport));
+			reportsById.put(roundId, toRoundReport(round, conceptsByReport, unaskedByReport, answersByReport));
 		}
 
 		return new TraineeReportsResponse(railItems, reportsById);
@@ -74,12 +76,20 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				.findFirst()
 				.orElseThrow(() -> new ReportException(ReportErrorCode.REPORT_NOT_FOUND));
 
-		return toRoundReport(target, conceptsByReport(userId), answersByReport(userId));
+		return toRoundReport(target, conceptsByReport(userId), unaskedByReport(userId),
+				answersByReport(userId));
 	}
 
 	private Map<UUID, List<ConceptRow>> conceptsByReport(UUID userId) {
 		return queryRepository.findConcepts(userId).stream()
 				.collect(Collectors.groupingBy(ConceptRow::reportId, LinkedHashMap::new, Collectors.toList()));
+	}
+
+	/** 묻지 못한 개념. 리포트 하나에 보통 0건이고 많아야 2건이다(개념 3개 중). */
+	private Map<UUID, List<UnaskedConceptRow>> unaskedByReport(UUID userId) {
+		return queryRepository.findUnaskedConcepts(userId).stream()
+				.collect(Collectors.groupingBy(UnaskedConceptRow::reportId, LinkedHashMap::new,
+						Collectors.toList()));
 	}
 
 	/** 문답은 (리포트, 문제) 단위로 묶는다 — 개념 하나가 문제 하나에 대응한다. */
@@ -99,6 +109,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	private RoundReportResponse toRoundReport(
 			RoundRow round,
 			Map<UUID, List<ConceptRow>> conceptsByReport,
+			Map<UUID, List<UnaskedConceptRow>> unaskedByReport,
 			Map<UUID, Map<UUID, List<StageAnswerRow>>> answersByReport
 	) {
 		String id = round.assessmentRoundId().toString();
@@ -145,10 +156,18 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		boolean fullScope = DisclosureScope.FULL == scope(round.traineeDisclosureScope());
 		boolean retryPending = isRetryPending(round);
 
-		List<ConceptReportResponse> concepts = conceptRows.stream()
+		// 물은 개념과 묻지 못한 개념을 한 배열에 담는다. 화면이 개념 3개를 나란히 그리고, 빠진
+		// 자리에 "코드에 이 개념이 없어 묻지 못했습니다"를 띄우려면 같은 목록에 있어야 한다 —
+		// 두 배열로 나누면 개념 순서(concept_display_order)가 무너진다.
+		List<ConceptReportResponse> concepts = new ArrayList<>(conceptRows.stream()
 				.map(row -> toConcept(row, answers.getOrDefault(row.problemId(), List.of()),
 						fullScope, retryPending))
-				.toList();
+				.toList());
+		unaskedByReport.getOrDefault(round.reportId(), List.of()).stream()
+				.map(row -> ConceptReportResponse.unasked(
+						row.problemId() == null ? null : row.problemId().toString(),
+						row.conceptDisplayName()))
+				.forEach(concepts::add);
 
 		return new RoundReportResponse(
 				id, reportId, label, "PUBLISHED",
@@ -218,6 +237,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				// 화면이 개념을 지목할 안정 키가 필요하다.
 				row.problemId() == null ? null : row.problemId().toString(),
 				row.conceptDisplayName(),
+				true,
 				reachLevel(row.reachDisplayCode()),
 				row.resultExplanation(),
 				row.reviewRequired(),
