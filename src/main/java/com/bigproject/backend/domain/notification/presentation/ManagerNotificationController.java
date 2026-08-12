@@ -33,7 +33,7 @@ import java.util.UUID;
 public class ManagerNotificationController {
 	private final ManagerNotificationService service;
 
-	@Operation(operationId = "findManagerNotificationInbox", summary = "매니저 인박스 조회 | ✅ 사용 가능")
+	@Operation(operationId = "findManagerNotificationInbox", summary = "매니저 인박스 조회 | ⚠️ 사용 불가")
 	@GetMapping("/inbox")
 	public ResponseEntity<NotificationInboxResponse> findInbox(
 			@PathVariable UUID cohortId,
@@ -48,7 +48,7 @@ public class ManagerNotificationController {
 				assessmentRoundId, since, includeResolved, cursor, size));
 	}
 
-	@Operation(operationId = "sendManagerReminder", summary = "매니저 단건 독촉 발송 | ✅ 사용 가능")
+	@Operation(operationId = "sendManagerReminder", summary = "매니저 단건 독촉 발송 | ⚠️ 사용 불가")
 	@PostMapping(value = "/reminders", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<SendReminderResponse> sendReminder(
 			@PathVariable UUID cohortId,

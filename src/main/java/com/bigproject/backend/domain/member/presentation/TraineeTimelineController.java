@@ -27,7 +27,7 @@ import java.util.UUID;
 public class TraineeTimelineController {
 	private final TraineeTimelineService service;
 
-	@Operation(operationId = "findManagerTraineeTimeline", summary = "교육생 통합 타임라인 조회 | ✅ 사용 가능")
+	@Operation(operationId = "findManagerTraineeTimeline", summary = "교육생 통합 타임라인 조회 | ⚠️ 사용 불가")
 	@GetMapping("/{traineeId}/timeline")
 	public ResponseEntity<TraineeTimelineResponse> findTimeline(
 			@PathVariable UUID cohortId, @PathVariable UUID traineeId,

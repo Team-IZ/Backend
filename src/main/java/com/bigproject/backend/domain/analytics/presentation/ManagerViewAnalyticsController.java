@@ -96,7 +96,7 @@ public class ManagerViewAnalyticsController {
 				assessmentRoundId, level, attemptView, classroomId, teamId));
 	}
 
-	@Operation(operationId = "findManagerRiskSignals", summary = "매니저 위험 신호 근거 조회 | ✅ 사용 가능")
+	@Operation(operationId = "findManagerRiskSignals", summary = "매니저 위험 신호 근거 조회 | ⚠️ 사용 불가")
 	@GetMapping("/risk-signals")
 	public ResponseEntity<RiskSignalResponse> findRiskSignals(
 			@PathVariable UUID cohortId, @RequestParam(required = false) UUID assessmentRoundId,
@@ -106,7 +106,7 @@ public class ManagerViewAnalyticsController {
 				assessmentRoundId, classroomId, traineeId, reasonCode));
 	}
 
-	@Operation(operationId = "findManagerConceptScope", summary = "면담 브리프 개념 소관 판정 | ✅ 사용 가능")
+	@Operation(operationId = "findManagerConceptScope", summary = "면담 브리프 개념 소관 판정 | ⚠️ 사용 불가")
 	@GetMapping("/concept-scope")
 	public ResponseEntity<ConceptScopeResponse> findConceptScope(
 			@PathVariable UUID cohortId, @RequestParam UUID assessmentRoundId,
