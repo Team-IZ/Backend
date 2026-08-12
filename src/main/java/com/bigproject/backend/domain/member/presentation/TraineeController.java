@@ -56,6 +56,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class TraineeController {
 	private static final String REQUEST_ID_HEADER = "X-Request-Id";
+	private static final String MANAGER_ROLE = "ROLE_MANAGER";
 
 	private final MemberInvitationService memberInvitationService;
 	private final TraineeCsvParser traineeCsvParser;
@@ -390,13 +391,22 @@ public class TraineeController {
 				&& assessmentRoundId == null) {
 			throw new ApiException(com.bigproject.backend.domain.member.domain.MemberErrorCode.ROSTER_ASSESSMENT_ROUND_REQUIRED);
 		}
-		UUID managerId = null;
-		if (assessmentRoundId != null || sort == TraineeRosterSort.RISK || sort == TraineeRosterSort.EXCELLENCE) {
+
+		// 매니저는 담당 반만 본다. 오퍼레이터는 기수 전체를 보므로 스코프를 걸지 않는다 —
+		// 이 엔드포인트는 두 역할이 함께 쓰므로 권한 애너테이션만으로는 갈라지지 않는다.
+		boolean manager = authentication.getAuthorities().stream()
+				.anyMatch(authority -> MANAGER_ROLE.equals(authority.getAuthority()));
+		UUID scopedManagerId = manager ? currentUserResolver.resolveCurrentMemberId() : null;
+
+		// 회차 지표 조인에 쓰는 매니저다. 매니저 본인이면 스코프와 같은 값을 그대로 쓴다.
+		UUID managerId = scopedManagerId;
+		if (managerId == null
+				&& (assessmentRoundId != null || sort == TraineeRosterSort.RISK || sort == TraineeRosterSort.EXCELLENCE)) {
 			managerId = currentUserResolver.resolveCurrentMemberId();
 		}
 
 		TraineeRosterService.RosterResult result = traineeRosterService.findRoster(
-				cohortId, organizationId, managerId, assessmentRoundId,
+				cohortId, organizationId, managerId, scopedManagerId, assessmentRoundId,
 				classroomId, unassignedOnly, accountStatus, query, sort,
 				PageRequest.of(page, size));
 
