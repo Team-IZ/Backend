@@ -288,7 +288,8 @@ public class TraineeController {
 					| `unassignedOnly` | 선택 | boolean | 반 배정이 없는 교육생만. 기본 `false` |
 					| `accountStatus` | 선택 | enum | `INVITED`(초대 대기) · `ACTIVE`(활성) · `INACTIVE`(비활성). 비우면 전체(화면의 `계정 · 전체`) |
 					| `query` | 선택 | string | 이름·이메일 부분검색. 비우면 전체 |
-					| `sort` | 선택 | enum | `NAME`(이름순, 기본) · `RECENT_ENROLLED`(최근 등록순) |
+					| `sort` | 선택 | enum | `NAME`(이름순, 기본) · `RECENT_ENROLLED`(최근 등록순) · `RISK`(위험순) · `EXCELLENCE`(우수순) |
+					| `assessmentRoundId` | `RISK`·`EXCELLENCE` 정렬 시 필수, 그 밖엔 선택 | UUID | **이 화면의 "프로젝트 회차" 필터**(명단 목업의 `회차 select`). 도달 단계·2단 이하·위험 배지·우수 누적 같은 회차 지표를 이 회차 기준으로 채운다 |
 					| `page` | 선택 | int | 0부터 시작. 기본 `0` |
 					| `size` | 선택 | int | 페이지당 개수. 기본 `20`, 최대 `100` |
 
@@ -297,6 +298,16 @@ public class TraineeController {
 
 					⚠️ **`classroomId`와 `unassignedOnly`는 함께 못 쓴다.** 화면에서 `반 · 전체 / 미배정 / A반…`이
 					단일 드롭다운이라 동시에 지정될 일이 없고, 들어오면 400으로 막는다.
+
+					⚠️ **`assessmentRoundId`는 회차 지표만 바꾸고, 명단에 어느 교육생이 나오는지는 안 바꾼다.**
+					회차를 고르면 그 회차의 도달·위험·우수 지표로 화면이 다시 그려지지만, 행 자체(누가 명단에
+					있는지)는 기수 소속 기준 그대로다. 예를 들어 회차 시작 전(팀 미배정 시점)에도 프로필 행은
+					남아 있고 도달·배지 칸만 비어 있다 — 회차가 명단의 **필터**가 아니라 **지표의 기준 시점**이기
+					때문이다. 생략하면 회차 지표 열(아래 `assessmentRoundId` 이하 필드들)이 전부 `null`로 나온다.
+
+					⚠️ **`sort=RISK`·`EXCELLENCE`는 `assessmentRoundId` 없이 못 쓴다.** 위험·우수 지표는
+					매니저·회차 단위 집계라 기준 회차가 없으면 정렬 자체가 성립하지 않으며, 생략하면
+					`ROSTER_ASSESSMENT_ROUND_REQUIRED`(400)로 막는다.
 
 					## 응답 (200)
 
@@ -327,6 +338,24 @@ public class TraineeController {
 					| `inactivatedById` | UUID? | 비활성화한 사용자 ID. 활성이면 `null` |
 					| `inactivatedByName` | string? | 비활성화한 사용자 이름. 화면 표시용 |
 					| `inactivatedAt` | date-time? | 비활성화 시각. 활성이면 `null` |
+					| `pendingInvitationTokenId` | UUID? | 아직 수락·취소되지 않은 초대 토큰(11차 R2). `null`이 아닐 때만 재발송 버튼(`POST /cohorts/{cohortId}/trainees/invitations/resend`)을 켠다. 이미 활성화됐거나 초대가 취소됐으면 `null` |
+
+					#### 여기부터는 `assessmentRoundId`를 지정했을 때만 채워지는 회차 지표다. 생략하면 전부 `null`이다
+
+					| 필드 | 타입 | 설명 |
+					| --- | --- | --- |
+					| `assessmentRoundId` | UUID? | 지표를 계산한 평가 회차. 요청한 값을 그대로 돌려준다 |
+					| `attemptId` | UUID? | 그 회차의 응시 시도 ID. 아직 응시하지 않았으면 `null` |
+					| `roundResultStatus` | enum? | 응시 시도 상태. `NOT_STARTED`(미시작) · `SUBMITTED` · `ANALYZING` · `SESSION_READY` · `SESSION_IN_PROGRESS` · `COMPLETED`(완료) · `FAILED` · `EXPIRED` |
+					| `conceptResultItems` | string? | 문항별 결과의 JSON 배열(문자열로 직렬화됨). 각 항목은 `problemId`·`problemNo`·`conceptId`·`generationStatus`·`reachLevel`(0~4단, 미생성·무응답이면 `null`)을 가진다 |
+					| `expectedConceptCount` | int? | `저단계 개수`의 분모. 실제로 생성된(`generationStatus='GENERATED'`) 문항 수이며 사람마다 다르다 |
+					| `lowStageConceptCount` | int? | 도달 단계 0~2단(저단계)인 문항 수. 응답한 문항이 하나도 없으면 `null`(화면의 `—`) |
+					| `excellentOccurrenceCount` | int? | 이 교육생이 우수로 발견된 누적 횟수 |
+					| `excellentAssessmentSequenceNos` | int[] | 우수로 발견된 프로젝트 차수(`analysis_sequence_no`) 전부. **조회 회차를 포함**하므로 이 배열에 조회 차수가 있으면 이번 회차도 우수다. 최신 차수부터 내림차순, 근거 없으면 빈 배열 |
+					| `matchedRiskTypeCodes` | string? | 이번 회차에 걸린 위험 유형 코드 배열(문자열로 직렬화됨). `STAGE_DECLINE`(단계 하락) · `PERSISTENT_LOW`(지속 저점) · `INVALID_ATTEMPT`(무효 응시) · `CONTRIBUTION_UNDERSTANDING_GAP`(기여·이해도 괴리) · `LOW_PARTICIPATION`(저기여) 중 동시에 여러 개가 걸릴 수 있다. 해소(`RESOLVED`)된 사유는 들어오지 않는다 |
+					| `roundPrimaryStatusCode` | enum? | 배지 한 칸에 넣을 **단일** 코드. 1층 응시상태(`NOT_ATTENDED` 미응시 → `SESSION_INCOMPLETE` 응시 중단 → `INVALID_ATTEMPT` 무효 응시)가 있으면 2층 위험 유형(`LOW_PARTICIPATION` → `CONTRIBUTION_UNDERSTANDING_GAP` → `STAGE_DECLINE` → `PERSISTENT_LOW`)은 보지 않는다. 걸린 것이 없으면 `null`(정상). 중도 이탈은 여기 들어오지 않는다 — 계정 상태의 비활성화 사유로 이미 드러난다 |
+					| `roundTerminalAt` | date-time? | `roundPrimaryStatusCode`가 `NOT_ATTENDED`·`SESSION_INCOMPLETE`일 때만 값이 있는 시각. 화면이 `우수 누적` 칸에 정상 결과 대신 `세션 중단 · 07-14`처럼 사유·일자를 그릴 때 쓴다 |
+					| `rowAggregationStatus` | string? | 이 행의 지표 집계 상태. 현재는 항상 `COMPLETE`다 |
 
 					#### inactivatedReasonCode 값
 
@@ -357,7 +386,7 @@ public class TraineeController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "명단 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "ROSTER_FILTER_CONFLICT classroomId와 unassignedOnly를 함께 지정함 · VALIDATION_FAILED accountStatus·sort에 없는 값을 지정했거나 page·size 값이 올바르지 않음"),
+			@ApiResponse(responseCode = "400", description = "ROSTER_FILTER_CONFLICT classroomId와 unassignedOnly를 함께 지정함 · ROSTER_ASSESSMENT_ROUND_REQUIRED sort가 RISK·EXCELLENCE인데 assessmentRoundId를 생략함 · VALIDATION_FAILED accountStatus·sort에 없는 값을 지정했거나 page·size 값이 올바르지 않음"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 만료됨"),
 			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터·매니저 권한이 아님"),
 			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 조회할 기수를 찾을 수 없음. 다른 기관의 기수도 존재를 알리지 않고 여기로 묶는다"),
@@ -376,9 +405,9 @@ public class TraineeController {
 			@RequestParam(required = false) AccountStatus accountStatus,
 			@Parameter(description = "이름·이메일 부분검색", example = "강건우")
 			@RequestParam(required = false) String query,
-			@Parameter(description = "정렬 기준", example = "NAME")
+			@Parameter(description = "정렬 기준. RISK·EXCELLENCE는 assessmentRoundId가 필수", example = "NAME")
 			@RequestParam(required = false, defaultValue = "NAME") TraineeRosterSort sort,
-			@Parameter(description = "회차별 결과를 합칠 평가 회차 ID")
+			@Parameter(description = "회차별 결과를 합칠 평가 회차 ID. RISK·EXCELLENCE 정렬에는 필수이며, 그 밖에는 회차 지표 필드를 채우는 데만 쓰인다")
 			@RequestParam(required = false) UUID assessmentRoundId,
 			@Parameter(description = "0부터 시작하는 페이지 번호", example = "0")
 			@RequestParam(defaultValue = "0") @Min(0) int page,
