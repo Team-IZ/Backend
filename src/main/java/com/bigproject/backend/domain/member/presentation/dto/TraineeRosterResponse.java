@@ -83,9 +83,44 @@ public record TraineeRosterResponse(
 			UUID attemptId,
 			String roundResultStatus,
 			String conceptResultItems,
+			@Schema(description = """
+					`2단 이하` 칸의 **분모**이며 그 회차에 이 교육생에게 실제로 만들어진 문항 수입니다.
+					사람마다 다릅니다 — 코드에 근거가 없어 문항이 생성되지 않은(`NOT_GENERATED`) 개념은
+					검증 세션에서도 물을 수 없어 분모에서 빠집니다. 화면의 `1/2`가 이 값입니다.
+					""", example = "2")
+			Integer expectedConceptCount,
 			Integer lowStageConceptCount,
 			Integer excellentOccurrenceCount,
+			@Schema(description = """
+					이 교육생이 우수로 발견된 프로젝트 차수 전부입니다(원장: report_evidence,
+					evidence_category=PARTICIPANT_RESULT_OCCURRENCE). **조회 회차를 포함**하므로
+					`assessmentRoundId`에 해당하는 차수가 이 배열에 있으면 이번 회차도 우수입니다.
+					최신 차수부터 내림차순이며, 근거가 없으면 빈 배열입니다. `우수 3회 · 1·2·3차`가 이 값입니다.
+					""", example = "[3, 2, 1]")
+			int[] excellentAssessmentSequenceNos,
+			@Schema(description = """
+					이번 회차에 걸린 위험 유형 **전부**입니다(원장: InterviewCandidateReason).
+					`STAGE_DECLINE`(단계 하락) · `PERSISTENT_LOW`(지속 저점) · `INVALID_ATTEMPT`(무효 응시) ·
+					`CONTRIBUTION_UNDERSTANDING_GAP`(기여·이해도 괴리) · `LOW_PARTICIPATION`(저기여) 5종이며
+					동시에 여러 개가 걸릴 수 있습니다. 해소(`RESOLVED`)된 사유는 들어오지 않습니다.
+					""", example = "{INVALID_ATTEMPT}")
 			String matchedRiskTypeCodes,
+			@Schema(description = """
+					배지 한 칸에 넣을 **단일** 코드입니다. 정책 문서 §7의 2층 구조를 그대로 담습니다 —
+					1층 응시상태(`NOT_ATTENDED` 미응시 → `SESSION_INCOMPLETE` 응시 중단 →
+					`INVALID_ATTEMPT` 무효 응시)가 있으면 2층 위험 유형(저기여 → 기여·이해도 괴리 →
+					단계 하락 → 지속 저점)은 보지 않습니다. 걸린 것이 없으면 `null`(정상)입니다.
+
+					**중도 이탈은 이 값에 들어오지 않습니다** — 계정 상태의 비활성화 사유로 이미
+					드러나므로 화면은 `status=INACTIVE`일 때 그 사유·일자를 계정 칸에 그리면 됩니다.
+					""", example = "SESSION_INCOMPLETE", nullable = true)
+			String roundPrimaryStatusCode,
+			@Schema(description = """
+					`roundPrimaryStatusCode`가 `NOT_ATTENDED`·`SESSION_INCOMPLETE`일 때만 값이 있는
+					시각입니다. 그 회차엔 우수 누적을 그릴 수 없으므로, 화면이 `우수 누적` 칸에 대신
+					`세션 중단 · 07-14`처럼 사유·일자를 그릴 때 이 값을 씁니다.
+					""", nullable = true)
+			OffsetDateTime roundTerminalAt,
 			String rowAggregationStatus
 	) {
 		public static Trainee from(TraineeRosterRepository.RosterRow row) {
@@ -108,9 +143,13 @@ public record TraineeRosterResponse(
 					row.attemptId(),
 					row.roundResultStatus(),
 					row.conceptResultItems(),
+					row.expectedConceptCount(),
 					row.lowStageConceptCount(),
 					row.excellentOccurrenceCount(),
+					row.excellentAssessmentSequenceNos(),
 					row.matchedRiskTypeCodes(),
+					row.roundPrimaryStatusCode(),
+					row.roundTerminalAt(),
 					row.rowAggregationStatus()
 			);
 		}
