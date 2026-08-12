@@ -120,23 +120,65 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 
 	@Override
 	public List<ConceptRow> findConcepts(UUID userId) {
-		// 개념 단위 판정은 뷰가 이미 만들어 둔 것을 그대로 쓴다 — 공개 범위에 따른
-		// can_view_explanation 판정이 뷰 안에 있어서 여기서 다시 쓰면 갈라진다.
+		/*
+		 * 개념 단위 판정은 뷰가 이미 만들어 둔 것을 그대로 쓴다 — 공개 범위에 따른
+		 * can_view_explanation 판정이 뷰 안에 있어서 여기서 다시 쓰면 갈라진다.
+		 *
+		 * 🔴 도달 단계만은 예외다. 뷰의 reach_display_code 는
+		 * COALESCE(assessment_problem.best_success_stage,'L0') 인데,
+		 * ck_assessment_problem_best_success_stage_2 가 problem_scope='TEAM_SHARED_PROBLEM' 행의
+		 * 그 컬럼을 항상 NULL 로 강제한다. 미니프로젝트는 전부 팀 공유 문제라 어떤 데이터를 넣어도
+		 * 전 개념이 L0(0단)으로 나갔다 — 같은 응답의 said 문장·isRetryTarget 과 정면으로 어긋나
+		 * "하나도 못 했다면서 무엇을 했다고 설명하는" 리포트가 됐다(20차 R2·R3).
+		 *
+		 * 그래서 원천을 둘로 잡는다.
+		 *
+		 *   ① report_evidence.trace_payload->>'reachedLevel' — 발행 시점에 얼린 값이다.
+		 *      ReportEvidenceFactory 가 AI reachedStage(없으면 problem_stage 집계)로 적고,
+		 *      isRetryTarget(decision_code)도 같은 값에서 갈린다. 리포트는 스냅샷이므로
+		 *      발행 당시 값을 쓰는 것이 맞고, 두 필드가 같은 원천을 보게 된다.
+		 *   ② 그 키가 없는 행(구 스냅샷·시드)은 problem_stage 에서 다시 센다.
+		 *      도달 단계 = MAX(axis_code) FILTER (status='PASSED'), 없으면 0단이다.
+		 *      세션·단계는 교육생별로 독립이라 본인 INITIAL 응시의 세션만 탄다.
+		 *
+		 * 뷰를 고치지 않는 이유는 정의서 변경 + DB 마이그레이션이 함께 필요해 배포 단위가
+		 * 달라지기 때문이다. 뷰가 교정되면 ①②를 걷어내고 컬럼 하나로 되돌린다.
+		 */
 		String sql = """
-				SELECT report_id,
-				       problem_id,
-				       concept_display_name,
-				       concept_display_order,
-				       reach_display_code,
-				       result_explanation,
-				       answer_excerpt,
-				       curriculum_location,
-				       review_required,
-				       review_before_after_items,
-				       can_view_explanation
-				FROM trainee_report_problem_view
-				WHERE user_id = ?
-				ORDER BY report_id, concept_display_order
+				SELECT v.report_id,
+				       v.problem_id,
+				       v.concept_display_name,
+				       v.concept_display_order,
+				       COALESCE(
+				           NULLIF(re.trace_payload->>'reachedLevel', '')::INTEGER,
+				           stage.reached_level,
+				           0
+				       )                                AS reach_level,
+				       v.result_explanation,
+				       v.answer_excerpt,
+				       v.curriculum_location,
+				       v.review_required,
+				       v.review_before_after_items,
+				       v.can_view_explanation
+				FROM trainee_report_problem_view v
+				LEFT JOIN report_evidence re
+				       ON re.snapshot_id       = v.snapshot_id
+				      AND re.problem_id        = v.problem_id
+				      AND re.evidence_category = 'RESULT_EXPLANATION'
+				LEFT JOIN LATERAL (
+				       SELECT MAX(SUBSTRING(ps.axis_code FROM 2)::INTEGER) AS reached_level
+				       FROM problem_stage ps
+				       JOIN assessment_session s
+				              ON s.session_id = ps.session_id
+				       JOIN measurement_attempt ma
+				              ON ma.attempt_id   = s.attempt_id
+				             AND ma.user_id      = v.user_id
+				             AND ma.attempt_type = 'INITIAL'
+				       WHERE ps.problem_id = v.problem_id
+				         AND ps.status     = 'PASSED'
+				) stage ON TRUE
+				WHERE v.user_id = ?
+				ORDER BY v.report_id, v.concept_display_order
 				""";
 
 		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> new ConceptRow(
@@ -144,7 +186,7 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				rs.getObject("problem_id", UUID.class),
 				rs.getString("concept_display_name"),
 				rs.getInt("concept_display_order"),
-				rs.getString("reach_display_code"),
+				rs.getInt("reach_level"),
 				rs.getString("result_explanation"),
 				rs.getString("answer_excerpt"),
 				rs.getString("curriculum_location"),
