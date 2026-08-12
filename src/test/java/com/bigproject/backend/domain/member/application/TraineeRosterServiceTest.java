@@ -90,7 +90,7 @@ class TraineeRosterServiceTest {
 	void translatesInvitedFilterToTheRawPendingDbValue() {
 		Page<TraineeRosterRepository.RosterRow> emptyPage = new PageImpl<>(List.of());
 		when(traineeRosterRepository.findRoster(any(), any())).thenReturn(emptyPage);
-		when(traineeRosterRepository.countUnassigned(cohortId, orgId)).thenReturn(0);
+		when(traineeRosterRepository.countUnassigned(cohortId, orgId, null)).thenReturn(0);
 
 		service.findRoster(cohortId, orgId, null, false, AccountStatus.INVITED, null, TraineeRosterSort.NAME,
 				PageRequest.of(0, 20));
@@ -105,7 +105,7 @@ class TraineeRosterServiceTest {
 	void reportsTheUnassignedCountAlongsideThePage() {
 		Page<TraineeRosterRepository.RosterRow> page = new PageImpl<>(List.of());
 		when(traineeRosterRepository.findRoster(any(), any())).thenReturn(page);
-		when(traineeRosterRepository.countUnassigned(cohortId, orgId)).thenReturn(3);
+		when(traineeRosterRepository.countUnassigned(cohortId, orgId, null)).thenReturn(3);
 
 		TraineeRosterService.RosterResult result = service.findRoster(
 				cohortId, orgId, null, false, null, null, TraineeRosterSort.NAME, PageRequest.of(0, 20));
