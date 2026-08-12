@@ -45,7 +45,7 @@ public class ReportDisclosureController {
 
 	@Operation(
 			operationId = "findMyDisclosure",
-			summary = "내 리포트 공개 상태 조회 | ⚠️ 사용 불가",
+			summary = "내 리포트 공개 상태 조회 | ✅ 사용 가능",
 			description = """
 					TR-04에서 **본문이 안 열리는 이유**를 판별한다. `GET /reports`가 회차 상태까지
 					같이 주므로 화면이 매번 부를 필요는 없고, `PENDING_VISIBILITY`처럼
@@ -110,7 +110,7 @@ public class ReportDisclosureController {
 
 	@Operation(
 			operationId = "updateDisclosure",
-			summary = "리포트 공개 범위 설정 | ⚠️ 사용 불가",
+			summary = "리포트 공개 범위 설정 | ✅ 사용 가능",
 			description = """
 					담당 매니저가 회차 결과를 교육생에게 연다. TR-04의 `공개 범위 미지정`을
 					푸는 유일한 경로다 — 이 호출이 없으면 리포트는 발행돼도 영원히 잠겨 있다.
