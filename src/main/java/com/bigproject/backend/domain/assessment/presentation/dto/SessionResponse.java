@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.assessment.presentation.dto;
 
+import com.bigproject.backend.domain.assessment.domain.AssessmentSessionStatus;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionHead;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionStage;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -25,7 +26,10 @@ public record SessionResponse(
 				allowableValues = {"FIRST", "REVIEW"})
 		String mode,
 
-		@Schema(description = "READY(시작 전) · IN_PROGRESS(진행 중)", allowableValues = {"READY", "IN_PROGRESS"})
+		// 이 조회는 READY·IN_PROGRESS만 돌려주지만(종료된 세션은 findCurrent가 고르지 않는다)
+		// 값 집합 자체는 세션 상태 8종이다. 좁혀서 내보내면 같은 컬럼이 API마다 다른 타입이 된다.
+		@Schema(description = "이 조회는 사실상 READY(시작 전) · IN_PROGRESS(진행 중)만 돌려준다",
+				implementation = AssessmentSessionStatus.class)
 		String status,
 
 		@Schema(description = "지금 서 있는 문제 번호(1~3). 시작 전이면 null", nullable = true) Integer currentProblemNo,

@@ -1,6 +1,8 @@
 package com.bigproject.backend.domain.assessment.presentation.dto;
 
+import com.bigproject.backend.domain.assessment.domain.MeasurementAttemptStatus;
 import com.bigproject.backend.domain.assessment.domain.TraineeHomeRound;
+import com.bigproject.backend.domain.assessment.domain.TraineeRepresentativeStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.util.UUID;
@@ -20,12 +22,11 @@ public record PastRoundResponse(
 		@Schema(example = "미프 2차") String roundName,
 		@Schema(description = "세션 완료 여부 판정용. ASSESSMENT_COMPLETED이면 완료",
 				example = "ASSESSMENT_COMPLETED",
-				allowableValues = {"REVIEW_REQUIRED", "ASSESSMENT_COMPLETED", "ASSESSMENT_WINDOW_CLOSED",
-						"ASSESSMENT_IN_PROGRESS", "ASSESSMENT_AVAILABLE", "ANALYSIS_FAILED",
-						"SUBMISSION_MISSED", "SUBMISSION_REQUIRED", "ANALYZING", "NO_ACTIVE_ROUND"})
+				implementation = TraineeRepresentativeStatus.class)
 		String representativeStatus,
-		// initialSessionStatus(CurrentRoundResponse)와 같은 이유로 값 집합 미확정 — string으로 둔다.
-		@Schema(description = "다시 보기 상태. 배정이 없으면 null", nullable = true) String reviewStatus,
+		// 19차 R3 회신으로 값 집합을 확정했다. CurrentRoundResponse.reviewStatus와 같은 축이다.
+		@Schema(description = "다시 보기 응시 상태. **배정이 없으면 null**", nullable = true,
+				implementation = MeasurementAttemptStatus.class) String reviewStatus,
 		@Schema(description = "완료한 다시 보기 건수", example = "1") int completedReviewCount,
 		UUID reportId,
 		@Schema(description = "traineeReleaseStatus = RELEASED일 때만 true") boolean canViewReport

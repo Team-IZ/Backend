@@ -29,7 +29,8 @@ public record ProblemActivityResponse(
 		@Schema(description = "코드 패널") Code code,
 		@Schema(description = "이 문제에서 지금까지 확정된 문답. 화면은 위에서 아래로 쌓는다")
 		List<Turn> turns,
-		@Schema(description = "지금 물어보는 질문. 문제가 끝났으면 null") CurrentQuestion current
+		@Schema(description = "지금 물어보는 질문. 문제가 끝났으면 null", nullable = true)
+		CurrentQuestion current
 ) {
 
 	@Schema(description = "코드 패널. snippet은 파일 전체이며 자를 위치는 화면이 정한다")

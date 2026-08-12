@@ -1,6 +1,17 @@
 package com.bigproject.backend.domain.assessment.presentation.dto;
 
+import com.bigproject.backend.domain.assessment.domain.AssessmentRoundStatus;
+import com.bigproject.backend.domain.assessment.domain.AssessmentSessionStatus;
+import com.bigproject.backend.domain.assessment.domain.MeasurementAttemptStatus;
+import com.bigproject.backend.domain.assessment.domain.TraineeDefaultActionCode;
 import com.bigproject.backend.domain.assessment.domain.TraineeHomeRound;
+import com.bigproject.backend.domain.assessment.domain.TraineeRepresentativeStatus;
+import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJobStatus;
+import com.bigproject.backend.domain.member.domain.CommitEmailStatus;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectCategory;
+import com.bigproject.backend.domain.reporting.domain.TraineeReleaseStatus;
+import com.bigproject.backend.domain.submission.domain.SubmissionMethod;
+import com.bigproject.backend.domain.submission.domain.SubmissionStatus;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -30,10 +41,10 @@ public record CurrentRoundResponse(
 		@Schema(nullable = true) Integer roundNo,
 		@Schema(example = "미프 3차", nullable = true) String roundName,
 		@Schema(description = "실제 회차면 항상 OPEN", example = "OPEN", nullable = true,
-				allowableValues = {"PLANNED", "OPEN", "CLOSED", "COMPLETED"}) String roundStatus,
+				implementation = AssessmentRoundStatus.class) String roundStatus,
 		@Schema(nullable = true) UUID projectId,
 		@Schema(nullable = true) String projectName,
-		@Schema(nullable = true, allowableValues = {"MINI_PROJECT", "BIG_PROJECT"}) String projectCategory,
+		@Schema(nullable = true, implementation = ProjectCategory.class) String projectCategory,
 		@Schema(description = "교안 표시명. 없으면 빈 배열") List<String> curriculumNames,
 
 		@Schema(description = "회차 스코프 팀. 팀 미편성이면 null", nullable = true) UUID teamId,
@@ -41,14 +52,10 @@ public record CurrentRoundResponse(
 		@Schema(example = "3팀", nullable = true) String teamName,
 
 		@Schema(description = "View 계약값 10종", example = "ANALYZING",
-				allowableValues = {"REVIEW_REQUIRED", "ASSESSMENT_COMPLETED", "ASSESSMENT_WINDOW_CLOSED",
-						"ASSESSMENT_IN_PROGRESS", "ASSESSMENT_AVAILABLE", "ANALYSIS_FAILED",
-						"SUBMISSION_MISSED", "SUBMISSION_REQUIRED", "ANALYZING", "NO_ACTIVE_ROUND"})
+				implementation = TraineeRepresentativeStatus.class)
 		String representativeStatus,
 		@Schema(description = "View 계약값 11종", example = "WAIT_FOR_ANALYSIS",
-				allowableValues = {"VIEW_REPORT", "WAIT_FOR_REPORT", "START_REVIEW", "RESUME_ASSESSMENT",
-						"START_ASSESSMENT", "RESUBMIT_REPOSITORY", "RESUBMIT_ZIP", "CONTACT_MANAGER",
-						"SUBMIT_CODE", "WAIT_FOR_ANALYSIS", "NONE"})
+				implementation = TraineeDefaultActionCode.class)
 		String defaultActionCode,
 		@Schema(description = "없으면 null", nullable = true,
 				allowableValues = {"SUBMISSION_DEADLINE_PASSED", "ASSESSMENT_WINDOW_CLOSED"})
@@ -62,13 +69,13 @@ public record CurrentRoundResponse(
 				커밋 이메일 상태. **null은 미등록**을 뜻한다. 배너 노출 조건은 \
 				`commitEmailStatus !== "VERIFIED"`이며 빅프로젝트에서는 미등록이 기여 귀속 실패로 이어진다.""",
 				example = "PENDING", nullable = true,
-				allowableValues = {"PENDING", "VERIFIED", "UNVERIFIED"}) String commitEmailStatus,
+				implementation = CommitEmailStatus.class) String commitEmailStatus,
 		@Schema(description = "기관 정책이 허용한 제출 수단")
-		@ArraySchema(schema = @Schema(allowableValues = {"GITHUB_URL", "ZIP_WITH_GITLOG"}))
+		@ArraySchema(schema = @Schema(implementation = SubmissionMethod.class))
 		List<String> availableSubmissionMethods,
 		@Schema(description = "실제 제출 수단. 미제출이면 null", nullable = true,
-				allowableValues = {"GITHUB_URL", "ZIP_WITH_GITLOG"}) String submissionMethod,
-		@Schema(nullable = true, allowableValues = {"VALIDATING", "ACCEPTED", "FETCH_FAILED", "INVALID"})
+				implementation = SubmissionMethod.class) String submissionMethod,
+		@Schema(nullable = true, implementation = SubmissionStatus.class)
 		String submissionStatus,
 		@Schema(nullable = true) Instant submittedAt,
 		boolean canSubmit,
@@ -77,27 +84,35 @@ public record CurrentRoundResponse(
 		@Schema(description = "View가 계산한 5값. 미제출이면 NOT_SUBMITTED", example = "ANALYZING",
 				allowableValues = {"NOT_SUBMITTED", "ANALYZING", "FAILED", "COMPLETED", "WAITING"})
 		String analysisPhase,
-		@Schema(nullable = true, allowableValues = {"QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL", "FAILED"})
+		@Schema(nullable = true, implementation = AnalysisJobStatus.class)
 		String analysisJobStatus,
 		@Schema(description = "분석 실패 사유. 15종. 상세는 Submission API 참고", nullable = true)
 		String analysisFailureCode,
 
-		// 값 집합이 "READY · IN_PROGRESS · PAUSED · COMPLETED 등"으로 문서에도 완결되어 있지 않다
-		// (17차 R1 검수, Q 별첨). 불완전한 enum은 다음 상태값 추가 때 조용히 값을 잃는, R1이 고치려는
-		// 바로 그 실패를 재현하므로 값 집합이 확정될 때까지 string으로 둔다.
-		@Schema(description = "READY · IN_PROGRESS · PAUSED · COMPLETED 등", nullable = true)
+		// 19차 R3로 둘 다 확정했다. 17차에서 "등"이라 보류했는데, 확인해 보니 두 값 집합 모두
+		// DB CHECK로 이미 닫혀 있었고 문서만 열려 있었다.
+		//
+		// 🔴 종전 설명문이 둘 다 "READY · IN_PROGRESS · PAUSED · COMPLETED 등"이었는데
+		// initialAttemptStatus 쪽은 틀린 문구였다 — 그 필드는 세션이 아니라 응시 상태
+		// (measurement_attempt.status)이고 값이 아예 다르다.
+		@Schema(description = "첫 응시 상태. **세션 상태가 아니다**", nullable = true,
+				implementation = MeasurementAttemptStatus.class)
 		String initialAttemptStatus,
-		@Schema(description = "READY · IN_PROGRESS · PAUSED · COMPLETED 등", nullable = true)
+		@Schema(description = "첫 응시의 세션 상태. 문제를 푸는 구간만 가리킨다", nullable = true,
+				implementation = AssessmentSessionStatus.class)
 		String initialSessionStatus,
 		@Schema(description = "출제된 문제 수", example = "3") int preparedProblemCount,
-		// initialSessionStatus와 같은 이유로 값 집합을 확정하지 못해 string으로 둔다.
-		@Schema(description = "다시 보기 상태. 배정이 없으면 null", nullable = true) String reviewStatus,
+		// 19차 R3 회신으로 값 집합을 확정했다 — View의 latest_review_status가 REVIEW 응시의
+		// measurement_attempt.status를 그대로 옮긴 값이라 응시 상태 기계와 1:1이다.
+		// "배정 없음"은 값이 아니라 null이다(TraineeReviewStatus javadoc 참고).
+		@Schema(description = "다시 보기 응시 상태. **배정이 없으면 null**", nullable = true,
+				implementation = MeasurementAttemptStatus.class) String reviewStatus,
 		int completedReviewCount,
 
 		@Schema(nullable = true) UUID reportId,
 		@Schema(allowableValues = {"PUBLISHED", "GENERATING", "NOT_PUBLISHED"}) String reportPublishStatus,
 		@Schema(description = "리포트 행이 없으면 NOT_CONFIGURED로 정규화한다",
-				allowableValues = {"NOT_CONFIGURED", "WITHHELD", "RELEASED"}) String traineeReleaseStatus,
+				implementation = TraineeReleaseStatus.class) String traineeReleaseStatus,
 		@Schema(description = "traineeReleaseStatus = RELEASED일 때만 true") boolean canViewReport,
 		@Schema(allowableValues = {"UNAVAILABLE", "PARTIAL", "AVAILABLE"}) String explanationStatus,
 

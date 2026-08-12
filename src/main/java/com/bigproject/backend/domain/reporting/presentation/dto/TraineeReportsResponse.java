@@ -78,6 +78,36 @@ public record TraineeReportsResponse(
 			// 설명을 필드가 아니라 타입에 둔 이유도 거기 적혀 있다.
 			@JsonInclude(JsonInclude.Include.NON_NULL) ReportCompletionStatus completionStatus,
 
+			/*
+			 * 🔴 19차 Q1 — "생성 실패와 문항 없음이 화면에서 같아 보인다"에 답하는 두 값이다.
+			 *
+			 * 두 사건은 **원천이 다르고 응답에 나타나는 방식도 다르다.**
+			 *
+			 *   문항 없음  → concepts[]에 asked=false 카드로 **들어온다**
+			 *                (assessment_problem.generation_status='NOT_GENERATED', 분석 단계)
+			 *   생성 실패  → concepts[]에서 **아예 빠진다**
+			 *                (report_generation_item.status<>'SUCCEEDED', 리포트 생성 단계)
+			 *
+			 * 즉 생성 실패가 asked=false로 오는 일은 없다. 다만 "빠진다"는 것만으로는 화면이
+			 * 몇 개가 왜 없는지 알 수 없어서, 그 건수를 여기서 직접 준다.
+			 */
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = """
+					이 리포트가 만들려 한 문제 수. `concepts[]` 길이와 비교하면 몇 개가 빠졌는지 알 수 있다.
+					**3으로 하드코딩하지 말 것** — 문항 수는 회차 설정에 따라 달라진다.""")
+			Integer expectedConceptCount,
+
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = """
+					**AI 생성이 실패해 빠진 개념 수**(시스템 장애). `0`이면 빠진 것이 없다.
+
+					`asked: false`(문항 없음)와 **다른 사건**이다 — 그쪽은 학생 코드에 개념이 없어
+					묻지 못한 정상 상태이고 `concepts[]`에 카드로 들어온다. 이 값은 결과가 나왔어야
+					하는데 못 나온 것이라 학생 잘못이 아니며, *"묻지 않았어요"* 로 안내하면 안 된다.
+
+					`completionStatus=PARTIAL`의 원인 건수이기도 하다.""")
+			Integer missingConceptCount,
+
 			@JsonInclude(JsonInclude.Include.NON_NULL) List<ConceptReportResponse> concepts,
 			@JsonInclude(JsonInclude.Include.NON_NULL)
 			@Schema(description = "PUBLISHED에서만", allowableValues = {"NONE", "PENDING", "DONE"}) String retryState,

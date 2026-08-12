@@ -125,6 +125,8 @@ class TraineeReportDisclosureGatingTest {
 		when(queryRepository.findRounds(USER)).thenReturn(List.of(new RoundRow(
 				ROUND, "미프 1차 이해도 확인", 1, "미니프로젝트",
 				REPORT, UUID.randomUUID(), "FULL",
+				// sampleCount 3 · missingCount 0 — 생성 실패가 없는 정상 리포트다(19차 Q1).
+				3, 0,
 				UUID.randomUUID(), "COMPLETED", null, "APPROVED",
 				"RELEASED", scope,
 				null, Instant.parse("2026-07-01T00:00:00Z"), true,
