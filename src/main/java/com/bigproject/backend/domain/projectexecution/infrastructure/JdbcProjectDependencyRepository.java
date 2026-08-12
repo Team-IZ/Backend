@@ -9,8 +9,10 @@ import java.sql.Array;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -100,6 +102,22 @@ public class JdbcProjectDependencyRepository implements ProjectDependencyReposit
 					counts.put(rs.getObject("project_id", UUID.class), rs.getInt("attended"));
 				});
 		return counts;
+	}
+
+	@Override
+	public List<UUID> findProjectIdsByClassId(UUID classId, UUID orgId) {
+		String sql = """
+				SELECT DISTINCT t.project_id
+				FROM team t
+				WHERE t.class_id = ? AND t.org_id = ?
+				""";
+		List<UUID> projectIds = new ArrayList<>();
+		jdbcTemplate.query(sql,
+				(ResultSet rs) -> {
+					projectIds.add(rs.getObject("project_id", UUID.class));
+				},
+				classId, orgId);
+		return projectIds;
 	}
 
 	/**

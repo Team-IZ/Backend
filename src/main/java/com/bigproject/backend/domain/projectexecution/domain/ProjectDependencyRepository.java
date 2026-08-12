@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.projectexecution.domain;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -46,4 +47,11 @@ public interface ProjectDependencyRepository {
 	 * @return 응시자가 한 명도 없는 회차는 <b>키가 없다</b>
 	 */
 	Map<UUID, Integer> countAttendedByProject(Collection<UUID> projectIds);
+
+	/**
+	 * 반(class) 하나에 편성된 팀들이 참여 중인 프로젝트 ID 목록(중복 제거).
+	 * team을 거쳐 이어 붙인다 — Project 자체는 class 연관이 없다. 이 반에 팀이
+	 * 하나도 편성되지 않았으면 빈 목록이다.
+	 */
+	List<UUID> findProjectIdsByClassId(UUID classId, UUID orgId);
 }

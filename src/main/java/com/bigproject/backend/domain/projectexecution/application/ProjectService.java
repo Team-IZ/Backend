@@ -116,6 +116,11 @@ public interface ProjectService {
 
     /** 목록 한 벌 + 필터와 무관한 상태별 개수. */
     ProjectList findProjectList(UUID cohortId, UUID orgId, ProjectListCriteria criteria);
+    /**
+     * 반(class) 하나가 담당하는 프로젝트 목록. team.class_id를 경유해 좁힌다 —
+     * 이 반의 팀이 하나도 편성되지 않은 프로젝트는 결과에서 빠진다.
+     */
+    ProjectList findProjectListByClass(UUID classId, UUID orgId, ProjectListCriteria criteria, ProjectCategory category);
 
     /**
      * @param search        회차 이름 부분검색(대소문자 무시). null·공백이면 전체

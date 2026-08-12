@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestMapping;
 
 /**
  * 화면 하나 대 API 하나가 아니라 화면이 필요로 하는 조합을 그대로 내려주는 BFF(Backend for Frontend) 성격
@@ -19,13 +20,14 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Project Execution", description = "프로젝트 구성·일정·요구사항 API")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
+@RequestMapping("/api/v0")
 @RequiredArgsConstructor
 public class BffController {
 
     private final CurrentRoundService currentRoundService;
 
-    @Operation(
-            summary = "교육생 홈 - 지금 할 일 하나 조회",
+	@Operation(
+			summary = "이번 회차 상태 판정 조회 (지금 할 일 하나) | ✅ 사용 가능",
             description = """
 					TR-01(교육생 홈)이 보여줄 상태 하나를 조회한다. 진행 중인 회차가 없으면
 					status=NO_ACTIVE_ROUND로 200을 내려준다 — 빈 상태는 에러가 아니다.

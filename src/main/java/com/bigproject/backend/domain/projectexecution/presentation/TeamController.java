@@ -47,7 +47,7 @@ public class TeamController {
 
     @Operation(
             operationId = "findTeams",
-            summary = "팀 목록 조회 | ",
+            summary = "팀 목록 조회 | ✅ 사용 가능",
             description = """
 					프로젝트의 팀 편성 현황을 조회한다(MG-08 팀 탭).
 
@@ -85,7 +85,7 @@ public class TeamController {
 
     @Operation(
             operationId = "createTeam",
-            summary = "팀 생성 | ",
+            summary = "팀 생성 | ✅ 사용 가능",
             description = """
 					빈 팀 하나를 만든다([+ 팀 추가] 버튼).
 
@@ -122,7 +122,7 @@ public class TeamController {
 
     @Operation(
             operationId = "autoAssignTeams",
-            summary = "팀 자동 배분 | ",
+            summary = "팀 자동 배분 실행 | ✅ 사용 가능",
             description = """
 					팀이 하나도 없을 때만 실행할 수 있다([자동 배분] 모달).
 
@@ -164,7 +164,7 @@ public class TeamController {
 
     @Operation(
             operationId = "confirmTeams",
-            summary = "팀 편성 확정 | ",
+            summary = "팀 편성 확정 | ✅ 사용 가능",
             description = """
 					전원 배정 상태에서 편성을 확정한다(정의 문서 ③→④). 미배정 인원이 있으면 실패한다.
 
@@ -189,7 +189,7 @@ public class TeamController {
 
     @Operation(
             operationId = "reopenTeams",
-            summary = "팀 편성 다시 열기 | ",
+            summary = "팀 편성 다시 열기 | ✅ 사용 가능",
             description = """
 					확정된 편성을 다시 편성 중 상태로 되돌린다([편성 다시 열기] 버튼).
 
