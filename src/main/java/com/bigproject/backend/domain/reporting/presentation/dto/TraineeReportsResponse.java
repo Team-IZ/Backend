@@ -1,7 +1,9 @@
 package com.bigproject.backend.domain.reporting.presentation.dto;
 
 import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
+import com.bigproject.backend.domain.reporting.domain.ReportCompletionStatus;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.util.List;
 import java.util.Map;
@@ -51,6 +53,8 @@ public record TraineeReportsResponse(
 	 *                <b>화면이 {@code qa} 유무로 범위를 되짚지 않게</b> 하려고 값으로 내려준다 —
 	 *                {@code FULL}인데 문항이 아직 없어 {@code qa}가 비는 경우를 {@code SUMMARY}로
 	 *                오인하는 것을 막는다.
+	 * @param completionStatus 리포트가 <b>몇 개 문제로 만들어졌는가</b>. {@code PUBLISHED}에서만.
+	 *                자세한 뜻은 아래 주석을 볼 것 — 같은 이름이 OP-05에서는 다른 뜻이다.
 	 * @param concepts {@code PUBLISHED}에서만.
 	 * @param retryState {@code NONE} · {@code PENDING} · {@code DONE}. PUBLISHED에서만.
 	 */
@@ -64,6 +68,12 @@ public record TraineeReportsResponse(
 			String publishedAt,
 			String curriculum,
 			DisclosureScope disclosureScope,
+
+			// 여기 PARTIAL은 "일부 문제의 AI 생성이 실패해 개념 카드가 빠졌다"는 뜻이다.
+			// OP-05의 동명 값과 뜻이 다르니 설명은 ReportCompletionStatus javadoc을 볼 것 —
+			// 설명을 필드가 아니라 타입에 둔 이유도 거기 적혀 있다.
+			ReportCompletionStatus completionStatus,
+
 			List<ConceptReportResponse> concepts,
 			String retryState,
 			String retryDueAt,
