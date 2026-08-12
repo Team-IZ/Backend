@@ -57,12 +57,20 @@ public interface TraineeRosterRepository {
 	record RosterCriteria(
 			UUID cohortId,
 			UUID orgId,
+			UUID managerId,
+			UUID assessmentRoundId,
 			UUID classroomId,
 			boolean unassignedOnly,
 			String rawAccountStatus,
 			String query,
 			TraineeRosterSort sort
 	) {
+		public RosterCriteria(
+				UUID cohortId, UUID orgId, UUID classroomId, boolean unassignedOnly,
+				String rawAccountStatus, String query, TraineeRosterSort sort) {
+			this(cohortId, orgId, null, null, classroomId, unassignedOnly,
+					rawAccountStatus, query, sort);
+		}
 	}
 
 	/**
@@ -95,7 +103,25 @@ public interface TraineeRosterRepository {
 			 * 아직 수락·취소되지 않은 초대 토큰(11차 R2). 없으면 null이다 —
 			 * 이미 활성화됐거나 초대가 취소된 계정이라 재발송할 것이 없다.
 			 */
-			UUID pendingInvitationTokenId
+			UUID pendingInvitationTokenId,
+			UUID assessmentRoundId,
+			UUID attemptId,
+			String roundResultStatus,
+			String conceptResultItems,
+			Integer lowStageConceptCount,
+			Integer excellentOccurrenceCount,
+			String matchedRiskTypeCodes,
+			String rowAggregationStatus
 	) {
+		public RosterRow(
+				UUID traineeId, String name, String email, String rawAccountStatus,
+				UUID classroomId, String className, OffsetDateTime joinedAt, OffsetDateTime leftAt,
+				String inactivatedReasonCode, String inactivatedReason, OffsetDateTime inactivatedAt,
+				UUID inactivatedById, String inactivatedByName, UUID pendingInvitationTokenId) {
+			this(traineeId, name, email, rawAccountStatus, classroomId, className, joinedAt, leftAt,
+					inactivatedReasonCode, inactivatedReason, inactivatedAt, inactivatedById,
+					inactivatedByName, pendingInvitationTokenId, null, null, null, null,
+					null, null, null, null);
+		}
 	}
 }

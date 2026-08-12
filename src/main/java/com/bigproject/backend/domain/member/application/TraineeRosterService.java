@@ -105,6 +105,8 @@ public class TraineeRosterService {
 	public RosterResult findRoster(
 			UUID cohortId,
 			UUID orgId,
+			UUID managerId,
+			UUID assessmentRoundId,
 			UUID classroomId,
 			boolean unassignedOnly,
 			AccountStatus accountStatus,
@@ -120,6 +122,8 @@ public class TraineeRosterService {
 		TraineeRosterRepository.RosterCriteria criteria = new TraineeRosterRepository.RosterCriteria(
 				cohortId,
 				orgId,
+				managerId,
+				assessmentRoundId,
 				classroomId,
 				unassignedOnly,
 				toRawStatus(accountStatus),
@@ -131,6 +135,13 @@ public class TraineeRosterService {
 		int unassignedCount = traineeRosterRepository.countUnassigned(cohortId, orgId);
 		int cohortTotal = traineeRosterRepository.countCohortTotal(cohortId, orgId);
 		return new RosterResult(page, unassignedCount, cohortTotal);
+	}
+
+	public RosterResult findRoster(
+			UUID cohortId, UUID orgId, UUID classroomId, boolean unassignedOnly,
+			AccountStatus accountStatus, String query, TraineeRosterSort sort, Pageable pageable) {
+		return findRoster(cohortId, orgId, null, null, classroomId, unassignedOnly,
+				accountStatus, query, sort, pageable);
 	}
 
 	@Transactional

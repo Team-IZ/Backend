@@ -39,12 +39,20 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 			         WHERE t.user_id = cm.user_id AND t.purpose = 'INVITE_TRAINEE'
 			           AND t.used_at IS NULL AND t.invalidated_at IS NULL
 			         ORDER BY t.issued_at DESC
-			         LIMIT 1) AS pending_invitation_token_id
+			         LIMIT 1) AS pending_invitation_token_id,
+			       mv.assessment_round_id, mv.attempt_id, mv.row_result_status,
+			       mv.concept_result_items::text AS concept_result_items,
+			       mv.low_stage_concept_count, mv.excellent_occurrence_count,
+			       mv.current_round_matched_risk_type_codes::text AS matched_risk_type_codes,
+			       mv.row_aggregation_status
 			FROM cohort_member cm
 			JOIN app_user u ON u.user_id = cm.user_id AND u.deleted_at IS NULL
 			LEFT JOIN class_membership csm ON csm.cohort_member_id = cm.cohort_member_id AND csm.unassigned_at IS NULL
 			LEFT JOIN class c ON c.class_id = csm.class_id
 			LEFT JOIN app_user actor ON actor.user_id = u.inactivated_by
+			LEFT JOIN manager_trainee_roster_view mv
+			  ON mv.user_id = cm.user_id AND mv.manager_user_id = ?::uuid
+			 AND mv.assessment_round_id = ?::uuid
 			""";
 
 	@Override
@@ -88,7 +96,10 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 						+ where,
 				Long.class, args.toArray());
 
-		List<Object> pageArgs = new ArrayList<>(args);
+		List<Object> pageArgs = new ArrayList<>();
+		pageArgs.add(criteria.managerId());
+		pageArgs.add(criteria.assessmentRoundId());
+		pageArgs.addAll(args);
 		pageArgs.add(pageable.getPageSize());
 		pageArgs.add(pageable.getOffset());
 
@@ -131,7 +142,8 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 	@Override
 	public Optional<RosterRow> findTrainee(UUID traineeId, UUID cohortId, UUID orgId) {
 		String sql = ROSTER_SELECT + " WHERE cm.user_id = ? AND cm.cohort_id = ? AND cm.org_id = ?";
-		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> mapRow(rs), traineeId, cohortId, orgId)
+		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> mapRow(rs),
+				null, null, traineeId, cohortId, orgId)
 				.stream().findFirst();
 	}
 
@@ -188,6 +200,12 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 	}
 
 	private String orderBy(TraineeRosterSort sort) {
+		if (sort == TraineeRosterSort.RISK) {
+			return " ORDER BY COALESCE(mv.risk_sort_key, -1) DESC, u.name ASC, u.email ASC";
+		}
+		if (sort == TraineeRosterSort.EXCELLENCE) {
+			return " ORDER BY COALESCE(mv.excellent_occurrence_count, -1) DESC, u.name ASC, u.email ASC";
+		}
 		if (sort == TraineeRosterSort.RECENT_ENROLLED) {
 			return " ORDER BY cm.joined_at DESC, u.name ASC, u.email ASC";
 		}
@@ -209,8 +227,21 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				toOffsetDateTime(rs.getTimestamp("inactivated_at")),
 				rs.getObject("inactivated_by_id", UUID.class),
 				rs.getString("inactivated_by_name"),
-				rs.getObject("pending_invitation_token_id", UUID.class)
+				rs.getObject("pending_invitation_token_id", UUID.class),
+				rs.getObject("assessment_round_id", UUID.class),
+				rs.getObject("attempt_id", UUID.class),
+				rs.getString("row_result_status"),
+				rs.getString("concept_result_items"),
+				integer(rs, "low_stage_concept_count"),
+				integer(rs, "excellent_occurrence_count"),
+				rs.getString("matched_risk_type_codes"),
+				rs.getString("row_aggregation_status")
 		);
+	}
+
+	private Integer integer(ResultSet rs, String column) throws SQLException {
+		int value = rs.getInt(column);
+		return rs.wasNull() ? null : value;
 	}
 
 	private OffsetDateTime toOffsetDateTime(Timestamp timestamp) {

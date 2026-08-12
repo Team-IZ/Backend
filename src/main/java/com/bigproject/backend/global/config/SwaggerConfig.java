@@ -1,15 +1,18 @@
 package com.bigproject.backend.global.config;
 
 import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.domain.assessment.domain.AssessmentValidityErrorCode;
 import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
 import com.bigproject.backend.domain.member.domain.MemberErrorCode;
+import com.bigproject.backend.domain.notification.domain.NotificationErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectExecutionErrorCode;
 import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
 import com.bigproject.backend.global.exception.ApiErrorCode;
 import com.bigproject.backend.global.exception.ErrorResponse;
+import com.bigproject.backend.global.security.ManagerViewAccessErrorCode;
 import io.swagger.v3.core.converter.AnnotatedType;
 import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
@@ -78,7 +81,9 @@ public class SwaggerConfig {
 	private static final Map<String, String> ERROR_CODE_CATALOG = Stream.<ApiErrorCode[]>of(
 					OrganizationErrorCode.values(), ReportErrorCode.values(), AuthErrorCode.values(),
 					AcademicOperationsErrorCode.values(), MemberErrorCode.values(), AnalyticsErrorCode.values(),
-					ProjectExecutionErrorCode.values(), CurriculumErrorCode.values())
+					ProjectExecutionErrorCode.values(), CurriculumErrorCode.values(),
+					ManagerViewAccessErrorCode.values(), NotificationErrorCode.values(),
+					AssessmentValidityErrorCode.values())
 			.flatMap(Arrays::stream)
 			.collect(LinkedHashMap::new, (map, code) -> map.put(code.name(), code.defaultMessage()), Map::putAll);
 
