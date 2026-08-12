@@ -102,10 +102,15 @@ public class TraineeRosterService {
 		NO_INVITATION
 	}
 
+	/**
+	 * @param scopedManagerId 목록을 담당 반으로 좁힐 매니저. 오퍼레이터가 부르면 null이라 기수 전체를 본다.
+	 *                        <b>목록·총원·미배정 수가 모두 같은 모집단</b>이 되도록 세 곳에 함께 넘긴다.
+	 */
 	public RosterResult findRoster(
 			UUID cohortId,
 			UUID orgId,
 			UUID managerId,
+			UUID scopedManagerId,
 			UUID assessmentRoundId,
 			UUID classroomId,
 			boolean unassignedOnly,
@@ -123,6 +128,7 @@ public class TraineeRosterService {
 				cohortId,
 				orgId,
 				managerId,
+				scopedManagerId,
 				assessmentRoundId,
 				classroomId,
 				unassignedOnly,
@@ -132,15 +138,15 @@ public class TraineeRosterService {
 		);
 
 		Page<TraineeRosterRepository.RosterRow> page = traineeRosterRepository.findRoster(criteria, pageable);
-		int unassignedCount = traineeRosterRepository.countUnassigned(cohortId, orgId);
-		int cohortTotal = traineeRosterRepository.countCohortTotal(cohortId, orgId);
+		int unassignedCount = traineeRosterRepository.countUnassigned(cohortId, orgId, scopedManagerId);
+		int cohortTotal = traineeRosterRepository.countCohortTotal(cohortId, orgId, scopedManagerId);
 		return new RosterResult(page, unassignedCount, cohortTotal);
 	}
 
 	public RosterResult findRoster(
 			UUID cohortId, UUID orgId, UUID classroomId, boolean unassignedOnly,
 			AccountStatus accountStatus, String query, TraineeRosterSort sort, Pageable pageable) {
-		return findRoster(cohortId, orgId, null, null, classroomId, unassignedOnly,
+		return findRoster(cohortId, orgId, null, null, null, classroomId, unassignedOnly,
 				accountStatus, query, sort, pageable);
 	}
 
