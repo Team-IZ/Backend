@@ -125,7 +125,7 @@ jobs:
           OP_ID=$(aws apprunner start-deployment --service-arn "$SERVICE_ARN" --query 'OperationId' --output text)
           echo "Started deployment operation: $OP_ID"
 
-          for i in $(seq 1 60); do
+          for i in $(seq 1 150); do
             OP_STATUS=$(aws apprunner list-operations --service-arn "$SERVICE_ARN" --max-results 5 \
               --query "OperationSummaryList[?Id=='$OP_ID'].Status" --output text)
             case "$OP_STATUS" in
@@ -138,7 +138,8 @@ jobs:
                 exit 1
                 ;;
             esac
-            sleep 8
+            echo "Deployment in progress (status: ${OP_STATUS:-UNKNOWN})"
+            sleep 10
           done
           echo "Timed out waiting for deployment $OP_ID to finish"
           exit 1
