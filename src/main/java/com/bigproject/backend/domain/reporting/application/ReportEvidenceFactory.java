@@ -153,14 +153,28 @@ public class ReportEvidenceFactory {
 		return fallbackSummary(context.conceptName(), reachedLevel);
 	}
 
-	/** AI 서술이 없을 때의 대체 문장. 시드({@code enrich-report-domain.sql})가 쓰는 눈금과 같다. */
+	/**
+	 * AI 서술이 없을 때의 대체 문장.
+	 *
+	 * <h2>🔴 문장은 "통과한 축 다음이 무엇인가"로 만든다</h2>
+	 *
+	 * <p>축 순서는 확정 채점 모델(2026-08-11)이다 —
+	 * <b>1단 코드 이해 · 2단 설계 논리 · 3단 대안 비교 · 4단 반례 대응.</b> 그래서 3단은
+	 * "대안까지 비교했고 반례에서 막혔다"이고, 그 반대가 아니다.
+	 *
+	 * <p>종전 문구는 3단과 4단의 축이 서로 뒤바뀌어 있었다(2026-08-13 교정). 이 문장은 화면에
+	 * {@code level} 배지 바로 옆에 놓이므로, 어긋나면 <b>같은 카드가 서로 다른 두 말을 한다</b> —
+	 * 20차 R2에서 프론트가 {@code said}와 {@code level}을 대조해 결함을 찾아낸 것도 그래서다.
+	 */
 	private static String fallbackSummary(String conceptName, int reachedLevel) {
 		String name = conceptName == null ? "이 개념" : conceptName;
 		return switch (reachedLevel) {
 			case 0 -> name + " 은(는) 네 축 가운데 어느 것도 통과하지 못했습니다.";
 			case 1 -> name + " 에서 무엇을 하는지까지는 설명했지만, 왜 그 구조를 선택했는지에서 막혔습니다.";
-			case 2 -> name + " 에서 선택 이유까지 설명했지만, 어떤 상황에서 이 방식이 깨지는지는 답하지 못했습니다.";
-			case 3 -> name + " 에서 실패 조건까지 짚었지만, 대안 설계는 제시하지 못했습니다.";
+			case 2 -> name + " 에서 선택 이유까지 설명했지만, 같은 요구사항을 다른 방법으로 구현하는 "
+					+ "대안은 제시하지 못했습니다.";
+			case 3 -> name + " 에서 대안까지 비교했지만, 어떤 상황에서 이 방식이 깨지는지는 답하지 "
+					+ "못했습니다.";
 			default -> name + " 은(는) 네 축을 모두 통과했습니다.";
 		};
 	}

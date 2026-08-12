@@ -97,6 +97,18 @@ public interface ProjectService {
 
     Project updateSchedule(UUID projectId, UUID orgId, LocalDate startDate, LocalDate endDate, UUID actorUserId);
 
+    /**
+     * 기간 + <b>제출 마감 시각</b>(18차 R5).
+     *
+     * <p>{@code submissionDueAt}이 {@code null}이면 마감을 건드리지 않는다 — 기간만 조정하는
+     * 경우가 흔하고, 그때 마감이 조용히 움직이면 학생에게 이미 알린 시각이 바뀐다.
+     *
+     * <p>날짜와 시각을 서버가 자동으로 연결하지 않는 이유도 같다. 회차 기간은 운영 일정이고
+     * 제출 마감은 학생과의 약속이라 <b>같이 움직여야 할 이유가 없다.</b>
+     */
+    Project updateSchedule(UUID projectId, UUID orgId, LocalDate startDate, LocalDate endDate,
+            java.time.Instant submissionDueAt, UUID actorUserId);
+
     List<ConceptCandidate> findConceptCandidates(UUID projectId, UUID orgId);
 
     void confirmConcepts(UUID projectId, UUID orgId, List<UUID> mappingIds, UUID actorUserId);
@@ -209,7 +221,18 @@ public interface ProjectService {
             Project project,
             int curriculumCount,
             int conceptCount,
-            int conceptCandidateCount) {
+            int conceptCandidateCount,
+            List<String> curriculumNames,
+            List<String> conceptNames) {
+
+        /**
+         * 이름이 필요 없는 자리에서 쓴다 — 상세 조회는 교안·개념을 <b>객체로</b> 따로 싣고
+         * ({@link ProjectDetail}) 목록용 이름 배열을 쓰지 않는다.
+         */
+        public ProjectSummary(Project project, int curriculumCount, int conceptCount,
+                int conceptCandidateCount) {
+            this(project, curriculumCount, conceptCount, conceptCandidateCount, List.of(), List.of());
+        }
 
         /**
          * 준비가 덜 된 정도 — 교안·확정 개념 <b>둘 중 비어 있는 개수</b>다.

@@ -8,6 +8,7 @@ import com.bigproject.backend.domain.projectexecution.domain.ProjectReadiness;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 @Schema(description = "프로젝트 정보")
@@ -35,7 +36,26 @@ public record ProjectResponse(
         // 목록 항목에 실어 주면 목록 조회 한 번으로 끝난다.
         @Schema(description = "연결된 교안 수. 0이면 화면의 `교안 연결 안 됨`", example = "2") int curriculumCount,
         @Schema(description = "확정된 검증 개념 수. 화면의 `검증 개념 2 / 3건`에서 분자", example = "3") int conceptCount,
-        @Schema(description = "검증 개념 후보 수. 화면의 `후보 12건에서 3건`에서 앞 숫자", example = "12") int conceptCandidateCount
+        @Schema(description = "검증 개념 후보 수. 화면의 `후보 12건에서 3건`에서 앞 숫자", example = "12") int conceptCandidateCount,
+
+        // ── 18차 R3: 개수만으로는 목록에서 확인할 수 없던 것 ──────────────────────
+        // `교안 1개`만 보여서, 교안으로 걸러 7건이 나와도 **무엇이 걸린 것인지** 표에서 알 수 없었다.
+        // 다른 교안으로 걸어 0건이 나왔을 때 "정말 없어서"인지 "필터가 안 먹어서"인지도 구분되지 않았다.
+        // 개념도 같다 — `3건 확정`이 아니라 무엇을 확정했는지가 그 회차의 정체다.
+        @Schema(description = """
+                연결된 교안 파일명. 순서는 연결 순서(`sequence_no`)다.
+
+                `curriculumCount`와 길이가 <b>다를 수 있다</b> — 개수는 연결 행을 그대로 세지만
+                이름은 못 찾은 항목이 빠진다. 개수 표시에는 `curriculumCount`를 쓸 것.""",
+                example = "[\"spring_backend_v1.pdf\"]")
+        List<String> curriculumNames,
+
+        @Schema(description = """
+                확정된 검증 개념 이름. 순서는 확정 순서(`sequence_no`)다.
+
+                `conceptCount`와 길이가 다를 수 있는 이유는 위와 같다.""",
+                example = "[\"예외 처리와 롤백 전략\", \"API 응답 계약 설계\"]")
+        List<String> conceptNames
 ) {
     public static ProjectResponse from(ProjectSummary summary) {
         Project project = summary.project();
@@ -51,7 +71,9 @@ public record ProjectResponse(
                 project.getEndDate(),
                 summary.curriculumCount(),
                 summary.conceptCount(),
-                summary.conceptCandidateCount()
+                summary.conceptCandidateCount(),
+                summary.curriculumNames(),
+                summary.conceptNames()
         );
     }
 }

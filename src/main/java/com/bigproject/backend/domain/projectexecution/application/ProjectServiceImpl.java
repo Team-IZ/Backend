@@ -36,6 +36,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.*;
@@ -428,8 +429,22 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public Project updateSchedule(UUID projectId, UUID orgId, LocalDate startDate, LocalDate endDate, UUID actorUserId) {
+        return updateSchedule(projectId, orgId, startDate, endDate, null, actorUserId);
+    }
+
+    @Override
+    @Transactional
+    public Project updateSchedule(UUID projectId, UUID orgId, LocalDate startDate, LocalDate endDate,
+            Instant submissionDueAt, UUID actorUserId) {
+
         Project project = findProject(projectId, orgId);
         project.updateSchedule(startDate, endDate, actorUserId);
+
+        // 18차 R5 — 마감은 회차(project_assessment_round)에 있고 기간은 프로젝트에 있다.
+        // 둘을 한 트랜잭션에서 바꾸되, 보내지 않았으면 마감은 그대로 둔다.
+        if (submissionDueAt != null) {
+            projectDependencyRepository.updateSubmissionDueAt(projectId, orgId, submissionDueAt);
+        }
         return project;
     }
 
@@ -580,20 +595,31 @@ public class ProjectServiceImpl implements ProjectService {
                         ProjectVerificationConceptSet::getConceptSetId,
                         (first, second) -> first));
 
-        Map<UUID, Long> conceptCountBySet = conceptSetByProject.isEmpty()
+        // ③ 세트별 개념. 개수만 세던 것을 목록까지 들고 있게 바꿨다(18차 R3) — 이름을 만들려면
+        //    어차피 같은 행이 필요하고, 조회를 늘리지 않는다.
+        Map<UUID, List<ProjectVerificationConcept>> conceptsBySet = conceptSetByProject.isEmpty()
                 ? Map.of()
                 : verificationConceptRepository
                         .findByConceptSetIdInOrderBySequenceNoAsc(conceptSetByProject.values()).stream()
                         .collect(Collectors.groupingBy(
-                                ProjectVerificationConcept::getConceptSetId, Collectors.counting()));
+                                ProjectVerificationConcept::getConceptSetId,
+                                LinkedHashMap::new, Collectors.toList()));
 
         // ④ 후보 수를 교안 버전 단위로 한 번에 센다. GROUP BY라 후보가 0건인 버전은 행이 없다.
         Map<UUID, Long> candidateCountByVersion = candidateCountsByVersion(linksByProject, orgId);
+
+        // ⑤⑥ 이름 두 벌(18차 R3). 목록의 `교안 1개`·`3건 확정`만으로는 교안 필터가 먹었는지
+        //     확인할 수 없고, 개념도 "무엇을 확정했는지"가 곧 그 회차의 정체다.
+        Map<UUID, String> curriculumNameByVersion = curriculumNamesByVersion(linksByProject);
+        Map<UUID, String> conceptNameByMapping = conceptNamesByMapping(conceptsBySet);
 
         List<ProjectSummary> summaries = new ArrayList<>(projects.size());
         for (Project project : projects) {
             List<ProjectCurriculum> links = linksByProject.getOrDefault(project.getProjectId(), List.of());
             UUID conceptSetId = conceptSetByProject.get(project.getProjectId());
+            List<ProjectVerificationConcept> concepts = conceptSetId == null
+                    ? List.of()
+                    : conceptsBySet.getOrDefault(conceptSetId, List.of());
 
             long candidateCount = 0;
             for (ProjectCurriculum link : links) {
@@ -603,11 +629,63 @@ public class ProjectServiceImpl implements ProjectService {
             summaries.add(new ProjectSummary(
                     project,
                     links.size(),
-                    Math.toIntExact(conceptSetId == null ? 0L
-                            : conceptCountBySet.getOrDefault(conceptSetId, 0L)),
-                    Math.toIntExact(candidateCount)));
+                    concepts.size(),
+                    Math.toIntExact(candidateCount),
+                    // 이름을 못 찾은 항목은 조용히 빠진다 — 목록의 표시용 값이라 여기서 터뜨리면
+                    // 회차 하나 때문에 목록 전체가 안 열린다. 개수는 원장 그대로라 숫자는 맞는다.
+                    links.stream()
+                            .map(link -> curriculumNameByVersion.get(link.getCurriculumVersionId()))
+                            .filter(Objects::nonNull)
+                            .toList(),
+                    concepts.stream()
+                            .map(concept -> conceptNameByMapping.get(concept.getSourceMappingId()))
+                            .filter(Objects::nonNull)
+                            .toList()));
         }
         return summaries;
+    }
+
+    /** 연결된 교안 버전의 파일명을 한 번에. 화면의 `교안` 열이 이 값을 그린다. */
+    private Map<UUID, String> curriculumNamesByVersion(
+            Map<UUID, List<ProjectCurriculum>> linksByProject) {
+
+        Set<UUID> versionIds = linksByProject.values().stream()
+                .flatMap(List::stream)
+                .map(ProjectCurriculum::getCurriculumVersionId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (versionIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, String> names = new HashMap<>();
+        for (CurriculumVersion version : curriculumVersionRepository.findAllById(versionIds)) {
+            names.put(version.getVersionId(), version.getOriginalFileName());
+        }
+        return names;
+    }
+
+    /**
+     * 확정 개념의 이름을 한 번에.
+     *
+     * <p>이름은 개념 행이 아니라 <b>출처 매핑</b>에 있다({@code source_mapping_id}) —
+     * {@link #toConfirmedConcept}가 상세에서 쓰는 것과 같은 원장이라 두 화면이 다른 이름을
+     * 말하지 않는다.
+     */
+    private Map<UUID, String> conceptNamesByMapping(
+            Map<UUID, List<ProjectVerificationConcept>> conceptsBySet) {
+
+        Set<UUID> mappingIds = conceptsBySet.values().stream()
+                .flatMap(List::stream)
+                .map(ProjectVerificationConcept::getSourceMappingId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (mappingIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, String> names = new HashMap<>();
+        for (CurriculumTeachesMapping mapping : mappingRepository.findAllById(mappingIds)) {
+            names.put(mapping.getMappingId(), mapping.getExtractedName());
+        }
+        return names;
     }
 
     /** 연결된 교안 버전 전체의 후보 수를 한 번에. 연결이 없으면 조회하지 않는다. */
@@ -684,7 +762,9 @@ public class ProjectServiceImpl implements ProjectService {
             filtered.add(summary);
         }
 
-        filtered.sort(comparatorFor(criteria.sort() == null ? ProjectListSort.READINESS : criteria.sort()));
+        // 오늘을 한 번만 읽어 넘긴다 — 비교 중에 날짜가 바뀌면 정렬이 비일관해진다.
+        filtered.sort(comparatorFor(
+                criteria.sort() == null ? ProjectListSort.READINESS : criteria.sort(), LocalDate.now()));
         return new ProjectList(List.copyOf(filtered), counts, readinessCounts);
     }
 
@@ -706,22 +786,111 @@ public class ProjectServiceImpl implements ProjectService {
     }
 
     /**
-     * 정렬 기준. {@code READINESS}는 {@link ProjectSummary#unreadyCount()}를 쓴다 —
-     * 응답의 {@code readiness} 배지와 <b>같은 규칙</b>이라 목록의 순서와 배지가 어긋날 수 없다(9차 Q1).
+     * 정렬 기준(18차 R4로 셋 다 다시 씀).
+     *
+     * <h2>종전에 셋이 사실상 같았다</h2>
+     *
+     * <p>세 정렬이 전부 <b>날짜 오름차순</b>으로만 동작해 결과가 거의 구분되지 않았고, 셋 다
+     * 5개월 전에 끝난 회차를 맨 위에 놓았다. 목록의 목적은 <em>손댈 것이 남은 회차 찾기</em>인데
+     * 가장 위 다섯 줄이 전부 "할 일 없음"이었다.
+     *
+     * <p>원인은 <b>오늘을 안 봤다</b>는 것이다. 날짜만 비교하면 지난 것과 남은 것이 한 줄에
+     * 섞이고, 지난 것이 항상 더 작으므로 먼저 온다.
+     *
+     * <h2>공통 규칙 — 끝난 것은 뒤로</h2>
+     *
+     * <p>{@code CLOSED}는 <b>어떤 정렬에서도 마지막 그룹</b>이다. 지난 일은 목록의 목적과
+     * 무관하고, 필요하면 상태 필터로 본다. 그 안에서는 최근에 끝난 것이 앞이다 — 되짚어 볼
+     * 이유가 있다면 방금 끝난 회차이기 때문이다.
+     *
+     * @param today 기준선. 호출 시점의 날짜를 넘겨 정렬이 시각에 의존하지 않게 한다
      */
-    private Comparator<ProjectSummary> comparatorFor(ProjectListSort sort) {
+    // 인스턴스 상태를 쓰지 않는다. 정렬 규칙만 따로 테스트할 수 있도록 static·package-private다.
+    static Comparator<ProjectSummary> comparatorFor(ProjectListSort sort, LocalDate today) {
+        // 끝난 것을 뒤로 보내는 공통 1차 키. CLOSED면 1, 아니면 0이다.
+        Comparator<ProjectSummary> closedLast =
+                Comparator.comparingInt(summary -> isClosed(summary) ? 1 : 0);
+
         return switch (sort) {
-            // 덜 준비된 것이 앞. 같으면 마감이 이른 순, 그것도 같으면 최근 회차 순.
-            case READINESS -> Comparator.comparingInt(ProjectSummary::unreadyCount).reversed()
-                    .thenComparing(summary -> summary.project().getEndDate(),
-                            Comparator.nullsLast(Comparator.naturalOrder()))
+            /*
+             * 준비 필요 순 — "지금 손대야 하는 것".
+             *
+             * 준비도를 시간 축보다 앞에 둔다. PLANNED 중 빈 것이 있는 회차(PREP)가 가장
+             * 급하고, 그 다음이 준비를 마친 PLANNED, 그 다음이 이미 굴러가는 RUNNING이다.
+             * unreadyCount 는 배지(readiness)와 같은 규칙이라 순서와 배지가 어긋나지 않는다(9차 Q1).
+             */
+            case READINESS -> closedLast
+                    .thenComparingInt(ProjectServiceImpl::readinessRank)
+                    .thenComparingInt(summary -> -summary.unreadyCount())
+                    .thenComparing(ProjectServiceImpl::endDateKey, Comparator.nullsLast(Comparator.naturalOrder()))
                     .thenComparing(summary -> summary.project().getSequenceNo(),
                             Comparator.nullsLast(Comparator.reverseOrder()));
-            case DUE_SOON -> Comparator.<ProjectSummary, LocalDate>comparing(
-                    summary -> summary.project().getEndDate(), Comparator.nullsLast(Comparator.naturalOrder()));
-            case START_DATE -> Comparator.<ProjectSummary, LocalDate>comparing(
-                    summary -> summary.project().getStartDate(), Comparator.nullsLast(Comparator.naturalOrder()));
+
+            /*
+             * 마감 임박 순 — "곧 닫히는 것".
+             *
+             * 아직 안 지난 마감만 가까운 순으로 앞에 세우고, 지난 마감은 뒤로 보내되 그 안에서는
+             * 최근 순이다. 지난 마감을 그냥 오름차순에 두면 가장 오래된 것이 맨 위에 온다.
+             */
+            case DUE_SOON -> closedLast
+                    .thenComparingInt(summary -> isPast(endDateKey(summary), today) ? 1 : 0)
+                    .thenComparing(summary -> dateOrder(endDateKey(summary), today),
+                            Comparator.nullsLast(Comparator.naturalOrder()));
+
+            /*
+             * 시작 임박 순 — "곧 열리는 것".
+             *
+             * 18차 R4에서 라벨(`시작 임박 순`)과 동작(`시작 이른 순`)이 어긋난다는 지적을 받았고,
+             * 프론트 의견대로 **동작을 라벨에 맞췄다** — 이 화면에서 지난 시작일은 볼 이유가 없다.
+             */
+            case START_DATE -> closedLast
+                    .thenComparingInt(summary -> isPast(startDateKey(summary), today) ? 1 : 0)
+                    .thenComparing(summary -> dateOrder(startDateKey(summary), today),
+                            Comparator.nullsLast(Comparator.naturalOrder()));
         };
+    }
+
+    /** 준비 필요 순의 그룹. 작을수록 앞이다 — PREP → 준비된 PLANNED → RUNNING. */
+    private static int readinessRank(ProjectSummary summary) {
+        ProjectLifecycleStatus status = summary.project().getLifecycleStatus();
+        if (status == ProjectLifecycleStatus.PLANNED) {
+            return summary.readiness() == ProjectReadiness.PREP ? 0 : 1;
+        }
+        return status == ProjectLifecycleStatus.RUNNING ? 2 : 3;
+    }
+
+    private static boolean isClosed(ProjectSummary summary) {
+        return summary.project().getLifecycleStatus() == ProjectLifecycleStatus.CLOSED;
+    }
+
+    private static LocalDate endDateKey(ProjectSummary summary) {
+        return summary.project().getEndDate();
+    }
+
+    private static LocalDate startDateKey(ProjectSummary summary) {
+        return summary.project().getStartDate();
+    }
+
+    /** 날짜가 없으면 "지나지 않은 것"으로 본다 — 미정인 회차를 지난 일 뒤로 밀지 않는다. */
+    private static boolean isPast(LocalDate date, LocalDate today) {
+        return date != null && date.isBefore(today);
+    }
+
+    /**
+     * 한 그룹 안의 정렬 키.
+     *
+     * <p>지나지 않은 날짜는 <b>가까운 순</b>(오름차순)이고, 지난 날짜는 <b>최근 순</b>(내림차순)이다.
+     * 둘을 한 비교자에 담으려고 지난 쪽은 오늘로부터의 거리로 뒤집는다.
+     */
+    private static LocalDate dateOrder(LocalDate date, LocalDate today) {
+        if (date == null) {
+            return null;
+        }
+        if (!date.isBefore(today)) {
+            return date;
+        }
+        // 오늘을 축으로 대칭시키면 가장 최근 과거가 가장 작은 값이 된다.
+        return today.plusDays(today.toEpochDay() - date.toEpochDay());
     }
 
     @Override

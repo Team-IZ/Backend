@@ -244,7 +244,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				row.problemId() == null ? null : row.problemId().toString(),
 				row.conceptDisplayName(),
 				true,
-				reachLevel(row.reachDisplayCode()),
+				row.reachLevel(),
 				row.resultExplanation(),
 				row.reviewRequired(),
 				row.canViewExplanation() ? curriculumRef(row.curriculumLocationJson()) : null,
@@ -252,26 +252,6 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				explain(row, fullScope, retryPending),
 				comparedReach(row.reviewBeforeAfterItemsJson())
 		);
-	}
-
-	/**
-	 * `L0`~`L4` → 0~4.
-	 *
-	 * <p><b>0은 1로 올리지 않는다.</b> 통과한 축이 하나도 없는데 1로 보내면 화면이
-	 * `무엇을 하는지까지`(= L1 통과) 라벨을 붙여 학생에게 사실과 다른 말을 하게 된다.
-	 * 계약을 5단(0~4)으로 맞춘 이유가 이것이다.
-	 */
-	private static int reachLevel(String reachDisplayCode) {
-		if (reachDisplayCode == null || reachDisplayCode.length() < 2) {
-			return 0;
-		}
-		return switch (reachDisplayCode) {
-			case "L1" -> 1;
-			case "L2" -> 2;
-			case "L3" -> 3;
-			case "L4" -> 4;
-			default -> 0;
-		};
 	}
 
 	/** 다시 보기 상태. REVIEW 응시 기록이 없으면 대상이 아니다. */
@@ -370,13 +350,30 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				return null;
 			}
 			return new ComparedReachResponse(
-					reachLevel(first.get("before").asString()),
-					reachLevel(first.get("after").asString())
+					axisLevel(first.get("before").asString()),
+					axisLevel(first.get("after").asString())
 			);
 		} catch (Exception exception) {
 			log.warn("다시 보기 비교 JSON을 읽지 못했습니다. 비교 없이 내보냅니다.", exception);
 			return null;
 		}
+	}
+
+	/**
+	 * 축 코드 `L0`~`L4` → 0~4. 다시 보기 비교 JSON({@code reviewBeforeAfterItems})만 축 코드를 쓴다 —
+	 * 개념 카드의 {@code level}은 이미 숫자로 조회된다.
+	 *
+	 * <p><b>0은 1로 올리지 않는다.</b> 통과한 축이 하나도 없는데 1로 보내면 화면이
+	 * `무엇을 하는지까지`(= L1 통과) 라벨을 붙여 학생에게 사실과 다른 말을 하게 된다.
+	 */
+	private static int axisLevel(String axisCode) {
+		return switch (axisCode == null ? "" : axisCode) {
+			case "L1" -> 1;
+			case "L2" -> 2;
+			case "L3" -> 3;
+			case "L4" -> 4;
+			default -> 0;
+		};
 	}
 
 	/** 본문이 없는 상태들. 화면은 status만 보고 그린다. */

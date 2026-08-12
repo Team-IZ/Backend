@@ -133,8 +133,8 @@ class TraineeReportDisclosureGatingTest {
 				reviewStatus, null, reviewDone)));
 
 		when(queryRepository.findConcepts(USER)).thenReturn(List.of(new ConceptRow(
-				REPORT, PROBLEM, "트랜잭션 경계 설정", 1, "L2",
-				"선택 이유까지는 설명했지만 실패 조건에서 막혔습니다.", EXCERPT,
+				REPORT, PROBLEM, "트랜잭션 경계 설정", 1, 2,
+				"선택 이유까지는 설명했지만 대안은 제시하지 못했습니다.", EXCERPT,
 				null, retryTarget, null, true)));
 
 		when(queryRepository.findStageAnswers(USER)).thenReturn(List.of(new StageAnswerRow(

@@ -11,6 +11,7 @@ import com.bigproject.backend.domain.curriculum.domain.CurriculumSection;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumTeachesMapping;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumVersion;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumVersionStatus;
+import com.bigproject.backend.domain.curriculum.domain.MappingStatus;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumAnalysisRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumMaterialRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumSectionRepository;
@@ -35,6 +36,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -65,6 +67,44 @@ public class CurriculumServiceImpl implements CurriculumService {
     @Override
     public List<CurriculumVersion> findLinkableCurricula(UUID orgId) {
         return curriculumVersionRepository.findAllActiveByOrgId(orgId, CurriculumVersionStatus.ACTIVE);
+    }
+
+    /**
+     * 18차 R2 — 교안 목록에 분석 상태와 항목 수를 얹는다.
+     *
+     * <p>버전마다 최신 분석을 따로 읽으면 목록 하나에 조회가 교안 수만큼 붙으므로
+     * (15차 R1에서 회차 목록이 같은 이유로 4.6초였다) 전량을 한 번에 읽고 자바에서 가른다.
+     * 조회는 교안 수와 무관하게 <b>고정 3건</b>이다.
+     */
+    @Override
+    public List<LinkableCurriculum> findLinkableCurriculaWithStatus(UUID orgId) {
+        List<CurriculumVersion> versions = findLinkableCurricula(orgId);
+        if (versions.isEmpty()) {
+            return List.of();
+        }
+        List<UUID> versionIds = versions.stream().map(CurriculumVersion::getVersionId).toList();
+
+        // 최신순으로 전량을 받아 버전별 첫 건만 취한다 — merge의 (first, second) -> first가 그 규칙이다.
+        Map<UUID, CurriculumAnalysisStatus> statusByVersion = new HashMap<>();
+        for (CurriculumAnalysis analysis : analysisRepository
+                .findAllByVersionIdInOrderByRequestedAtDesc(versionIds)) {
+            statusByVersion.putIfAbsent(analysis.getVersionId(), analysis.getStatus());
+        }
+
+        // 항목 수는 19차 R2에서 만든 일괄 집계를 그대로 쓴다. 후보 수와 같은 것을 세므로
+        // 두 값이 갈릴 일이 없다 — 회차 생성 모달이 보는 수와 개념 후보 조회가 주는 수가 같아야 한다.
+        Map<UUID, Long> teachesByVersion = new HashMap<>();
+        for (Object[] row : mappingRepository.countActiveCandidatesByVersionIds(
+                versionIds, orgId, MappingStatus.ACTIVE)) {
+            teachesByVersion.put((UUID) row[0], ((Number) row[1]).longValue());
+        }
+
+        return versions.stream()
+                .map(version -> new LinkableCurriculum(
+                        version,
+                        statusByVersion.get(version.getVersionId()),
+                        Math.toIntExact(teachesByVersion.getOrDefault(version.getVersionId(), 0L))))
+                .toList();
     }
 
     @Override
