@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.reporting.infrastructure;
 
 import com.bigproject.backend.domain.reporting.application.ReportBatchService;
+import com.bigproject.backend.domain.reporting.application.ReportPublishService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -28,6 +29,7 @@ import org.springframework.stereotype.Component;
 public class ReportJobScheduler {
 
 	private final ReportBatchService reportBatchService;
+	private final ReportPublishService reportPublishService;
 
 	/**
 	 * 회차 종료 시각이 지난 대상을 찾아 요청한다.
@@ -41,17 +43,63 @@ public class ReportJobScheduler {
 	 * 대상이 많아 한 번이 오래 걸려도 실행이 겹쳐 쌓이지 않는다.
 	 */
 	@Scheduled(
-			fixedDelayString = "${ai.report.scheduler.dispatch-delay:PT5M}",
+			fixedDelayString = "${ai.report.scheduler.dispatch-delay:PT1M}",
 			initialDelayString = "${ai.report.scheduler.initial-delay:PT1M}")
-	public void dispatchDueSessions() {
+	public void dispatchDueProblems() {
 		try {
-			int dispatched = reportBatchService.dispatchDueSessions();
+			int dispatched = reportBatchService.dispatchDueProblems();
 			if (dispatched > 0) {
-				log.info("리포트 생성을 요청했다: sessions={}", dispatched);
+				log.info("리포트 생성을 요청했다: problems={}", dispatched);
 			}
 		} catch (RuntimeException exception) {
 			// 여기서 예외가 새면 스케줄러는 다음 실행을 계속 돌지만 스택트레이스가 묻힌다.
 			log.error("리포트 생성 요청 배치 실패", exception);
+		}
+	}
+
+	/**
+	 * 회차 마감이 지났는데 아직 리포트가 없는 세션을 줍는다. <b>안전망</b>이다.
+	 *
+	 * <h2>왜 문제 단위 dispatch만으로 부족한가</h2>
+	 *
+	 * <p>{@link #dispatchDueProblems}는 <b>{@code problem_stage}가 종료 상태로 정리된 문제</b>만
+	 * 집는다. 세션이 비정상적으로 끝나 단계가 {@code PREPARED}·{@code IN_PROGRESS}로 남으면
+	 * 그 문제는 영영 안 잡히고, 학생은 리포트를 못 받는다.
+	 *
+	 * <p>이 배치는 세션 단위 조회({@code findDueSessions})를 쓰므로 <b>회차 마감 후</b>에
+	 * 남은 것을 한 번 더 훑는다. 자주 돌 이유가 없어 주기를 길게 둔다.
+	 */
+	@Scheduled(
+			fixedDelayString = "${ai.report.scheduler.sweep-delay:PT10M}",
+			initialDelayString = "${ai.report.scheduler.initial-delay:PT1M}")
+	public void sweepDueSessions() {
+		try {
+			int dispatched = reportBatchService.dispatchDueSessions();
+			if (dispatched > 0) {
+				log.info("마감 후 남은 세션을 요청했다: sessions={}", dispatched);
+			}
+		} catch (RuntimeException exception) {
+			log.error("리포트 생성 안전망 배치 실패", exception);
+		}
+	}
+
+	/**
+	 * 발행 예정 시각 때문에 보류된 리포트를 발행한다.
+	 *
+	 * <p>확정은 끝났고 스냅샷·근거도 다 들어가 있는데 {@code published_at}만 비어 있는 것들이다.
+	 * 문제 단위로 즉시 만들다 보니 <b>운영자가 정한 발행 시각보다 먼저 완성되는</b> 경우가 생겨
+	 * 필요해졌다({@link com.bigproject.backend.domain.reporting.application.ReportPublishService}).
+	 *
+	 * <p>시각 단위 판정이라 촘촘할 이유가 없다. 5분이면 "예정 시각 후 최대 5분 안에 발행"이다.
+	 */
+	@Scheduled(
+			fixedDelayString = "${ai.report.scheduler.publish-delay:PT5M}",
+			initialDelayString = "${ai.report.scheduler.initial-delay:PT1M}")
+	public void publishDueReports() {
+		try {
+			reportPublishService.publishDueReports();
+		} catch (RuntimeException exception) {
+			log.error("보류 리포트 발행 배치 실패", exception);
 		}
 	}
 

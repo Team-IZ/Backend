@@ -21,6 +21,21 @@ import java.util.UUID;
  * {@link JsonNode}로 만들어 내보낸다. AI 쪽 타입이 {@code list[dict[str, Any]]}로 열려 있어
  * 고정 스키마가 없고, 백엔드가 자기 DTO로 좁히면 <b>AI가 필드를 추가할 때 조용히 값이 잘린다</b>
  * ({@code ReportGenerationRequest} javadoc과 같은 판단이다).
+ *
+ * <h2>🔴 이 클래스는 도메인 경계를 넘는다</h2>
+ *
+ * <p>{@code problem_stage}·{@code assessment_problem}·{@code assessment_session}은
+ * <b>Assessment 도메인 소유</b>다. Reporting이 직접 읽는 이유는 리포트 요청 조립이
+ * Reporting 몫이기 때문이고(결정 6), 조회만 하고 쓰지 않는다.
+ *
+ * <p><b>그래서 이 SQL은 남의 스키마 변경에 깨진다.</b> 컴파일도 단위 테스트도 잡지 못한다 —
+ * 네이티브 SQL이고 리포지토리가 mock되기 때문이다. 이 위험은 코드가 아니라 합의로 막는다:
+ * <b>Assessment가 {@code problem_stage}의 컬럼이나 {@code status} 값 집합을 바꿀 때 통지</b>하기로
+ * 했다(2026-08-10 지속 의무 1번). 통지가 오면 이 클래스의 세 질의를 함께 확인해야 한다.
+ *
+ * <p>깨졌을 때 어떻게 드러나는지도 알아 둘 것 — 예외로 터지지 않고
+ * {@link #findConceptContext}가 빈 값을 내면 그 문제의 개념 카드가 <b>화면에서 통째로 사라진다</b>
+ * ({@code ReportRunFinalizer}가 {@code log.warn} 후 건너뛴다).
  */
 @Repository
 @RequiredArgsConstructor
@@ -163,13 +178,31 @@ public class JdbcReportPayloadRepository {
 	 * v08부터 {@code TEAM_SHARED_PROBLEM}에서 {@code project_verification_concept_id}가 NULL일 수
 	 * 있어({@code ck_assessment_problem_problem_scope_2}), 그때는 문제에 직접 붙은
 	 * {@code assessment_problem.teaches_id}가 개념 연결을 대신 보존한다.
+	 *
+	 * <h2>⚠️ 알려진 한계 — 미통과 집합에 진행 중 상태가 없다</h2>
+	 *
+	 * <p>{@code block_level}은 {@code NOT_PASSED}·{@code NOT_ANSWERED}·{@code NOT_REACHED}만 센다.
+	 * stage가 {@code PREPARED}·{@code IN_PROGRESS}로 남아 있으면 그 축은 <b>미통과로 잡히지 않고</b>
+	 * {@code block_level}이 NULL이 되어 <b>L4가 대표 축이 된다</b> — 학생이 도달조차 못 한 축을
+	 * "여기서 막혔다"고 보여주게 된다.
+	 *
+	 * <p>정상 경로에서는 생기지 않는다. 대상 선별이 {@code s.status='COMPLETED' AND
+	 * ma.status='COMPLETED'}라, <b>세션 종료 로직이 남은 stage를 정리한다는 전제</b>에 기대고 있다.
+	 * 그 전제는 Assessment가 지키기로 했고 결과를 통지받기로 했다(2026-08-10 지속 의무 2번).
+	 *
+	 * <p>{@code IN_PROGRESS}가 남는 설계로 간다는 통지가 오면 <b>아래 CTE의 {@code IN} 목록 한 줄</b>에
+	 * 추가하면 된다. 이 한계는 통합본 §6 한계 4로도 등록돼 있다.
 	 */
 	public Optional<ConceptContext> findConceptContext(UUID sessionId, UUID problemId) {
 		String sql = """
 				WITH reach AS (
 				    SELECT MAX(CASE WHEN status = 'PASSED' THEN SUBSTR(axis_code, 2)::int ELSE 0 END) AS reach_level,
+				           -- ⚠️ 이 IN 목록에 PREPARED·IN_PROGRESS 가 없다(한계 4, javadoc 참고).
+				           --    남아 있으면 block_level 이 NULL 이 되어 아래 조인이 L4 를 대표로 집는다.
+				           --    Assessment 의 세션 종료가 stage 를 정리한다는 전제에 기대고 있는 줄이다.
 				           MIN(CASE WHEN status IN ('NOT_PASSED', 'NOT_ANSWERED', 'NOT_REACHED')
 				                    THEN SUBSTR(axis_code, 2)::int END)                              AS block_level
+				      -- 🔴 problem_stage 는 Assessment 소유다. 클래스 javadoc의 "도메인 경계" 참고.
 				      FROM problem_stage
 				     WHERE session_id = ? AND problem_id = ?
 				)

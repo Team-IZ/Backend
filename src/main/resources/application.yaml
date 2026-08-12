@@ -196,8 +196,21 @@ ai:
       # 🔴 기본 false. 켜져 있으면 @SpringBootTest 컨텍스트가 뜰 때마다 실제 AI 서버로
       # 요청이 나가고, 로컬에서 앱을 띄워 둔 것만으로 종료된 회차에 LLM 비용이 발생한다.
       enabled: ${AI_REPORT_SCHEDULER_ENABLED:false}
-      # 회차 종료 후 늦어도 이 간격 안에 요청이 나간다.
-      dispatch-delay: ${AI_REPORT_SCHEDULER_DISPATCH_DELAY:PT5M}
+      # 문제가 끝난 뒤 늦어도 이 간격 안에 요청이 나간다.
+      #
+      # [2026-08-11] 회차 마감 후 일괄에서 문제 단위 즉시 생성으로 바꾸면서 PT5M -> PT1M.
+      # 학생이 다음 문제를 푸는 동안 앞 문제를 만들어 두는 것이 목적이라, 5분이면 문제 하나
+      # 푸는 시간보다 길어 의미가 없다.
+      #
+      # 🔴 report_generation_run(report_id) 인덱스가 있어야 한다. 없으면 이 조회가 31초 걸려
+      # (시드 기준 실측) 1분 주기를 감당하지 못한다. 인덱스가 있으면 527ms 다.
+      dispatch-delay: ${AI_REPORT_SCHEDULER_DISPATCH_DELAY:PT1M}
+      # 안전망. 단계가 정리되지 않아 문제 단위 조회에 안 잡힌 세션을 회차 마감 후 줍는다.
+      # 자주 돌 이유가 없다.
+      sweep-delay: ${AI_REPORT_SCHEDULER_SWEEP_DELAY:PT10M}
+      # 발행 예정 시각 때문에 보류된 리포트를 발행하는 주기.
+      # 시각 단위 판정이라 촘촘할 이유가 없다 — 예정 시각 후 최대 이 간격 안에 발행된다.
+      publish-delay: ${AI_REPORT_SCHEDULER_PUBLISH_DELAY:PT5M}
       # 교육생 화면이 `발행 전`에서 넘어가는 지연이 곧 이 값이다.
       poll-delay: ${AI_REPORT_SCHEDULER_POLL_DELAY:PT1M}
       initial-delay: ${AI_REPORT_SCHEDULER_INITIAL_DELAY:PT1M}

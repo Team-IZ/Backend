@@ -7,8 +7,10 @@ import com.bigproject.backend.domain.reporting.domain.ReportGenerationItem;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationItemStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRun;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRunStatus;
+import com.bigproject.backend.domain.reporting.domain.ReportGenerationTriggerType;
 import com.bigproject.backend.domain.reporting.infrastructure.JdbcReportPayloadRepository;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository;
+import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.ProblemDueTarget;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.ProblemTarget;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.ReportTarget;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportGenerationItemRepository;
@@ -34,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -49,6 +52,15 @@ import static org.mockito.Mockito.when;
  * 시드를 올려 쿼리를 직접 실행해야 한다.
  */
 class ReportBatchServiceTest {
+
+	/** 문제 단위 조회 결과가 공유하는 세션 축. 한 세션의 문제들은 이 값이 같아야 한다. */
+	private static final UUID ATTEMPT = UUID.randomUUID();
+	private static final UUID USER = UUID.randomUUID();
+	private static final UUID ORG = UUID.randomUUID();
+	private static final UUID COHORT = UUID.randomUUID();
+	private static final UUID PROJECT = UUID.randomUUID();
+	private static final UUID ROUND = UUID.randomUUID();
+	private static final UUID ANALYSIS = UUID.randomUUID();
 
 	private static final String MODEL_CODE = "minimaxai/minimax-m3";
 	private static final String PROVIDER_MODEL_CODE = "minimax-m3";
@@ -146,6 +158,38 @@ class ReportBatchServiceTest {
 		assertThat(requests.getValue().idempotencyKey()).endsWith(":" + runId);
 	}
 
+	/**
+	 * 🔴 AI에 보내는 모델 식별자는 <b>접두어가 붙은 쪽</b>이어야 한다.
+	 *
+	 * <p>필드 이름은 {@code providerModelCode}지만 값은 설정값({@code ai.report.model-code})을 쓴다 —
+	 * 운영 DB의 {@code provider_model_code}에 접두어가 빠져 있고({@code minimax-m3}),
+	 * 공급자가 요구하는 형식은 {@code minimaxai/minimax-m3}이기 때문이다.
+	 *
+	 * <p>이 테스트가 그 의도적 어긋남을 고정한다. 데이터가 정리되면 이 테스트를 먼저 고치고
+	 * {@code getProviderModelCode()}로 되돌리면 된다 — 그 전에 되돌리면 AI가 모델을 못 찾는데
+	 * 응답이 200이라 조용히 기본 모델로 대체될 수 있다.
+	 */
+	@Test
+	void sendsThePrefixedModelCodeBecauseProviderModelCodeLacksIt() {
+		catalogHasTheConfiguredModel();
+		ReportTarget target = target();
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target));
+		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of(problem(1)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
+		when(aiClient.requestGeneration(any(), any()))
+				.thenReturn(new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		service.dispatchDueSessions();
+
+		ArgumentCaptor<ReportGenerationRequest> requests =
+				ArgumentCaptor.forClass(ReportGenerationRequest.class);
+		verify(aiClient).requestGeneration(requests.capture(), any());
+		assertThat(requests.getValue().providerModelCode())
+				.as("접두어가 빠지면 AI가 모델을 못 찾는다")
+				.isEqualTo(MODEL_CODE)
+				.isNotEqualTo(PROVIDER_MODEL_CODE);
+	}
+
 	/** 모델을 못 찾으면 아무 행도 남기지 않는다. run을 만들면 설정을 고쳐도 재시도 상한만 깎인다. */
 	@Test
 	void writesNothingWhenTheConfiguredModelIsMissingFromTheCatalog() {
@@ -229,6 +273,173 @@ class ReportBatchServiceTest {
 		ArgumentCaptor<ReportGenerationRun> runs = ArgumentCaptor.forClass(ReportGenerationRun.class);
 		verify(runRepository, times(2)).save(runs.capture());
 		assertThat(runs.getAllValues().get(0).getReportId()).isEqualTo(existing.getReportId());
+	}
+
+	/**
+	 * 정리되지 않은 stage 때문에 빠진 세션은 <b>반드시 로그로 드러나야 한다.</b>
+	 *
+	 * <p>{@code NO_UNFINISHED_STAGE}는 네이티브 SQL 안에 있어 이 테스트로 검증되지 않는다.
+	 * 검증할 수 있는 것은 <b>"조용히 걸러지지 않는가"</b>뿐이고, 그게 실제로 중요한 부분이다 —
+	 * 대상이 0건이어도 원인을 세러 가야 한다. 세션 종료 쪽 문제라 이쪽에서 고칠 수 없고,
+	 * 로그가 유일한 단서이기 때문이다.
+	 */
+	@Test
+	void countsBlockedSessionsEvenWhenThereIsNothingToDispatch() {
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of());
+		when(dispatchRepository.countSessionsWithUnfinishedStages()).thenReturn(4L);
+
+		assertThat(service.dispatchDueSessions()).isZero();
+
+		verify(dispatchRepository).countSessionsWithUnfinishedStages();
+	}
+
+	/** 경고를 못 남긴 것이 요청을 막을 이유는 없다. */
+	@Test
+	void keepsDispatchingWhenTheBlockedSessionCountFails() {
+		catalogHasTheConfiguredModel();
+		ReportTarget target = target();
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target));
+		when(dispatchRepository.countSessionsWithUnfinishedStages())
+				.thenThrow(new IllegalStateException("집계 실패"));
+		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of(problem(1)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
+		when(aiClient.requestGeneration(any(), any()))
+				.thenReturn(new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		assertThat(service.dispatchDueSessions()).isEqualTo(1);
+
+		verify(aiClient).requestGeneration(any(), any());
+	}
+
+	// --------------------------------------------------------- 문제 단위 dispatch
+
+	/**
+	 * 🔴 같은 세션의 문제 여러 개가 한 번에 걸려도 <b>실행(run)은 하나</b>여야 한다.
+	 *
+	 * <p>문제마다 run을 만들면 {@code uq_report_snapshot_generation_run_id}(run 1건당 스냅샷 1건)
+	 * 때문에 스냅샷이 문제 수만큼 생기고, 리포트는 회차당 1건이라 합치는 단계가 새로 필요해진다.
+	 */
+	@Test
+	void keepsOneRunPerStudentEvenWhenSeveralProblemsFinishTogether() {
+		catalogHasTheConfiguredModel();
+		UUID sessionId = UUID.randomUUID();
+		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS))
+				.thenReturn(List.of(dueProblem(sessionId, 1), dueProblem(sessionId, 2)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
+		when(runRepository.findActiveByReportIdAndTriggerType(any(), any())).thenReturn(Optional.empty());
+		when(aiClient.requestGeneration(any(), any()))
+				.thenAnswer(call -> new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		assertThat(service.dispatchDueProblems()).isEqualTo(2);
+
+		ArgumentCaptor<ReportGenerationRun> runs = ArgumentCaptor.forClass(ReportGenerationRun.class);
+		verify(runRepository, times(2)).save(runs.capture());   // QUEUED 저장 + RUNNING 전이
+		assertThat(runs.getAllValues())
+				.extracting(ReportGenerationRun::getGenerationRunId)
+				.containsOnly(runs.getAllValues().get(0).getGenerationRunId());
+		verify(aiClient, times(2)).requestGeneration(any(), any());
+	}
+
+	/**
+	 * 🔴 나중에 끝난 문제는 <b>기존 실행에 붙는다</b>. 새 run을 만들면 안 된다.
+	 *
+	 * <p>문제 1이 이미 나가 있고 문제 2가 이제 끝난 상황이다. {@code uq_report_generation_run_active}가
+	 * (report_id, trigger_type)에 걸려 있어 새로 만들면 DB도 거부한다.
+	 */
+	@Test
+	void attachesLaterProblemsToTheRunThatIsAlreadyRunning() {
+		catalogHasTheConfiguredModel();
+		UUID sessionId = UUID.randomUUID();
+		Report report = withId(Report.forTrainee(ORG, COHORT, USER, ROUND), "reportId");
+		ReportGenerationRun existing = withId(ReportGenerationRun.queued(
+				report.getReportId(), ReportGenerationTriggerType.SCHEDULED,
+				"key", 1, 1, "f".repeat(64)), "generationRunId");
+
+		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS))
+				.thenReturn(List.of(dueProblem(sessionId, 2)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of(report));
+		when(runRepository.findActiveByReportIdAndTriggerType(
+				report.getReportId(), ReportGenerationTriggerType.SCHEDULED))
+				.thenReturn(Optional.of(existing));
+		when(aiClient.requestGeneration(any(), any()))
+				.thenReturn(new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		assertThat(service.dispatchDueProblems()).isEqualTo(1);
+
+		ArgumentCaptor<ReportGenerationItem> items = ArgumentCaptor.forClass(ReportGenerationItem.class);
+		verify(itemRepository, atLeastOnce()).save(items.capture());
+		assertThat(items.getAllValues())
+				.extracting(ReportGenerationItem::getGenerationRunId)
+				.containsOnly(existing.getGenerationRunId());
+	}
+
+	/** 서로 다른 세션은 각자 run을 갖는다. 묶는 기준이 세션이라는 것을 못 박는다. */
+	@Test
+	void givesEachSessionItsOwnRun() {
+		catalogHasTheConfiguredModel();
+		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS))
+				.thenReturn(List.of(dueProblem(UUID.randomUUID(), 1), dueProblem(UUID.randomUUID(), 1)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
+		when(runRepository.findActiveByReportIdAndTriggerType(any(), any())).thenReturn(Optional.empty());
+		when(aiClient.requestGeneration(any(), any()))
+				.thenAnswer(call -> new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		assertThat(service.dispatchDueProblems()).isEqualTo(2);
+
+		// 세션 2개 × (QUEUED 저장 + RUNNING 전이)
+		verify(runRepository, times(4)).save(any());
+	}
+
+	// ------------------------------------------------------------- 운영자 재생성
+
+	/**
+	 * 배치가 놓친 대상을 푸는 유일한 경로다. 두 가지를 못 박는다.
+	 *
+	 * <p><b>① 배치 대상 조회를 타지 않는다.</b> {@code findDueSessions}는
+	 * {@code BLOCKING_RUN_EXISTS}·{@code UNDER_ATTEMPT_LIMIT}로 걸러진 목록이라, 재생성이 그걸
+	 * 거치면 <b>정확히 고쳐야 할 대상만 빠진다</b>(상한을 소진했거나 PARTIAL로 닫힌 것들).
+	 *
+	 * <p><b>② run이 {@code USER_REQUESTED}로 남는다.</b> 이 값이 {@code SCHEDULED}로 새면
+	 * {@code UNDER_ATTEMPT_LIMIT}가 그 실행까지 세서, 재생성을 누를수록 배치가 그 대상을 더 빨리
+	 * 포기하게 된다 — 도구가 문제를 악화시키는 방향이다.
+	 */
+	@Test
+	void regeneratesBypassingTheBatchGatesAndMarksTheRunUserRequested() {
+		catalogHasTheConfiguredModel();
+		ReportTarget target = target();
+		when(dispatchRepository.findTargetBySession(target.getSessionId())).thenReturn(Optional.of(target));
+		when(dispatchRepository.findSessionProblems(target.getSessionId()))
+				.thenReturn(List.of(problem(1), problem(2), problem(3)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
+		when(aiClient.requestGeneration(any(), any()))
+				.thenAnswer(call -> new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		Optional<UUID> runId = service.regenerateSession(target.getSessionId(), "operator@example.com");
+
+		assertThat(runId).isPresent();
+		verify(dispatchRepository, never()).findDueSessions(anyInt());
+		verify(aiClient, times(3)).requestGeneration(any(), any());
+
+		ArgumentCaptor<ReportGenerationRun> runs = ArgumentCaptor.forClass(ReportGenerationRun.class);
+		verify(runRepository, times(2)).save(runs.capture());
+		assertThat(runs.getAllValues().get(0).getTriggerType())
+				.isEqualTo(ReportGenerationTriggerType.USER_REQUESTED);
+	}
+
+	/**
+	 * 세션이 없거나 유효성 규칙에 안 맞으면 아무것도 만들지 않는다.
+	 *
+	 * <p>재생성이 푸는 것은 <b>"얼마나 자주"이지 "누구를"이 아니다.</b> 무효 응시나 미완료 세션은
+	 * 조회가 빈 값을 내므로, 여기서 run을 만들면 영원히 확정되지 않는 실행이 남는다.
+	 */
+	@Test
+	void doesNotRegenerateWhatIsNotAValidTarget() {
+		when(dispatchRepository.findTargetBySession(any())).thenReturn(Optional.empty());
+
+		assertThat(service.regenerateSession(UUID.randomUUID(), "operator@example.com")).isEmpty();
+
+		verify(runRepository, never()).save(any());
+		verify(aiClient, never()).requestGeneration(any(), any());
 	}
 
 	// ---------------------------------------------------------------------- poll
@@ -394,6 +605,70 @@ class ReportBatchServiceTest {
 		@Override
 		public UUID getCodeAnalysisId() {
 			return codeAnalysisId;
+		}
+
+		@Override
+		public Instant getReportPublishNotBeforeAt() {
+			return null;
+		}
+	}
+
+	private static ProblemDueTarget dueProblem(UUID sessionId, int problemNo) {
+		return new TestProblemDueTarget(sessionId, UUID.randomUUID(), problemNo);
+	}
+
+	/** 문제 단위 조회 결과. 세션 축은 한 세션 안에서 같아야 해서 sessionId만 받는다. */
+	private record TestProblemDueTarget(UUID sessionId, UUID problemId, Integer problemNo)
+			implements ProblemDueTarget {
+
+		@Override
+		public UUID getSessionId() {
+			return sessionId;
+		}
+
+		@Override
+		public UUID getProblemId() {
+			return problemId;
+		}
+
+		@Override
+		public Integer getProblemNo() {
+			return problemNo;
+		}
+
+		@Override
+		public UUID getAttemptId() {
+			return ATTEMPT;
+		}
+
+		@Override
+		public UUID getUserId() {
+			return USER;
+		}
+
+		@Override
+		public UUID getOrgId() {
+			return ORG;
+		}
+
+		@Override
+		public UUID getCohortId() {
+			return COHORT;
+		}
+
+		@Override
+		public UUID getProjectId() {
+			return PROJECT;
+		}
+
+		@Override
+		public UUID getAssessmentRoundId() {
+			return ROUND;
+		}
+
+		@Override
+		public UUID getCodeAnalysisId() {
+			return ANALYSIS;
 		}
 
 		@Override
