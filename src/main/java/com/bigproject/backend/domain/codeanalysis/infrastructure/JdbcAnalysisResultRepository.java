@@ -7,8 +7,7 @@ import com.bigproject.backend.domain.codeanalysis.application.AnalysisResultPayl
 import com.bigproject.backend.domain.codeanalysis.application.AnalysisResultPayload.RequirementResult;
 import com.bigproject.backend.domain.codeanalysis.application.AnalysisResultPayload.UnmatchedTeach;
 import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJob;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -35,7 +34,8 @@ import java.util.UUID;
  * 보이는 편이 안전하다.
  *
  * <p>응시·세션·단계 생성은 {@link JdbcAssessmentSessionPreparer}가 맡는다. 같은 트랜잭션 안에서
- * 문제 적재 <b>뒤에</b> 불린다 — {@code problem_stage}가 {@code assessment_problem}을 참조한다.
+ * 두 번 불린다 — 세션 개설은 문제 적재 <b>앞</b>, 단계 적재는 <b>뒤</b>다. 자세한 이유는
+ * {@link #record}의 순서 설명 참조.
  */
 @Slf4j
 @Repository
@@ -55,16 +55,25 @@ public class JdbcAnalysisResultRepository {
 	 */
 	private static final String ATTRIBUTION_METHOD_EMAIL = "COMMIT_EMAIL_EXACT";
 
-	private static final ObjectMapper JSON = new ObjectMapper();
-
 	private final JdbcTemplate jdbc;
 	private final JdbcAssessmentSessionPreparer sessionPreparer;
+	private final ObjectMapper objectMapper;
 
 	/**
 	 * 분석 결과 한 벌을 적재하고 만들어진 {@code code_analysis.analysis_id}를 돌려준다.
 	 *
 	 * <p>호출부가 {@code @Transactional}로 감싼다. 중간에 실패하면 {@code code_analysis}만 남고
 	 * 문제가 없는 상태가 되는데, 그건 "분석은 됐는데 문항이 없다"로 보여 실패보다 나쁘다.
+	 *
+	 * <h2>순서 (2026-08-10 재배치)</h2>
+	 *
+	 * <p>분석 → <b>응시·세션</b> → 문제 → 단계 순이다. 종전에는 세션 개설이 문제 적재 뒤에 한 덩어리로
+	 * 묶여 있었는데, {@code assessment_session}은 {@code measurement_attempt}만 참조하므로 문제를
+	 * 기다릴 이유가 없다. FK가 실제로 요구하는 것은 {@code problem_stage}가 세션과 문제 <b>둘 다</b>
+	 * 뒤에 온다는 것뿐이다.
+	 *
+	 * <p>{@code commit_attribution}·{@code project_requirement_assessment}를 뒤로 미룬 이유는 둘 다
+	 * 세션 계보와 무관한 부산물이라, 핵심 연쇄가 위에서 아래로 한 번에 읽히는 편이 낫기 때문이다.
 	 */
 	public UUID record(AnalysisJob job, AnalysisResultPayload result) {
 		UUID analysisId = UUID.randomUUID();
@@ -72,12 +81,15 @@ public class JdbcAnalysisResultRepository {
 		supersedePreviousAnalysis(job);
 		insertCodeAnalysis(analysisId, job, result);
 		updateSubmissionAnalysisInput(job, result);
+
+		// 응시를 확보해 SESSION_READY 로 옮기고 세션을 연다. 문제보다 먼저다.
+		sessionPreparer.openSessions(job, analysisId);
 		insertProblems(analysisId, job, result);
+		// 단계는 세션과 문제가 둘 다 있어야 깔린다 -- problem_stage 가 양쪽을 참조한다.
+		sessionPreparer.insertStages(job, analysisId, result);
+
 		insertCommitAttributions(analysisId, job, result);
 		upsertRequirementAssessments(analysisId, job, result);
-		// 문제가 다 들어간 뒤에 세션을 연다. problem_stage 가 assessment_problem 을 참조하므로
-		// 순서가 뒤집히면 깔 단계를 하나도 찾지 못한다.
-		sessionPreparer.prepare(job, analysisId, result);
 		jdbc.update("UPDATE analysis_job SET analysis_id = ? WHERE job_id = ?", analysisId, job.getJobId());
 
 		return analysisId;
@@ -509,10 +521,17 @@ public class JdbcAnalysisResultRepository {
 		}).map(UUID::fromString).orElse(null);
 	}
 
-	private static String toJson(Object value) {
+	/**
+	 * 2026-08-10 정정: 이전에는 Jackson 2 {@code ObjectMapper}를 썼는데, {@code jsr310} 모듈이 없어
+	 * {@code java.time.Instant}가 하나라도 섞이면(예: {@code gitHistory[].committedAt}) 예외를 던졌다.
+	 * {@code record()}가 이 실패를 삼키지 않으므로 {@code assessment_problem}·{@code problem_stage}가
+	 * 통째로 저장되지 않고 job만 SUCCEEDED로 남는 사고로 이어졌다. Jackson 3(현재 이 프로젝트의
+	 * 표준)은 java.time을 기본 지원해 별도 모듈이 필요 없다.
+	 */
+	private String toJson(Object value) {
 		try {
-			return JSON.writeValueAsString(value);
-		} catch (JsonProcessingException exception) {
+			return objectMapper.writeValueAsString(value);
+		} catch (RuntimeException exception) {
 			throw new IllegalStateException("분석 결과를 JSON 으로 만들지 못했다.", exception);
 		}
 	}

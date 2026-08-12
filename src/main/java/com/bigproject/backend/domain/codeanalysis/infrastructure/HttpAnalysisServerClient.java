@@ -10,8 +10,10 @@ import com.bigproject.backend.domain.submission.application.SubmissionArtifactSt
 import com.bigproject.backend.domain.submission.domain.SubmissionException;
 import com.bigproject.backend.global.ai.AiCallException;
 import com.bigproject.backend.global.ai.AiClient;
+import com.bigproject.backend.global.ai.AiClientConfig;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -22,6 +24,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -32,8 +35,8 @@ import java.util.UUID;
  * <p>이 빈이 등록되면 {@link AnalysisServerClientConfig}의 "항상 실패하는" 폴백이
  * {@code @ConditionalOnMissingBean}에 의해 물러난다.
  *
- * <p><b>경로에 {@code /api/v0}를 붙이지 않는다.</b> {@code ai.base-url}이 이미 그 접두어를 포함한다
- * ({@code application.yaml}의 {@code AI_BASE_URL} 기본값 참조). 여기서 또 붙이면 {@code /api/v0/api/v0}가 된다.
+ * <p><b>대상은 원본 서버({@code ai.origin-base-url})다</b>(2026-08-11). 코드 제출 분석은 프록시를
+ * 거치지 않는다. 경로에는 {@link AiClient#API_V0}를 직접 붙인다 — base-url에는 호스트만 있다.
  *
  * <h2>실패를 우리 값 집합으로 접는다</h2>
  *
@@ -45,12 +48,14 @@ import java.util.UUID;
 @Component
 public class HttpAnalysisServerClient implements AnalysisServerClient {
 
-	private static final String ANALYSES_PATH = "/analyses";
+	private static final String ANALYSES_PATH = AiClient.API_V0 + "/analyses";
 
 	private final AiClient aiClient;
 	private final SubmissionArtifactStorage artifactStorage;
 
-	public HttpAnalysisServerClient(AiClient aiClient, SubmissionArtifactStorage artifactStorage) {
+	public HttpAnalysisServerClient(
+			@Qualifier(AiClientConfig.AI_ORIGIN_CLIENT) AiClient aiClient,
+			SubmissionArtifactStorage artifactStorage) {
 		this.aiClient = aiClient;
 		this.artifactStorage = artifactStorage;
 	}
@@ -226,38 +231,86 @@ public class HttpAnalysisServerClient implements AnalysisServerClient {
 		return new AnalysesRequestBody(
 				request.method(),
 				request.submissionId(),
-				request.attemptId(),
-				new AnalysisSource(request.repositoryUrl(), request.requestedBranch()),
+				// ZIP 제출은 저장소가 없다 — source를 아예 생략한다("source": {}가 아니라 키 자체가 없어야
+				// 2026-08-10 확인된 케이스3(ZIP)과 일치한다).
+				request.repositoryUrl() == null
+						? null
+						: new AnalysisSource(request.repositoryUrl(), request.requestedBranch()),
+				request.problemScope(),
 				request.extractionScope(),
 				request.commitEmail(),
 				request.questionBudget(),
-				request.curriculumVersionId(),
+				toRequirementBodies(request.requirements()),
+				toFocusItemBodies(request.focusItems()),
+				toTeachBodies(request.teaches()),
 				request.providerModelCode());
+	}
+
+	private static List<FocusItemBody> toFocusItemBodies(List<AnalysisServerClient.FocusItem> items) {
+		return items == null ? null : items.stream()
+				.map(item -> new FocusItemBody(item.focusItemId(), item.name(), item.description()))
+				.toList();
+	}
+
+	private static List<RequirementBody> toRequirementBodies(List<AnalysisServerClient.RequirementItem> items) {
+		return items == null ? null : items.stream()
+				.map(item -> new RequirementBody(item.requirementId(), item.text()))
+				.toList();
+	}
+
+	private static List<TeachBody> toTeachBodies(List<AnalysisServerClient.TeachItem> items) {
+		return items == null ? null : items.stream()
+				.map(item -> new TeachBody(item.id(), item.label(), item.unitId(), item.sourcePages()))
+				.toList();
 	}
 
 	/**
 	 * {@code POST /analyses} 요청 본문.
 	 *
-	 * <p>{@code NON_NULL}로 비는 필드를 아예 빼는 이유: {@code focusItems}·{@code requirements}·
-	 * {@code teaches}는 아직 채우지 않는데, {@code null}을 명시로 보내면 AI 쪽 기본값(빈 배열)을
-	 * {@code null}로 덮어쓸 수 있다. 필드를 생략하면 기본값이 그대로 적용된다.
+	 * <p>{@code NON_NULL}로 비는 필드를 아예 빼는 이유: 값이 없을 때 {@code null}을 명시로 보내면
+	 * AI 쪽 기본값(빈 배열)을 {@code null}로 덮어쓸 수 있다. 필드를 생략하면 기본값이 그대로 적용된다.
+	 * {@code TEAM_SHARED_PROBLEM}과 {@code INDIVIDUAL_OWN_COMMIT}은 {@code teaches}·{@code focusItems}
+	 * 존재 여부를 AI가 상호 배타로 검증하므로(2026-08-10 확인), 이 생략이 단순 최적화가 아니라
+	 * <b>필수</b>다 — 해당 없는 쪽에 빈 배열이라도 실리면 AI가 거부한다.
+	 *
+	 * <p>{@code curriculumVersionId}·{@code attemptId} 필드가 없는 이유: AI가 이 값을 읽는 코드가
+	 * 없다고 확인돼(2026-08-10) 계약에서 아예 뺐다.
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	private record AnalysesRequestBody(
 			String method,
 			UUID submissionId,
-			UUID attemptId,
 			AnalysisSource source,
+			String problemScope,
 			String extractionScope,
 			String commitEmail,
 			Integer questionBudget,
-			UUID curriculumVersionId,
+			List<RequirementBody> requirements,
+			List<FocusItemBody> focusItems,
+			List<TeachBody> teaches,
 			String providerModelCode
 	) {
 	}
 
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	private record AnalysisSource(String repoUrl, String branch) {
+	}
+
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	private record RequirementBody(String requirementId, String text) {
+	}
+
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	private record FocusItemBody(String focusItemId, String name, String description) {
+	}
+
+	@JsonInclude(JsonInclude.Include.NON_NULL)
+	private record TeachBody(
+			String id,
+			String label,
+			String unitId,
+			List<Integer> sourcePages
+	) {
 	}
 
 	/** 202 응답. {@code status}는 항상 {@code QUEUED}라 읽지 않는다. */
@@ -278,7 +331,7 @@ public class HttpAnalysisServerClient implements AnalysisServerClient {
 			Instant startedAt,
 			Instant completedAt,
 			AnalysisResultPayload result,
-			java.util.List<AiUsageEntry> aiUsage
+			List<AiUsageEntry> aiUsage
 	) {
 	}
 }

@@ -24,28 +24,82 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 
 	private final JdbcTemplate jdbcTemplate;
 
-	private static final String ROSTER_SELECT = """
-			SELECT cm.user_id AS trainee_id, u.name, u.email, u.status AS account_status,
-			       c.class_id AS classroom_id, c.name AS class_name,
-			       cm.joined_at, cm.left_at,
-			       u.inactivated_reason_code, u.inactivated_reason, u.inactivated_at,
-			       u.inactivated_by AS inactivated_by_id, actor.name AS inactivated_by_name,
-			       /*
-			        * 대기 중 초대 토큰(11차 R2). 재발송이 토큰 단위라 목록에 없으면 화면이 버튼을
-			        * status='INVITED'로 유추해야 했다. 매니저·오퍼레이터 목록과 같은 방식으로 상관
-			        * 서브쿼리로 둔다 — 조인하면 계정 한 명이 토큰 수만큼 중복 행으로 늘어난다.
-			        */
-			       (SELECT t.token_id FROM one_time_token t
-			         WHERE t.user_id = cm.user_id AND t.purpose = 'INVITE_TRAINEE'
-			           AND t.used_at IS NULL AND t.invalidated_at IS NULL
-			         ORDER BY t.issued_at DESC
-			         LIMIT 1) AS pending_invitation_token_id
-			FROM cohort_member cm
-			JOIN app_user u ON u.user_id = cm.user_id AND u.deleted_at IS NULL
-			LEFT JOIN class_membership csm ON csm.cohort_member_id = cm.cohort_member_id AND csm.unassigned_at IS NULL
-			LEFT JOIN class c ON c.class_id = csm.class_id
-			LEFT JOIN app_user actor ON actor.user_id = u.inactivated_by
+	/**
+	 * 실제 소속과 초대 대기를 같은 명단 행으로 정규화한다. cohort_member는 수락 시에만 생기므로
+	 * PENDING 계정은 user_invitation.target_cohort_id에서 기수 범위를 얻는다.
+	 */
+	private static final String ROSTER_CTE = """
+			WITH roster AS (
+				SELECT cm.cohort_member_id, cm.user_id, cm.cohort_id, cm.org_id,
+				       cm.joined_at, cm.left_at, cm.joined_at AS sort_at,
+				       u.name, u.email, u.status AS account_status,
+				       u.inactivated_reason_code, u.inactivated_reason, u.inactivated_at,
+				       u.inactivated_by, NULL::uuid AS pending_invitation_token_id
+				FROM cohort_member cm
+				JOIN app_user u ON u.user_id = cm.user_id AND u.deleted_at IS NULL
+
+				UNION ALL
+
+				SELECT NULL::uuid, u.user_id, ui.target_cohort_id, ui.org_id,
+				       NULL::timestamptz, NULL::timestamptz, ui.invited_at,
+				       u.name, u.email, u.status,
+				       u.inactivated_reason_code, u.inactivated_reason, u.inactivated_at,
+				       u.inactivated_by,
+				       CASE WHEN EXISTS (
+				           SELECT 1 FROM cohort invitation_cohort
+				           WHERE invitation_cohort.cohort_id = ui.target_cohort_id
+				             AND invitation_cohort.org_id = ui.org_id
+				             AND invitation_cohort.status <> 'CLOSED'
+				             AND invitation_cohort.deleted_at IS NULL
+				       ) THEN ui.current_token_id END
+				FROM user_invitation ui
+				JOIN app_user u
+				  ON u.normalized_email = ui.target_email_normalized
+				 AND u.org_id = ui.org_id
+				 AND u.status = 'PENDING'
+				 AND u.deleted_at IS NULL
+				JOIN "role" role ON role.role_id = u.role_id AND role.code = 'TRAINEE'
+				WHERE ui.target_role_code = 'TRAINEE'
+				  AND ui.status IN ('PENDING', 'SENT', 'DELIVERY_FAILED', 'EXPIRED')
+				  AND NOT EXISTS (
+				      SELECT 1 FROM cohort_member cm
+				      WHERE cm.cohort_id = ui.target_cohort_id AND cm.user_id = u.user_id
+				  )
+			)
 			""";
+
+	private static final String ROSTER_FROM = """
+			FROM roster r
+			LEFT JOIN class_membership csm ON csm.cohort_member_id = r.cohort_member_id AND csm.unassigned_at IS NULL
+			LEFT JOIN class c ON c.class_id = csm.class_id
+			LEFT JOIN app_user actor ON actor.user_id = r.inactivated_by
+			""";
+
+	/**
+	 * 위험·우수 지표는 매니저·회차 단위 집계라 명단 본문에서만 붙인다. 집계 없이 세기만 하는
+	 * COUNT 질의({@link #ROSTER_FROM})에 함께 두면 쓰지도 않을 바인딩 파라미터 두 개를 요구한다.
+	 *
+	 * <p>초대 대기 행은 응시 이력이 없어 조인 결과가 모두 NULL이다.
+	 */
+	private static final String ROSTER_MANAGER_METRICS_JOIN = """
+			LEFT JOIN manager_trainee_roster_view mv
+			  ON mv.user_id = r.user_id AND mv.manager_user_id = ?::uuid
+			 AND mv.assessment_round_id = ?::uuid
+			""";
+
+	private static final String ROSTER_SELECT = ROSTER_CTE + """
+			SELECT r.user_id AS trainee_id, r.name, r.email, r.account_status,
+			       c.class_id AS classroom_id, c.name AS class_name,
+			       r.joined_at, r.left_at,
+			       r.inactivated_reason_code, r.inactivated_reason, r.inactivated_at,
+			       r.inactivated_by AS inactivated_by_id, actor.name AS inactivated_by_name,
+			       r.pending_invitation_token_id,
+			       mv.assessment_round_id, mv.attempt_id, mv.row_result_status,
+			       mv.concept_result_items::text AS concept_result_items,
+			       mv.low_stage_concept_count, mv.excellent_occurrence_count,
+			       mv.current_round_matched_risk_type_codes::text AS matched_risk_type_codes,
+			       mv.row_aggregation_status
+			""" + ROSTER_FROM + ROSTER_MANAGER_METRICS_JOIN;
 
 	@Override
 	public Optional<CohortScope> findCohortScope(UUID cohortId) {
@@ -59,7 +113,7 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 
 	@Override
 	public Page<RosterRow> findRoster(RosterCriteria criteria, Pageable pageable) {
-		StringBuilder where = new StringBuilder(" WHERE cm.cohort_id = ? AND cm.org_id = ?");
+		StringBuilder where = new StringBuilder(" WHERE r.cohort_id = ? AND r.org_id = ?");
 		List<Object> args = new ArrayList<>(List.of(criteria.cohortId(), criteria.orgId()));
 
 		if (criteria.classroomId() != null) {
@@ -70,25 +124,25 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 			where.append(" AND csm.class_id IS NULL");
 		}
 		if (criteria.rawAccountStatus() != null) {
-			where.append(" AND u.status = ?");
+			where.append(" AND r.account_status = ?");
 			args.add(criteria.rawAccountStatus());
 		}
 		if (criteria.query() != null && !criteria.query().isBlank()) {
-			where.append(" AND (u.name ILIKE ? OR u.email ILIKE ?)");
+			where.append(" AND (r.name ILIKE ? OR r.email ILIKE ?)");
 			String likeQuery = "%" + criteria.query().trim() + "%";
 			args.add(likeQuery);
 			args.add(likeQuery);
 		}
 
 		Long total = jdbcTemplate.queryForObject(
-				"SELECT COUNT(*) FROM cohort_member cm "
-						+ "JOIN app_user u ON u.user_id = cm.user_id AND u.deleted_at IS NULL "
-						+ "LEFT JOIN class_membership csm ON csm.cohort_member_id = cm.cohort_member_id AND csm.unassigned_at IS NULL "
-						+ "LEFT JOIN class c ON c.class_id = csm.class_id"
+				ROSTER_CTE + " SELECT COUNT(*) " + ROSTER_FROM
 						+ where,
 				Long.class, args.toArray());
 
-		List<Object> pageArgs = new ArrayList<>(args);
+		List<Object> pageArgs = new ArrayList<>();
+		pageArgs.add(criteria.managerId());
+		pageArgs.add(criteria.assessmentRoundId());
+		pageArgs.addAll(args);
 		pageArgs.add(pageable.getPageSize());
 		pageArgs.add(pageable.getOffset());
 
@@ -102,12 +156,12 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 
 	@Override
 	public int countUnassigned(UUID cohortId, UUID orgId) {
-		String sql = """
-				SELECT COUNT(*) FROM cohort_member cm
-				WHERE cm.cohort_id = ? AND cm.org_id = ?
+		String sql = ROSTER_CTE + """
+				SELECT COUNT(*) FROM roster r
+				WHERE r.cohort_id = ? AND r.org_id = ?
 				  AND NOT EXISTS (
 				      SELECT 1 FROM class_membership csm
-				      WHERE csm.cohort_member_id = cm.cohort_member_id AND csm.unassigned_at IS NULL
+				      WHERE csm.cohort_member_id = r.cohort_member_id AND csm.unassigned_at IS NULL
 				  )
 				""";
 		Integer count = jdbcTemplate.queryForObject(sql, Integer.class, cohortId, orgId);
@@ -120,9 +174,9 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 	 */
 	@Override
 	public int countCohortTotal(UUID cohortId, UUID orgId) {
-		String sql = """
-				SELECT COUNT(*) FROM cohort_member cm
-				WHERE cm.cohort_id = ? AND cm.org_id = ?
+		String sql = ROSTER_CTE + """
+				SELECT COUNT(*) FROM roster r
+				WHERE r.cohort_id = ? AND r.org_id = ?
 				""";
 		Integer count = jdbcTemplate.queryForObject(sql, Integer.class, cohortId, orgId);
 		return count == null ? 0 : count;
@@ -130,8 +184,9 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 
 	@Override
 	public Optional<RosterRow> findTrainee(UUID traineeId, UUID cohortId, UUID orgId) {
-		String sql = ROSTER_SELECT + " WHERE cm.user_id = ? AND cm.cohort_id = ? AND cm.org_id = ?";
-		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> mapRow(rs), traineeId, cohortId, orgId)
+		String sql = ROSTER_SELECT + " WHERE r.user_id = ? AND r.cohort_id = ? AND r.org_id = ?";
+		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> mapRow(rs),
+				null, null, traineeId, cohortId, orgId)
 				.stream().findFirst();
 	}
 
@@ -188,10 +243,16 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 	}
 
 	private String orderBy(TraineeRosterSort sort) {
-		if (sort == TraineeRosterSort.RECENT_ENROLLED) {
-			return " ORDER BY cm.joined_at DESC, u.name ASC, u.email ASC";
+		if (sort == TraineeRosterSort.RISK) {
+			return " ORDER BY COALESCE(mv.risk_sort_key, -1) DESC, r.name ASC, r.email ASC";
 		}
-		return " ORDER BY u.name ASC, u.email ASC";
+		if (sort == TraineeRosterSort.EXCELLENCE) {
+			return " ORDER BY COALESCE(mv.excellent_occurrence_count, -1) DESC, r.name ASC, r.email ASC";
+		}
+		if (sort == TraineeRosterSort.RECENT_ENROLLED) {
+			return " ORDER BY r.sort_at DESC, r.name ASC, r.email ASC";
+		}
+		return " ORDER BY r.name ASC, r.email ASC";
 	}
 
 	private RosterRow mapRow(ResultSet rs) throws SQLException {
@@ -209,8 +270,21 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				toOffsetDateTime(rs.getTimestamp("inactivated_at")),
 				rs.getObject("inactivated_by_id", UUID.class),
 				rs.getString("inactivated_by_name"),
-				rs.getObject("pending_invitation_token_id", UUID.class)
+				rs.getObject("pending_invitation_token_id", UUID.class),
+				rs.getObject("assessment_round_id", UUID.class),
+				rs.getObject("attempt_id", UUID.class),
+				rs.getString("row_result_status"),
+				rs.getString("concept_result_items"),
+				integer(rs, "low_stage_concept_count"),
+				integer(rs, "excellent_occurrence_count"),
+				rs.getString("matched_risk_type_codes"),
+				rs.getString("row_aggregation_status")
 		);
+	}
+
+	private Integer integer(ResultSet rs, String column) throws SQLException {
+		int value = rs.getInt(column);
+		return rs.wasNull() ? null : value;
 	}
 
 	private OffsetDateTime toOffsetDateTime(Timestamp timestamp) {

@@ -11,6 +11,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
 
@@ -34,8 +35,11 @@ public class GlobalExceptionHandler {
 			HttpServletRequest request
 	) {
 		List<ErrorResponse.FieldError> fieldErrors = exception.getBindingResult().getFieldErrors().stream()
-				.map(error -> new ErrorResponse.FieldError(
+				.map(error -> ErrorResponse.FieldError.of(
 						error.getField(),
+						// getCode()가 제약 이름(NotBlank·Size)을 준다. 기본 문구는 영문이라 계약이 못 되므로
+						// 프론트가 분기할 값은 이쪽이다.
+						error.getCode(),
 						error.getDefaultMessage() == null ? "올바르지 않은 값입니다." : error.getDefaultMessage()
 				))
 				.toList();
@@ -77,8 +81,10 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler(ConstraintViolationException.class)
 	public ResponseEntity<ErrorResponse> handleConstraintViolation(ConstraintViolationException exception) {
 		List<ErrorResponse.FieldError> fieldErrors = exception.getConstraintViolations().stream()
-				.map(violation -> new ErrorResponse.FieldError(
+				.map(violation -> ErrorResponse.FieldError.of(
 						violation.getPropertyPath().toString(),
+						violation.getConstraintDescriptor() == null ? null
+								: violation.getConstraintDescriptor().getAnnotation().annotationType().getSimpleName(),
 						violation.getMessage()
 				))
 				.toList();
@@ -111,6 +117,32 @@ public class GlobalExceptionHandler {
 				"DATA_INTEGRITY_VIOLATION",
 				"DATA_INTEGRITY_VIOLATION",
 				"요청을 처리할 수 없습니다. 데이터 제약 조건에 맞지 않습니다."
+		));
+	}
+
+	/**
+	 * 매핑되지 않은 경로. <b>상태는 그대로 404이고 응답 봉투만 공통 형식으로 맞춘다.</b>
+	 *
+	 * <p>잡지 않으면 스프링 기본 오류 본문({@code timestamp·status·error·message·path})이 나가는데,
+	 * 거기에는 {@code code}가 없다. 프론트는 스펙에서 {@code ErrorResponse}로 에러 타입을 생성해
+	 * {@code code}로 분기하므로, <b>이 경로만 타입이 어긋나 분기가 실패한다.</b>
+	 *
+	 * <p>유효한 토큰으로 없는 경로를 부르면 이미 404다(401이 아니다 — 실측 확인). 그래서 여기서
+	 * 바꾸는 것은 상태가 아니라 모양뿐이며, "토큰 만료"와 "경로 오타"의 구분은 그대로 유지된다.
+	 *
+	 * <p>경로는 응답에 싣지 않는다. 요청자가 이미 아는 값이고, 존재하지 않는 경로를 되돌려 주면
+	 * 반사형 노출의 통로가 된다.
+	 */
+	@ExceptionHandler(NoResourceFoundException.class)
+	public ResponseEntity<ErrorResponse> handleNoResourceFound(
+			NoResourceFoundException exception,
+			HttpServletRequest request
+	) {
+		log.info("매핑되지 않은 경로: method={}, path={}", request.getMethod(), request.getRequestURI());
+		return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ErrorResponse.of(
+				HttpStatus.NOT_FOUND,
+				"NOT_FOUND",
+				"요청한 경로를 찾을 수 없습니다."
 		));
 	}
 

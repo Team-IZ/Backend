@@ -109,6 +109,13 @@ ai:
   # App Runner 원본 도메인. 안 정하면 프록시와 같은 값으로 fallback(로컬 개발처럼
   # 프록시/원본 구분이 없는 환경 대응).
   origin-base-url: ${AI_ORIGIN_BASE_URL:${AI_PROXY_BASE_URL:http://localhost:8000}}
+  proxy:
+    # 원본으로 직접 보내기 전(교안 PDF·코드 제출) 프록시를 깨우는 GET /api/health의 상한.
+    #
+    # 🔴 짧게 잡으면 안 된다. 이 호출은 생존 확인이 아니라 기동 요청이고, 프록시가 원본이
+    # RUNNING이 될 때까지 동기로 기다린다(유휴 후 첫 호출 ~80초 관측). 2초 같은 값을 쓰면
+    # "잠들어 있는 정상 상태"가 전부 실패로 읽혀 AI가 멀쩡한데도 제출이 거부된다.
+    warm-up-timeout: ${AI_PROXY_WARM_UP_TIMEOUT:PT150S}
   # AI의 require_internal_key가 읽는 공유 비밀(X-Internal-Key).
   # 비워 두면 헤더를 아예 붙이지 않는다 — AI 쪽도 "키 미설정 = 로컬 개발"로 검증을 건너뛴다.
   internal-key: ${AI_INTERNAL_KEY:}
@@ -212,13 +219,16 @@ ai:
 
   # 교안 분석 연동. develop 머지 때 파일 아래쪽에 `ai:` 블록이 하나 더 생겨
   # YAML 중복 키로 기동이 통째로 실패했다(snakeyaml: found duplicate key ai).
-  # 값과 환경변수 이름은 그대로 두고 이 블록 안으로 옮기기만 했다.
   #
-  # ⚠️ 같은 공유 비밀인데 위 공통 블록과 환경변수 이름이 다르다(AI_INTERNAL_API_KEY vs
-  # AI_INTERNAL_KEY) — base-url 통합과 별개 문제라 이번엔 안 건드렸다. 두 이름을 다
-  # 관리하면 한쪽만 채워 넣는 사고가 난다, 다음에 손댈 때 같이 정리할 것.
+  # [2026-08-10] 공통 설정과 어긋나던 둘을 맞췄다. 종전에는 AI_CURRICULUM_BASE_URL ·
+  # AI_INTERNAL_API_KEY 라는 이름을 따로 썼는데, 같은 AI 서버의 같은 공유 비밀을 가리키면서
+  # 환경변수만 둘이라 한쪽만 채워 넣는 사고가 나기 쉬웠다.
+  #
+  # [2026-08-11] base-url 을 여기서 없앴다. 교안 제출은 원본 서버로 나가므로
+  # AiCurriculumClient 가 위쪽 ai.origin-base-url 을 직접 읽는다. 남은 x-internal-key 는
+  # 위 ai.internal-key 와 같은 값을 가리키는 중복이라 정리 후보다.
   curriculum:
-    x-internal-key: ${AI_INTERNAL_API_KEY:}
+    x-internal-key: ${AI_INTERNAL_KEY:}
 
 jwt:
   secret: ${JWT_SECRET}

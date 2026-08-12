@@ -3,10 +3,8 @@ package com.bigproject.backend.global.ai;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
-import org.springframework.stereotype.Component;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
@@ -30,13 +28,32 @@ import java.nio.charset.StandardCharsets;
  *
  * 둘 다 {@link AiCallException} 하나로 접는다 — 호출부가 봉투 모양을 알 필요는 없고
  * "무엇이 실패했고 다시 불러도 되는가"만 알면 된다.
+ *
+ * <h2>빈이 둘이다</h2>
+ *
+ * <p>대상 서버가 둘로 갈라져 {@link AiClientConfig}가 {@code aiProxyClient}(프록시)와
+ * {@code aiOriginClient}(원본) 두 빈을 등록한다. 그래서 이 클래스에는 {@code @Component}가
+ * 없다 — 붙이면 같은 타입 빈이 셋이 되어 주입이 모호해진다. 주입부는 반드시
+ * {@code @Qualifier}로 어느 쪽인지 밝힌다.
  */
 @Slf4j
-@Component
 public class AiClient {
 
 	/** Spring→FastAPI 서비스 간 인증 헤더. AI 저장소 {@code app/api/deps.py:require_internal_key}. */
 	public static final String INTERNAL_KEY_HEADER = "X-Internal-Key";
+
+	/**
+	 * AI API 버전 프리픽스. AI 저장소 {@code app/config.py}의 {@code API_V0_PREFIX}와 같은 값이다.
+	 *
+	 * <p><b>base-url이 아니라 경로에 붙인다</b>(2026-08-11). 종전에는 {@code AI_BASE_URL} 값
+	 * 자체에 프리픽스가 들어 있었는데, 대상 서버가 프록시·원본 둘로 갈라지면서 환경변수마다
+	 * 프리픽스를 빠짐없이 붙여야 하는 규약이 됐다. 한 곳만 빠뜨려도 404가 나고 그 사실이
+	 * 설정 파일에는 드러나지 않는다. 프리픽스를 코드로 옮겨 환경변수는 호스트만 담는다.
+	 *
+	 * <p>단, 헬스체크({@code GET /api/health})는 이 프리픽스 밖이다.
+	 * {@link AiProxyWarmUp} 참조.
+	 */
+	public static final String API_V0 = "/api/v0";
 
 	/**
 	 * 재시도 시 동일 값을 재사용한다. 다섯 엔드포인트가 같은 이름을 쓴다(백엔드 제안서 1-1).
@@ -61,7 +78,7 @@ public class AiClient {
 
 	private final RestClient restClient;
 
-	public AiClient(@Qualifier(AiClientConfig.AI_REST_CLIENT) RestClient restClient) {
+	public AiClient(RestClient restClient) {
 		this.restClient = restClient;
 	}
 
@@ -184,6 +201,11 @@ public class AiClient {
 			}
 			if (node.hasNonNull("message")) {
 				message = node.get("message").asText();
+			} else if (node.hasNonNull("detail")) {
+				// FastAPI 기본 오류 봉투는 message가 아니라 detail을 쓴다. 이를 버리면
+				// 프록시의 404·502가 상태 코드만 남아 실제 장애 원인을 구분할 수 없다.
+				JsonNode detail = node.get("detail");
+				message = detail.isTextual() ? detail.asText() : detail.toString();
 			}
 			if (node.hasNonNull("retryable")) {
 				retryable = node.get("retryable").asBoolean();

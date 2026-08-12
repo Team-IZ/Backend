@@ -11,11 +11,13 @@ import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepo
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository.AnalysisModel;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAiUsageRecorder;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisRequestContextRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAssessmentSessionPreparer;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisResultRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.Instant;
 import java.util.List;
@@ -48,7 +50,11 @@ class AnalysisBatchServiceTest {
 	private JdbcAiUsageRecorder usageRecorder;
 	private JdbcAssessmentSessionPreparer sessionPreparer;
 	private AnalysisServerClient client;
+	private JdbcAnalysisRequestContextRepository requestContextRepository;
 	private AnalysisBatchService service;
+
+	private static final AnalysisServerClient.TeachItem DEFAULT_TEACH =
+			new AnalysisServerClient.TeachItem("teach-1", "매니저 패턴", "unit-10", List.of(18));
 
 	@BeforeEach
 	void setUp() {
@@ -59,14 +65,26 @@ class AnalysisBatchServiceTest {
 		usageRecorder = mock(JdbcAiUsageRecorder.class);
 		sessionPreparer = mock(JdbcAssessmentSessionPreparer.class);
 		client = mock(AnalysisServerClient.class);
+		requestContextRepository = mock(JdbcAnalysisRequestContextRepository.class);
+		// 기본값: requirements/focusItems는 빈 목록, teaches는 1건. TEAM_SHARED_PROBLEM은 teaches가
+		// 비면 AI가 거부하므로(requireTeaches), 개별 stub 없이 dispatchOne을 타는 다른 테스트들이
+		// 전부 이 기본값에 기대게 둔다.
+		when(requestContextRepository.findRequirements(any())).thenReturn(List.of());
+		when(requestContextRepository.findFocusItems(any())).thenReturn(List.of());
+		when(requestContextRepository.findTeaches(any(), any())).thenReturn(List.of(DEFAULT_TEACH));
+		// 트랜잭션 경계 자체는 여기서 검증할 수 없다(실제 DB가 있어야 한다). mock 이면
+		// TransactionTemplate 이 콜백을 그대로 실행하므로, 이 테스트가 보려는 상태 전이 로직은
+		// 경계와 무관하게 그대로 확인된다.
 		service = new AnalysisBatchService(dispatchRepository, jobRepository, modelRepository,
-				resultRepository, usageRecorder, sessionPreparer, client, MODEL_CODE, MAX_ATTEMPTS);
+				resultRepository, usageRecorder, sessionPreparer, client, requestContextRepository,
+				mock(PlatformTransactionManager.class), MODEL_CODE, MAX_ATTEMPTS);
 	}
 
 	/** 카탈로그에 설정된 모델이 있는 정상 상태. */
 	private void catalogHasTheConfiguredModel() {
 		AnalysisModel model = mock(AnalysisModel.class);
 		when(model.getModelId()).thenReturn(MODEL_ID);
+		when(model.getModelCode()).thenReturn(MODEL_CODE);
 		when(model.getProviderModelCode()).thenReturn(PROVIDER_MODEL_CODE);
 		when(modelRepository.findActiveByModelCode(MODEL_CODE)).thenReturn(Optional.of(model));
 	}
@@ -137,6 +155,78 @@ class AnalysisBatchServiceTest {
 	}
 
 	@Test
+	void skipsOnlyTheJobThatFailsToParseAndStillUpdatesTheRest() {
+		AnalysisJob broken = jobWithExternalId();
+		AnalysisJob healthy = jobWithExternalId();
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(broken, healthy));
+		// AI가 값 집합 밖의 status를 주면 클라이언트 구현체가 AnalysisServerException을 던진다.
+		when(client.fetchProgress(broken.getExternalJobId()))
+				.thenThrow(new AnalysisServerException(AnalysisFailureCode.MODEL_ERROR, "알 수 없는 status"));
+		when(client.fetchProgress(healthy.getExternalJobId())).thenReturn(Optional.of(new AnalysisProgress(
+				AnalysisJobStatus.FAILED, NOW, NOW, AnalysisFailureCode.REPO_NOT_FOUND, "저장소 없음", null, null)));
+
+		int updated = service.pollActiveJobs();
+
+		// 문제가 있는 job 하나 때문에 나머지 job의 정상 갱신까지 막히면 안 된다.
+		assertThat(updated).isEqualTo(1);
+		assertThat(healthy.getStatus()).isEqualTo(AnalysisJobStatus.FAILED);
+		assertThat(healthy.getFailureCode()).isEqualTo(AnalysisFailureCode.REPO_NOT_FOUND);
+		// broken은 예외가 난 시점 이전이라 아무 것도 바뀌지 않은 채 QUEUED로 남아 다음 폴링에서 다시 시도된다.
+		assertThat(broken.getStatus()).isEqualTo(AnalysisJobStatus.QUEUED);
+	}
+
+	/**
+	 * 적재가 깨져도 상태 전이는 나간다.
+	 *
+	 * <p>종전에는 {@code pollActiveJobs} 전체가 한 트랜잭션이라 이 catch 가 실제로는 무의미했다 —
+	 * Postgres 는 문 하나가 실패하면 트랜잭션을 abort 시켜 뒤따르는 상태 전이까지 커밋 시점에 함께
+	 * 롤백한다. 쓰기 단위마다 트랜잭션을 나눈 뒤라야 "적재 실패로 job 을 FAILED 로 되돌리지 않는다"가
+	 * 성립한다.
+	 */
+	@Test
+	void marksTheJobCompletedEvenWhenLoadingTheResultBlowsUp() {
+		AnalysisJob job = jobWithExternalId();
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any())).thenReturn(Optional.of(new AnalysisProgress(
+				AnalysisJobStatus.SUCCEEDED, NOW, NOW, null, null, resultPayload(), null)));
+		when(resultRepository.record(any(), any()))
+				.thenThrow(new IllegalStateException("problem_stage 제약 위반"));
+
+		int updated = service.pollActiveJobs();
+
+		assertThat(updated).isEqualTo(1);
+		// 적재를 실제로 시도했는지부터 못박는다. 건너뛰었다면 아래 단언들이 같은 값으로 통과해
+		// 테스트가 엉뚱한 이유로 초록이 된다.
+		verify(resultRepository).record(any(), any());
+		// 분석은 실제로 성공했고 비용도 나갔다. FAILED 로 쓰면 같은 분석을 또 돌린다.
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.SUCCEEDED);
+		// analysis_id 가 비어 있는 SUCCEEDED job 이 곧 "적재가 깨졌다"는 신호다.
+		assertThat(job.getAnalysisId()).isNull();
+		verify(jobRepository).save(job);
+	}
+
+	/** 적재가 이미 끝난 job 을 다시 적재하지 않는다 — problemId 가 PK 라 재적재는 충돌한다. */
+	@Test
+	void doesNotLoadTheResultTwiceWhenTheJobComesBackWithAnAnalysisAlreadyAttached() {
+		AnalysisJob job = jobWithExternalId();
+		job.attachAnalysis(UUID.randomUUID());
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any())).thenReturn(Optional.of(new AnalysisProgress(
+				AnalysisJobStatus.SUCCEEDED, NOW, NOW, null, null, resultPayload(), null)));
+
+		service.pollActiveJobs();
+
+		verify(resultRepository, never()).record(any(), any());
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.SUCCEEDED);
+	}
+
+	/** 적재 경로를 타게 하는 최소 payload. 내용은 resultRepository 를 모킹해서 보지 않는다. */
+	private static AnalysisResultPayload resultPayload() {
+		return new AnalysisResultPayload(null, null, "TOTAL", null, null, null, null,
+				null, List.of(), null, null, null, null, null, null, null);
+	}
+
+	@Test
 	void skipsJobsThatWereNeverAccepted() {
 		AnalysisJob notSent = AnalysisJob.queued(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
 				UUID.randomUUID(), "batch-key", "CODE_ANALYSIS", 1, "trace-1");
@@ -152,9 +242,12 @@ class AnalysisBatchServiceTest {
 		when(target.getOrgId()).thenReturn(UUID.randomUUID());
 		when(target.getTeamId()).thenReturn(UUID.randomUUID());
 		when(target.getAssessmentRoundId()).thenReturn(UUID.randomUUID());
+		when(target.getProjectId()).thenReturn(UUID.randomUUID());
 		when(target.getMethod()).thenReturn("GITHUB_URL");
 		when(target.getRequestedBranch()).thenReturn("main");
 		when(target.getRepositoryUrl()).thenReturn("https://github.com/team-iz/mini-project-3");
+		// commitEmail은 조회는 되지만 TEAM_SHARED_PROBLEM에서는 어디서도 쓰지 않는다(개인 모드 전용).
+		when(target.getCommitEmail()).thenReturn("submitter@example.com");
 		return target;
 	}
 
@@ -177,10 +270,79 @@ class AnalysisBatchServiceTest {
 		assertThat(sent.requestedBranch()).isEqualTo("main");
 		// AI 서버 계약: submissionId:attemptNo. attemptNo는 execution_no(첫 실행은 1)다.
 		assertThat(sent.idempotencyKey()).isEqualTo(target.getSubmissionId() + ":1");
+		// 2026-08-10 확인: TEAM_SHARED_PROBLEM 계약. commitEmail·focusItems는 항상 null이고
+		// problemScope는 고정값이다.
+		assertThat(sent.problemScope()).isEqualTo("TEAM_SHARED_PROBLEM");
+		assertThat(sent.commitEmail()).isNull();
+		assertThat(sent.focusItems()).isNull();
 
 		ArgumentCaptor<AnalysisJob> jobCaptor = ArgumentCaptor.forClass(AnalysisJob.class);
 		verify(jobRepository, org.mockito.Mockito.atLeastOnce()).save(jobCaptor.capture());
 		assertThat(jobCaptor.getValue().getExternalJobId()).isNotNull();
+	}
+
+	@Test
+	void dispatchSubmissionFillsRequirementsAndTeachesFromTheProjectAndRound() {
+		DispatchTarget target = target();
+		catalogHasTheConfiguredModel();
+		when(dispatchRepository.findDispatchTarget(target.getSubmissionId(), MAX_ATTEMPTS)).thenReturn(Optional.of(target));
+		when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+		when(client.requestAnalysis(any())).thenReturn(UUID.randomUUID());
+
+		AnalysisServerClient.RequirementItem requirement = new AnalysisServerClient.RequirementItem("req-1", "RAG를 사용했는가");
+		AnalysisServerClient.TeachItem teach = new AnalysisServerClient.TeachItem(
+				"teach-1", "매니저 패턴", "unit-10", List.of(18));
+		when(requestContextRepository.findRequirements(target.getProjectId())).thenReturn(List.of(requirement));
+		when(requestContextRepository.findTeaches(target.getAssessmentRoundId(), target.getProjectId()))
+				.thenReturn(List.of(teach));
+
+		service.dispatchSubmission(target.getSubmissionId());
+
+		ArgumentCaptor<AnalysisRequest> captor = ArgumentCaptor.forClass(AnalysisRequest.class);
+		verify(client).requestAnalysis(captor.capture());
+		AnalysisRequest sent = captor.getValue();
+		assertThat(sent.requirements()).containsExactly(requirement);
+		assertThat(sent.teaches()).containsExactly(teach);
+		// focusItems는 TEAM_SHARED_PROBLEM에서 조회조차 하지 않는다 — P5(개인 모드) 전용.
+		verify(requestContextRepository, org.mockito.Mockito.never()).findFocusItems(any());
+	}
+
+	@Test
+	void dispatchSubmissionOmitsRequirementsForZipSubmissions() {
+		DispatchTarget target = target();
+		when(target.getMethod()).thenReturn("ZIP_WITH_GITLOG");
+		when(target.getRepositoryUrl()).thenReturn(null);
+		when(target.getRequestedBranch()).thenReturn(null);
+		when(target.getArtifactStorageUri()).thenReturn("s3://bucket/key.zip");
+		catalogHasTheConfiguredModel();
+		when(dispatchRepository.findDispatchTarget(target.getSubmissionId(), MAX_ATTEMPTS)).thenReturn(Optional.of(target));
+		when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+		when(client.requestAnalysis(any())).thenReturn(UUID.randomUUID());
+
+		service.dispatchSubmission(target.getSubmissionId());
+
+		ArgumentCaptor<AnalysisRequest> captor = ArgumentCaptor.forClass(AnalysisRequest.class);
+		verify(client).requestAnalysis(captor.capture());
+		// 2026-08-10 확인: requirements는 GITHUB_URL 케이스에만 실린다.
+		assertThat(captor.getValue().requirements()).isNull();
+		verify(requestContextRepository, org.mockito.Mockito.never()).findRequirements(any());
+	}
+
+	@Test
+	void dispatchSubmissionLeavesNoJobRowWhenTheRoundHasNoVerificationConcepts() {
+		DispatchTarget target = target();
+		catalogHasTheConfiguredModel();
+		when(dispatchRepository.findDispatchTarget(target.getSubmissionId(), MAX_ATTEMPTS)).thenReturn(Optional.of(target));
+		// 회차에 concept_set이 아예 설정되지 않은 상태다.
+		when(requestContextRepository.findTeaches(target.getAssessmentRoundId(), target.getProjectId()))
+				.thenReturn(List.of());
+
+		service.dispatchSubmission(target.getSubmissionId());
+
+		// TEAM_SHARED_PROBLEM은 teaches가 비면 AI가 거부하므로 아예 부르지 않는다.
+		verify(client, never()).requestAnalysis(any());
+		// 모델 미설정과 같은 이유로 job 행도 남기지 않는다 — 재시도 가능한 상태로 둔다.
+		verify(jobRepository, never()).save(any());
 	}
 
 	@Test
@@ -197,9 +359,10 @@ class AnalysisBatchServiceTest {
 		verify(client).requestAnalysis(captor.capture());
 		// 생략하면 AI가 자기 기본 모델을 쓰고, 그 modelCode 가 ai_model 에 없으면
 		// ai_usage.model_code FK 위반으로 사용량이 통째로 유실된다.
-		assertThat(captor.getValue().providerModelCode()).isEqualTo(PROVIDER_MODEL_CODE);
-		// 화면 선택값(model_code)이 아니라 공급자 원본 식별자를 보내야 호출이 된다.
-		assertThat(captor.getValue().providerModelCode()).doesNotContain("/");
+		// 2026-08-10 정정: 필드 이름은 providerModelCode지만 값은 전체 코드(model_code)다 —
+		// 공급자 원본 식별자만 보내면 AI가 모델을 인식하지 못한다.
+		assertThat(captor.getValue().providerModelCode()).isEqualTo(MODEL_CODE);
+		assertThat(captor.getValue().providerModelCode()).contains("/");
 
 		ArgumentCaptor<AnalysisJob> jobCaptor = ArgumentCaptor.forClass(AnalysisJob.class);
 		verify(jobRepository, org.mockito.Mockito.atLeastOnce()).save(jobCaptor.capture());

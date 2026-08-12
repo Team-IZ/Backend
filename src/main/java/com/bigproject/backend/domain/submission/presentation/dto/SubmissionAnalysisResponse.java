@@ -32,7 +32,11 @@ public record SubmissionAnalysisResponse(
 		@Schema(
 				description = """
 						FAILED일 때만 값이 있다. 분석 실행 실패 6종과 저장소 접근 실패 5종을 합한 11종이다 —
-						저장소 주소 오류도 제출이 아니라 여기로 드러난다.""",
+						저장소 주소 오류도 제출이 아니라 여기로 드러난다.
+
+						SESSION_PREPARATION_FAILED만 예외로 analysis_job.failure_code에 없는 값이다.
+						분석은 성공했지만 이 교육생의 세션·문항이 준비되지 않아 응시를 시작할 수 없다는
+						뜻이며, 서버가 조회 시점에 판정해 내려 준다.""",
 				example = "REPO_NOT_FOUND"
 		)
 		String failureCode,
@@ -61,6 +65,33 @@ public record SubmissionAnalysisResponse(
 				job.getFailureCode() == null ? null : job.getFailureCode().name(),
 				job.getFailureReason(),
 				job.getAnalysisId()
+		);
+	}
+
+	/**
+	 * 분석은 성공했지만 이 교육생의 세션·문항이 준비되지 않았다.
+	 *
+	 * <p><b>원장은 그대로 두고 응답만 바꾼다.</b> {@code analysis_job}은 SUCCEEDED로 남는다 — AI
+	 * 분석은 실제로 성공했고 비용도 나갔으며, FAILED로 쓰면 재시도 대상이 되어 같은 분석을 또 돌린다.
+	 * 하지만 교육생이 볼 수 있는 사실은 "응시를 시작할 수 없다"이므로 화면에는 실패로 내려간다.
+	 *
+	 * <p>{@code analysisJobId}·{@code executionNo}·시각은 그대로 실어 준다. 운영이 로그와 원장을
+	 * 대조할 때 필요한 값이고, 이 실패가 어느 실행에서 났는지가 그 값으로만 특정된다.
+	 *
+	 * <p>{@code codeAnalysisId}는 비운다. 값을 남기면 화면이 결과 조회로 넘어갈 수 있다고 오해하는데,
+	 * 실제로는 세션이 없어 응시를 시작할 수 없다.
+	 */
+	public static SubmissionAnalysisResponse sessionPreparationFailed(AnalysisJob job) {
+		return new SubmissionAnalysisResponse(
+				job.getSubmissionId(),
+				SubmissionAnalysisPhase.FAILED,
+				job.getJobId(),
+				job.getExecutionNo(),
+				job.getStartedAt(),
+				job.getCompletedAt(),
+				"SESSION_PREPARATION_FAILED",
+				"분석은 완료됐지만 응시할 문항이 준비되지 않았습니다. 담당 매니저에게 문의해 주세요.",
+				null
 		);
 	}
 }

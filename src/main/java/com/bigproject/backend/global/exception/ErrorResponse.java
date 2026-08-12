@@ -71,10 +71,43 @@ public record ErrorResponse(
 					example = "dataRetentionDays")
 			String field,
 
-			@Schema(description = "거절 사유", requiredMode = Schema.RequiredMode.REQUIRED,
+			@Schema(description = """
+					거절 사유를 나타내는 안정 코드. **화면 문구는 이 값으로 정한다.**
+					Bean Validation 제약 이름을 대문자 스네이크로 옮긴 값이며(`@NotBlank` → `NOT_BLANK`),
+					제약을 알 수 없으면 `INVALID`다.
+
+					`message`가 아니라 이 값으로 분기해야 하는 이유: `message`는 Bean Validation 기본 문구라
+					영문이고(`must not be blank`) 로케일·라이브러리 버전에 따라 바뀐다 — 계약이 아니다.""",
+					requiredMode = Schema.RequiredMode.REQUIRED, example = "NOT_BLANK")
+			String code,
+
+			@Schema(description = "거절 사유(사람이 읽는 기본 문구). 화면에 그대로 쓰지 말 것 — 바뀔 수 있다",
+					requiredMode = Schema.RequiredMode.REQUIRED,
 					example = "90, 180, 365 중 하나여야 합니다.")
 			String message
 	) {
+
+		/** 제약 이름을 모를 때 쓰는 값. 코드가 비는 것보다 낫다 — 프론트가 분기에서 빠뜨리지 않는다. */
+		private static final String UNKNOWN_CONSTRAINT = "INVALID";
+
+		/**
+		 * Bean Validation 제약 이름({@code NotBlank}·{@code Size})을 코드로 옮긴다.
+		 *
+		 * <p>스프링은 이 이름을 {@code FieldError.getCode()}로, Jakarta 쪽은 애너테이션 타입으로 준다.
+		 * 둘 다 같은 규칙으로 접어 두면 어느 경로로 온 검증 실패든 프론트가 같은 값으로 분기한다.
+		 */
+		public static FieldError of(String field, String constraintName, String message) {
+			return new FieldError(field, toCode(constraintName), message);
+		}
+
+		private static String toCode(String constraintName) {
+			if (constraintName == null || constraintName.isBlank()) {
+				return UNKNOWN_CONSTRAINT;
+			}
+			// NotBlank → NOT_BLANK. 대문자 앞에 밑줄을 넣되 맨 앞은 빼고, 연속 대문자(URL 등)는 붙여 둔다.
+			String snake = constraintName.replaceAll("(?<=[a-z0-9])(?=[A-Z])", "_");
+			return snake.toUpperCase(java.util.Locale.ROOT);
+		}
 	}
 
 	/** 안정 코드가 따로 없는 경우. {@code error}를 그대로 코드로 쓴다. */

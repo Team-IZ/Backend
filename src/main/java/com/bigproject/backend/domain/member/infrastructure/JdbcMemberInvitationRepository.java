@@ -171,6 +171,7 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				AND t.used_at IS NULL
 				AND ui.status IN ('PENDING', 'SENT', 'DELIVERY_FAILED')
 				AND u.deleted_at IS NULL
+				AND (ui.target_cohort_id IS NULL OR (c.deleted_at IS NULL AND c.status <> 'CLOSED'))
 			""";
 	/** 재발송 성공 기록. DELIVERY_FAILED에서 올라올 수 있으므로 실패 컬럼 4개를 함께 비운다. */
 	private static final String MARK_INVITATION_RESENT = """
@@ -219,19 +220,6 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				AND used_at IS NULL
 				AND invalidated_at IS NULL
 			""";
-	private static final String INSERT_COHORT_MEMBER = """
-			INSERT INTO cohort_member (
-				cohort_member_id, cohort_id, user_id, org_id, joined_at,
-				left_at, status, created_at
-			) VALUES (?, ?, ?, ?, ?, NULL, 'INVITED', ?)
-			""";
-	private static final String INSERT_CLASS_MEMBERSHIP = """
-			INSERT INTO class_membership (
-				class_membership_id, class_id, cohort_member_id, org_id,
-				assigned_at, unassigned_at, assigned_by, created_at
-			) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
-			""";
-
 	private final JdbcTemplate jdbcTemplate;
 
 	@Override
@@ -497,41 +485,6 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				replacement.purpose().name(),
 				replacement.tokenId()
 		);
-	}
-
-	@Override
-	public void saveTraineeMembership(
-			UUID memberId,
-			UUID tokenId,
-			UUID organizationId,
-			UUID cohortId,
-			UUID classroomId,
-			UUID assignedBy,
-			Instant joinedAt
-	) {
-		UUID cohortMemberId = UUID.randomUUID();
-		Timestamp timestamp = Timestamp.from(joinedAt);
-		jdbcTemplate.update(
-				INSERT_COHORT_MEMBER,
-				cohortMemberId,
-				cohortId,
-				memberId,
-				organizationId,
-				timestamp,
-				timestamp
-		);
-		if (classroomId != null) {
-			jdbcTemplate.update(
-					INSERT_CLASS_MEMBERSHIP,
-					UUID.randomUUID(),
-					classroomId,
-					cohortMemberId,
-					organizationId,
-					timestamp,
-					assignedBy,
-					timestamp
-			);
-		}
 	}
 
 }

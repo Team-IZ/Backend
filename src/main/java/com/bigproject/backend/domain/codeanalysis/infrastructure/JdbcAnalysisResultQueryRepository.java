@@ -27,7 +27,48 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class JdbcAnalysisResultQueryRepository {
 
+	/**
+	 * 문제 1건이 갖는 단계 수. {@code ck_problem_stage_axis_code}의 L1~L4가 곧 이 값이고
+	 * {@code problem_stage} 정의서가 "총 행 수는 generated_problem_count × 4"로 못박고 있다.
+	 */
+	private static final int STAGE_AXIS_COUNT = 4;
+
 	private final JdbcTemplate jdbc;
+
+	/**
+	 * 이 교육생이 실제로 응시할 수 있는 상태인가. 분석은 성공했는데 세션·단계가 깔리지 않은 경우를
+	 * 잡는다.
+	 *
+	 * <p><b>왜 필요한가.</b> {@code analysis_job}이 SUCCEEDED여도 세션 준비는 따로 실패할 수 있다 —
+	 * 응시가 지워졌거나, 팀 배정이 끊겼거나, AI가 4축 질문·힌트를 온전히 주지 않아 문제가 통째로
+	 * 스킵된 경우다. 그때 job 상태만 보고 "분석 완료"를 돌려주면 교육생은 시작할 수 없는 화면을
+	 * 계속 새로고침하게 된다. job을 FAILED로 쓰지 않는 이유는 분석 자체는 실제로 성공했고 비용도
+	 * 이미 나갔기 때문이다({@code JdbcAnalysisResultRepository} 참조) — 사실은 원장에 그대로 두고,
+	 * <b>교육생에게 보이는 값만</b> 실패로 바꾼다.
+	 *
+	 * <p>기대치를 {@code GENERATED} 문제 수 × 4로 계산하는 이유: 근거를 못 찾아 3슬롯이 전부
+	 * {@code NOT_GENERATED}면 단계가 0인 것이 정상이다. 0건 자체를 실패로 보면 그 정상 결과까지
+	 * 실패로 뒤집는다.
+	 *
+	 * @return 세션이 있고 단계가 기대만큼 깔렸으면 {@code true}. 현행 분석이 없어도 {@code false}다.
+	 */
+	public boolean isSessionPrepared(UUID submissionId, UUID userId) {
+		return jdbc.query("""
+				SELECT (SELECT count(*) FROM assessment_problem p
+				         WHERE p.code_analysis_id = ca.analysis_id
+				           AND p.generation_status = 'GENERATED')      AS generated_count,
+				       s.session_id                                    AS session_id,
+				       (SELECT count(*) FROM problem_stage ps
+				         WHERE ps.session_id = s.session_id)           AS stage_count
+				  FROM code_analysis ca
+				  LEFT JOIN measurement_attempt a ON a.code_analysis_id = ca.analysis_id AND a.user_id = ?
+				  LEFT JOIN assessment_session s ON s.attempt_id = a.attempt_id
+				 WHERE ca.source_submission_id = ? AND ca.status = 'ACTIVE'
+				""",
+				(rs, rowNum) -> rs.getObject("session_id", UUID.class) != null
+						&& rs.getInt("stage_count") == rs.getInt("generated_count") * STAGE_AXIS_COUNT,
+				userId, submissionId).stream().findFirst().orElse(false);
+	}
 
 	/** 제출의 현행 분석 1건. {@code uq_code_analysis_active}가 ACTIVE 유일성을 보장한다. */
 	public Optional<AnalysisSummary> findActiveAnalysis(UUID submissionId) {

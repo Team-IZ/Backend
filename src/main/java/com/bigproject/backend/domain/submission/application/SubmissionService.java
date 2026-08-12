@@ -1,5 +1,7 @@
 package com.bigproject.backend.domain.submission.application;
 
+import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJob;
+import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJobStatus;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepository;
 import com.bigproject.backend.domain.submission.domain.GithubRepositoryUrl;
 import com.bigproject.backend.domain.submission.domain.Repository;
@@ -21,6 +23,7 @@ import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisRes
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResultResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
+import com.bigproject.backend.global.ai.AiProxyWarmUp;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
@@ -62,6 +65,7 @@ public class SubmissionService {
 	private final JdbcAnalysisResultQueryRepository analysisResultQueryRepository;
 	private final JdbcMeasurementAttemptOpener measurementAttemptOpener;
 	private final ApplicationEventPublisher eventPublisher;
+	private final AiProxyWarmUp aiProxyWarmUp;
 
 	/**
 	 * 파일당 상한. 정의서에 원천 컬럼이 없어 애플리케이션 상수로 두고 적용값을
@@ -89,6 +93,7 @@ public class SubmissionService {
 	@Transactional
 	public SubmissionResponse submitGithubUrl(
 			UUID userId, CreateGithubSubmissionRequest request, UUID idempotencyKey) {
+		requireAiProxyAwake();
 		SubmissionContext context = requireSubmittableRound(userId, request.assessmentRoundId());
 		if (!context.getAllowGithubIntegration()) {
 			throw new SubmissionException(SubmissionErrorCode.SUBMISSION_METHOD_NOT_ALLOWED);
@@ -121,12 +126,51 @@ public class SubmissionService {
 
 		// 개인 응시를 여기서 연다. 분석 성공 시점에 만들면 분석이 실패했을 때 응시가 영영 생기지
 		// 않아 "미응시"와 "분석 실패로 응시 불가"가 구분되지 않는다.
-		measurementAttemptOpener.openForTeam(context.getOrgId(), context.getTeamId(),
-				request.assessmentRoundId(), submission.getSubmissionId());
+		openAttempts(context, request.assessmentRoundId(), submission);
 
 		eventPublisher.publishEvent(new SubmissionAcceptedEvent(submission.getSubmissionId()));
 
 		return SubmissionResponse.of(submission, null);
+	}
+
+	/**
+	 * AI 프록시를 깨운 뒤에만 제출을 받는다(2026-08-11).
+	 *
+	 * <p>이 서비스가 AI로 직접 나가지는 않는다는 원칙은 그대로다 — 여기서 하는 것은 웜업 한 번이고
+	 * 분석 요청은 여전히 커밋 후 이벤트가 보낸다. 그런데도 접수 시점에 깨우는 이유는 둘이다. 첫째,
+	 * AI가 닿지 않으면 제출은 200으로 응답되고 실패는 한참 뒤 분석 화면에만 나타난다 — 그때는 마감이
+	 * 지나 교육생이 할 수 있는 일이 없다. 둘째, ZIP은 원본으로 직접 보내야 하는데 원본은 PAUSED를
+	 * 스스로 깨우지 못한다({@link AiProxyWarmUp} 참조).
+	 *
+	 * <p>⚠️ 트랜잭션 안에서 나가는 HTTP 호출이고, 유휴 상태를 깨우는 첫 요청은 80초 안팎까지 걸린다.
+	 * 짧게 잡을 수 없는 값이라(잠든 정상 상태가 전부 실패로 읽힌다) 마감 직전 동시 제출에서 커넥션
+	 * 점유가 길어지는 것은 감수한 것이다. 문제가 되면 줄일 곳은 타임아웃이 아니라 트랜잭션 경계다.
+	 */
+	private void requireAiProxyAwake() {
+		if (!aiProxyWarmUp.warmUp()) {
+			throw new SubmissionException(SubmissionErrorCode.AI_SERVER_UNAVAILABLE);
+		}
+	}
+
+	/**
+	 * 팀원마다 개인 응시를 연다. <b>제출 행을 먼저 flush한다.</b>
+	 *
+	 * <p>{@code Submission}은 {@code @UuidGenerator}라 {@code save()}가 메모리에서 id를 채운 객체를
+	 * 곧바로 돌려주지만, INSERT 자체는 쓰기 지연으로 flush 시점까지 미뤄진다. 그런데
+	 * {@link JdbcMeasurementAttemptOpener}는 {@code JdbcTemplate}이라 Hibernate가 이 호출을 모르고
+	 * auto-flush를 걸지 않는다 — 같은 커넥션·같은 트랜잭션이어도 DB에는 아직 그 제출이 없다.
+	 *
+	 * <p>그 상태로 {@code measurement_attempt.source_submission_id}에 새 제출 id를 쓰면
+	 * {@code fk_measurement_attempt_source_submission_id}가 막고, 전역 핸들러가 이를 409
+	 * {@code DATA_INTEGRITY_VIOLATION}으로 바꿔 <b>제출·재제출이 통째로 거부된다.</b>
+	 *
+	 * <p>{@link #supersedeCurrentSubmission}이 이미 같은 이유로 flush를 강제하고 있다 — JPA 지연 쓰기와
+	 * 생 JDBC를 섞는 자리마다 이 경계가 필요하다.
+	 */
+	private void openAttempts(SubmissionContext context, UUID assessmentRoundId, Submission submission) {
+		submissionRepository.flush();
+		measurementAttemptOpener.openForTeam(context.getOrgId(), context.getTeamId(),
+				assessmentRoundId, submission.getSubmissionId());
 	}
 
 	/**
@@ -171,6 +215,7 @@ public class SubmissionService {
 	@Transactional
 	public SubmissionResponse submitZip(
 			UUID userId, UUID assessmentRoundId, MultipartFile file, UUID idempotencyKey) {
+		requireAiProxyAwake();
 		SubmissionContext context = requireSubmittableRound(userId, assessmentRoundId);
 		if (!context.getAllowZipSubmission()) {
 			throw new SubmissionException(SubmissionErrorCode.SUBMISSION_METHOD_NOT_ALLOWED);
@@ -222,8 +267,7 @@ public class SubmissionService {
 				maxZipBytes
 		));
 
-		measurementAttemptOpener.openForTeam(context.getOrgId(), context.getTeamId(),
-				assessmentRoundId, submission.getSubmissionId());
+		openAttempts(context, assessmentRoundId, submission);
 
 		// artifact 를 저장한 뒤에 발행한다. 리스너가 storage_uri 를 읽어 AI 에 파일을 실어 보내므로
 		// 순서가 뒤집히면 분석 요청이 파일을 찾지 못한다.
@@ -237,6 +281,10 @@ public class SubmissionService {
 	 *
 	 * <p>{@code code_analysis}가 아니라 {@code analysis_job}을 읽는다. 전자는 성공했을 때에만 생기는 결과물이라
 	 * "진행 중"과 "분석 없음"을 구분할 수 없고 실패 사유 컬럼도 없다.
+	 *
+	 * <p><b>성공은 job 상태만으로 판정하지 않는다(2026-08-10).</b> 세션 준비는 job과 별개로 실패할 수
+	 * 있어서, 그때 SUCCEEDED를 그대로 내려 주면 교육생이 시작할 수 없는 화면을 계속 새로고침하게
+	 * 된다. {@link #withSessionReadiness} 참조.
 	 */
 	@Transactional(readOnly = true)
 	public SubmissionAnalysisResponse getAnalysis(UUID userId, UUID submissionId) {
@@ -245,8 +293,29 @@ public class SubmissionService {
 
 		return analysisJobRepository
 				.findFirstBySubmissionIdOrderByExecutionNoDescStartedAtDescJobIdDesc(submissionId)
-				.map(SubmissionAnalysisResponse::of)
+				.map(job -> withSessionReadiness(job, userId))
 				.orElseGet(() -> SubmissionAnalysisResponse.notStarted(submissionId));
+	}
+
+	/**
+	 * 성공한 job이라도 이 교육생이 실제로 응시할 수 있는지 확인해 응답을 낮춘다.
+	 *
+	 * <p>제출은 팀 단위지만 <b>세션은 개인 단위</b>라, 같은 SUCCEEDED job을 놓고도 사람마다 답이
+	 * 다를 수 있다 — 한 사람만 팀 배정이 끊겼다면 그 사람에게만 세션이 없다. 그래서 조회자 기준으로
+	 * 본다.
+	 *
+	 * <p>{@code analysis_job}은 건드리지 않는다. 분석은 실제로 성공했고, FAILED로 쓰면 재시도 대상이
+	 * 되어 같은 분석을 또 돌리게 되는데 원인이 우리 쪽 준비 단계면 몇 번을 불러도 같은 자리에서
+	 * 깨진다. 원장은 사실대로 두고 화면에만 실패를 드러낸다.
+	 */
+	private SubmissionAnalysisResponse withSessionReadiness(AnalysisJob job, UUID userId) {
+		if (job.getStatus() != AnalysisJobStatus.SUCCEEDED && job.getStatus() != AnalysisJobStatus.PARTIAL) {
+			return SubmissionAnalysisResponse.of(job);
+		}
+		if (analysisResultQueryRepository.isSessionPrepared(job.getSubmissionId(), userId)) {
+			return SubmissionAnalysisResponse.of(job);
+		}
+		return SubmissionAnalysisResponse.sessionPreparationFailed(job);
 	}
 
 	/**

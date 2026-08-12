@@ -14,7 +14,7 @@ import java.util.UUID;
  */
 public interface CohortDependencyRepository {
 
-	/** 이 기수에 등록된 교육생이 하나라도 있는지(이탈자 포함 — 이력도 사실이다). */
+	/** 이 기수에 등록 또는 초대된 교육생이 하나라도 있는지(이탈·취소 이력도 사실이다). */
 	boolean hasMembers(UUID cohortId);
 
 	/** 이 기수에 만들어진 반이 하나라도 있는지. 반이 남으면 지운 기수를 가리키는 행이 생긴다. */

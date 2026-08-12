@@ -1,5 +1,6 @@
 package com.bigproject.backend.global.ai;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,7 +10,18 @@ import org.springframework.web.client.RestClient;
 import java.time.Duration;
 
 /**
- * AI(FastAPI) 호출용 {@link RestClient} 빈.
+ * AI(FastAPI) 호출용 {@link RestClient}·{@link AiClient} 빈.
+ *
+ * <h2>대상 서버가 둘이다 (2026-08-11)</h2>
+ *
+ * <pre>
+ * ai.proxy-base-url  : 리포트 생성, 세션 채점 — 그 외 전부
+ * ai.origin-base-url : 교안 제출, 코드 제출(GitHub·ZIP) 분석
+ * </pre>
+ *
+ * <p>두 값 모두 <b>호스트만</b> 담고 {@code /api/v0}를 포함하지 않는다. 프리픽스는
+ * {@link AiClient#API_V0}로 경로 쪽에 있다 — 환경변수가 둘로 늘어난 이상, 프리픽스를 값에
+ * 넣는 규약은 한쪽만 빠뜨리는 사고를 부른다.
  *
  * <h2>왜 새 의존성을 추가하지 않는가</h2>
  *
@@ -31,24 +43,56 @@ import java.time.Duration;
 @Configuration
 public class AiClientConfig {
 
-	/** 스프링이 AI 서버로 나갈 때 쓰는 이름. 다른 {@code RestClient} 빈이 생겨도 섞이지 않게 한정한다. */
-	public static final String AI_REST_CLIENT = "aiRestClient";
+	/** 프록시로 나가는 {@code RestClient}. 다른 {@code RestClient} 빈이 생겨도 섞이지 않게 한정한다. */
+	public static final String AI_PROXY_REST_CLIENT = "aiProxyRestClient";
 
-	@Bean(AI_REST_CLIENT)
-	public RestClient aiRestClient(
-			@Value("${ai.proxy-base-url:http://localhost:8000}") String proxyBaseUrl,
+	/** 원본 서버로 나가는 {@code RestClient}. */
+	public static final String AI_ORIGIN_REST_CLIENT = "aiOriginRestClient";
+
+	/** 리포트·세션 채점 등 프록시 대상 호출이 주입받는 {@link AiClient}. */
+	public static final String AI_PROXY_CLIENT = "aiProxyClient";
+
+	/** 교안·코드 제출 분석이 주입받는 {@link AiClient}. */
+	public static final String AI_ORIGIN_CLIENT = "aiOriginClient";
+
+	@Bean(AI_PROXY_REST_CLIENT)
+	public RestClient aiProxyRestClient(
+			@Value("${ai.proxy-base-url:http://localhost:8000}") String baseUrl,
 			@Value("${ai.internal-key:}") String internalKey,
 			@Value("${ai.connect-timeout:PT5S}") Duration connectTimeout,
 			@Value("${ai.read-timeout:PT150S}") Duration readTimeout
 	) {
+		return build(baseUrl, internalKey, connectTimeout, readTimeout);
+	}
+
+	@Bean(AI_ORIGIN_REST_CLIENT)
+	public RestClient aiOriginRestClient(
+			@Value("${ai.origin-base-url:http://localhost:8000}") String baseUrl,
+			@Value("${ai.internal-key:}") String internalKey,
+			@Value("${ai.connect-timeout:PT5S}") Duration connectTimeout,
+			@Value("${ai.read-timeout:PT150S}") Duration readTimeout
+	) {
+		return build(baseUrl, internalKey, connectTimeout, readTimeout);
+	}
+
+	@Bean(AI_PROXY_CLIENT)
+	public AiClient aiProxyClient(@Qualifier(AI_PROXY_REST_CLIENT) RestClient restClient) {
+		return new AiClient(restClient);
+	}
+
+	@Bean(AI_ORIGIN_CLIENT)
+	public AiClient aiOriginClient(@Qualifier(AI_ORIGIN_REST_CLIENT) RestClient restClient) {
+		return new AiClient(restClient);
+	}
+
+	private static RestClient build(String baseUrl, String internalKey,
+			Duration connectTimeout, Duration readTimeout) {
 		SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
 		factory.setConnectTimeout(connectTimeout);
 		factory.setReadTimeout(readTimeout);
 
-		// AI 저장소 app/config.py의 API_V0_PREFIX가 /api/v0라 여기서 붙여 둔다 -- 이 빈을
-		// 쓰는 AiClient/ReportGenerationAiClient는 "/analyses"처럼 접두어 없는 상대경로만 쓴다.
 		RestClient.Builder builder = RestClient.builder()
-				.baseUrl(proxyBaseUrl + "/api/v0")
+				.baseUrl(baseUrl)
 				.requestFactory(factory);
 
 		// 키가 비면 헤더 자체를 붙이지 않는다. AI 쪽 require_internal_key가 "키 미설정 = 로컬 개발"로

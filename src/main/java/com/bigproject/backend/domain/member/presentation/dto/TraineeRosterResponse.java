@@ -78,7 +78,15 @@ public record TraineeRosterResponse(
 					예전에는 이 값이 없어 화면이 `status === 'INVITED'`로 유추해야 했습니다.
 					이미 활성화됐거나 초대가 취소된 계정은 넘길 토큰이 없어 `null`입니다.
 					""", nullable = true)
-			UUID pendingInvitationTokenId
+			UUID pendingInvitationTokenId,
+			UUID assessmentRoundId,
+			UUID attemptId,
+			String roundResultStatus,
+			String conceptResultItems,
+			Integer lowStageConceptCount,
+			Integer excellentOccurrenceCount,
+			String matchedRiskTypeCodes,
+			String rowAggregationStatus
 	) {
 		public static Trainee from(TraineeRosterRepository.RosterRow row) {
 			return new Trainee(
@@ -95,7 +103,15 @@ public record TraineeRosterResponse(
 					row.inactivatedById(),
 					row.inactivatedByName(),
 					row.inactivatedAt(),
-					row.pendingInvitationTokenId()
+					row.pendingInvitationTokenId(),
+					row.assessmentRoundId(),
+					row.attemptId(),
+					row.roundResultStatus(),
+					row.conceptResultItems(),
+					row.lowStageConceptCount(),
+					row.excellentOccurrenceCount(),
+					row.matchedRiskTypeCodes(),
+					row.rowAggregationStatus()
 			);
 		}
 
