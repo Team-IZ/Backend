@@ -51,3 +51,6 @@ uploads/
 
 ### api test
 /vite-project
+
+### Mac OS Hidden File
+.DS_Store
