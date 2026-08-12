@@ -10,6 +10,31 @@ public interface CurriculumService {
 
     List<CurriculumVersion> findLinkableCurricula(UUID orgId);
 
+    /**
+     * 연결 가능한 교안 + <b>분석 상태·항목 수</b>(18차 R2).
+     *
+     * <p>{@link #findLinkableCurricula}가 버전 엔티티만 주던 것을 대신한다. 화면이
+     * {@code pageCount == null}로 분석 여부를 추측하고 있었는데, 그건 "쪽수를 아직 모른다"는
+     * 뜻이지 "분석 중"이라는 뜻이 아니고 <b>분석 실패와도 구분되지 않는다.</b>
+     *
+     * <p>조회는 교안 수와 무관하게 고정 3건이다 — 버전 · 최신 분석 · 항목 수.
+     */
+    List<LinkableCurriculum> findLinkableCurriculaWithStatus(UUID orgId);
+
+    /**
+     * 회차 생성 모달의 교안 한 줄.
+     *
+     * @param analysisStatus 가장 최근 분석 <b>시도</b>의 상태. 한 번도 분석하지 않았으면 {@code null}이다 —
+     *                       실패({@code FAILED})와 구분해야 해서 값을 만들어 넣지 않는다
+     * @param teachesCount   승인된(ACTIVE) 가르친 항목 수. 검증 개념 3건을 뽑을 수 있는지를
+     *                       고르기 <b>전에</b> 알 수 있게 하는 값이다
+     */
+    record LinkableCurriculum(
+            CurriculumVersion version,
+            com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus analysisStatus,
+            int teachesCount) {
+    }
+
     CurriculumVersion getLinkableCurriculum(UUID versionId, UUID orgId);
 
     List<SectionItemView> findSectionItems(UUID sectionId, UUID orgId);
