@@ -9,6 +9,8 @@ import java.sql.Array;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -112,5 +114,27 @@ public class JdbcProjectDependencyRepository implements ProjectDependencyReposit
 
 	private boolean exists(String sql, UUID projectId) {
 		return Boolean.TRUE.equals(jdbcTemplate.queryForObject(sql, Boolean.class, projectId));
+	}
+
+	/**
+	 * 18차 R5 — 제출 마감 시각 갱신.
+	 *
+	 * <p>{@code org_id}를 조건에 함께 거는 이유는 다른 기관의 회차를 건드릴 수 없게 하기
+	 * 위해서다. 호출부가 이미 프로젝트 소유를 확인하지만, 쓰기 쿼리는 그 확인이 빠져도
+	 * 안전해야 한다.
+	 *
+	 * <p>{@code deleted_at IS NULL}로 살아 있는 회차만 본다 — 지운 회차의 마감을 되살리면
+	 * 복구했을 때 운영자가 정한 적 없는 값이 들어간다.
+	 */
+	@Override
+	public int updateSubmissionDueAt(UUID projectId, UUID orgId, Instant submissionDueAt) {
+		return jdbcTemplate.update("""
+				UPDATE project_assessment_round
+				   SET submission_due_at = ?,
+				       updated_at = CURRENT_TIMESTAMP
+				 WHERE project_id = ?
+				   AND org_id = ?
+				   AND deleted_at IS NULL
+				""", Timestamp.from(submissionDueAt), projectId, orgId);
 	}
 }

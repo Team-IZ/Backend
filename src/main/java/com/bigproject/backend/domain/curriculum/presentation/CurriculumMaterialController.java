@@ -103,14 +103,27 @@ public class CurriculumMaterialController {
 					  - usedAsVerificationConcept: ★ 표시(검증개념으로 확정된 적 있는지)
 					  - usedRoundLabels: 검증개념으로 쓰인 회차 라벨 목록
 
-					⚠ 이 교안의 최신 버전에 "성공한 분석"이 한 번도 없으면 404를 반환한다.
+					## 🔴 분석 전 교안은 409다 (18차 R1)
+
+					이 교안의 최신 버전에 "성공한 분석"이 한 번도 없으면 **`409 CURRICULUM_ANALYSIS_NOT_COMPLETED`**
+					를 즉시 반환한다. 화면은 이때 `분석이 끝나면 고를 수 있습니다`를 그리면 된다.
+
+					**종전에는 503이었다.** 그런데 503은 "서버가 지금 요청을 처리할 수 없다"는 인프라
+					신호라, 프론트 전역 재시도(`status >= 500`)가 자동으로 3회 붙고 그 재시도가 동시에
+					나가면서 프록시 결함(15차 R3)을 밟아 `net::ERR_FAILED`가 됐다 — 화면에는
+					**응답이 아예 오지 않는 것처럼** 보였다. 실제로는 요청이 지금 상태와 맞지 않는
+					것이지 서버가 아픈 것이 아니므로 409가 정확하다.
+
+					재시도해야 한다는 사실은 상태 코드가 아니라 `code`로 전달한다.
+
+					⚠ 교안 자체가 없으면 그건 영구 실패라 여전히 **404**(`CURRICULUM_MATERIAL_NOT_FOUND`)다.
 					"""
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "섹션 조회 성공"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
             @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 그 기관에 그 교안이 없음(영구적)"),
-            @ApiResponse(responseCode = "503", description = "CURRICULUM_ANALYSIS_NOT_COMPLETED 최신 버전에 성공한 분석이 아직 없음(일시적 — 화면은 재시도를 안내한다)"),
+            @ApiResponse(responseCode = "409", description = "CURRICULUM_ANALYSIS_NOT_COMPLETED 최신 버전에 성공한 분석이 아직 없음(일시적 — 화면은 `분석이 끝나면 고를 수 있습니다`를 안내한다). **18차 R1로 503에서 내렸다** — 503은 인프라 신호라 프론트 전역 재시도와 프록시가 그대로 밟아 응답이 화면에 닿지 못했다"),
     })
     @GetMapping("/sections")
     public ResponseEntity<List<SectionResponse>> findSections(

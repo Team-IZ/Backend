@@ -372,9 +372,25 @@ public class ProjectController {
 					순간 **학생에게 알려준 마감과 실제 마감이 갈린다.** 마감 시각을 보여줘야 하는 자리에서는
 					`class-progress`의 `submissionDueAt`을 쓰는 것이 맞다.
 
-					**어느 쪽으로 정할지 알려주시면 그대로 맞추겠다** — ⓐ `endDate` 저장 시 그 날짜의
-					`23:59:59 KST`로 `submission_due_at`을 함께 갱신하거나, ⓑ 마감 시각을 별도 입력으로 받는다.
-					되돌릴 수 없는 학생 화면 값이라 임의로 정하지 않았다.
+					## 🔴 18차 R5로 정해졌다 — 마감 시각을 이 API가 받는다
+
+					**`submissionDueAt`(선택)** 을 함께 보내면 그 회차의 `submission_due_at`을 같이 바꾼다.
+					9차 Q2에서 열어 둔 질문을 프론트가 ⓑ(별도 필드)로 답해 그대로 구현했다.
+
+					| 보낸 것 | 결과 |
+					|---|---|
+					| `startDate`·`endDate`만 | 기간만 바뀐다. **마감은 그대로** |
+					| + `submissionDueAt` | 기간과 마감이 함께 바뀐다 |
+
+					**여전히 서버가 둘을 자동으로 연결하지 않는다.** 기간을 늘려도 마감은 움직이지
+					않는다 — 회차 기간은 운영 일정이고 제출 마감은 학생과의 약속이라 같이 움직여야 할
+					이유가 없고, 자동 파생을 넣으면 운영자가 기간만 손댔을 때 **이미 알린 마감이 조용히
+					바뀐다.**
+
+					그래서 화면이 마감을 표시할 때는 여전히 `endDate`에 `23:59`을 붙이지 말고
+					실제 마감 값을 써야 한다.
+
+					시각대는 UTC로 저장된다 — `23:59 KST`는 `T14:59:00Z`다.
 					"""
 	)
 	@ApiResponses({
@@ -390,7 +406,8 @@ public class ProjectController {
 	) {
 		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
 		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
-		Project project = projectService.updateSchedule(projectId, orgId, request.startDate(), request.endDate(), actorUserId);
+		Project project = projectService.updateSchedule(projectId, orgId,
+				request.startDate(), request.endDate(), request.submissionDueAt(), actorUserId);
 		return ResponseEntity.ok(ProjectResponse.from(projectService.summarize(project, orgId)));
 	}
 
@@ -701,7 +718,8 @@ public class ProjectController {
 	) {
 		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
 		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
-		Project project = projectService.updateSchedule(roundId, orgId, request.startDate(), request.endDate(), actorUserId);
+		Project project = projectService.updateSchedule(roundId, orgId,
+				request.startDate(), request.endDate(), request.submissionDueAt(), actorUserId);
 		return ResponseEntity.ok(ProjectResponse.from(projectService.summarize(project, orgId)));
 	}
 
