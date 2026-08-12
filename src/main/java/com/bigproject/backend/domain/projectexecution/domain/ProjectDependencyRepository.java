@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.projectexecution.domain;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -49,9 +50,24 @@ public interface ProjectDependencyRepository {
 	Map<UUID, Integer> countAttendedByProject(Collection<UUID> projectIds);
 
 	/**
+	 /**
 	 * 반(class) 하나에 편성된 팀들이 참여 중인 프로젝트 ID 목록(중복 제거).
 	 * team을 거쳐 이어 붙인다 — Project 자체는 class 연관이 없다. 이 반에 팀이
 	 * 하나도 편성되지 않았으면 빈 목록이다.
 	 */
 	List<UUID> findProjectIdsByClassId(UUID classId, UUID orgId);
+
+	/**
+	 * 제출 마감 <b>시각</b>을 바꾼다(18차 R5).
+	 *
+	 * <p>{@code project_assessment_round}는 이 도메인의 JPA 엔티티가 아니라 컬럼 하나만 쓴다 —
+	 * {@link ProjectDependencyRepository}의 다른 메서드와 같은 이유로 여기 둔다.
+	 *
+	 * <p><b>그 프로젝트의 살아 있는 회차 전부</b>를 갱신한다. 정의서가 미니프로젝트에
+	 * "활성 회차 정확히 1건"을 요구하므로 지금은 사실상 1행이고, 빅프로젝트가 열려 회차가
+	 * 여럿이 되면 회차별 마감을 따로 받는 API가 필요해진다 — 그때 이 메서드는 쓰지 않는다.
+	 *
+	 * @return 실제로 갱신된 행 수. 0이면 그 프로젝트에 활성 회차가 없다는 뜻이다
+	 */
+	int updateSubmissionDueAt(UUID projectId, UUID orgId, Instant submissionDueAt);
 }

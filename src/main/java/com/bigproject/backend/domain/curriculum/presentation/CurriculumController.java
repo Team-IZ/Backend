@@ -176,8 +176,33 @@ public class CurriculumController {
 					**응답 (200)**
 					- versionId / materialId: 교안 버전 ID / 원장 ID
 					- versionNo: 버전 번호
-					- originalFileName / pageCount: 파일명 / 페이지 수
+					- originalFileName: 파일명
+					- pageCount: 페이지 수. **분석 전이면 null**
+					- analysisStatus: 분석 상태. **한 번도 분석하지 않았으면 null**
+					- teachesCount: 승인된 가르친 항목 수
 					- createdAt: 등록 시각
+
+					## 🔴 분석 여부를 pageCount로 추측하지 말 것 (18차 R2)
+
+					종전에는 상태 필드가 없어 화면이 `pageCount == null`로 분석 여부를 추측하고
+					있었다. 그건 **"쪽수를 아직 모른다"는 뜻이지 "분석 중"이 아니고**, 분석이
+					**실패**한 교안과도 구분되지 않는다. `analysisStatus`를 쓴다.
+
+					| `analysisStatus` | 화면 |
+					|---|---|
+					| `null` | `분석 전` · 못 고름 |
+					| `PENDING` · `RUNNING` | `분석 중 — 끝나면 고를 수 있습니다` · 못 고름 |
+					| `SUCCEEDED` | 고를 수 있음 |
+					| `FAILED` | `분석 실패 — 다시 올려 주세요` · 못 고름 |
+
+					⚠️ 값이 **4종 + null**이다(요청서의 `ANALYZING`·`READY`·`FAILED` 3종이 아니다).
+					`PENDING`과 `RUNNING`을 화면에서 `분석 중` 하나로 접으시면 되고, **`null`(분석 전)과
+					`FAILED`(분석 실패)는 갈라야 한다** — 전자는 기다리면 되고 후자는 다시 올려야 한다.
+
+					`teachesCount`는 고르기 **전에** 이 교안에서 검증 개념 3건을 뽑을 수 있는지
+					알려 준다. `GET /projects/{projectId}/concept-candidates`가 세는 것과 같은 값이다.
+
+					**조회는 교안 수와 무관하게 고정 3건**이라 목록이 길어져도 느려지지 않는다.
 					"""
     )
     @ApiResponses({
@@ -189,7 +214,7 @@ public class CurriculumController {
             @Parameter(description = "경로상 기수 ID(현재 미검증)") @PathVariable UUID cohortId
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-        List<CurriculumVersionResponse> response = curriculumService.findLinkableCurricula(orgId).stream()
+        List<CurriculumVersionResponse> response = curriculumService.findLinkableCurriculaWithStatus(orgId).stream()
                 .map(CurriculumVersionResponse::from)
                 .toList();
         return ResponseEntity.ok(response);
