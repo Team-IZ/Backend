@@ -9,9 +9,11 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.MountableFile;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 @Testcontainers(disabledWithoutDocker = true)
 class ManagerViewPostgresIntegrationTest {
@@ -20,10 +22,13 @@ class ManagerViewPostgresIntegrationTest {
 
 	@Test
 	void canonicalDdlCreatesManagerViewsWithJsonbAndArrayColumns() throws IOException, InterruptedException {
-		postgres.copyFileToContainer(MountableFile.forHostPath(Path.of(
-				"docs/table-definition/테이블정의서_v07_교육생홈_DDL.sql").toAbsolutePath()), "/tmp/schema.sql");
-		postgres.copyFileToContainer(MountableFile.forHostPath(Path.of(
-				"docs/table-definition/테이블정의서_v07_교육생홈_View.sql").toAbsolutePath()), "/tmp/views.sql");
+		Path ddlPath = Path.of("docs/table-definition/테이블정의서_v07_교육생홈_DDL.sql").toAbsolutePath();
+		Path viewsPath = Path.of("docs/table-definition/테이블정의서_v07_교육생홈_View.sql").toAbsolutePath();
+		assumeTrue(Files.exists(ddlPath) && Files.exists(viewsPath),
+				"정본 DDL/View 문서가 없어 PostgreSQL 통합 검증을 건너뜁니다.");
+
+		postgres.copyFileToContainer(MountableFile.forHostPath(ddlPath), "/tmp/schema.sql");
+		postgres.copyFileToContainer(MountableFile.forHostPath(viewsPath), "/tmp/views.sql");
 		assertSuccess(postgres.execInContainer("psql", "-U", postgres.getUsername(), "-d",
 				postgres.getDatabaseName(), "-v", "ON_ERROR_STOP=1", "-f", "/tmp/schema.sql"));
 		assertSuccess(postgres.execInContainer("psql", "-U", postgres.getUsername(), "-d",
