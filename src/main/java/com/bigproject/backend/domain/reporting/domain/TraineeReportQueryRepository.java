@@ -34,6 +34,36 @@ public interface TraineeReportQueryRepository {
 	List<StageAnswerRow> findStageAnswers(UUID userId);
 
 	/**
+	 * <b>묻지 못한 개념</b>({@code assessment_problem.generation_status='NOT_GENERATED'}).
+	 *
+	 * <p>{@link #findConcepts}와 따로 읽는 이유는 원천이 다르기 때문이다. 그쪽은
+	 * {@code trainee_report_problem_view}이고 그 뷰는 {@code report_evidence}에서 시작하는데,
+	 * 문항이 만들어지지 않은 개념에는 근거 행이 없어 뷰에 아예 나타나지 않는다.
+	 *
+	 * <p>그래서 이 조회가 없으면 화면에 개념이 <b>2개만</b> 뜨고 학생은 나머지 하나가 어디 갔는지
+	 * 알 수 없다. {@code GET /reports/class-diagnosis}가 {@code level0}과 {@code unasked}를 엄격히
+	 * 구분하는 것과 같은 이유로, 교육생 리포트도 "못한 것"과 "안 물어본 것"을 갈라야 한다 —
+	 * 뷰가 {@code reach_display_code}를 {@code COALESCE(best_success_stage,'L0')}으로 만들기 때문에
+	 * 둘을 합치면 <b>묻지 않은 개념이 0단으로 표시된다.</b>
+	 */
+	List<UnaskedConceptRow> findUnaskedConcepts(UUID userId);
+
+	/**
+	 * 묻지 못한 개념 하나.
+	 *
+	 * @param reasonCode {@code NO_MATCHING_CODE_EVIDENCE} 하나로 고정돼 있다
+	 *                   ({@code ck_assessment_problem_not_generated_reason_code}).
+	 */
+	record UnaskedConceptRow(
+			UUID reportId,
+			UUID problemId,
+			String conceptDisplayName,
+			int conceptDisplayOrder,
+			String reasonCode
+	) {
+	}
+
+	/**
 	 * {@code trainee_report_round_view} 한 행.
 	 *
 	 * @param assessmentRoundId 회차 선택의 <b>권위 식별자</b>. reportId는 없을 수도 있는 보조 키다

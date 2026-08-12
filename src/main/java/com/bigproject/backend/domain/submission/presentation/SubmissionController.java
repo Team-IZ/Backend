@@ -3,6 +3,8 @@ package com.bigproject.backend.domain.submission.presentation;
 import com.bigproject.backend.domain.submission.application.SubmissionService;
 import com.bigproject.backend.domain.submission.domain.IdempotencyKey;
 import com.bigproject.backend.domain.submission.presentation.dto.CreateGithubSubmissionRequest;
+import com.bigproject.backend.domain.submission.presentation.dto.RepositoryCheckRequest;
+import com.bigproject.backend.domain.submission.presentation.dto.RepositoryCheckResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResultResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
@@ -162,7 +164,18 @@ public class SubmissionController {
 
 					| 파트 | 필수 | 타입 | 설명 |
 					| --- | --- | --- | --- |
-					| `file` | 필수 | binary | git log를 포함한 ZIP. 상한은 `app.submission.max-zip-bytes` |
+					| `file` | 필수 | binary | git log를 포함한 ZIP. **상한 50MB** |
+
+					### 🔴 상한은 정확히 50MB = 52,428,800 바이트
+
+					**화면 상한과 서버 상한이 같아야 한다** — 다르면 "올린 뒤에 거절"이 생긴다.
+					서버 값은 `app.submission.max-zip-bytes`(기본 `52428800`)이고, 이 값을 넘으면
+					`413 FILE_TOO_LARGE`다.
+
+					그 앞에 톰캣 상한이 하나 더 있다(`spring.servlet.multipart.max-file-size`, 기본 `60MB`).
+					**일부러 넉넉하게 잡아 둔 것**이라, 50~60MB 파일은 톰캣을 통과한 뒤 컨트롤러에서
+					`413 FILE_TOO_LARGE`로 거절된다 — 톰캣이 먼저 끊으면 우리 에러 코드가 실리지 않아
+					화면이 사유를 알 수 없기 때문이다.
 
 					## 응답 (202)
 
@@ -206,6 +219,71 @@ public class SubmissionController {
 		UUID userId = currentUserResolver.resolveCurrentMemberId();
 		return ResponseEntity.status(HttpStatus.ACCEPTED).body(submissionService.submitZip(
 				userId, assessmentRoundId, file, IdempotencyKey.parse(idempotencyKey)));
+	}
+
+	@Operation(
+			operationId = "checkRepository",
+			summary = "저장소 주소 사전 확인 | ✅ 사용 가능",
+			description = """
+					**제출 버튼을 누르기 전에** 저장소 주소를 한 번 확인한다. 제출 시점의 형식·호스트 검사를
+					그대로 미리 돌려 보는 것이라, 여기서 통과한 주소는 `POST /submissions`에서 같은 이유로
+					거절되지 않는다.
+
+					## 🔴 무엇을 확인하고 무엇을 확인하지 않는가
+
+					| | 확인한다 | 통과 뒤에도 실패할 수 있는 것 |
+					|---|---|---|
+					| | 주소 형식(`scheme`·경로 깊이·허용 문자) | 저장소가 실제로 존재하는가 |
+					| | 호스트가 `github.com`인가 | **비공개·조직 밖이라 접근이 막히는가** |
+					| | `.git`·후행 슬래시·대소문자 정규화 | 브랜치가 있는가 |
+
+					⚠️ **저장소 존재·접근 여부는 이 API가 답할 수 없다.** 백엔드에는 GitHub 경로가 없고
+					clone·fetch 주체가 AI 서버로 확정돼 있기 때문이다(2026-08-06). 그 실패는 분석 단계에서
+					`GET /submissions/{submissionId}/analysis`의 `failureCode`에 `REPO_NOT_FOUND`·
+					`REPOSITORY_ACCESS_DENIED`로 나타난다.
+
+					**그래서 "비공개 저장소는 ZIP으로" 안내는 이 응답이 아니라 분석 실패 응답에 붙어야 한다.**
+					여기서 미리 막을 수 있는 것은 오타·잘못된 호스트·저장소가 아닌 주소까지다 — 실제로 가장
+					흔한 부류이고, 이것만 걸러도 "제출 뒤 분석 실패로 마감을 놓치는" 경로 하나가 사라진다.
+
+					## 요청
+
+					| 필드 | 타입 | 설명 |
+					|---|---|---|
+					| `repoUrl` | string | 확인할 주소. `https://` 생략 가능 |
+
+					**회차를 받지 않는다.** 주소 자체에 대한 판정이라 회차·팀·마감과 무관하고, 화면이
+					제출 폼을 그리기 전에도 부를 수 있어야 한다.
+
+					## 응답 (200)
+
+					| 필드 | 타입 | 설명 |
+					|---|---|---|
+					| `ok` | boolean | 200에서는 **항상 `true`** |
+					| `normalizedUrl` | string | 정규화 주소. 확인 문구에 그대로 쓰면 오타가 눈에 보인다 |
+					| `ownerLogin` | string | 소유자(사용자·조직) |
+					| `repositoryName` | string | 저장소 이름 |
+
+					`ok: false`를 두지 않은 이유는 형식 불일치와 저장소 없음이 서로 다른 안내로 이어지기
+					때문이다 — 전자는 입력을 고치면 되고 후자는 ZIP으로 갈아타야 한다. boolean 하나에 겹쳐
+					담으면 화면이 두 사건을 같은 분기로 처리하게 된다.
+
+					## 부수 효과가 없다
+
+					행을 만들지 않고 멱등키도 쓰지 않는다. 입력 중에 여러 번 불러도 된다.
+
+					## 오류
+
+					| 코드 | 상태 | 언제 |
+					|---|---|---|
+					| `INVALID_REPOSITORY_URL` | 400 | 형식이 저장소 주소가 아니다(`/tree/main` 등 더 깊은 경로 포함) |
+					| `UNSUPPORTED_HOST` | 400 | `github.com`이 아니다 |
+					""")
+	@PostMapping(path = "/repository-checks", consumes = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<RepositoryCheckResponse> checkRepository(
+			@Valid @RequestBody RepositoryCheckRequest request
+	) {
+		return ResponseEntity.ok(submissionService.checkRepositoryUrl(request.repoUrl()));
 	}
 
 	@Operation(

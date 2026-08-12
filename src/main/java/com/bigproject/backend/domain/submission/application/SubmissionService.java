@@ -18,6 +18,7 @@ import com.bigproject.backend.domain.submission.infrastructure.SubmissionContext
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionContextRepository.SubmissionContext;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionRepository;
 import com.bigproject.backend.domain.submission.presentation.dto.CreateGithubSubmissionRequest;
+import com.bigproject.backend.domain.submission.presentation.dto.RepositoryCheckResponse;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisResultQueryRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisResultQueryRepository.AnalysisSummary;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
@@ -131,6 +132,27 @@ public class SubmissionService {
 		eventPublisher.publishEvent(new SubmissionAcceptedEvent(submission.getSubmissionId()));
 
 		return SubmissionResponse.of(submission, null);
+	}
+
+	/**
+	 * 제출 전 저장소 주소 사전 확인(2026-08-12, 16차 R2-③).
+	 *
+	 * <p><b>여기서 GitHub에 접속하지 않는다.</b> 백엔드에 GitHub 경로가 없다는 원칙은 그대로이고
+	 * (클래스 주석 참고), 이 메서드가 하는 일은 {@link #submitGithubUrl}이 제출 시점에 하는
+	 * 형식·호스트 검사를 <b>제출보다 먼저 한 번 더</b> 돌려 보는 것이다.
+	 *
+	 * <p>그래서 이 확인을 통과해도 저장소가 유효하다는 보장은 없다. 그럼에도 값이 있는 이유는,
+	 * 잡히는 오류가 실제로 가장 흔한 부류이기 때문이다 — {@code /tree/main}이 붙은 주소를 복사했거나,
+	 * GitLab 주소를 넣었거나, 조직 페이지 주소를 저장소 주소로 착각한 경우가 여기서 걸린다.
+	 * 이런 입력은 지금 막지 않으면 분석까지 간 뒤 {@code INVALID_REPOSITORY_URL}로 돌아오는데
+	 * 그때는 교육생이 마감 시간을 이미 쓴 뒤다.
+	 *
+	 * <p>부수 효과가 없다 — 행을 만들지도, 멱등키를 쓰지도 않는다. 화면이 입력 중에 여러 번 불러도 된다.
+	 *
+	 * @throws SubmissionException {@code INVALID_REPOSITORY_URL} · {@code UNSUPPORTED_HOST}
+	 */
+	public RepositoryCheckResponse checkRepositoryUrl(String repositoryUrl) {
+		return RepositoryCheckResponse.of(GithubRepositoryUrl.parse(repositoryUrl));
 	}
 
 	/**
