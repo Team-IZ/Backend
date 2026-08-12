@@ -19,8 +19,13 @@ public record PastRoundResponse(
 		Integer roundNo,
 		@Schema(example = "미프 2차") String roundName,
 		@Schema(description = "세션 완료 여부 판정용. ASSESSMENT_COMPLETED이면 완료",
-				example = "ASSESSMENT_COMPLETED") String representativeStatus,
-		@Schema(description = "다시 보기 상태. 배정이 없으면 null") String reviewStatus,
+				example = "ASSESSMENT_COMPLETED",
+				allowableValues = {"REVIEW_REQUIRED", "ASSESSMENT_COMPLETED", "ASSESSMENT_WINDOW_CLOSED",
+						"ASSESSMENT_IN_PROGRESS", "ASSESSMENT_AVAILABLE", "ANALYSIS_FAILED",
+						"SUBMISSION_MISSED", "SUBMISSION_REQUIRED", "ANALYZING", "NO_ACTIVE_ROUND"})
+		String representativeStatus,
+		// initialSessionStatus(CurrentRoundResponse)와 같은 이유로 값 집합 미확정 — string으로 둔다.
+		@Schema(description = "다시 보기 상태. 배정이 없으면 null", nullable = true) String reviewStatus,
 		@Schema(description = "완료한 다시 보기 건수", example = "1") int completedReviewCount,
 		UUID reportId,
 		@Schema(description = "traineeReleaseStatus = RELEASED일 때만 true") boolean canViewReport

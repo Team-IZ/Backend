@@ -58,26 +58,31 @@ public record TraineeReportsResponse(
 	 * @param concepts {@code PUBLISHED}에서만.
 	 * @param retryState {@code NONE} · {@code PENDING} · {@code DONE}. PUBLISHED에서만.
 	 */
-	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record RoundReportResponse(
 			String id,
-			String reportId,
+			@JsonInclude(JsonInclude.Include.NON_NULL) String reportId,
 			String label,
+			@Schema(allowableValues = {"PUBLISHED", "PENDING_PUBLISH", "PENDING_VISIBILITY",
+					"NOT_ATTEMPTED", "VOID_ATTEMPT", "STOPPED"})
 			String status,
-			String publishAfter,
-			String publishedAt,
-			String curriculum,
-			DisclosureScope disclosureScope,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "PENDING_PUBLISH에서만. 그 외에는 키가 빠진다") String publishAfter,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "PUBLISHED에서만. 그 외에는 키가 빠진다") String publishedAt,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "PUBLISHED에서만. 그 외에는 키가 빠진다") String curriculum,
+			@JsonInclude(JsonInclude.Include.NON_NULL) DisclosureScope disclosureScope,
 
 			// 여기 PARTIAL은 "일부 문제의 AI 생성이 실패해 개념 카드가 빠졌다"는 뜻이다.
 			// OP-05의 동명 값과 뜻이 다르니 설명은 ReportCompletionStatus javadoc을 볼 것 —
 			// 설명을 필드가 아니라 타입에 둔 이유도 거기 적혀 있다.
-			ReportCompletionStatus completionStatus,
+			@JsonInclude(JsonInclude.Include.NON_NULL) ReportCompletionStatus completionStatus,
 
-			List<ConceptReportResponse> concepts,
-			String retryState,
-			String retryDueAt,
-			String retryCompletedAt
+			@JsonInclude(JsonInclude.Include.NON_NULL) List<ConceptReportResponse> concepts,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "PUBLISHED에서만", allowableValues = {"NONE", "PENDING", "DONE"}) String retryState,
+			@JsonInclude(JsonInclude.Include.NON_NULL) String retryDueAt,
+			@JsonInclude(JsonInclude.Include.NON_NULL) String retryCompletedAt
 	) {
 	}
 
@@ -117,9 +122,8 @@ public record TraineeReportsResponse(
 	 * <p>프론트에서 {@code said?}·{@code qa?}로 바꾸고 {@code ConceptCard.tsx}·{@code QaList.tsx}에
 	 * 미존재 분기를 두면 된다.
 	 */
-	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record ConceptReportResponse(
-			String problemId,
+			@Schema(nullable = true) String problemId,
 			String name,
 
 			/*
@@ -134,14 +138,14 @@ public record TraineeReportsResponse(
 			boolean asked,
 
 			/** 도달 단계 0~4. {@code asked=false}면 키가 빠진다 — 물은 적이 없으므로 단계가 없다. */
-			Integer level,
+			@JsonInclude(JsonInclude.Include.NON_NULL) Integer level,
 
-			String said,
+			@JsonInclude(JsonInclude.Include.NON_NULL) String said,
 			boolean isRetryTarget,
-			CurriculumRefResponse curriculumRef,
-			List<QaEntryResponse> qa,
-			List<String> explain,
-			ComparedReachResponse comparedReach
+			@JsonInclude(JsonInclude.Include.NON_NULL) CurriculumRefResponse curriculumRef,
+			@JsonInclude(JsonInclude.Include.NON_NULL) List<QaEntryResponse> qa,
+			@JsonInclude(JsonInclude.Include.NON_NULL) List<String> explain,
+			@JsonInclude(JsonInclude.Include.NON_NULL) ComparedReachResponse comparedReach
 	) {
 
 		/**

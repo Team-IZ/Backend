@@ -28,7 +28,7 @@ public record SessionResponse(
 		@Schema(description = "READY(시작 전) · IN_PROGRESS(진행 중)", allowableValues = {"READY", "IN_PROGRESS"})
 		String status,
 
-		@Schema(description = "지금 서 있는 문제 번호(1~3). 시작 전이면 null") Integer currentProblemNo,
+		@Schema(description = "지금 서 있는 문제 번호(1~3). 시작 전이면 null", nullable = true) Integer currentProblemNo,
 
 		@Schema(description = "생성된 문제 수. 화면의 `문제 n/N`의 N이다. NOT_GENERATED 문제가 있으면 3보다 작다")
 		int problemTotal,
