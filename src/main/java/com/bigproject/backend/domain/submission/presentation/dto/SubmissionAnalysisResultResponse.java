@@ -55,15 +55,16 @@ public record SubmissionAnalysisResultResponse(
 			화면에는 `―`로 표시한다. **0단(물어봤는데 못 풀었음)과 다르다.**""")
 	public record Problem(
 			int problemNo,
-			String generationStatus,
+			@Schema(allowableValues = {"GENERATED", "NOT_GENERATED"}) String generationStatus,
+			@Schema(description = "문항을 만들지 못한 사유. GENERATED면 null", nullable = true)
 			String notGeneratedReason,
-			String title,
-			String problemType,
-			String codeLanguage,
-			String sourcePath,
-			Integer lineStart,
-			Integer lineEnd,
-			@Schema(description = "문제 출제에 쓰인 코드 원문. NOT_GENERATED 슬롯은 null이다.")
+			@Schema(description = "문제 제목. NOT_GENERATED면 null", nullable = true) String title,
+			@Schema(description = "문제 유형. 예: DESIGN_CHOICE", nullable = true) String problemType,
+			@Schema(nullable = true) String codeLanguage,
+			@Schema(nullable = true) String sourcePath,
+			@Schema(nullable = true) Integer lineStart,
+			@Schema(nullable = true) Integer lineEnd,
+			@Schema(description = "문제 출제에 쓰인 코드 원문. NOT_GENERATED 슬롯은 null이다.", nullable = true)
 			String codeSnippet
 	) {
 	}

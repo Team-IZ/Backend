@@ -31,13 +31,14 @@ public record AnswerSubmitResponse(
 						"SESSION_ENDED"})
 		String outcome,
 
-		@Schema(description = "다음에 설 문제 번호. 세션이 끝났으면 null") Integer nextProblemNo,
+		@Schema(description = "다음에 설 문제 번호. 세션이 끝났으면 null", nullable = true) Integer nextProblemNo,
 
-		@Schema(description = "다음 질문. 세션이 끝났으면 null") NextQuestion next,
+		@Schema(description = "다음 질문. 세션이 끝났으면 null", nullable = true) NextQuestion next,
 
 		@Schema(description = """
 				3점 미만이라 자동으로 열린 힌트. 통과했거나 힌트를 다 썼거나 질문이 닫혔으면 null.
-				**점수를 알려주지 않으면서 미달을 전달하는 유일한 신호다**""")
+				**점수를 알려주지 않으면서 미달을 전달하는 유일한 신호다**""",
+				nullable = true)
 		AutoHint hint
 ) {
 

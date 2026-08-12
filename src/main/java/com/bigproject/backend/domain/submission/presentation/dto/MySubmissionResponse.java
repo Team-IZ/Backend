@@ -15,7 +15,6 @@ import java.time.Instant;
  * <p>상태별로 쓰지 않는 필드는 {@link JsonInclude}로 <b>키 자체가 빠진다.</b> null을 실어 보내면
  * "`ANALYZING`인데 `verifyClosesAt`이 있으면 무슨 뜻인가"를 화면이 매번 판단하게 된다.
  */
-@JsonInclude(JsonInclude.Include.NON_NULL)
 @Schema(description = "내 팀의 현재 제출 상태")
 public record MySubmissionResponse(
 
@@ -33,27 +32,42 @@ public record MySubmissionResponse(
 						"SUBMISSION_CLOSED"})
 		String status,
 
+		@JsonInclude(JsonInclude.Include.NON_NULL)
 		@Schema(description = "제출 식별자. 분석 폴링(`GET /submissions/{id}/analysis`)에 쓴다. 미제출이면 키가 빠진다")
 		String submissionId,
 
-		@Schema(description = "제출 수단. `GITHUB_URL` · `ZIP_WITH_GITLOG`") String method,
+		@JsonInclude(JsonInclude.Include.NON_NULL)
+		@Schema(description = "제출 수단. 미제출이면 키가 빠진다",
+				allowableValues = {"GITHUB_URL", "ZIP_WITH_GITLOG"}) String method,
 
-		@Schema(description = "제출 시각. 제출 후에만") Instant submittedAt,
+		@JsonInclude(JsonInclude.Include.NON_NULL)
+		@Schema(description = "제출 시각. 제출 후에만. 미제출이면 키가 빠진다") Instant submittedAt,
 
-		@Schema(description = "분석 완료 시각. 분석 후에만") Instant analyzedAt,
+		@JsonInclude(JsonInclude.Include.NON_NULL)
+		@Schema(description = "분석 완료 시각. 분석 후에만. 그 전에는 키가 빠진다") Instant analyzedAt,
 
-		@Schema(description = "개인 응시 창 종료. `READY`·`LOCKED`에서만") Instant verifyClosesAt,
+		@JsonInclude(JsonInclude.Include.NON_NULL)
+		@Schema(description = "개인 응시 창 종료. `READY`·`LOCKED`에서만. 그 외에는 키가 빠진다") Instant verifyClosesAt,
 
+		@JsonInclude(JsonInclude.Include.NON_NULL)
 		@Schema(description = """
 				사용자에게 보일 실패 사유. `ANALYSIS_FAILED`에서만.
-				`failureCode`가 기계용이고 이쪽이 문구다 — 화면이 코드로 문구를 만들지 않는다""")
+				`failureCode`가 기계용이고 이쪽이 문구다 — 화면이 코드로 문구를 만들지 않는다.
+				그 외에는 키가 빠진다""")
 		String failureReason,
 
+		@JsonInclude(JsonInclude.Include.NON_NULL)
 		@Schema(description = """
 				실패 코드 15종. `REPO_NOT_FOUND`·`REPOSITORY_ACCESS_DENIED`면 화면이 ZIP 전환을 안내한다.
-				`ANALYSIS_FAILED`에서만""")
+				`ANALYSIS_FAILED`에서만이고 그 외에는 키가 빠진다""",
+				allowableValues = {"SOURCE_UNREACHABLE", "UNSUPPORTED_LANGUAGE", "ANALYSIS_TIMEOUT",
+						"MODEL_ERROR", "TEMPORARY_ERROR", "INVALID_REPOSITORY_URL", "REPO_NOT_FOUND",
+						"REPOSITORY_ACCESS_DENIED", "BRANCH_NOT_FOUND", "UNSUPPORTED_HOST",
+						"FILE_TOO_LARGE", "ARCHIVE_INVALID", "EMPTY_CODE", "PROHIBITED_FILE",
+						"GIT_LOG_MISSING"})
 		String failureCode,
 
+		@JsonInclude(JsonInclude.Include.NON_NULL)
 		@Schema(description = "제출 내용. GitHub 제출에서만. ZIP 제출이면 키가 빠진다")
 		SubmissionContent content
 ) {
@@ -68,12 +82,12 @@ public record MySubmissionResponse(
 	 * @param branch 실제로 분석된 브랜치. 분석 전에는 교육생이 적어 낸 값이고, 분석 후에는 AI가 확정한
 	 *               값이다. 교육생이 비워 냈으면 저장소 기본 브랜치가 들어간다
 	 */
-	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record SubmissionContent(
 			@Schema(description = "교육생이 입력한 원문 주소. 정규화 전 값이라 폼에 그대로 되채울 수 있다")
 			String repoUrl,
 			@Schema(description = "브랜치", example = "main") String branch,
-			@Schema(description = "분석 대상 커밋. 분석 성공 후에만 채워진다") LastCommit lastCommit
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "분석 대상 커밋. 분석 성공 후에만 채워진다. 그 전에는 키가 빠진다") LastCommit lastCommit
 	) {
 	}
 

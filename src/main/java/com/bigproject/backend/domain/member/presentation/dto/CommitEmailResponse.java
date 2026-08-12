@@ -12,7 +12,8 @@ public record CommitEmailResponse(
 		@Schema(description = "커밋 이메일 등록 여부. commitEmail 존재 여부에서 파생되는 값입니다.", example = "true")
 		boolean registered,
 
-		@Schema(description = "등록된 커밋 이메일. 미등록이면 null입니다.", example = "gildong@example.com")
+		@Schema(description = "등록된 커밋 이메일. 미등록이면 null입니다.", example = "gildong@example.com",
+				nullable = true)
 		String commitEmail,
 
 		@Schema(
@@ -27,6 +28,7 @@ public record CommitEmailResponse(
 		@Schema(
 				description = "검증 완료 방식. 자가 입력만으로는 부여되지 않으므로 PENDING 상태에서는 항상 null입니다.",
 				allowableValues = {"OAUTH", "MANAGER_CONFIRMED"},
+				nullable = true,
 				example = "null"
 		)
 		String verificationMethod,
