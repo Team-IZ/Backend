@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.submission.presentation.dto;
 
+import com.bigproject.backend.domain.submission.domain.SubmissionMethod;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -38,7 +39,7 @@ public record MySubmissionResponse(
 
 		@JsonInclude(JsonInclude.Include.NON_NULL)
 		@Schema(description = "제출 수단. 미제출이면 키가 빠진다",
-				allowableValues = {"GITHUB_URL", "ZIP_WITH_GITLOG"}) String method,
+				implementation = SubmissionMethod.class) String method,
 
 		@JsonInclude(JsonInclude.Include.NON_NULL)
 		@Schema(description = "제출 시각. 제출 후에만. 미제출이면 키가 빠진다") Instant submittedAt,

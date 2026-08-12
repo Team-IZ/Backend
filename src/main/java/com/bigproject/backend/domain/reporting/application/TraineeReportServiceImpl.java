@@ -140,7 +140,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		//    publishAfter는 회차가 정해 둔 "이 시각 전에는 발행하지 않는다" 값이다.
 		if (round.reportId() == null || round.publishedAt() == null) {
 			return new RoundReportResponse(id, reportId, label, "PENDING_PUBLISH",
-					iso(round.reportPublishNotBeforeAt()), null, null, null, null, null, null, null, null);
+					iso(round.reportPublishNotBeforeAt()), null, null, null, null,
+					null, null, null, null, null, null);
 		}
 
 		// ⑤ 발행됐지만 공개 범위 미지정 — 발행과 공개는 다른 사건이다.
@@ -181,6 +182,11 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				// PUBLISHED 분기에서만 채운다. 앞의 ①~⑤는 활성 스냅샷이 없거나(발행 전)
 				// 볼 수 없는 상태라 완전성을 말할 대상 자체가 없다.
 				completion(round.completionStatus()),
+				// 19차 Q1 — 생성 실패(장애)와 문항 없음(정상)을 화면이 가를 수 있게 건수를 준다.
+				// 문항 없음은 위 concepts에 asked=false로 들어가고, 생성 실패는 아예 빠지므로
+				// 배열만 봐서는 "왜 3개가 아닌가"를 알 수 없다.
+				round.sampleCount(),
+				round.missingCount(),
 				concepts,
 				retryState(round),
 				iso(round.reviewDueAt()),
@@ -376,7 +382,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	/** 본문이 없는 상태들. 화면은 status만 보고 그린다. */
 	private static RoundReportResponse statusOnly(String id, String reportId, String label, String status) {
 		return new RoundReportResponse(id, reportId, label, status,
-				null, null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null, null, null);
 	}
 
 	private static String iso(Instant instant) {

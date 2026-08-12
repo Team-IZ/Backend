@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.assessment.presentation.dto;
 
+import com.bigproject.backend.domain.assessment.domain.AssessmentRoundStatus;
 import com.bigproject.backend.domain.assessment.domain.TraineeHomeRound;
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -16,7 +17,7 @@ public record UpcomingRoundResponse(
 		Integer roundNo,
 		@Schema(example = "미프 4차") String roundName,
 		@Schema(description = "항상 PLANNED", example = "PLANNED",
-				allowableValues = {"PLANNED", "OPEN", "CLOSED", "COMPLETED"}) String roundStatus,
+				implementation = AssessmentRoundStatus.class) String roundStatus,
 		Instant submissionDueAt,
 		@Schema(description = """
 				이해도 확인 시작일자. **PLANNED 회차에서는 null일 수 있다** — \
