@@ -335,6 +335,51 @@ public class ProjectServiceImpl implements ProjectService {
         return projectRepository.findByCohortIdAndOrgIdAndDeletedAtIsNullOrderByCreatedAtDesc(cohortId, orgId);
     }
 
+    /**
+     * 「이번 회차」 판정(15차 R1). <b>규칙을 서버가 갖는다.</b>
+     *
+     * <ol>
+     *   <li>{@code RUNNING}이 있으면 그것. 여럿이면 <b>가장 늦게 시작한</b> 것 — 회차가 겹쳐 열린
+     *       상태에서는 나중에 연 쪽이 지금 굴러가는 것이다</li>
+     *   <li>없으면 <b>가장 이른 {@code PLANNED}</b> — 다음에 열릴 회차가 지금의 관심사다</li>
+     *   <li>그것도 없으면 <b>마지막 회차</b>(전부 {@code CLOSED}인 기수) — 끝난 기수에서도
+     *       화면이 마지막 결과를 그려야 한다</li>
+     * </ol>
+     *
+     * <p>③이 {@code CLOSED}를 돌려주므로 <b>호출부는 상태를 보고 그려야 한다.</b> "진행 중"이라고
+     * 단정하지 않는다 — 응답에 {@code status}가 함께 나가는 이유다.
+     *
+     * <p>정렬 키로 {@code sequenceNo}를 앞에 두고 {@code startDate}를 뒤에 둔다. 정의서가
+     * {@code sequence_no}를 "기수 내 전체 프로젝트 운영 순서"로 정의하므로 그것이 권위 축이고,
+     * 날짜는 비어 있을 수 있어 보조로만 쓴다.
+     */
+    @Override
+    public Optional<ProjectSummary> findCurrentProject(UUID cohortId, UUID orgId) {
+        List<Project> projects = findProjects(cohortId, orgId);
+        if (projects.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Project chosen = projects.stream()
+                .filter(project -> project.getLifecycleStatus() == ProjectLifecycleStatus.RUNNING)
+                .max(ORDER)
+                .or(() -> projects.stream()
+                        .filter(project -> project.getLifecycleStatus() == ProjectLifecycleStatus.PLANNED)
+                        .min(ORDER))
+                .orElseGet(() -> projects.stream().max(ORDER).orElseThrow());
+
+        // 요약은 고른 하나에만 매긴다. 목록이 느렸던 이유가 모집단 전체를 요약한 것이라
+        // (summarizeAll 주석), 여기서 같은 실수를 하면 이 API를 만든 뜻이 사라진다.
+        return Optional.of(summarizeAll(List.of(chosen), orgId).get(0));
+    }
+
+    /** 기수 안 운영 순서. {@code sequence_no}가 권위 축이고 날짜는 비어 있을 수 있어 보조다. */
+    private static final Comparator<Project> ORDER =
+            Comparator.<Project, Integer>comparing(Project::getSequenceNo,
+                            Comparator.nullsFirst(Comparator.naturalOrder()))
+                    .thenComparing(Project::getStartDate, Comparator.nullsFirst(Comparator.naturalOrder()))
+                    .thenComparing(Project::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder()));
+
     @Override
     public Project findProject(UUID projectId, UUID orgId) {
         return projectRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(projectId, orgId)
@@ -449,9 +494,88 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public List<ProjectSummary> findProjectSummaries(UUID cohortId, UUID orgId) {
-        return findProjects(cohortId, orgId).stream()
-                .map(project -> summarize(project, orgId))
-                .toList();
+        return summarizeAll(findProjects(cohortId, orgId), orgId);
+    }
+
+    /**
+     * 여러 프로젝트를 <b>고정 개수의 쿼리</b>로 요약한다(15차 R1).
+     *
+     * <p>종전에는 {@link #summarize}를 프로젝트마다 불렀고 그 안이 다시 교안 버전마다 후보를 세어,
+     * 회차 목록 한 번에 조회가 <b>회차 수 × (3 + 교안 수)</b>만큼 나갔다. 회차 7개 · 교안 2개면
+     * 35건이다. 프론트 실측에서 이 목록이 요청과 무관하게 4~5초로 <b>일정했던</b> 이유가 이것이다 —
+     * 느린 것은 집계 한 방이 아니라 왕복 수였고, 그래서 {@code ?status=RUNNING}으로 1건만 남겨도
+     * 시간이 줄지 않았다({@link #findProjectList}가 필터 <b>전</b> 모집단 전체를 요약하기 때문).
+     *
+     * <p>지금은 4건이다 — 교안 연결 · 개념 세트 · 개념 수 · 후보 수.
+     */
+    private List<ProjectSummary> summarizeAll(List<Project> projects, UUID orgId) {
+        if (projects.isEmpty()) {
+            return List.of();
+        }
+        List<UUID> projectIds = projects.stream().map(Project::getProjectId).toList();
+
+        // ① 교안 연결을 전량 읽어 프로젝트별로 나눈다. 개수(curriculumCount)와 후보 집계의
+        //    대상 버전 목록을 이 한 번의 조회가 함께 준다.
+        Map<UUID, List<ProjectCurriculum>> linksByProject = projectCurriculumRepository
+                .findAllByProjectIdInAndOrgId(projectIds, orgId).stream()
+                .collect(Collectors.groupingBy(ProjectCurriculum::getProjectId));
+
+        // ② 활성 개념 세트 → ③ 세트별 개념 수. 둘 다 11차에서 만들어 둔 일괄 조회를 쓴다.
+        Map<UUID, UUID> conceptSetByProject = verificationConceptSetRepository
+                .findByProjectIdInAndStatus(projectIds, ConceptSetStatus.ACTIVE).stream()
+                .collect(Collectors.toMap(
+                        ProjectVerificationConceptSet::getProjectId,
+                        ProjectVerificationConceptSet::getConceptSetId,
+                        (first, second) -> first));
+
+        Map<UUID, Long> conceptCountBySet = conceptSetByProject.isEmpty()
+                ? Map.of()
+                : verificationConceptRepository
+                        .findByConceptSetIdInOrderBySequenceNoAsc(conceptSetByProject.values()).stream()
+                        .collect(Collectors.groupingBy(
+                                ProjectVerificationConcept::getConceptSetId, Collectors.counting()));
+
+        // ④ 후보 수를 교안 버전 단위로 한 번에 센다. GROUP BY라 후보가 0건인 버전은 행이 없다.
+        Map<UUID, Long> candidateCountByVersion = candidateCountsByVersion(linksByProject, orgId);
+
+        List<ProjectSummary> summaries = new ArrayList<>(projects.size());
+        for (Project project : projects) {
+            List<ProjectCurriculum> links = linksByProject.getOrDefault(project.getProjectId(), List.of());
+            UUID conceptSetId = conceptSetByProject.get(project.getProjectId());
+
+            long candidateCount = 0;
+            for (ProjectCurriculum link : links) {
+                candidateCount += candidateCountByVersion.getOrDefault(link.getCurriculumVersionId(), 0L);
+            }
+
+            summaries.add(new ProjectSummary(
+                    project,
+                    links.size(),
+                    Math.toIntExact(conceptSetId == null ? 0L
+                            : conceptCountBySet.getOrDefault(conceptSetId, 0L)),
+                    Math.toIntExact(candidateCount)));
+        }
+        return summaries;
+    }
+
+    /** 연결된 교안 버전 전체의 후보 수를 한 번에. 연결이 없으면 조회하지 않는다. */
+    private Map<UUID, Long> candidateCountsByVersion(
+            Map<UUID, List<ProjectCurriculum>> linksByProject, UUID orgId) {
+
+        Set<UUID> versionIds = linksByProject.values().stream()
+                .flatMap(List::stream)
+                .map(ProjectCurriculum::getCurriculumVersionId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (versionIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<UUID, Long> counts = new HashMap<>();
+        for (Object[] row : mappingRepository.countActiveCandidatesByVersionIds(
+                versionIds, orgId, MappingStatus.ACTIVE)) {
+            counts.put((UUID) row[0], ((Number) row[1]).longValue());
+        }
+        return counts;
     }
 
     @Override
@@ -499,13 +623,14 @@ public class ProjectServiceImpl implements ProjectService {
      * 카운트 계산 → 필터 → 정렬. population은 이미 조회 범위가 좁혀진 상태(기수 전체 또는 반 제한)다.
      * category는 반 기준 조회에서만 쓰이는 축이다.
      */
-    private ProjectList buildProjectList(
-            List<ProjectSummary> population, UUID orgId, ProjectListCriteria criteria, ProjectCategory category) {
-
-        Map<ProjectLifecycleStatus, Long> counts = new EnumMap<>(ProjectLifecycleStatus.class);
-        for (ProjectLifecycleStatus status : ProjectLifecycleStatus.values()) {
-            counts.put(status, 0L);
-        }
+        private ProjectList buildProjectList(
+                List<ProjectSummary> population, UUID orgId, ProjectListCriteria criteria, ProjectCategory category) {
+            // 모집단 전체를 먼저 요약한다. readiness 개수(10차 Q1)가 걸러지지 않은 모집단 기준이라
+            // 필터를 통과한 것만 요약해서는 만들 수 없다.
+                Map<ProjectLifecycleStatus, Long> counts = new EnumMap<>(ProjectLifecycleStatus.class);
+                for (ProjectLifecycleStatus status : ProjectLifecycleStatus.values()) {
+                    counts.put(status, 0L);
+                }
         population.forEach(summary -> counts.merge(summary.project().getLifecycleStatus(), 1L, Long::sum));
 
         Map<ProjectReadiness, Long> readinessCounts = new EnumMap<>(ProjectReadiness.class);

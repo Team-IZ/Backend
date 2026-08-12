@@ -60,6 +60,10 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	// Testcontainers JUnit: Docker 사용 가능 환경에서 PostgreSQL View 통합 테스트 수명주기를 관리합니다.
+	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+	// Testcontainers PostgreSQL: H2로 검증할 수 없는 PostgreSQL View·JSONB·배열 SQL을 검증합니다.
+	testImplementation 'org.testcontainers:testcontainers-postgresql'
 	// 테스트 코드에서 사용하는 Lombok 애너테이션
 	testCompileOnly 'org.projectlombok:lombok'
 	// H2 Database: PostgreSQL 호환 모드로 애플리케이션 컨텍스트 테스트를 격리합니다.

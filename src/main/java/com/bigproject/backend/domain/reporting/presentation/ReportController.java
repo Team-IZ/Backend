@@ -34,10 +34,14 @@ public class ReportController {
 
 	@Operation(
 			operationId = "findMyReports",
-			summary = "내 리포트 전량 조회 | ⚠️ 사용 불가",
+			summary = "내 리포트 전량 조회 | ✅ 사용 가능",
 			description = """
 					TR-04 `내 리포트` 화면 전체를 이 응답 하나로 그린다.
 					좌측 회차 레일(`rounds`)과 우측 본문(`reportsById`)이 함께 온다.
+
+					> **2026-08-12 사용 가능으로 올림(16차 R4).** 조회 SQL이 읽는 뷰·컬럼이 정본 문서에
+					> 있는지를 `TraineeReportCanonicalSqlContractTest`가 확인한다. 라이브 DB 없이 확인할 수
+					> 있는 최대치가 여기까지이며, 조인 결과의 의미론은 이 테스트가 잡지 못한다.
 
 					**교육생 본인 것만 나간다.** `traineeId` 파라미터를 받지 않는다 —
 					인증 주체로 결정하므로 남의 리포트를 지정할 방법 자체가 없다.
@@ -80,7 +84,8 @@ public class ReportController {
 					| 필드 | 타입 | 설명 |
 					|---|---|---|
 					| `name` | string | 개념 이름 |
-					| `level` | int | 도달 단계 **0~4** |
+					| `asked` | boolean | **물었는가.** `false`면 아래 값이 전부 빠진다 |
+					| `level` | int? | 도달 단계 **0~4**. `asked=false`면 키가 빠진다 |
 					| `said` | string? | 학생에게 보여주는 서술 |
 					| `isRetryTarget` | boolean | 다시 보기 대상 |
 					| `curriculumRef` | object? | `{chapter, pages, title}` — 공개 범위 SUMMARY 이상 |
@@ -92,7 +97,22 @@ public class ReportController {
 					**`1`(무엇을 하는지까지 설명함)과 전혀 다르다.** 0을 1로 올려 그리면
 					학생에게 사실과 다른 말을 하게 된다.
 
-					`level = 0` 과 "안 물어본 것"도 다르다 — 전자는 물었는데 못 한 것이다.
+					### 🔴 문항 없음 — 제3의 값 (`asked: false`)
+
+					개념 3개 중 하나가 그 학생 코드에 없으면 문항이 만들어지지 않는다
+					(`assessment_problem.generation_status='NOT_GENERATED'`). 그 개념도 **`concepts[]`에
+					같이 들어오며** `asked=false`이고 `level`을 포함한 판정 필드가 전부 빠진다.
+
+					**`level=0`과 합치면 안 된다.** 전자는 물었는데 통과한 축이 없는 것이고, 후자는 묻지
+					않은 것이다. `GET /reports/class-diagnosis`가 `level0`과 `unasked`를 엄격히 구분하는
+					것과 같은 규칙이다.
+
+					⚠️ **`asked=false`는 다시 보기 대상이 아니다** — 다시 볼 문항이 없기 때문이다.
+					`isRetryTarget`은 항상 `false`로 온다.
+
+					> 이 개념들을 배열에서 빼지 않는 이유는, 빼면 화면에 개념이 2개만 뜨고 학생이 나머지
+					> 하나가 어디 갔는지 알 수 없기 때문이다. *"코드에 이 개념이 없어 묻지 못했습니다 —
+					> 못한 것이 아닙니다"* 를 그 자리에 그릴 수 있어야 한다.
 
 					## 공개 범위가 응답을 바꾼다
 
@@ -186,7 +206,7 @@ public class ReportController {
 
 	@Operation(
 			operationId = "findMyReport",
-			summary = "리포트 단건 조회 | ⚠️ 사용 불가",
+			summary = "리포트 단건 조회 | ✅ 사용 가능",
 			description = """
 					리포트 1건의 본문. `GET /reports` 응답의 `reportsById[id]` 한 덩어리와 **같은 모양**이다.
 

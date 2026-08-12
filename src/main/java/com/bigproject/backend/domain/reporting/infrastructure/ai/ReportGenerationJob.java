@@ -1,11 +1,13 @@
 package com.bigproject.backend.domain.reporting.infrastructure.ai;
 
+import com.bigproject.backend.global.ai.AiCallException;
 import com.bigproject.backend.global.ai.AiUsageEnvelope;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * AI 보고서 job의 접수 응답과 상태 응답.
@@ -27,6 +29,31 @@ public final class ReportGenerationJob {
 	 */
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record Accepted(String jobId, String status) {
+
+		/**
+		 * {@code report_generation_item.external_job_id}에 넣을 UUID.
+		 *
+		 * <p>AI 스키마의 {@code jobId}는 {@code format: uuid}가 붙지 않은 그냥 string이다
+		 * ({@code problemId}·{@code sessionId}와 다르다). 실측 응답은 UUID였고
+		 * ({@code f9413c77-943e-4734-b12a-9207fc58d431}) 코드 분석 경로도 같은 전제로 돌고 있지만,
+		 * 계약이 보장하지 않으므로 <b>저장 전에 여기서 거른다</b> — 컬럼이 UUID라 그냥 두면
+		 * INSERT 시점에 깨지고, 그때는 이미 LLM 비용이 나간 뒤다.
+		 *
+		 * <p>{@code retryable=false}인 이유: 다시 불러도 AI는 같은 형식의 jobId를 준다.
+		 * 일시적 장애가 아니라 계약 위반이다.
+		 */
+		public UUID externalJobId() {
+			if (jobId == null || jobId.isBlank()) {
+				throw new AiCallException(null, "INVALID_JSON", false,
+						"AI가 jobId 없이 리포트 생성을 접수했습니다.");
+			}
+			try {
+				return UUID.fromString(jobId.trim());
+			} catch (IllegalArgumentException exception) {
+				throw new AiCallException(null, "INVALID_JSON", false,
+						"AI가 UUID가 아닌 jobId를 주었습니다: " + jobId, exception);
+			}
+		}
 	}
 
 	/**

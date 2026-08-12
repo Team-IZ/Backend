@@ -57,7 +57,7 @@ public class CohortComparisonAnalyticsService {
 		List<CohortComparisonQueryRepository.BaselineCandidateRow> candidates =
 				cohortComparisonQueryRepository.findBaselineCandidates(organizationId, cohortId);
 		CohortComparisonResponse.CohortRef targetRef =
-				new CohortComparisonResponse.CohortRef(target.cohortId(), target.cohortName());
+				CohortComparisonResponse.CohortRef.of(target.cohortId(), target.cohortName());
 
 		// 비교 대상을 아직 고르지 않았으면 드롭다운 후보만 채운다.
 		// 후보 자체가 없으면 이 기관의 첫 기수라 비교 자체가 성립하지 않는다.
@@ -76,7 +76,7 @@ public class CohortComparisonAnalyticsService {
 				.findFirst()
 				.orElseThrow(() -> new ApiException(AnalyticsErrorCode.BASELINE_COHORT_INVALID));
 		CohortComparisonResponse.CohortRef baselineRef =
-				new CohortComparisonResponse.CohortRef(baseline.cohortId(), baseline.cohortName());
+				CohortComparisonResponse.CohortRef.of(baseline.cohortId(), baseline.cohortName());
 
 		// 두 기수 모두 발행된 수업 진단 리포트가 있어야 읽을 스냅샷이 생긴다.
 		if (!baseline.comparable() || !cohortComparisonQueryRepository.hasPublishedDiagnosis(cohortId, organizationId)) {
@@ -85,6 +85,18 @@ public class CohortComparisonAnalyticsService {
 		}
 
 		List<UUID> cohortIds = List.of(cohortId, baselineCohortId);
+
+		// 스냅샷 완전성은 집계에 쓰지 않고 표시용으로만 올린다. PARTIAL을 걸러내면 미응시가 있는
+		// 기수가 비교에서 통째로 사라지므로, 수치는 그대로 두고 모수가 다를 수 있다는 사실만 알린다.
+		Map<UUID, CohortComparisonQueryRepository.SnapshotCompletionRow> completions =
+				cohortComparisonQueryRepository.findSnapshotCompletion(organizationId, cohortIds).stream()
+						.collect(Collectors.toMap(
+								CohortComparisonQueryRepository.SnapshotCompletionRow::cohortId,
+								Function.identity(),
+								(left, right) -> left));
+		targetRef = withCompletion(targetRef, completions.get(cohortId));
+		baselineRef = withCompletion(baselineRef, completions.get(baselineCohortId));
+
 		List<CohortComparisonQueryRepository.ConceptLevelRow> levels =
 				cohortComparisonQueryRepository.aggregateConceptLevels(organizationId, cohortIds);
 		Map<UUID, CohortComparisonQueryRepository.ConceptLevelRow> targetLevels = levelsOf(levels, cohortId);
@@ -125,6 +137,28 @@ public class CohortComparisonAnalyticsService {
 				appliedSort,
 				sameCurriculumOnly,
 				sorted(concepts, appliedSort)
+		);
+	}
+
+	/**
+	 * 기수 표시 정보에 스냅샷 완전성을 덧붙인다.
+	 *
+	 * 스냅샷이 없으면 완전성도 없으므로 그대로 둔다 — 이 경로는 두 기수 모두 발행을 확인한
+	 * 뒤에만 오지만, 확인 쿼리와 이 조회가 같은 트랜잭션 안의 서로 다른 질의라 없을 수 있다.
+	 */
+	private CohortComparisonResponse.CohortRef withCompletion(
+			CohortComparisonResponse.CohortRef ref,
+			CohortComparisonQueryRepository.SnapshotCompletionRow completion
+	) {
+		if (completion == null) {
+			return ref;
+		}
+		return new CohortComparisonResponse.CohortRef(
+				ref.cohortId(),
+				ref.cohortName(),
+				completion.completionStatus(),
+				completion.sampleCount(),
+				completion.missingCount()
 		);
 	}
 

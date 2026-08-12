@@ -93,6 +93,51 @@ public class ReportSnapshot {
 	@Column(name = "payload_schema_version", nullable = false)
 	private Integer payloadSchemaVersion;
 
+	private ReportSnapshot(UUID orgId, UUID reportId, int snapshotVersion, Instant asOfAt,
+			int calculationVersion, String summaryPayload, ReportCompletionStatus completionStatus,
+			int sampleCount, int missingCount, String payloadHash, UUID generationRunId,
+			int payloadSchemaVersion) {
+		this.orgId = orgId;
+		this.reportId = reportId;
+		this.snapshotVersion = snapshotVersion;
+		this.asOfAt = asOfAt;
+		this.calculationVersion = calculationVersion;
+		this.summaryPayload = summaryPayload;
+		this.completionStatus = completionStatus;
+		this.sampleCount = sampleCount;
+		this.missingCount = missingCount;
+		this.payloadHash = payloadHash;
+		this.generationRunId = generationRunId;
+		this.payloadSchemaVersion = payloadSchemaVersion;
+		this.isActive = true;
+	}
+
+	/**
+	 * 새 본문을 활성 스냅샷으로 만든다.
+	 *
+	 * <p><b>부르기 전에 이전 활성 스냅샷을 {@link #deactivate()} 해야 한다.</b> "리포트당 활성 하나"는
+	 * 이 클래스가 강제할 수 없다 — 다른 행을 봐야 알 수 있는 조건이라 서비스 계층의 책임이다.
+	 *
+	 * <p>{@code generationRunId}는 DB에서 UNIQUE다({@code uq_report_snapshot_generation_run_id}).
+	 * 실행 1회당 스냅샷 1건이라는 뜻이므로, 같은 run으로 두 번 부르면 23505가 난다.
+	 *
+	 * <p>{@code missingCount <= sampleCount}를 CHECK가 요구한다. 여기서 먼저 막지 않으면
+	 * INSERT 시점에 어느 값이 어긋났는지 드러나지 않는다.
+	 */
+	public static ReportSnapshot create(UUID orgId, UUID reportId, int snapshotVersion, Instant asOfAt,
+			int calculationVersion, String summaryPayload, ReportCompletionStatus completionStatus,
+			int sampleCount, int missingCount, String payloadHash, UUID generationRunId,
+			int payloadSchemaVersion) {
+		if (missingCount < 0 || sampleCount < 0 || missingCount > sampleCount) {
+			throw new IllegalArgumentException(
+					"missing_count는 0 이상 sample_count 이하여야 한다: sample=%d, missing=%d"
+							.formatted(sampleCount, missingCount));
+		}
+		return new ReportSnapshot(orgId, reportId, snapshotVersion, asOfAt, calculationVersion,
+				summaryPayload, completionStatus, sampleCount, missingCount, payloadHash,
+				generationRunId, payloadSchemaVersion);
+	}
+
 	/** 비활성으로 내린다. 새 스냅샷을 활성화하기 전에 부른다. */
 	public void deactivate() {
 		this.isActive = false;

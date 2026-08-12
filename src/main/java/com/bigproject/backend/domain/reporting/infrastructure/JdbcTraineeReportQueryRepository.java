@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.reporting.infrastructure;
 
 import com.bigproject.backend.domain.reporting.domain.TraineeReportQueryRepository;
+import com.bigproject.backend.domain.reporting.domain.TraineeReportQueryRepository.UnaskedConceptRow;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -46,6 +47,9 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				       p.name                       AS project_name,
 				       rpt.report_id,
 				       rs.snapshot_id,
+				       rs.completion_status,
+				       rs.sample_count,
+				       rs.missing_count,
 				       ma.attempt_id,
 				       ma.status                    AS attempt_status,
 				       ma.terminal_reason_code,
@@ -96,6 +100,9 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				rs.getString("project_name"),
 				rs.getObject("report_id", UUID.class),
 				rs.getObject("snapshot_id", UUID.class),
+				rs.getString("completion_status"),
+				rs.getInt("sample_count"),
+				rs.getInt("missing_count"),
 				rs.getObject("attempt_id", UUID.class),
 				rs.getString("attempt_status"),
 				rs.getString("terminal_reason_code"),
@@ -144,6 +151,55 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				rs.getBoolean("review_required"),
 				rs.getString("review_before_after_items"),
 				rs.getBoolean("can_view_explanation")
+		), userId);
+	}
+
+	@Override
+	public List<UnaskedConceptRow> findUnaskedConcepts(UUID userId) {
+		/*
+		 * 뷰를 쓸 수 없다 — trainee_report_problem_view 는 report_evidence 에서 시작하는데
+		 * NOT_GENERATED 개념에는 근거 행이 없어 뷰에 나타나지 않는다(그 자리에서 사라지는 것이
+		 * 정확히 이 조회가 메우려는 구멍이다).
+		 *
+		 * 그래서 리포트 → 응시 → 코드분석 → 문제 슬롯 순으로 베이스 테이블을 직접 탄다.
+		 * assessment_problem 은 근거를 못 찾은 개념에도 NOT_GENERATED 슬롯을 남기므로
+		 * (JdbcAnalysisResultRepository 참고) 여기서 개념 이름을 되찾을 수 있다.
+		 *
+		 * 발행·공개된 리포트만 본다. 묻지 못했다는 사실도 리포트 본문의 일부라, 공개 범위가
+		 * 정해지기 전에 내보내면 PENDING_VISIBILITY 회차에서 개념 카드가 새어 나간다.
+		 * 범위는 SUMMARY 로 충분하다 — 개념 이름과 "묻지 못함"까지는 요약에 들어간다.
+		 */
+		String sql = """
+				SELECT rpt.report_id,
+				       ap.problem_id,
+				       COALESCE(t.canonical_name, ap.title) AS concept_display_name,
+				       pvc.sequence_no                      AS concept_display_order,
+				       ap.not_generated_reason_code
+				FROM report rpt
+				JOIN measurement_attempt ma
+				       ON ma.assessment_round_id = rpt.assessment_round_id
+				      AND ma.user_id             = rpt.user_id
+				      AND ma.attempt_type        = 'INITIAL'
+				JOIN assessment_problem ap
+				       ON ap.code_analysis_id   = ma.code_analysis_id
+				      AND ap.generation_status  = 'NOT_GENERATED'
+				LEFT JOIN project_verification_concept pvc
+				       ON pvc.project_concept_id = ap.project_verification_concept_id
+				LEFT JOIN teaches t
+				       ON t.teaches_id = pvc.teaches_id
+				WHERE rpt.user_id = ?
+				  AND rpt.lifecycle_status <> 'SUPERSEDED'
+				  AND rpt.trainee_release_status = 'RELEASED'
+				  AND rpt.trainee_disclosure_scope IN ('SUMMARY', 'FULL')
+				ORDER BY rpt.report_id, pvc.sequence_no, ap.problem_no
+				""";
+
+		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> new UnaskedConceptRow(
+				rs.getObject("report_id", UUID.class),
+				rs.getObject("problem_id", UUID.class),
+				rs.getString("concept_display_name"),
+				rs.getInt("concept_display_order"),
+				rs.getString("not_generated_reason_code")
 		), userId);
 	}
 

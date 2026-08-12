@@ -1,7 +1,7 @@
 package com.bigproject.backend.domain.reporting.infrastructure.ai;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 import java.util.List;
 import java.util.UUID;
@@ -41,5 +41,21 @@ public record ReportGenerationRequest(
 	 */
 	public String idempotencyKey() {
 		return problemId + ":" + (scoreRunId == null ? "" : scoreRunId);
+	}
+
+	/**
+	 * {@code scoreRunId}만 채운 사본.
+	 *
+	 * <p>이 값({@code report_generation_run.generation_run_id})은 실행 행을 저장한 뒤에야 정해지는데,
+	 * 요청 본문은 그 전에 다 만들어 둬야 한다 — 본문을 만들다 실패하면 실행 행을 남기지 않는 편이
+	 * 맞기 때문이다(재시도 상한만 깎고 아무것도 못 한다). 그래서 두 단계로 나눈다.
+	 *
+	 * <p>🔴 <b>보내기 전에 반드시 채워야 한다.</b> 비어 있으면 위 멱등키가 문제당 상수가 되어,
+	 * 재생성 때 AI가 처음 jobId를 그대로 돌려주고 {@code uq_report_generation_item_external_job_id}가
+	 * 두 번째 item을 거부한다.
+	 */
+	public ReportGenerationRequest withScoreRunId(String scoreRunId) {
+		return new ReportGenerationRequest(problemId, problemNo, sessionId, scoreRunId,
+				providerModelCode, transcript, analysisDocuments, teaches);
 	}
 }

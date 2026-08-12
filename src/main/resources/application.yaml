@@ -46,6 +46,13 @@ spring:
       data-source-properties:
         prepareThreshold: 0
 
+  servlet:
+    multipart:
+      # 컨트롤러에 닿기 전에 톰캣이 먼저 거절하는 상한이다. app.submission.max-zip-bytes 보다 넉넉해야
+      # FILE_TOO_LARGE 에러 코드로 응답할 기회가 생긴다 — 여기서 걸리면 도메인 코드 없는 500이 나간다.
+      max-file-size: ${SUBMISSION_MULTIPART_MAX_FILE_SIZE:60MB}
+      max-request-size: ${SUBMISSION_MULTIPART_MAX_REQUEST_SIZE:60MB}
+
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     open-in-view: false
@@ -102,6 +109,13 @@ ai:
   # App Runner 원본 도메인. 안 정하면 프록시와 같은 값으로 fallback(로컬 개발처럼
   # 프록시/원본 구분이 없는 환경 대응).
   origin-base-url: ${AI_ORIGIN_BASE_URL:${AI_PROXY_BASE_URL:http://localhost:8000}}
+  proxy:
+    # 원본으로 직접 보내기 전(교안 PDF·코드 제출) 프록시를 깨우는 GET /api/health의 상한.
+    #
+    # 🔴 짧게 잡으면 안 된다. 이 호출은 생존 확인이 아니라 기동 요청이고, 프록시가 원본이
+    # RUNNING이 될 때까지 동기로 기다린다(유휴 후 첫 호출 ~80초 관측). 2초 같은 값을 쓰면
+    # "잠들어 있는 정상 상태"가 전부 실패로 읽혀 AI가 멀쩡한데도 제출이 거부된다.
+    warm-up-timeout: ${AI_PROXY_WARM_UP_TIMEOUT:PT150S}
   # AI의 require_internal_key가 읽는 공유 비밀(X-Internal-Key).
   # 비워 두면 헤더를 아예 붙이지 않는다 — AI 쪽도 "키 미설정 = 로컬 개발"로 검증을 건너뛴다.
   internal-key: ${AI_INTERNAL_KEY:}
@@ -111,22 +125,110 @@ ai:
   # AI는 계속 작업 중인데 백엔드만 재시도해서 같은 요청에 LLM 비용이 두 번 나간다.
   read-timeout: ${AI_READ_TIMEOUT:PT150S}
 
+  # 코드 분석 연동. POST /analyses · GET /analyses/{jobId}.
+  analysis:
+    # 코드 분석에 쓸 모델의 ai_model.model_code.
+    #
+    # 🔴 비워 두거나 카탈로그에 없는 값을 넣으면 분석 요청 자체가 TEMPORARY_ERROR로 실패한다.
+    # 일부러 그렇게 했다 — 모델을 지정하지 않으면 AI가 자기 기본 모델을 쓰는데, 그 modelCode가
+    # 응답 aiUsage[]에 실려 오고 ai_usage.model_code는 ai_model을 참조하는 FK다. 카탈로그에
+    # 없는 모델이면 사용량 행이 통째로 적재 실패하고, 그건 monthly_ai_budget 집행 근거가
+    # 조용히 비는 것이라 분석 하나를 못 돌리는 것보다 나쁘다.
+    #
+    # 값 형식은 provider/provider_model_code다(2026-08-09 규칙). AI에 실제로 보내는 값은
+    # 이 코드로 조회한 행의 provider_model_code이고, model_id는 analysis_job.requested_model_id에 남는다.
+    model-code: ${AI_ANALYSIS_MODEL_CODE:nvidia/nemotron-3-ultra-550b-a55b}
+
+    # 한 제출에 허용하는 총 분석 시도 횟수(첫 시도 포함, 재시도 횟수가 아니다).
+    #
+    # 다시 거는 대상은 일시적 실패 4종(TEMPORARY_ERROR·ANALYSIS_TIMEOUT·MODEL_ERROR·
+    # SOURCE_UNREACHABLE)뿐이다. 저장소 URL 오류나 제출물 문제는 같은 제출을 다시 분석해도
+    # 결과가 같아 재시도하지 않는다 — 그쪽 복구 경로는 교육생의 재제출이다.
+    #
+    # 상한이 없으면 AI 서버가 계속 죽어 있는 동안 안전망이 돌 때마다 전 제출을 다시 요청한다.
+    # 분석 1회가 LLM 호출 20여 건이라 낭비가 크다. 1로 두면 재시도가 꺼진다.
+    max-attempts: ${AI_ANALYSIS_MAX_ATTEMPTS:3}
+
+    scheduler:
+      # 기본 false. 켜져 있으면 앱을 띄우기만 해도 마감 지난 제출에 LLM 비용이 발생하고,
+      # @SpringBootTest 컨텍스트가 뜰 때마다 실제 AI 서버로 요청이 나간다. 운영에서만 켠다.
+      enabled: ${AI_ANALYSIS_SCHEDULER_ENABLED:false}
+      # 요청 안전망. 정상 경로는 제출 이벤트가 즉시 처리하므로 여기서 걸리는 것이 없어야 정상이다.
+      dispatch-delay: ${AI_ANALYSIS_DISPATCH_DELAY:PT5M}
+      # 상태 폴링. 분석 1건이 5분 안팎 걸리지만, 교육생 화면이 "분석 중"에서 넘어가는 지연이
+      # 곧 이 간격이라 짧게 잡았다.
+      poll-delay: ${AI_ANALYSIS_POLL_DELAY:PT1M}
+      # 기동 직후에는 돌지 않는다. 배포 롤링 중 두 인스턴스가 동시에 같은 제출을 집는 창을 줄인다
+      # (uq_analysis_job_active가 최종 방어선이지만 예외 로그로 시끄러워진다).
+      initial-delay: ${AI_ANALYSIS_SCHEDULER_INITIAL_DELAY:PT1M}
+
   report:
     # AI의 POST /reports는 202 + jobId만 주고 생성은 백그라운드에서 돈다.
-    # 아래 둘의 곱(2초 x 60회 = 2분)이 한 리포트를 기다리는 상한이고,
-    # AI의 최악 소요 시간(20초 x 6회 재시도)에 맞춰 잡았다.
+    #
+    # 🔴 아래 둘은 ReportGenerationServiceImpl(스레드를 붙들고 기다리는 동기 경로)만 쓴다.
+    #    그 상한(2초 x 60회 = 2분)은 "AI 최악 20초 x 6회 재시도" 가정에서 나왔는데,
+    #    2026-08-09 실측 응답이 latencyMs=129108(2분 9초)로 그 가정을 이미 넘겼다.
+    #    즉 이 설정 그대로는 성공한 job을 타임아웃으로 처리한다.
+    #    리포트 생성 배치(ReportBatchService)는 이 경로를 쓰지 않고 dispatch/poll 2단계로 돈다.
+    #    동기 경로를 되살릴 일이 있으면 max-attempts부터 180(6분)으로 올려야 한다.
     poll-interval: ${AI_REPORT_POLL_INTERVAL:PT2S}
     poll-max-attempts: ${AI_REPORT_POLL_MAX_ATTEMPTS:60}
 
+    # 리포트 생성에 쓸 모델의 ai_model.model_code.
+    #
+    # 🔴 코드 분석과 같은 이유로 비워 두면 안 된다. 지정하지 않으면 AI가 자기 기본 모델을 쓰고
+    # 그 modelCode가 응답 aiUsage[]에 실려 오는데, ai_usage.model_code는 ai_model을 참조하는
+    # FK다. 카탈로그에 없는 모델이면 사용량 행이 통째로 적재 실패하고, 그건 monthly_ai_budget
+    # 집행 근거가 조용히 비는 것이라 리포트 하나를 못 만드는 것보다 나쁘다.
+    #
+    # 값 형식은 provider/provider_model_code다(2026-08-09 규칙).
+    model-code: ${AI_REPORT_MODEL_CODE:minimaxai/minimax-m3}
+
+    # 회차·교육생 1건에 허용하는 총 실행 횟수(첫 시도 포함, 재시도 횟수가 아니다).
+    # 상한이 없으면 AI 서버가 계속 죽어 있는 동안 배치가 돌 때마다 전 대상을 다시 요청한다.
+    # 리포트 1건이 문제 수(최대 3)만큼 LLM 호출이라 그 낭비가 작지 않다.
+    max-attempts: ${AI_REPORT_MAX_ATTEMPTS:3}
+
+    # 문제 1건의 생성을 기다리는 상한. 실측 129초의 약 5배로 잡았다.
+    # 없으면 AI가 잃어버린 job이 RUNNING으로 영원히 남고, 그 실행에 묶인 리포트가 확정되지
+    # 않아 교육생 화면이 계속 `발행 전`이다.
+    item-timeout: ${AI_REPORT_ITEM_TIMEOUT:PT10M}
+
+    scheduler:
+      # 🔴 기본 false. 켜져 있으면 @SpringBootTest 컨텍스트가 뜰 때마다 실제 AI 서버로
+      # 요청이 나가고, 로컬에서 앱을 띄워 둔 것만으로 종료된 회차에 LLM 비용이 발생한다.
+      enabled: ${AI_REPORT_SCHEDULER_ENABLED:false}
+      # 문제가 끝난 뒤 늦어도 이 간격 안에 요청이 나간다.
+      #
+      # [2026-08-11] 회차 마감 후 일괄에서 문제 단위 즉시 생성으로 바꾸면서 PT5M -> PT1M.
+      # 학생이 다음 문제를 푸는 동안 앞 문제를 만들어 두는 것이 목적이라, 5분이면 문제 하나
+      # 푸는 시간보다 길어 의미가 없다.
+      #
+      # 🔴 report_generation_run(report_id) 인덱스가 있어야 한다. 없으면 이 조회가 31초 걸려
+      # (시드 기준 실측) 1분 주기를 감당하지 못한다. 인덱스가 있으면 527ms 다.
+      dispatch-delay: ${AI_REPORT_SCHEDULER_DISPATCH_DELAY:PT1M}
+      # 안전망. 단계가 정리되지 않아 문제 단위 조회에 안 잡힌 세션을 회차 마감 후 줍는다.
+      # 자주 돌 이유가 없다.
+      sweep-delay: ${AI_REPORT_SCHEDULER_SWEEP_DELAY:PT10M}
+      # 발행 예정 시각 때문에 보류된 리포트를 발행하는 주기.
+      # 시각 단위 판정이라 촘촘할 이유가 없다 — 예정 시각 후 최대 이 간격 안에 발행된다.
+      publish-delay: ${AI_REPORT_SCHEDULER_PUBLISH_DELAY:PT5M}
+      # 교육생 화면이 `발행 전`에서 넘어가는 지연이 곧 이 값이다.
+      poll-delay: ${AI_REPORT_SCHEDULER_POLL_DELAY:PT1M}
+      initial-delay: ${AI_REPORT_SCHEDULER_INITIAL_DELAY:PT1M}
+
   # 교안 분석 연동. develop 머지 때 파일 아래쪽에 `ai:` 블록이 하나 더 생겨
   # YAML 중복 키로 기동이 통째로 실패했다(snakeyaml: found duplicate key ai).
-  # 값과 환경변수 이름은 그대로 두고 이 블록 안으로 옮기기만 했다.
   #
-  # ⚠️ 같은 공유 비밀인데 위 공통 블록과 환경변수 이름이 다르다(AI_INTERNAL_API_KEY vs
-  # AI_INTERNAL_KEY) — base-url 통합과 별개 문제라 이번엔 안 건드렸다. 두 이름을 다
-  # 관리하면 한쪽만 채워 넣는 사고가 난다, 다음에 손댈 때 같이 정리할 것.
+  # [2026-08-10] 공통 설정과 어긋나던 둘을 맞췄다. 종전에는 AI_CURRICULUM_BASE_URL ·
+  # AI_INTERNAL_API_KEY 라는 이름을 따로 썼는데, 같은 AI 서버의 같은 공유 비밀을 가리키면서
+  # 환경변수만 둘이라 한쪽만 채워 넣는 사고가 나기 쉬웠다.
+  #
+  # [2026-08-11] base-url 을 여기서 없앴다. 교안 제출은 원본 서버로 나가므로
+  # AiCurriculumClient 가 위쪽 ai.origin-base-url 을 직접 읽는다. 남은 x-internal-key 는
+  # 위 ai.internal-key 와 같은 값을 가리키는 중복이라 정리 후보다.
   curriculum:
-    x-internal-key: ${AI_INTERNAL_API_KEY:}
+    x-internal-key: ${AI_INTERNAL_KEY:}
 
 jwt:
   secret: ${JWT_SECRET}
@@ -182,3 +284,32 @@ password-reset:
   base-url: ${PASSWORD_RESET_BASE_URL:http://localhost:5173}
   expiration: ${PASSWORD_RESET_EXPIRATION:PT30M}
   request-cooldown: ${PASSWORD_RESET_REQUEST_COOLDOWN:PT1M}
+
+app:
+  report:
+    # 리포트를 발행하면서 교육생 공개까지 자동으로 할지.
+    #
+    # 🔴 기본은 꺼 둔다(actor-user-id 가 비면 동작하지 않는다). 켜면 매니저의 판단 없이 리포트가
+    # 학생에게 나가고, AI가 일부 실패한 PARTIAL 리포트(개념 카드가 빠진 것)도 그대로 나간다.
+    # 켤지는 운영이 정할 일이라 기본값으로 정하지 않는다.
+    #
+    # actor-user-id 가 필요한 이유: ck_report_trainee_release_status_2 가 RELEASED 에
+    # trainee_released_by NOT NULL 을 요구하고 그 컬럼이 app_user FK 다. 배치에는 "누가
+    # 공개했는가"에 넣을 사용자가 없어서 밖에서 받아야 한다.
+    #
+    # 운영에서는 자동화 전용 시스템 계정을 가리켜야 한다 — 사람 계정을 넣으면 감사 기록이
+    # 그 사람을 지목한다. 로컬 확인용으로는 아무 계정 UUID 나 넣어도 동작한다.
+    auto-release:
+      actor-user-id: ${REPORT_AUTO_RELEASE_ACTOR:}
+      # SUMMARY 는 문답 원문을 닫는다. PRIVATE 은 Report.release 가 거부한다(비공개는 withhold).
+      scope: ${REPORT_AUTO_RELEASE_SCOPE:FULL}
+
+  submission:
+    # ZIP 제출물 저장 위치. 지금은 로컬 파일시스템이며 경로는 <root>/<orgId>/<teamId>/<submissionId>.zip 이다.
+    # 인스턴스가 여러 대가 되거나 분석 배치가 별도 프로세스로 분리되면 이 경로로는 파일을 찾을 수 없으므로
+    # SubmissionArtifactStorage 의 S3 구현체로 교체해야 한다.
+    storage-root: ${SUBMISSION_STORAGE_ROOT:./var/submissions}
+    # 파일당 상한. 정의서에 원천 컬럼이 없어 애플리케이션 상수로 두고 적용값을
+    # submission_artifact.applied_max_file_bytes 에 그대로 기록한다. 정책화가 필요해지면
+    # organization_policy.max_submission_file_bytes 로 승격한다.
+    max-zip-bytes: ${SUBMISSION_MAX_ZIP_BYTES:52428800}
