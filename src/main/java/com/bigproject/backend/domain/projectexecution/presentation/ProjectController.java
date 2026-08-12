@@ -172,6 +172,77 @@ public class ProjectController {
 	}
 
 	@Operation(
+			operationId = "findCurrentProject",
+			summary = "기수의 이번 회차 조회 | ✅ 사용 가능",
+			description = """
+					그 기수에서 **지금 굴러가는 회차 하나**를 돌려준다. OP-01 대시보드의 `이번 회차`
+					블록이 이 응답 하나로 그려진다.
+
+					## 🔴 회차 선택 규칙을 서버가 갖는다
+
+					「지금 어느 회차인가」는 화면 취향이 아니라 **도메인 사실**이다. 종전에는 화면이
+					`GET /cohorts/{id}/projects`로 전량을 받아 스스로 골랐는데, 그 규칙은 합의된 적이
+					없어 서버 정렬이 바뀌면 조용히 다른 회차가 뜨고 같은 판단이 필요한 화면이 늘면
+					규칙이 두 곳으로 갈렸다.
+
+					| 순서 | 고르는 것 | 왜 |
+					|---|---|---|
+					| ① | `RUNNING` 중 **가장 늦게 시작한** 것 | 회차가 겹쳐 열렸으면 나중에 연 쪽이 지금이다 |
+					| ② | 없으면 **가장 이른 `PLANNED`** | 다음에 열릴 회차가 지금의 관심사다 |
+					| ③ | 그것도 없으면 **마지막 회차** | 전부 끝난 기수도 마지막 결과를 그려야 한다 |
+
+					⚠️ **③이 `CLOSED`를 돌려준다.** 이 응답이 왔다고 "진행 중"이라고 단정하면 안 된다 —
+					`status`를 보고 그린다. 응답에 `status`가 함께 나가는 이유다.
+
+					정렬 축은 `sequenceNo`가 먼저이고 `startDate`가 보조다. 정의서가 `sequence_no`를
+					"기수 내 전체 프로젝트 운영 순서"로 정의하므로 그것이 권위 축이고, 날짜는 비어
+					있을 수 있다.
+
+					## 응답
+
+					`GET /projects/{projectId}`의 요약과 **같은 모양**이다 —
+					`projectId` · `name` · `sequenceNo` · `status` · `startDate` · `endDate` +
+					`curriculumCount` · `conceptCount` · `conceptCandidateCount`.
+
+					## 🔴 회차가 없으면 `204 No Content`다
+
+					**`404`가 아니다.** 회차를 아직 만들지 않은 기수는 실패가 아니라 정상 상태이고,
+					404로 답하면 "그런 기수가 없다"와 구분되지 않는다. 본문이 없으므로 화면은
+					`이번 회차 없음`을 그리면 된다.
+
+					## 왜 목록 대신 이것을 쓰나
+
+					목록은 회차 전량과 상태별 집계를 함께 만든다. 대시보드는 그중 **하나만** 쓰고
+					나머지를 버렸다. 이 API는 고른 회차 하나만 요약하므로 그 낭비가 없다.
+
+					> 15차 R1로 목록(`GET /cohorts/{id}/projects`) 자체의 N+1도 함께 고쳤다.
+					> 목록이 여전히 필요한 화면(OP-03)은 그쪽을 계속 쓰면 된다.
+
+					## 오류
+
+					| 상태 | 언제 |
+					|---|---|
+					| 204 | 그 기수에 회차가 하나도 없다 (**정상**) |
+					| 401 | 액세스 토큰이 없거나 유효하지 않다 |
+					""")
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "이번 회차 조회 성공"),
+			@ApiResponse(responseCode = "204", description = "그 기수에 회차가 하나도 없음. 정상 상태이며 본문이 없다"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+	})
+	// `/{projectId}`가 아니라 `/cohorts/{cohortId}/projects/current`라 경로 충돌이 없다 —
+	// 이 뿌리에는 UUID 경로 변수가 뒤에 오지 않는다.
+	@GetMapping("/cohorts/{cohortId}/projects/current")
+	public ResponseEntity<ProjectResponse> findCurrentProject(
+			@Parameter(description = "기수 ID") @PathVariable UUID cohortId
+	) {
+		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
+		return projectService.findCurrentProject(cohortId, orgId)
+				.map(summary -> ResponseEntity.ok(ProjectResponse.from(summary)))
+				.orElseGet(() -> ResponseEntity.noContent().build());
+	}
+
+	@Operation(
 			summary = "프로젝트 생성 | ✅ 사용 가능",
 			description = """
 					오퍼레이터가 기수 안에 프로젝트(미프/빅프)를 만든다.

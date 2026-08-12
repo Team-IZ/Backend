@@ -13,6 +13,7 @@ import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface ProjectService {
@@ -69,6 +70,18 @@ public interface ProjectService {
                           LocalDate startDate, LocalDate endDate, UUID actorUserId);
 
     List<Project> findProjects(UUID cohortId, UUID orgId);
+
+    /**
+     * 그 기수에서 <b>지금 굴러가는 회차</b> 하나(15차 R1).
+     *
+     * <p>「지금 어느 회차인가」는 화면 취향이 아니라 도메인 사실이라 서버가 판정한다. 종전에는
+     * 프론트가 전량을 받아 스스로 골랐는데, 그 규칙은 어디에도 합의된 적이 없어 서버 정렬이 바뀌면
+     * 조용히 다른 회차가 뜨고 같은 판단이 필요한 화면이 늘면 규칙이 두 곳으로 갈렸다.
+     *
+     * <p>회차가 하나도 없으면 비어 있다 — <b>오류가 아니다.</b> 회차를 아직 만들지 않은 기수는
+     * 정상 상태이고, 404로 답하면 "기수가 없다"와 구분되지 않는다.
+     */
+    Optional<ProjectSummary> findCurrentProject(UUID cohortId, UUID orgId);
 
     Project findProject(UUID projectId, UUID orgId);
 
