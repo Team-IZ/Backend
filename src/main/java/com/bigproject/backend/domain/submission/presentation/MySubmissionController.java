@@ -76,17 +76,26 @@ public class MySubmissionController {
 					명이 세션을 시작했다고 나머지가 잠기지 않는다. 같은 제출을 두고도 사람마다 `READY`와
 					`LOCKED`가 갈릴 수 있다.
 
-					## content — GitHub 제출에서만
+					## content — 두 수단이 같은 카드를 채운다
 
-					| 필드 | 타입 | 설명 |
-					|---|---|---|
-					| `repoUrl` | string | 교육생이 입력한 **원문** 주소. 정규화 전이라 폼에 그대로 되채운다 |
-					| `branch` | string? | 실제로 분석된 브랜치. 분석 전에는 적어 낸 값, 비워 냈으면 기본 브랜치 |
-					| `lastCommit` | object? | `{sha, message, at}` — **분석 성공 후에만** |
+					| 필드 | 타입 | GitHub | ZIP | 설명 |
+					|---|---|---|---|---|
+					| `repoUrl` | string? | ✅ | — | 교육생이 입력한 **원문** 주소. 정규화 전이라 폼에 그대로 되채운다 |
+					| `branch` | string? | ✅ | — | 실제로 분석된 브랜치. 분석 전에는 적어 낸 값, 비워 냈으면 기본 브랜치 |
+					| `fileName` | string? | — | ✅ | 올린 파일 이름. 예: `team3-miniproject.zip` |
+					| `fileSize` | int64? | — | ✅ | 올린 파일 크기(바이트) |
+					| `lastCommit` | object? | ✅ | ✅ | `{sha, message, at}` — **분석 성공 후에만** |
 
-					⚠️ **ZIP 제출이면 `content` 키 자체가 빠진다.** `ck_submission_method_2`가 ZIP 분기의
-					저장소·커밋 컬럼을 전부 NULL로 강제하므로 담을 값이 없다. 빈 객체를 보내면 화면이
-					"GitHub인데 주소가 비었다"로 읽는다.
+					**필드는 수단별로 배타적이다.** GitHub이면 저장소·브랜치가, ZIP이면 파일 이름·크기가
+					채워지고 반대쪽은 키가 빠진다. 화면은 `repoUrl`이 있으면 저장소 줄을, `fileName`이
+					있으면 파일 줄을 그리면 된다.
+
+					🔴 **ZIP의 커밋 정보는 분석 결과에서 온다.** `ck_submission_method_2`가 ZIP 분기의
+					`source_commit_*`를 NULL로 강제하고 git log를 읽는 주체가 AI라, 제출 직후에는
+					`lastCommit`이 없다가 **분석이 끝나면 나타난다.** GitHub 쪽도 같은 시점에 채워진다.
+
+					⚠️ **미제출이면 `content` 키 자체가 빠진다.** ZIP인데 아티팩트 행이 아직 없는
+					접수 도중에도 마찬가지다 — 빈 객체를 보내면 화면이 "냈는데 내용이 비었다"로 읽는다.
 
 					## 상태별로 쓰지 않는 필드는 키가 빠진다
 
