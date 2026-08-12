@@ -11,6 +11,8 @@ import com.bigproject.backend.domain.reporting.domain.ReportGenerationRunStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportSnapshot;
 import com.bigproject.backend.domain.reporting.domain.TraineeReleaseStatus;
 import com.bigproject.backend.domain.reporting.infrastructure.JdbcReportPayloadRepository;
+import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository;
+import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.FinalizeContext;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportEvidenceRepository;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportGenerationItemRepository;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportGenerationRunRepository;
@@ -56,6 +58,10 @@ public class ReportRunFinalizer {
 	private final ReportSnapshotRepository snapshotRepository;
 	private final ReportEvidenceRepository evidenceRepository;
 	private final JdbcReportPayloadRepository payloadRepository;
+
+	/** 확정 직전 판정용. 세션 유효성·발행 예정 시각·총 문제 수를 읽는다. */
+	private final ReportDispatchRepository dispatchRepository;
+
 	private final ReportEvidenceFactory evidenceFactory;
 	private final ObjectMapper objectMapper;
 
@@ -95,6 +101,7 @@ public class ReportRunFinalizer {
 			ReportSnapshotRepository snapshotRepository,
 			ReportEvidenceRepository evidenceRepository,
 			JdbcReportPayloadRepository payloadRepository,
+			ReportDispatchRepository dispatchRepository,
 			ReportEvidenceFactory evidenceFactory,
 			ObjectMapper objectMapper,
 			@Value("${app.report.auto-release.actor-user-id:}") String autoReleaseActorId,
@@ -106,10 +113,49 @@ public class ReportRunFinalizer {
 		this.snapshotRepository = snapshotRepository;
 		this.evidenceRepository = evidenceRepository;
 		this.payloadRepository = payloadRepository;
+		this.dispatchRepository = dispatchRepository;
 		this.evidenceFactory = evidenceFactory;
 		this.objectMapper = objectMapper;
 		this.autoReleaseActorId = autoReleaseActorId;
 		this.autoReleaseScope = autoReleaseScope;
+	}
+
+	/**
+	 * 발행해도 되는지 보고, 되면 발행(+공개)까지 간다.
+	 *
+	 * <h2>막는 것 두 가지</h2>
+	 *
+	 * <p><b>① 무효 세션</b> — 문제 단위 dispatch 는 세션이 끝나기 전에 요청을 보내므로, 만든 뒤에
+	 * 세션이 무효로 끝날 수 있다. 스냅샷과 근거는 <b>지우지 않는다</b> — "왜 이 학생만 리포트가
+	 * 없나"를 물었을 때 {@code report_generation_run}·{@code report_snapshot} 이 답이 된다
+	 * (2026-08-11 ⓐ안). 발행만 하지 않는다.
+	 *
+	 * <p><b>② 발행 예정 시각 전</b> — 운영자가 {@code report_publish_not_before_at} 으로 "이 시각
+	 * 전에는 발행하지 마라"를 정해 둔다. 종전에는 대상 조회가 그때까지 <b>만들지 않는 것</b>으로
+	 * 지켰는데, 즉시 생성으로 바뀌면서 지킬 곳이 여기밖에 없다.
+	 *
+	 * <p>②로 보류된 리포트는 {@code ReportPublishService} 가 시각이 지난 뒤 발행한다.
+	 * ①은 세션이 무효인 한 영영 발행되지 않는다 — 그게 맞다.
+	 *
+	 * @return 발행했으면 true
+	 */
+	private boolean publishIfAllowed(Report report, FinalizeContext context, UUID runId, Instant now) {
+		if (!context.getEligible()) {
+			log.warn("세션이 정상 완료되지 않아 발행하지 않는다. 스냅샷·근거는 남긴다: "
+					+ "reportId={}, runId={}", report.getReportId(), runId);
+			return false;
+		}
+		Instant notBefore = context.getPublishNotBeforeAt();
+		if (notBefore != null && now.isBefore(notBefore)) {
+			log.info("발행 예정 시각 전이라 보류한다: reportId={}, runId={}, publishAfter={}",
+					report.getReportId(), runId, notBefore);
+			return false;
+		}
+
+		report.publish(now);
+		// 발행과 공개는 다른 사건이다. 설정이 있을 때만 공개까지 간다.
+		autoRelease(report, now);
+		return true;
 	}
 
 	/**
@@ -155,6 +201,28 @@ public class ReportRunFinalizer {
 			return false;
 		}
 
+		/*
+		 * 🔴 문제가 다 모였는지 본다.
+		 *
+		 * 문제 단위 dispatch 는 item 을 시차를 두고 붙인다. 위의 "전부 종료" 만 보면 문제 1개가
+		 * 끝난 순간에도 참이 되어 개념 카드 1장짜리 리포트가 발행된다. 나머지 두 문제는 그 뒤에
+		 * 도착하는데, 그때는 run 이 이미 닫혀 있어 반영되지 않는다.
+		 *
+		 * 세션 맥락을 못 읽으면 확정하지 않는다 — 세션이 사라졌거나 조회가 실패한 것이라
+		 * 모르는 채로 발행하는 것보다 다음 폴링에 다시 보는 편이 낫다.
+		 */
+		UUID sessionId = items.get(0).getSessionId();
+		FinalizeContext context = dispatchRepository.findFinalizeContext(sessionId).orElse(null);
+		if (context == null) {
+			log.warn("세션 맥락을 읽지 못해 확정을 미룬다: runId={}, sessionId={}", generationRunId, sessionId);
+			return false;
+		}
+		if (items.size() < context.getProblemCount()) {
+			log.debug("아직 도착하지 않은 문제가 있어 확정을 미룬다: runId={}, {}/{}",
+					generationRunId, items.size(), context.getProblemCount());
+			return false;
+		}
+
 		Report report = reportRepository.findById(run.getReportId()).orElse(null);
 		if (report == null) {
 			// 리포트 행이 사라졌다면 스냅샷을 붙일 곳이 없다. 실행만 실패로 닫는다 —
@@ -188,16 +256,16 @@ public class ReportRunFinalizer {
 		runRepository.save(run);
 
 		// 발행은 마지막이다. 스냅샷과 근거가 다 들어간 뒤에야 화면이 그릴 것이 생긴다.
-		report.publish(now);
-		// 발행과 공개는 다른 사건이다. 설정이 있을 때만 공개까지 간다.
-		autoRelease(report, now);
+		// 다만 여기서 못 하는 경우가 둘 있다 — 무효 세션과 발행 시각 전(publishNow 참고).
+		boolean published = publishIfAllowed(report, context, generationRunId, now);
 		reportRepository.save(report);
 
 		// 개념 카드 수를 함께 남긴다. completion 은 AI 성공 여부만 보므로 FULL 인데 카드가 모자란
 		// 경우가 있고, 그때 화면과 이 로그가 어긋난다 — 한 줄에서 바로 보이게 둔다.
-		log.info("리포트 발행: reportId={}, runId={}, 문제 {}건 중 {}건 성공, 개념 카드 {}건, completion={}",
+		log.info("리포트 확정: reportId={}, runId={}, 문제 {}건 중 {}건 성공, 개념 카드 {}건, "
+						+ "completion={}, 발행={}",
 				report.getReportId(), generationRunId, items.size(), succeeded, evidenceWritten,
-				full ? "FULL" : "PARTIAL");
+				full ? "FULL" : "PARTIAL", published ? "함" : "보류");
 		return true;
 	}
 

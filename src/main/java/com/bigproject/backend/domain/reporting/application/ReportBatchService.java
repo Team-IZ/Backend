@@ -11,6 +11,7 @@ import com.bigproject.backend.domain.reporting.domain.ReportLifecycleStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportType;
 import com.bigproject.backend.domain.reporting.infrastructure.JdbcReportPayloadRepository;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository;
+import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.ProblemDueTarget;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.ProblemTarget;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.ReportTarget;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportGenerationItemRepository;
@@ -31,11 +32,14 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 리포트 생성 배치.
@@ -181,6 +185,153 @@ public class ReportBatchService {
 			}
 		}
 		return dispatched;
+	}
+
+	/**
+	 * 끝난 <b>문제</b>를 찾아 AI에 요청한다. 리포트 생성의 기본 경로다.
+	 *
+	 * <h2>세션이 끝나기를 기다리지 않는다</h2>
+	 *
+	 * <p>학생이 문제 1을 끝내고 문제 2로 넘어가는 동안 문제 1을 만들어 둔다. 마지막 문제가 끝나면
+	 * 앞의 것들이 이미 준비돼 있어 <b>학생이 기다리는 시간이 마지막 문제 하나로 줄어든다.</b>
+	 *
+	 * <h2>run은 학생당 하나다</h2>
+	 *
+	 * <p>문제마다 요청을 보내지만 <b>실행(run)은 재사용</b>한다 — 첫 문제에서 만들고 이후 문제는
+	 * 같은 run에 item만 붙인다. 문제마다 run을 만들면 스냅샷이 문제 수만큼 생긴다
+	 * ({@code uq_report_snapshot_generation_run_id}).
+	 *
+	 * <p>그래서 <b>같은 세션의 문제들을 묶어서</b> 처리한다. 한 번에 여러 문제가 걸려 나올 수 있는데
+	 * (예: 배치가 잠깐 멈춘 사이 2·3번이 다 끝남) 그때도 run은 하나다.
+	 *
+	 * <h2>실패는 세션 단위로 삼킨다</h2>
+	 *
+	 * <p>한 학생의 요청이 실패해도 같은 회차의 나머지는 나가야 한다. 실패한 문제는 item이 없거나
+	 * {@code FAILED}로 남고, 대상 조회가 <b>item이 없는 문제</b>를 다시 집으므로 다음 주기에 재시도된다.
+	 *
+	 * @return 요청을 보낸 문제 수
+	 */
+	public int dispatchDueProblems() {
+		List<ProblemDueTarget> targets = dispatchRepository.findDueProblems(maxAttempts);
+		if (targets.isEmpty()) {
+			return 0;
+		}
+
+		AnalysisModel model = modelRepository.findActiveByModelCode(modelCode).orElse(null);
+		if (model == null) {
+			// 특정 대상의 문제가 아니라 기관 전체가 못 도는 설정 문제다. run 행을 만들어 두면
+			// 설정을 고쳐도 재시도 상한만 깎이므로, 아무것도 남기지 않고 물러난다.
+			log.error("ai.report.model-code 가 가리키는 ACTIVE 모델이 ai_model 에 없다. "
+					+ "리포트 생성을 건너뛴다: modelCode={}, 대상={}건", modelCode, targets.size());
+			return 0;
+		}
+
+		// 같은 세션의 문제를 한 묶음으로 — run 을 한 번만 확보하려고.
+		Map<UUID, List<ProblemDueTarget>> bySession = targets.stream()
+				.collect(Collectors.groupingBy(ProblemDueTarget::getSessionId, LinkedHashMap::new,
+						Collectors.toList()));
+
+		int dispatched = 0;
+		for (List<ProblemDueTarget> group : bySession.values()) {
+			try {
+				dispatched += dispatchProblems(group, model, Instant.now());
+			} catch (DataIntegrityViolationException exception) {
+				// 다른 인스턴스가 같은 대상을 먼저 집었다는 뜻이라 오류가 아니다.
+				log.debug("이미 다른 실행이 접수했다: sessionId={}", group.get(0).getSessionId());
+			} catch (RuntimeException exception) {
+				log.error("리포트 생성 요청 실패: sessionId={}, 문제 {}건",
+						group.get(0).getSessionId(), group.size(), exception);
+			}
+		}
+		return dispatched;
+	}
+
+	/**
+	 * 한 세션에서 이번에 끝난 문제들을 요청한다.
+	 *
+	 * <p>순서는 세션 단위 경로와 같다 — <b>조립 → run·item 저장 → AI 호출</b>. 조립하다 실패하면
+	 * run 행을 남기지 않는 편이 맞고(재시도 상한만 깎는다), item 행은 AI 호출보다 먼저 있어야 한다
+	 * (202를 받았는데 행이 없는 순간이 생기면 jobId를 잃는다).
+	 */
+	private int dispatchProblems(List<ProblemDueTarget> problems, AnalysisModel model, Instant now) {
+		ProblemDueTarget any = problems.get(0);
+
+		List<PreparedRequest> prepared = problems.stream()
+				.map(problem -> prepare(any, new SingleProblem(problem.getProblemId(), problem.getProblemNo()), model))
+				.toList();
+
+		Report report = resolveReport(any);
+		ReportGenerationRun run = resolveRun(report, prepared, now);
+		String scoreRunId = run.getGenerationRunId().toString();
+
+		for (PreparedRequest request : prepared) {
+			sendOne(request, run, any.getSessionId(), scoreRunId, now);
+		}
+
+		run.markRunning(now);
+		runRepository.save(run);
+
+		log.info("리포트 생성 요청(문제 단위): reportId={}, runId={}, 문제 {}건, 실행 {}회차",
+				report.getReportId(), run.getGenerationRunId(), prepared.size(), run.getExecutionNo());
+		return prepared.size();
+	}
+
+	/**
+	 * 진행 중인 실행이 있으면 재사용하고, 없으면 만든다.
+	 *
+	 * <p>🔴 <b>재사용할 때 {@code request_fingerprint}는 갱신하지 않는다.</b> 그 값은 "같은
+	 * idempotency_key 로 다른 요청이 오지 않았는가"를 보는 지문인데, 문제 단위 dispatch에서는
+	 * item이 나중에 붙는 것이 정상이라 매번 달라진다. <b>첫 묶음 기준</b>으로 남겨 둔다.
+	 */
+	private ReportGenerationRun resolveRun(Report report, List<PreparedRequest> prepared, Instant now) {
+		return runRepository
+				.findActiveByReportIdAndTriggerType(report.getReportId(), ReportGenerationTriggerType.SCHEDULED)
+				.orElseGet(() -> {
+					int executionNo = nextExecutionNo(report.getReportId());
+					return runRepository.save(ReportGenerationRun.queued(
+							report.getReportId(),
+							ReportGenerationTriggerType.SCHEDULED,
+							idempotencyKeyOf(report.getReportId(), executionNo),
+							ReportRunFinalizer.CALCULATION_VERSION,
+							executionNo,
+							fingerprintOf(prepared)
+					));
+				});
+	}
+
+	/** item 하나를 저장하고 AI에 보낸다. 세션 단위 경로와 같은 순서다. */
+	private void sendOne(PreparedRequest request, ReportGenerationRun run, UUID sessionId,
+			String scoreRunId, Instant now) {
+
+		ReportGenerationRequest body = request.body().withScoreRunId(scoreRunId);
+		String payload = ReportPayloads.toJson(objectMapper, body);
+
+		ReportGenerationItem item = itemRepository.save(ReportGenerationItem.queued(
+				run.getGenerationRunId(),
+				request.problemId(),
+				sessionId,
+				request.problemNo(),
+				payload,
+				ReportPayloads.sha256Hex(payload),
+				ReportRunFinalizer.PAYLOAD_SCHEMA_VERSION,
+				scoreRunId
+		));
+
+		requestGeneration(item, body, now);
+	}
+
+	/** {@link ProblemTarget}을 만족시키는 최소 구현. 문제 단위 조회 결과를 조립 코드에 그대로 넘긴다. */
+	private record SingleProblem(UUID problemId, Integer problemNo) implements ProblemTarget {
+
+		@Override
+		public UUID getProblemId() {
+			return problemId;
+		}
+
+		@Override
+		public Integer getProblemNo() {
+			return problemNo;
+		}
 	}
 
 	/**

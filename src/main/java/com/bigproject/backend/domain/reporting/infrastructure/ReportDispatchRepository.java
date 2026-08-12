@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.reporting.infrastructure;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRun;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.UUID;
@@ -184,6 +185,100 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 	List<ReportTarget> findDueSessions(int maxAttempts);
 
 	/**
+	 * 끝난 <b>문제</b>를 하나씩 집는다. 리포트 생성의 기본 경로다.
+	 *
+	 * <h2>왜 세션이 아니라 문제 단위인가</h2>
+	 *
+	 * <p>학생이 문제 1을 끝내고 문제 2로 넘어가는 동안 문제 1의 리포트를 만들어 두면, 마지막 문제가
+	 * 끝났을 때 앞의 것들이 이미 준비돼 있다. 회차 마감 후 3개를 몰아 만들면 그만큼 기다린다 —
+	 * AI 명세가 원래 의도한 방식이기도 하다.
+	 *
+	 * <p>{@link #findDueSessions}와 달리 <b>세션이 끝나기를 기다리지 않는다.</b> 그래서 조건이 둘
+	 * 갈린다.
+	 *
+	 * <table>
+	 *   <caption>두 조회의 차이</caption>
+	 *   <tr><th></th><th>{@code findDueSessions}</th><th>이 조회</th></tr>
+	 *   <tr><td>단위</td><td>세션</td><td><b>문제</b></td></tr>
+	 *   <tr><td>시점</td><td>회차 마감 후</td><td><b>그 문제가 끝나는 즉시</b></td></tr>
+	 *   <tr><td>세션 완료</td><td>필수</td><td><b>안 봄</b> — 아직 진행 중이다</td></tr>
+	 *   <tr><td>마감 판정</td><td>{@code ended_at &lt; due_at}</td><td><b>{@code started_at &lt; due_at}</b></td></tr>
+	 * </table>
+	 *
+	 * <h2>🔴 마감 기준이 "끝냈나"에서 "시작했나"로 바뀐다</h2>
+	 *
+	 * <p>{@code s.started_at < r.assessment_due_at} — <b>마감 전에 시작만 했으면</b> 그 세션의 모든
+	 * 문제가 리포트를 받는다. 마감에 걸쳐 푸는 학생이 마지막 문제만 리포트를 못 받는 상황을 막는다
+	 * (2026-08-11 결정).
+	 *
+	 * <h2>유효성은 여기서 다 보지 않는다</h2>
+	 *
+	 * <p>세션이 끝나기 전에 만들기 때문에 <b>세션 완료·종료 사유·최종 유효성을 이 시점엔 알 수 없다.</b>
+	 * 이미 무효로 확정된 것({@code CONFIRMED_INVALID})만 거르고, 나머지 판정은
+	 * {@code ReportRunFinalizer}가 <b>발행 직전에</b> 한다.
+	 *
+	 * <p>그래서 <b>무효로 끝난 세션의 리포트가 만들어질 수 있다</b> — 그 LLM 비용은 회수되지 않는다.
+	 * 대신 발행되지 않고, {@code report_generation_run} 행이 남아 "왜 이 학생만 리포트가 없나"의
+	 * 근거가 된다(2026-08-11 ⓐ안).
+	 *
+	 * <h2>🔴 인덱스 전제</h2>
+	 *
+	 * <p>{@code report_generation_run(report_id)} 인덱스가 있어야 한다. 없으면 판정마다
+	 * 그 테이블을 통째로 훑어 <b>31초</b>가 걸린다(시드 기준 실측). 인덱스가 있으면 <b>527ms</b>다.
+	 * FK만으로는 인덱스가 생기지 않고, {@code uq_report_generation_run_active}는 부분 인덱스라
+	 * 종료된 run 조회에 쓰이지 않는다.
+	 *
+	 * @return 문제 1건이 행 1개. 같은 세션의 문제 여러 개가 함께 나올 수 있다
+	 */
+	@Query(value = """
+			SELECT DISTINCT
+			       s.session_id           AS sessionId,
+			       ma.attempt_id          AS attemptId,
+			       ma.user_id             AS userId,
+			       ma.org_id              AS orgId,
+			       ma.cohort_id           AS cohortId,
+			       ma.project_id          AS projectId,
+			       ma.assessment_round_id AS assessmentRoundId,
+			       ma.code_analysis_id    AS codeAnalysisId,
+			       r.report_publish_not_before_at AS reportPublishNotBeforeAt,
+			       ps.problem_id          AS problemId,
+			       ap.problem_no          AS problemNo
+			  FROM problem_stage ps
+			  JOIN assessment_session s
+			    ON s.session_id = ps.session_id
+			  JOIN measurement_attempt ma
+			    ON ma.attempt_id = s.attempt_id
+			  JOIN project_assessment_round r
+			    ON r.assessment_round_id = ma.assessment_round_id
+			   AND r.deleted_at IS NULL
+			  JOIN assessment_problem ap
+			    ON ap.problem_id = ps.problem_id
+			 WHERE s.started_at IS NOT NULL
+			   AND r.assessment_due_at IS NOT NULL
+			   AND s.started_at < r.assessment_due_at
+			   AND ma.validity_review_status <> 'CONFIRMED_INVALID'
+			   AND NOT EXISTS (
+			       SELECT 1 FROM problem_stage ps2
+			        WHERE ps2.session_id = ps.session_id
+			          AND ps2.problem_id = ps.problem_id
+			          AND ps2.status IN ('PREPARED', 'IN_PROGRESS')
+			   )
+			   AND NOT EXISTS (
+			       SELECT 1 FROM report_generation_item it
+			         JOIN report_generation_run run ON run.generation_run_id = it.generation_run_id
+			         JOIN report rp                 ON rp.report_id = run.report_id
+			        WHERE it.problem_id          = ps.problem_id
+			          AND rp.user_id             = ma.user_id
+			          AND rp.assessment_round_id = ma.assessment_round_id
+			          AND rp.class_id IS NULL
+			          AND run.status <> 'FAILED'
+			   )
+			   AND\s""" + UNDER_ATTEMPT_LIMIT + """
+			 ORDER BY ma.user_id, ap.problem_no
+			""", nativeQuery = true)
+	List<ProblemDueTarget> findDueProblems(int maxAttempts);
+
+	/**
 	 * 세션 1건의 맥락. <b>운영자 수동 재생성</b>이 쓴다.
 	 *
 	 * <h2>왜 별도 질의인가</h2>
@@ -336,6 +431,130 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 		UUID getCodeAnalysisId();
 
 		java.time.Instant getReportPublishNotBeforeAt();
+	}
+
+	/**
+	 * 확정 직전에 필요한 세 가지를 한 번에 읽는다.
+	 *
+	 * <h2>왜 확정 시점에 다시 보나</h2>
+	 *
+	 * <p>문제 단위 dispatch는 <b>세션이 끝나기 전에</b> 요청을 보낸다({@link #findDueProblems}).
+	 * 그래서 세션 완료·종료 사유·최종 유효성을 그 시점엔 알 수 없다. 그 판정을 여기로 미룬다.
+	 *
+	 * <ul>
+	 *   <li>{@code eligible} — 세션·응시가 정상 완료됐고 무효가 아닌가.
+	 *       거짓이면 <b>스냅샷은 만들되 발행하지 않는다</b></li>
+	 *   <li>{@code publishNotBeforeAt} — 이 시각 전에는 발행하지 않는다.
+	 *       종전에는 대상 조회가 "그때까지 만들지 않음"으로 지켰는데, 즉시 생성으로 바뀌면서
+	 *       <b>지킬 곳이 여기밖에 없다</b></li>
+	 *   <li>{@code problemCount} — 이 세션이 다룬 문제 수.
+	 *       🔴 <b>item이 이 수만큼 모여야 확정한다</b> — 안 그러면 문제 1개만 끝났을 때
+	 *       "item 전부 종료"로 읽혀 <b>개념 카드 1장짜리 리포트가 발행된다</b></li>
+	 * </ul>
+	 *
+	 * <p>{@code problemCount}는 {@link #findSessionProblems}와 같은 기준으로 센다
+	 * ({@code problem_stage}의 서로 다른 {@code problem_id} 수).
+	 */
+	@Query(value = """
+			SELECT (s.status = 'COMPLETED'
+			        AND ma.status = 'COMPLETED'
+			        AND ma.validity_review_status <> 'CONFIRMED_INVALID'
+			        AND (s.end_reason_code IS NULL OR s.end_reason_code NOT IN (
+			                'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
+			                'REVIEW_DUE_AT_EXPIRED', 'DATA_INTEGRITY_INVALID',
+			                'ADMIN_INVALIDATED', 'TECHNICAL_FAILURE'))
+			       )                                                            AS eligible,
+			       COALESCE(r.report_publish_not_before_at, r.assessment_due_at) AS publishNotBeforeAt,
+			       (SELECT count(DISTINCT ps.problem_id)
+			          FROM problem_stage ps WHERE ps.session_id = s.session_id)  AS problemCount
+			  FROM assessment_session s
+			  JOIN measurement_attempt ma
+			    ON ma.attempt_id = s.attempt_id
+			  JOIN project_assessment_round r
+			    ON r.assessment_round_id = ma.assessment_round_id
+			   AND r.deleted_at IS NULL
+			 WHERE s.session_id = :sessionId
+			""", nativeQuery = true)
+	java.util.Optional<FinalizeContext> findFinalizeContext(@Param("sessionId") UUID sessionId);
+
+	/**
+	 * 확정은 끝났는데 <b>발행 예정 시각 때문에 보류</b>된 리포트. 발행 배치가 쓴다.
+	 *
+	 * <p>{@code ReportRunFinalizer}가 스냅샷·근거까지 만들어 두고 {@code published_at}만 비워 둔
+	 * 상태다. 시각이 지나면 이 조회가 집어 발행한다.
+	 *
+	 * <h2>조건 하나하나가 다른 것을 막는다</h2>
+	 *
+	 * <ul>
+	 *   <li>{@code published_at IS NULL} — 이미 발행된 것을 다시 건드리지 않는다</li>
+	 *   <li>{@code is_active} 스냅샷이 있다 — <b>본문이 없는 리포트를 발행하지 않는다.</b>
+	 *       화면 뷰가 스냅샷을 INNER JOIN하므로 없으면 발행해도 빈 화면이다</li>
+	 *   <li>{@code lifecycle_status <> 'SUPERSEDED'} — 재생성으로 대체된 리포트는 대상이 아니다</li>
+	 *   <li>{@code class_id IS NULL} — 교육생 리포트만. 기수·반 리포트는 발행 경로가 다르다</li>
+	 * </ul>
+	 *
+	 * <p>🔴 <b>세션 유효성은 여기서 보지 않는다.</b> 무효 세션은 {@code ReportRunFinalizer}가 이미
+	 * 걸렀고, 그때 스냅샷은 만들어 두므로 이 조회에 걸린다. 그러나 무효인 리포트를 나중에
+	 * 발행하면 안 되므로 <b>발행 배치가 다시 확인한다</b>({@link #findFinalizeContext}).
+	 */
+	@Query(value = """
+			SELECT rp.report_id AS reportId
+			  FROM report rp
+			  JOIN report_snapshot rs
+			    ON rs.report_id = rp.report_id
+			   AND rs.is_active
+			  JOIN project_assessment_round r
+			    ON r.assessment_round_id = rp.assessment_round_id
+			   AND r.deleted_at IS NULL
+			 WHERE rp.published_at IS NULL
+			   AND rp.class_id IS NULL
+			   AND rp.lifecycle_status <> 'SUPERSEDED'
+			   AND now() >= COALESCE(r.report_publish_not_before_at, r.assessment_due_at)
+			 ORDER BY rp.report_id
+			""", nativeQuery = true)
+	List<UUID> findReportsAwaitingPublish();
+
+	/**
+	 * 이 리포트를 만든 세션. 발행 배치가 유효성을 다시 볼 때 쓴다.
+	 *
+	 * <p>{@code report}에는 세션 축이 없어 item을 거쳐 찾는다. 한 리포트의 item은 모두 같은
+	 * 세션이므로 아무거나 하나면 된다.
+	 */
+	@Query(value = """
+			SELECT it.session_id
+			  FROM report_generation_run run
+			  JOIN report_generation_item it ON it.generation_run_id = run.generation_run_id
+			 WHERE run.report_id = :reportId
+			 ORDER BY it.created_at
+			 LIMIT 1
+			""", nativeQuery = true)
+	java.util.Optional<UUID> findSessionIdByReport(@Param("reportId") UUID reportId);
+
+	/** 확정 판정에 쓰는 맥락. {@link #findFinalizeContext} 참고. */
+	interface FinalizeContext {
+
+		/** 세션·응시가 정상 완료됐고 무효가 아닌가. 거짓이면 발행하지 않는다. */
+		boolean getEligible();
+
+		/** 이 시각 전에는 발행하지 않는다. 회차에 마감이 없으면 NULL이다. */
+		java.time.Instant getPublishNotBeforeAt();
+
+		/** 이 세션이 다룬 문제 수. item이 이만큼 모여야 확정한다. */
+		int getProblemCount();
+	}
+
+	/**
+	 * 끝난 문제 1건. {@link ReportTarget}(세션 맥락)에 문제 축을 더한 것이다.
+	 *
+	 * <p>{@code ReportTarget}을 상속하는 이유는 {@code dispatchOne}이 그 타입을 받기 때문이다 —
+	 * 세션 단위 경로(배치 안전망·운영자 재생성)와 조립 코드를 그대로 공유한다.
+	 */
+	interface ProblemDueTarget extends ReportTarget {
+
+		UUID getProblemId();
+
+		/** 1~3. 범위 밖이거나 미지정이면 NULL이다. */
+		Integer getProblemNo();
 	}
 
 	/** 세션이 다룬 문제 하나. */

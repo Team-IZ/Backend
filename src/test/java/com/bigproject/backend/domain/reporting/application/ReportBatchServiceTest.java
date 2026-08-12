@@ -10,6 +10,7 @@ import com.bigproject.backend.domain.reporting.domain.ReportGenerationRunStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationTriggerType;
 import com.bigproject.backend.domain.reporting.infrastructure.JdbcReportPayloadRepository;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository;
+import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.ProblemDueTarget;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.ProblemTarget;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.ReportTarget;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportGenerationItemRepository;
@@ -35,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -50,6 +52,15 @@ import static org.mockito.Mockito.when;
  * 시드를 올려 쿼리를 직접 실행해야 한다.
  */
 class ReportBatchServiceTest {
+
+	/** 문제 단위 조회 결과가 공유하는 세션 축. 한 세션의 문제들은 이 값이 같아야 한다. */
+	private static final UUID ATTEMPT = UUID.randomUUID();
+	private static final UUID USER = UUID.randomUUID();
+	private static final UUID ORG = UUID.randomUUID();
+	private static final UUID COHORT = UUID.randomUUID();
+	private static final UUID PROJECT = UUID.randomUUID();
+	private static final UUID ROUND = UUID.randomUUID();
+	private static final UUID ANALYSIS = UUID.randomUUID();
 
 	private static final String MODEL_CODE = "minimaxai/minimax-m3";
 	private static final String PROVIDER_MODEL_CODE = "minimax-m3";
@@ -300,6 +311,85 @@ class ReportBatchServiceTest {
 		verify(aiClient).requestGeneration(any(), any());
 	}
 
+	// --------------------------------------------------------- 문제 단위 dispatch
+
+	/**
+	 * 🔴 같은 세션의 문제 여러 개가 한 번에 걸려도 <b>실행(run)은 하나</b>여야 한다.
+	 *
+	 * <p>문제마다 run을 만들면 {@code uq_report_snapshot_generation_run_id}(run 1건당 스냅샷 1건)
+	 * 때문에 스냅샷이 문제 수만큼 생기고, 리포트는 회차당 1건이라 합치는 단계가 새로 필요해진다.
+	 */
+	@Test
+	void keepsOneRunPerStudentEvenWhenSeveralProblemsFinishTogether() {
+		catalogHasTheConfiguredModel();
+		UUID sessionId = UUID.randomUUID();
+		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS))
+				.thenReturn(List.of(dueProblem(sessionId, 1), dueProblem(sessionId, 2)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
+		when(runRepository.findActiveByReportIdAndTriggerType(any(), any())).thenReturn(Optional.empty());
+		when(aiClient.requestGeneration(any(), any()))
+				.thenAnswer(call -> new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		assertThat(service.dispatchDueProblems()).isEqualTo(2);
+
+		ArgumentCaptor<ReportGenerationRun> runs = ArgumentCaptor.forClass(ReportGenerationRun.class);
+		verify(runRepository, times(2)).save(runs.capture());   // QUEUED 저장 + RUNNING 전이
+		assertThat(runs.getAllValues())
+				.extracting(ReportGenerationRun::getGenerationRunId)
+				.containsOnly(runs.getAllValues().get(0).getGenerationRunId());
+		verify(aiClient, times(2)).requestGeneration(any(), any());
+	}
+
+	/**
+	 * 🔴 나중에 끝난 문제는 <b>기존 실행에 붙는다</b>. 새 run을 만들면 안 된다.
+	 *
+	 * <p>문제 1이 이미 나가 있고 문제 2가 이제 끝난 상황이다. {@code uq_report_generation_run_active}가
+	 * (report_id, trigger_type)에 걸려 있어 새로 만들면 DB도 거부한다.
+	 */
+	@Test
+	void attachesLaterProblemsToTheRunThatIsAlreadyRunning() {
+		catalogHasTheConfiguredModel();
+		UUID sessionId = UUID.randomUUID();
+		Report report = withId(Report.forTrainee(ORG, COHORT, USER, ROUND), "reportId");
+		ReportGenerationRun existing = withId(ReportGenerationRun.queued(
+				report.getReportId(), ReportGenerationTriggerType.SCHEDULED,
+				"key", 1, 1, "f".repeat(64)), "generationRunId");
+
+		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS))
+				.thenReturn(List.of(dueProblem(sessionId, 2)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of(report));
+		when(runRepository.findActiveByReportIdAndTriggerType(
+				report.getReportId(), ReportGenerationTriggerType.SCHEDULED))
+				.thenReturn(Optional.of(existing));
+		when(aiClient.requestGeneration(any(), any()))
+				.thenReturn(new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		assertThat(service.dispatchDueProblems()).isEqualTo(1);
+
+		ArgumentCaptor<ReportGenerationItem> items = ArgumentCaptor.forClass(ReportGenerationItem.class);
+		verify(itemRepository, atLeastOnce()).save(items.capture());
+		assertThat(items.getAllValues())
+				.extracting(ReportGenerationItem::getGenerationRunId)
+				.containsOnly(existing.getGenerationRunId());
+	}
+
+	/** 서로 다른 세션은 각자 run을 갖는다. 묶는 기준이 세션이라는 것을 못 박는다. */
+	@Test
+	void givesEachSessionItsOwnRun() {
+		catalogHasTheConfiguredModel();
+		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS))
+				.thenReturn(List.of(dueProblem(UUID.randomUUID(), 1), dueProblem(UUID.randomUUID(), 1)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
+		when(runRepository.findActiveByReportIdAndTriggerType(any(), any())).thenReturn(Optional.empty());
+		when(aiClient.requestGeneration(any(), any()))
+				.thenAnswer(call -> new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
+
+		assertThat(service.dispatchDueProblems()).isEqualTo(2);
+
+		// 세션 2개 × (QUEUED 저장 + RUNNING 전이)
+		verify(runRepository, times(4)).save(any());
+	}
+
 	// ------------------------------------------------------------- 운영자 재생성
 
 	/**
@@ -515,6 +605,70 @@ class ReportBatchServiceTest {
 		@Override
 		public UUID getCodeAnalysisId() {
 			return codeAnalysisId;
+		}
+
+		@Override
+		public Instant getReportPublishNotBeforeAt() {
+			return null;
+		}
+	}
+
+	private static ProblemDueTarget dueProblem(UUID sessionId, int problemNo) {
+		return new TestProblemDueTarget(sessionId, UUID.randomUUID(), problemNo);
+	}
+
+	/** 문제 단위 조회 결과. 세션 축은 한 세션 안에서 같아야 해서 sessionId만 받는다. */
+	private record TestProblemDueTarget(UUID sessionId, UUID problemId, Integer problemNo)
+			implements ProblemDueTarget {
+
+		@Override
+		public UUID getSessionId() {
+			return sessionId;
+		}
+
+		@Override
+		public UUID getProblemId() {
+			return problemId;
+		}
+
+		@Override
+		public Integer getProblemNo() {
+			return problemNo;
+		}
+
+		@Override
+		public UUID getAttemptId() {
+			return ATTEMPT;
+		}
+
+		@Override
+		public UUID getUserId() {
+			return USER;
+		}
+
+		@Override
+		public UUID getOrgId() {
+			return ORG;
+		}
+
+		@Override
+		public UUID getCohortId() {
+			return COHORT;
+		}
+
+		@Override
+		public UUID getProjectId() {
+			return PROJECT;
+		}
+
+		@Override
+		public UUID getAssessmentRoundId() {
+			return ROUND;
+		}
+
+		@Override
+		public UUID getCodeAnalysisId() {
+			return ANALYSIS;
 		}
 
 		@Override
