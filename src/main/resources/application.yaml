@@ -14,14 +14,6 @@ server:
       # 여기서 명시적으로 꺼 두면 어느 환경이든 클라이언트 IP를 뽑는 곳이 한 군데뿐이다.
       remote-ip-header: x-client-ip-handled-by-application
       protocol-header: x-forwarded-proto
-  error:
-    # 오류 응답에 내부 정보를 싣지 않는다. 켜 두면 스택트레이스·실행 SQL·실패한 DB 행이 그대로 나가는데,
-    # 실제로 초대 취소 실패 500 응답에 사용자 이메일과 초대 토큰 해시까지 노출된 적이 있다.
-    # 원인은 서버 로그로 확인한다.
-    include-stacktrace: never
-    include-message: never
-    include-binding-errors: never
-    include-exception: false
 
 spring:
   config:
@@ -67,6 +59,12 @@ spring:
           batch_size: 50
         order_inserts: true
         order_updates: true
+  web:
+    error:
+      include-stacktrace: never
+      include-message: never
+      include-binding-errors: never
+      include-exception: false
 
 web:
   client-ip:
@@ -206,6 +204,7 @@ ai:
 
   # 교안 분석 연동. develop 머지 때 파일 아래쪽에 `ai:` 블록이 하나 더 생겨
   # YAML 중복 키로 기동이 통째로 실패했다(snakeyaml: found duplicate key ai).
+  # 값과 환경변수 이름은 그대로 두고 이 블록 안으로 옮기기만 했다.
   #
   # [2026-08-10] 공통 설정과 어긋나던 둘을 맞췄다. 종전에는 AI_CURRICULUM_BASE_URL ·
   # AI_INTERNAL_API_KEY 라는 이름을 따로 썼는데, 같은 AI 서버의 같은 공유 비밀을 가리키면서
@@ -273,6 +272,24 @@ password-reset:
   request-cooldown: ${PASSWORD_RESET_REQUEST_COOLDOWN:PT1M}
 
 app:
+  report:
+    # 리포트를 발행하면서 교육생 공개까지 자동으로 할지.
+    #
+    # 🔴 기본은 꺼 둔다(actor-user-id 가 비면 동작하지 않는다). 켜면 매니저의 판단 없이 리포트가
+    # 학생에게 나가고, AI가 일부 실패한 PARTIAL 리포트(개념 카드가 빠진 것)도 그대로 나간다.
+    # 켤지는 운영이 정할 일이라 기본값으로 정하지 않는다.
+    #
+    # actor-user-id 가 필요한 이유: ck_report_trainee_release_status_2 가 RELEASED 에
+    # trainee_released_by NOT NULL 을 요구하고 그 컬럼이 app_user FK 다. 배치에는 "누가
+    # 공개했는가"에 넣을 사용자가 없어서 밖에서 받아야 한다.
+    #
+    # 운영에서는 자동화 전용 시스템 계정을 가리켜야 한다 — 사람 계정을 넣으면 감사 기록이
+    # 그 사람을 지목한다. 로컬 확인용으로는 아무 계정 UUID 나 넣어도 동작한다.
+    auto-release:
+      actor-user-id: ${REPORT_AUTO_RELEASE_ACTOR:}
+      # SUMMARY 는 문답 원문을 닫는다. PRIVATE 은 Report.release 가 거부한다(비공개는 withhold).
+      scope: ${REPORT_AUTO_RELEASE_SCOPE:FULL}
+
   submission:
     # ZIP 제출물 저장 위치. 지금은 로컬 파일시스템이며 경로는 <root>/<orgId>/<teamId>/<submissionId>.zip 이다.
     # 인스턴스가 여러 대가 되거나 분석 배치가 별도 프로세스로 분리되면 이 경로로는 파일을 찾을 수 없으므로
@@ -282,3 +299,5 @@ app:
     # submission_artifact.applied_max_file_bytes 에 그대로 기록한다. 정책화가 필요해지면
     # organization_policy.max_submission_file_bytes 로 승격한다.
     max-zip-bytes: ${SUBMISSION_MAX_ZIP_BYTES:52428800}
+
+
