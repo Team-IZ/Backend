@@ -75,14 +75,31 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 			LEFT JOIN app_user actor ON actor.user_id = r.inactivated_by
 			""";
 
+	/**
+	 * 위험·우수 지표는 매니저·회차 단위 집계라 명단 본문에서만 붙인다. 집계 없이 세기만 하는
+	 * COUNT 질의({@link #ROSTER_FROM})에 함께 두면 쓰지도 않을 바인딩 파라미터 두 개를 요구한다.
+	 *
+	 * <p>초대 대기 행은 응시 이력이 없어 조인 결과가 모두 NULL이다.
+	 */
+	private static final String ROSTER_MANAGER_METRICS_JOIN = """
+			LEFT JOIN manager_trainee_roster_view mv
+			  ON mv.user_id = r.user_id AND mv.manager_user_id = ?::uuid
+			 AND mv.assessment_round_id = ?::uuid
+			""";
+
 	private static final String ROSTER_SELECT = ROSTER_CTE + """
 			SELECT r.user_id AS trainee_id, r.name, r.email, r.account_status,
 			       c.class_id AS classroom_id, c.name AS class_name,
 			       r.joined_at, r.left_at,
 			       r.inactivated_reason_code, r.inactivated_reason, r.inactivated_at,
 			       r.inactivated_by AS inactivated_by_id, actor.name AS inactivated_by_name,
-			       r.pending_invitation_token_id
-			""" + ROSTER_FROM;
+			       r.pending_invitation_token_id,
+			       mv.assessment_round_id, mv.attempt_id, mv.row_result_status,
+			       mv.concept_result_items::text AS concept_result_items,
+			       mv.low_stage_concept_count, mv.excellent_occurrence_count,
+			       mv.current_round_matched_risk_type_codes::text AS matched_risk_type_codes,
+			       mv.row_aggregation_status
+			""" + ROSTER_FROM + ROSTER_MANAGER_METRICS_JOIN;
 
 	@Override
 	public Optional<CohortScope> findCohortScope(UUID cohortId) {
@@ -122,7 +139,10 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 						+ where,
 				Long.class, args.toArray());
 
-		List<Object> pageArgs = new ArrayList<>(args);
+		List<Object> pageArgs = new ArrayList<>();
+		pageArgs.add(criteria.managerId());
+		pageArgs.add(criteria.assessmentRoundId());
+		pageArgs.addAll(args);
 		pageArgs.add(pageable.getPageSize());
 		pageArgs.add(pageable.getOffset());
 
@@ -165,7 +185,8 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 	@Override
 	public Optional<RosterRow> findTrainee(UUID traineeId, UUID cohortId, UUID orgId) {
 		String sql = ROSTER_SELECT + " WHERE r.user_id = ? AND r.cohort_id = ? AND r.org_id = ?";
-		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> mapRow(rs), traineeId, cohortId, orgId)
+		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> mapRow(rs),
+				null, null, traineeId, cohortId, orgId)
 				.stream().findFirst();
 	}
 
@@ -222,6 +243,12 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 	}
 
 	private String orderBy(TraineeRosterSort sort) {
+		if (sort == TraineeRosterSort.RISK) {
+			return " ORDER BY COALESCE(mv.risk_sort_key, -1) DESC, r.name ASC, r.email ASC";
+		}
+		if (sort == TraineeRosterSort.EXCELLENCE) {
+			return " ORDER BY COALESCE(mv.excellent_occurrence_count, -1) DESC, r.name ASC, r.email ASC";
+		}
 		if (sort == TraineeRosterSort.RECENT_ENROLLED) {
 			return " ORDER BY r.sort_at DESC, r.name ASC, r.email ASC";
 		}
@@ -243,8 +270,21 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				toOffsetDateTime(rs.getTimestamp("inactivated_at")),
 				rs.getObject("inactivated_by_id", UUID.class),
 				rs.getString("inactivated_by_name"),
-				rs.getObject("pending_invitation_token_id", UUID.class)
+				rs.getObject("pending_invitation_token_id", UUID.class),
+				rs.getObject("assessment_round_id", UUID.class),
+				rs.getObject("attempt_id", UUID.class),
+				rs.getString("row_result_status"),
+				rs.getString("concept_result_items"),
+				integer(rs, "low_stage_concept_count"),
+				integer(rs, "excellent_occurrence_count"),
+				rs.getString("matched_risk_type_codes"),
+				rs.getString("row_aggregation_status")
 		);
+	}
+
+	private Integer integer(ResultSet rs, String column) throws SQLException {
+		int value = rs.getInt(column);
+		return rs.wasNull() ? null : value;
 	}
 
 	private OffsetDateTime toOffsetDateTime(Timestamp timestamp) {

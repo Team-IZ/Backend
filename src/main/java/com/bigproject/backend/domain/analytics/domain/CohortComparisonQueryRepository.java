@@ -33,6 +33,15 @@ public interface CohortComparisonQueryRepository {
 	/** 발행된 수업 진단 리포트의 활성 스냅샷이 있는지 확인한다. */
 	boolean hasPublishedDiagnosis(UUID cohortId, UUID organizationId);
 
+	/**
+	 * 비교에 쓰는 스냅샷의 완전성을 기수별로 돌려준다.
+	 *
+	 * PARTIAL은 리포트 생성 실패가 아니라 미응시·무효·중단으로 모수에서 빠진 응시 건이
+	 * 있다는 뜻이다. 그래서 집계에서 빼지 않고 화면이 구분해 표시할 수 있게 값만 올린다.
+	 * 스냅샷이 없는 기수는 행 자체가 없다.
+	 */
+	List<SnapshotCompletionRow> findSnapshotCompletion(UUID organizationId, List<UUID> cohortIds);
+
 	/** 두 기수의 개념별 도달 단계 합계·인원을 한 번의 질의로 집계한다. */
 	List<ConceptLevelRow> aggregateConceptLevels(UUID organizationId, List<UUID> cohortIds);
 
@@ -43,6 +52,15 @@ public interface CohortComparisonQueryRepository {
 	}
 
 	record BaselineCandidateRow(UUID cohortId, String cohortName, boolean comparable) {
+	}
+
+	/**
+	 * 한 기수의 활성 진단 스냅샷 완전성.
+	 *
+	 * sampleCount는 채점된 응시 건수, missingCount는 미응시·무효·중단으로 빠진 응시 건수다.
+	 * 둘 다 교육생 수가 아니라 <b>응시 건수</b> 단위다.
+	 */
+	record SnapshotCompletionRow(UUID cohortId, String completionStatus, long sampleCount, long missingCount) {
 	}
 
 	/**

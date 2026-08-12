@@ -44,7 +44,13 @@ out/
 ### Claude Code local settings ###
 .claude/settings.local.json
 
-### Frontend API Connection test ###
-vite-project
+### Submission artifacts (local storage) ###
+var/
 
 uploads/
+
+### api test
+/vite-project
+
+### Mac OS Hidden File
+.DS_Store
