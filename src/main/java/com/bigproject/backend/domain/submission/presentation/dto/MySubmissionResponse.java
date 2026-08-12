@@ -69,26 +69,51 @@ public record MySubmissionResponse(
 		String failureCode,
 
 		@JsonInclude(JsonInclude.Include.NON_NULL)
-		@Schema(description = "제출 내용. GitHub 제출에서만. ZIP 제출이면 키가 빠진다")
+		@Schema(description = "제출 내용. 미제출이면 키가 빠진다. 제출 수단에 따라 채워지는 필드가 다르다")
 		SubmissionContent content
 ) {
 
 	/**
-	 * 제출한 저장소·브랜치·커밋.
+	 * 제출한 것. <b>화면 `제출한 내용` 카드 하나를 두 수단이 함께 쓴다.</b>
 	 *
-	 * <p>ZIP 제출에서는 객체 자체가 없다 — {@code ck_submission_method_2}가 ZIP 분기의 저장소·커밋
-	 * 컬럼을 전부 NULL로 강제하므로 담을 값이 없다. 빈 객체를 보내면 화면이 "GitHub인데 주소가 비었다"로
-	 * 읽는다.
+	 * <h2>🔴 필드가 수단별로 배타적이다</h2>
+	 *
+	 * <table>
+	 *   <tr><th></th><th>GITHUB_URL</th><th>ZIP_WITH_GITLOG</th></tr>
+	 *   <tr><td>{@code repoUrl}·{@code branch}</td><td>채워진다</td><td>키가 빠진다</td></tr>
+	 *   <tr><td>{@code fileName}·{@code fileSize}</td><td>키가 빠진다</td><td>채워진다</td></tr>
+	 *   <tr><td>{@code lastCommit}</td><td colspan="2">분석 성공 후 둘 다 채워진다</td></tr>
+	 * </table>
+	 *
+	 * <p>ZIP 분기가 저장소·브랜치를 갖지 않는 것은 {@code ck_submission_method_2}가 그 컬럼들을
+	 * NULL로 강제하기 때문이다. 반대로 <b>ZIP의 커밋 정보는 제출 행이 아니라 분석 결과에서 온다</b>
+	 * ({@code code_analysis.head_commit_*}) — git log를 읽는 주체가 AI라 분석 전에는 알 수 없다.
+	 *
+	 * <p>종전에는 이 객체를 GitHub 제출에서만 내보냈다. 그래서 ZIP으로 낸 학생은 <b>자기가 무엇을
+	 * 냈는지 화면에서 볼 수 없었다</b>(20차 R4). 파일 이름과 크기는 학생이 "내가 올린 그 파일이 맞나"를
+	 * 확인하는 유일한 값이다.
 	 *
 	 * @param branch 실제로 분석된 브랜치. 분석 전에는 교육생이 적어 낸 값이고, 분석 후에는 AI가 확정한
 	 *               값이다. 교육생이 비워 냈으면 저장소 기본 브랜치가 들어간다
 	 */
 	public record SubmissionContent(
-			@Schema(description = "교육생이 입력한 원문 주소. 정규화 전 값이라 폼에 그대로 되채울 수 있다")
-			String repoUrl,
-			@Schema(description = "브랜치", example = "main") String branch,
 			@JsonInclude(JsonInclude.Include.NON_NULL)
-			@Schema(description = "분석 대상 커밋. 분석 성공 후에만 채워진다. 그 전에는 키가 빠진다") LastCommit lastCommit
+			@Schema(description = """
+					교육생이 입력한 원문 주소. 정규화 전 값이라 폼에 그대로 되채울 수 있다.
+					**GitHub 제출에서만** 채워진다""")
+			String repoUrl,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "브랜치. **GitHub 제출에서만**", example = "main") String branch,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "올린 파일 이름. **ZIP 제출에서만**", example = "team3-miniproject.zip")
+			String fileName,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "올린 파일 크기(바이트). **ZIP 제출에서만**", example = "12873421")
+			Long fileSize,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = """
+					분석 대상 커밋. 분석 성공 후에만 채워지고 그 전에는 키가 빠진다.
+					ZIP 제출도 AI가 git log를 읽어 채운다""") LastCommit lastCommit
 	) {
 	}
 

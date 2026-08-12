@@ -25,6 +25,12 @@ public interface MySubmissionQueryRepository {
 	 * @param sessionStarted 이 교육생이 세션을 시작했는가. {@code READY}와 {@code LOCKED}를 가르는 유일한 축이다
 	 * @param analysisFailureCode {@code analysis_job.failure_code}. 15종이며 사용자 문구로 옮겨 내보낸다
 	 * @param verifyClosesAt 개인 응시 창 종료({@code measurement_attempt.assessment_close_at})
+	 * @param artifactFileName ZIP 제출의 원본 파일 이름. GitHub 제출이면 null이다
+	 * @param artifactFileSize ZIP 제출의 파일 크기(바이트). GitHub 제출이면 null이다
+	 * @param analysisCommitSha 분석이 실제로 읽은 HEAD 커밋. <b>ZIP 제출의 커밋 정보는 여기에만 있다</b> —
+	 *                          {@code ck_submission_method_2}가 ZIP 분기의 {@code source_commit_*}를
+	 *                          NULL로 강제하므로 제출 행에서는 가져올 수 없고, git log를 읽는 주체가
+	 *                          AI라 분석이 끝나야 값이 생긴다
 	 */
 	record MySubmissionRow(
 			UUID assessmentRoundId,
@@ -46,9 +52,15 @@ public interface MySubmissionQueryRepository {
 			String commitMessage,
 			Instant commitCommittedAt,
 
+			String artifactFileName,
+			Long artifactFileSize,
+
 			String analysisJobStatus,
 			String analysisFailureCode,
 			Instant analyzedAt,
+			String analysisCommitSha,
+			String analysisCommitMessage,
+			Instant analysisCommitCommittedAt,
 
 			boolean sessionStarted,
 			Instant verifyClosesAt

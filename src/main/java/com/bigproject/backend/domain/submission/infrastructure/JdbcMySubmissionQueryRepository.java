@@ -59,9 +59,16 @@ public class JdbcMySubmissionQueryRepository implements MySubmissionQueryReposit
 			       repo.repo_url,
 			       repo.default_branch,
 
+			       art.original_file_name         AS artifact_file_name,
+			       art.file_size_bytes            AS artifact_file_size,
+
 			       job.status                     AS analysis_job_status,
 			       job.failure_code               AS analysis_failure_code,
 			       job.completed_at               AS analyzed_at,
+
+			       ca.head_commit_sha             AS analysis_commit_sha,
+			       ca.head_commit_message         AS analysis_commit_message,
+			       ca.head_commit_committed_at    AS analysis_commit_committed_at,
 
 			       (sess.started_at IS NOT NULL)  AS session_started,
 			       ma.assessment_close_at         AS verify_closes_at
@@ -83,6 +90,8 @@ public class JdbcMySubmissionQueryRepository implements MySubmissionQueryReposit
 			   AND s.is_current
 			  LEFT JOIN repository repo
 			    ON repo.repository_id = s.repository_id
+			  LEFT JOIN submission_artifact art
+			    ON art.submission_id = s.submission_id
 			  LEFT JOIN LATERAL (
 			       SELECT j.status, j.failure_code, j.completed_at
 			         FROM analysis_job j
@@ -90,6 +99,14 @@ public class JdbcMySubmissionQueryRepository implements MySubmissionQueryReposit
 			        ORDER BY j.execution_no DESC, j.started_at DESC, j.job_id DESC
 			        LIMIT 1
 			  ) job ON TRUE
+			  LEFT JOIN LATERAL (
+			       SELECT c.head_commit_sha, c.head_commit_message, c.head_commit_committed_at
+			         FROM code_analysis c
+			        WHERE c.source_submission_id = s.submission_id
+			          AND c.status = 'ACTIVE'
+			        ORDER BY c.created_at DESC
+			        LIMIT 1
+			  ) ca ON TRUE
 			  LEFT JOIN measurement_attempt ma
 			    ON ma.assessment_round_id = r.assessment_round_id
 			   AND ma.user_id             = pm.user_id
@@ -131,13 +148,25 @@ public class JdbcMySubmissionQueryRepository implements MySubmissionQueryReposit
 			rs.getString("source_commit_message"),
 			instant(rs, "source_commit_committed_at"),
 
+			rs.getString("artifact_file_name"),
+			longOrNull(rs, "artifact_file_size"),
+
 			rs.getString("analysis_job_status"),
 			rs.getString("analysis_failure_code"),
 			instant(rs, "analyzed_at"),
+			rs.getString("analysis_commit_sha"),
+			rs.getString("analysis_commit_message"),
+			instant(rs, "analysis_commit_committed_at"),
 
 			rs.getBoolean("session_started"),
 			instant(rs, "verify_closes_at")
 	);
+
+	/** BIGINT → Long. {@code getLong}은 NULL을 0으로 만들어 "0바이트 파일"로 보이게 한다. */
+	private static Long longOrNull(ResultSet rs, String column) throws SQLException {
+		long value = rs.getLong(column);
+		return rs.wasNull() ? null : value;
+	}
 
 	/** TIMESTAMPTZ → Instant. NULL 컬럼을 0 epoch로 만들지 않으려면 getTimestamp를 거쳐야 한다. */
 	private static Instant instant(ResultSet rs, String column) throws SQLException {
