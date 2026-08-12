@@ -8,10 +8,10 @@ import java.util.UUID;
 
 @Schema(description = "기수 스코프 소속. 팀은 회차마다 바뀌므로 여기가 아니라 current에 있다.")
 public record MembershipResponse(
-		@Schema(description = "기수 ID. 기수 미소속이면 전 필드 null") UUID cohortId,
-		@Schema(description = "기수 표시명", example = "7기") String cohortName,
-		@Schema(description = "반 ID. 반 미배정이면 null") UUID classId,
-		@Schema(description = "반 표시명", example = "A반") String className
+		@Schema(description = "기수 ID. 기수 미소속이면 전 필드 null", nullable = true) UUID cohortId,
+		@Schema(description = "기수 표시명", example = "7기", nullable = true) String cohortName,
+		@Schema(description = "반 ID. 반 미배정이면 null", nullable = true) UUID classId,
+		@Schema(description = "반 표시명", example = "A반", nullable = true) String className
 ) {
 	public static MembershipResponse from(TraineeHomeRound round) {
 		return new MembershipResponse(

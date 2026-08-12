@@ -59,7 +59,7 @@ public record ProblemActivityResponse(
 	public record Turn(
 			@Schema(description = "질문 순번. 화면의 `◆ 질문 2`") int sequenceNo,
 			String questionText,
-			@Schema(description = "이 턴 직전에 보여준 힌트. 첫 시도면 null") String hintText,
+			@Schema(description = "이 턴 직전에 보여준 힌트. 첫 시도면 null", nullable = true) String hintText,
 			String answerText,
 			Instant answeredAt,
 			@Schema(description = "강조할 구간. 질문마다 옮겨간다") Highlight highlight

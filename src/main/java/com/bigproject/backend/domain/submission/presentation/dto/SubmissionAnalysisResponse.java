@@ -19,10 +19,10 @@ public record SubmissionAnalysisResponse(
 		)
 		SubmissionAnalysisPhase phase,
 
-		@Schema(description = "분석이 시작되지 않았으면 null이다.")
+		@Schema(description = "분석이 시작되지 않았으면 null이다.", nullable = true)
 		UUID analysisJobId,
 
-		@Schema(description = "재시도 회차. 분석이 시작되지 않았으면 null이다.")
+		@Schema(description = "재시도 회차. 분석이 시작되지 않았으면 null이다.", nullable = true)
 		Integer executionNo,
 
 		Instant startedAt,
@@ -43,7 +43,7 @@ public record SubmissionAnalysisResponse(
 
 		String failureReason,
 
-		@Schema(description = "분석 성공 시 생성된 코드 분석 결과. 그 외에는 null이다.")
+		@Schema(description = "분석 성공 시 생성된 코드 분석 결과. 그 외에는 null이다.", nullable = true)
 		UUID codeAnalysisId
 ) {
 

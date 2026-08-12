@@ -30,13 +30,14 @@ public record SubmissionResponse(
 		@Schema(description = "팀·회차의 현재 제출인지 여부")
 		boolean current,
 
-		@Schema(description = "직전 제출. 첫 제출이면 null이다.")
+		@Schema(description = "직전 제출. 첫 제출이면 null이다.", nullable = true)
 		UUID supersedesSubmissionId,
 
-		@Schema(description = "GitHub 제출의 저장소 확인 실행. 제출된 URL 원문은 이 행에만 남는다. ZIP이면 null이다.")
+		@Schema(description = "GitHub 제출의 저장소 확인 실행. 제출된 URL 원문은 이 행에만 남는다. ZIP이면 null이다.",
+				nullable = true)
 		UUID repositoryVerificationId,
 
-		@Schema(description = "ZIP 제출의 아티팩트. GitHub 제출이면 null이다.")
+		@Schema(description = "ZIP 제출의 아티팩트. GitHub 제출이면 null이다.", nullable = true)
 		UUID artifactId
 ) {
 	public static SubmissionResponse of(Submission submission, UUID artifactId) {
