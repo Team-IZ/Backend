@@ -22,6 +22,11 @@ public record CohortResponse(
 				"중도 이탈자는 빠지므로 교육생 명단 조회의 전체 건수보다 작을 수 있다.", example = "208")
 		int traineeCount,
 
+		@Schema(description = "이 기수의 반 개수이며 삭제된 반은 빠진다(13차 Q1). " +
+				"화면의 `10반 250명`에서 앞 숫자다 — 이 값이 없어 기수마다 GET /cohorts/{cohortId}/classrooms를 " +
+				"한 번 더 부르던 자리다.", example = "10")
+		int classroomCount,
+
 		@Schema(description = "⚠ 아직 채워지지 않는 값 — 항상 빈 배열이다. classroom 도메인 조인이 필요해 아직 연결되지 않았다. " +
 				"담당 매니저가 필요하면 GET /cohorts/{cohortId}/classrooms를 함께 호출한다.")
 		List<Manager> managers
@@ -32,15 +37,15 @@ public record CohortResponse(
 	// managers는 classroom 도메인이 준비되기 전까지 빈 값으로 채운다.
 
 	/**
-	 * 재적 인원을 아직 세지 않은 자리에서 쓴다 — 기수를 <b>방금 만들었거나 종료한</b> 응답이며,
-	 * 그 순간의 인원은 각각 0명·직전과 동일이라 별도 집계가 의미 없다.
-	 * 목록·단건 조회처럼 실제 인원을 보여줘야 하는 곳은 {@link #from(Cohort, int)}를 쓴다.
+	 * 집계를 아직 세지 않은 자리에서 쓴다 — 기수를 <b>방금 만든</b> 응답이며,
+	 * 그 순간에는 교육생도 반도 없어 별도 집계가 의미 없다.
+	 * 목록·단건 조회처럼 실제 값을 보여줘야 하는 곳은 {@link #from(Cohort, int, int)}를 쓴다.
 	 */
 	public static CohortResponse from(Cohort cohort) {
-		return from(cohort, 0);
+		return from(cohort, 0, 0);
 	}
 
-	public static CohortResponse from(Cohort cohort, int traineeCount) {
+	public static CohortResponse from(Cohort cohort, int traineeCount, int classroomCount) {
 		return new CohortResponse(
 				cohort.getCohortId(),
 				cohort.getOrgId(),
@@ -49,6 +54,7 @@ public record CohortResponse(
 				cohort.getStartDate(),
 				cohort.getEndDate(),
 				traineeCount,
+				classroomCount,
 				List.of()
 		);
 	}

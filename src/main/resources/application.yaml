@@ -91,9 +91,17 @@ springdoc:
     disable-swagger-default-url: true
     persist-authorization: true
 
-# AI(FastAPI) 연동. AI 저장소 app/config.py의 API_V0_PREFIX가 /api/v0라 base-url에 붙여 둔다.
+# AI(FastAPI) 연동. 서버가 둘이 아니라 딱 둘이다 -- 프록시(wake/sleep Lambda, 항상 이걸로
+# 먼저/보통 부른다)와 origin(App Runner 컨테이너 원본, PAUSED를 못 깨우지만 Lambda Function
+# URL의 6MB 동기 페이로드 상한이 없다 -- PDF·ZIP처럼 큰 본문은 여기로 직접 보낸다).
+# 예전엔 이게 AI_BASE_URL/AI_CURRICULUM_BASE_URL/AI_CURRICULUM_ORIGIN_BASE_URL 셋으로
+# 갈라져 있었는데(그중 둘은 완전히 같은 프록시를 가리키면서 이름만 달랐다), 2026-08-11
+# 프록시 하나·origin 하나로 통합했다 -- 두 물리 서버에 env var도 정확히 둘.
 ai:
-  base-url: ${AI_BASE_URL:http://localhost:8000/api/v0}
+  proxy-base-url: ${AI_PROXY_BASE_URL:http://localhost:8000}
+  # App Runner 원본 도메인. 안 정하면 프록시와 같은 값으로 fallback(로컬 개발처럼
+  # 프록시/원본 구분이 없는 환경 대응).
+  origin-base-url: ${AI_ORIGIN_BASE_URL:${AI_PROXY_BASE_URL:http://localhost:8000}}
   # AI의 require_internal_key가 읽는 공유 비밀(X-Internal-Key).
   # 비워 두면 헤더를 아예 붙이지 않는다 — AI 쪽도 "키 미설정 = 로컬 개발"로 검증을 건너뛴다.
   internal-key: ${AI_INTERNAL_KEY:}
@@ -114,12 +122,10 @@ ai:
   # YAML 중복 키로 기동이 통째로 실패했다(snakeyaml: found duplicate key ai).
   # 값과 환경변수 이름은 그대로 두고 이 블록 안으로 옮기기만 했다.
   #
-  # ⚠️ 위 공통 설정과 어긋나는 점이 둘 있다. 의도한 것인지 확인이 필요하다.
-  #   - base-url에 `/api/v0`가 없다(공통은 붙어 있다)
-  #   - 같은 공유 비밀인데 환경변수가 AI_INTERNAL_API_KEY다(공통은 AI_INTERNAL_KEY)
-  #     두 이름을 다 관리하면 한쪽만 채워 넣는 사고가 난다.
+  # ⚠️ 같은 공유 비밀인데 위 공통 블록과 환경변수 이름이 다르다(AI_INTERNAL_API_KEY vs
+  # AI_INTERNAL_KEY) — base-url 통합과 별개 문제라 이번엔 안 건드렸다. 두 이름을 다
+  # 관리하면 한쪽만 채워 넣는 사고가 난다, 다음에 손댈 때 같이 정리할 것.
   curriculum:
-    base-url: ${AI_CURRICULUM_BASE_URL:http://localhost:8000}
     x-internal-key: ${AI_INTERNAL_API_KEY:}
 
 jwt:

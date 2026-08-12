@@ -9,8 +9,8 @@ import org.hibernate.annotations.CreationTimestamp;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-// 기수에 소속된 교육생/구성원 한 명을 나타내는 엔티티
-// status는 체크 제약이 없는 카탈로그형 코드(INVITED, ACTIVE 등)라 enum 대신 String으로 둠
+// 초대를 수락해 기수에 실제 소속된 교육생 한 명을 나타내는 엔티티.
+// status는 DDL CHECK 값인 ACTIVE·LEFT를 저장하며, 초대 대기는 user_invitation에만 존재한다.
 
 @Entity
 @Table(name = "cohort_member")

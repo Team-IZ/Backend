@@ -55,8 +55,9 @@ class RiskTraineeTeamLevelTest {
 		when(riskTraineeQueryRepository.projectBelongsToCohort(projectId, cohortId, organizationId, "MINI_PROJECT"))
 				.thenReturn(true);
 		when(riskTraineeQueryRepository.findRounds(any())).thenReturn(List.of(
+				// roundNo(프로젝트 안 응시 번호) · cohortRoundNo(기수 안 회차 순번) — 12차 R1
 				new RiskTraineeQueryRepository.RoundRow(
-						roundId, 1, "K8s 배포 실습", projectId, "미프 1차", "COMPLETED", true)
+						roundId, 1, 1, "K8s 배포 실습", projectId, "미프 1차", "COMPLETED", true)
 		));
 		when(riskTraineeQueryRepository.findCohortRoster(cohortId, organizationId))
 				.thenReturn(new RiskTraineeQueryRepository.RosterCount(50, 0));

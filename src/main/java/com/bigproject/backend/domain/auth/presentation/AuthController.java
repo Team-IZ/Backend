@@ -386,13 +386,33 @@ public class AuthController {
 					1. `GET /consents?role={role}` 로 표시할 동의 항목을 받는다
 					2. TRAINEE 면 `POST /auth/trainee-activation`, 그 외에는 `POST /auth/manager-signup`
 
-					**400이면 링크가 죽은 것이다** — 만료, 이미 사용됨, 재발송으로 교체됨, 초대가 취소됨 중 하나다.
-					모두 400 하나로 합쳐 응답하므로 화면은 "링크가 유효하지 않습니다 · 재발송을 요청하세요"로 안내한다.
+					**링크가 죽은 이유는 코드로 갈라 내려간다.** 화면이 안내할 다음 행동이 서로 다르기 때문이다.
+
+					| 코드 | 상태 | 화면이 안내할 것 |
+					|---|---|---|
+					| 400 `INVITATION_INVALID` | 토큰 누락·위변조, 계정·기관이 링크를 받을 수 없는 상태 | 문의 |
+					| 409 `INVITATION_ALREADY_ACCEPTED` | 이미 수락·활성화된 초대 | 로그인 |
+					| 410 `INVITATION_EXPIRED` | 기한 경과, 또는 재발송으로 교체된 이전 링크 | 재발송 요청 |
+					| 403 `INVITATION_NOT_IN_ROSTER` | 교육생 초대가 취소됐거나 대상 기수가 종료·삭제됨 | 문의 |
+
+					**판정 순서가 정해져 있다.** 한 토큰이 여러 조건에 동시에 걸리므로 먼저 보는 것이 답이 된다 —
+					구조적 무효 → 이미 수락 → 만료 → 명단 외 순이다. 수락된 초대는 시간이 지나면 만료 조건에도
+					걸리는데, 그때 맞는 안내는 재발송이 아니라 로그인이라 이미 수락을 먼저 본다.
+
+					`INVITATION_INVALID`는 **세부 사유를 알려 주지 않는다** — 토큰을 긁어 보는 쪽에 단서가 되기 때문이다.
+					나머지 셋은 사용자가 다음 행동을 골라야 하므로 갈라 준다. 이 분기는 추측할 수 없는 토큰을 이미
+					가진 사람에게만 보이므로 계정 존재 여부가 새지 않는다.
+
+					같은 판정을 `/auth/manager-signup`·`/auth/trainee-activation`도 그대로 쓴다 —
+					링크를 열 때는 "만료"라고 했다가 제출할 때 "유효하지 않음"이라고 하면 안내가 갈린다.
 					"""
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "현재 유효한 SUPER_ADMIN·OPERATOR·MANAGER·TRAINEE 초대 대상 해석 성공"),
-			@ApiResponse(responseCode = "400", description = "INVITATION_INVALID 토큰 누락·위변조·사용 완료·교체 또는 초대 상태가 SENT가 아님")
+			@ApiResponse(responseCode = "400", description = "INVITATION_INVALID 토큰 누락·위변조 또는 계정·기관이 링크를 받을 수 없는 상태"),
+			@ApiResponse(responseCode = "403", description = "INVITATION_NOT_IN_ROSTER 교육생 초대가 취소됐거나 대상 기수가 종료·삭제됨"),
+			@ApiResponse(responseCode = "409", description = "INVITATION_ALREADY_ACCEPTED 이미 수락·활성화된 초대"),
+			@ApiResponse(responseCode = "410", description = "INVITATION_EXPIRED 초대 링크 만료 또는 재발송으로 교체됨")
 	})
 	@PostMapping("/invitations/resolve")
 	public ResponseEntity<InvitationResolveResponse> resolveInvitation(
@@ -467,14 +487,23 @@ public class AuthController {
 					본다 — 그래서 가입 직후 별도 이메일 인증 단계가 없다.
 
 					계정 활성화·이메일 검증·동의 기록·초대 수락·토큰 사용 처리가 **한 트랜잭션**으로 함께 확정된다.
-					409는 같은 링크로 동시에 두 번 제출한 경우이며, 화면은 로그인 화면으로 보내면 된다.
+
+					**초대 링크 상태 코드는 `/auth/invitations/resolve`와 같다** — 만료 410, 이미 수락 409
+					`INVITATION_ALREADY_ACCEPTED`, 무효 400. 링크를 연 뒤 제출까지 사이에 상태가 바뀔 수 있으므로
+					제출 단계에서도 같은 분기를 처리해야 한다.
+
+					409가 두 종류다. `INVITATION_ALREADY_ACCEPTED`는 로그인으로 보내고,
+					`ACTIVATION_STATE_CHANGED`는 동시 제출로 확정이 밀린 경우라 새로고침 후 재시도를 안내한다 —
+					입력이 틀린 것이 아니므로 입력칸에 오류를 붙이면 안 된다.
 					"""
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "OPERATOR 또는 MANAGER 계정 활성화와 초대 ACCEPTED 전환 성공"),
 			@ApiResponse(responseCode = "400",
-					description = "INVITATION_INVALID 초대 토큰·대상 역할이 유효하지 않음 · PASSWORD_CONFIRMATION_MISMATCH 비밀번호 확인 불일치 · REQUIRED_CONSENT_MISSING 필수 동의 누락"),
-			@ApiResponse(responseCode = "409", description = "ACTIVATION_STATE_CHANGED 동시 요청으로 계정·초대·토큰 상태가 먼저 변경됨"),
+					description = "INVITATION_INVALID 초대 토큰·목적·대상 역할이 유효하지 않음 · PASSWORD_CONFIRMATION_MISMATCH 비밀번호 확인 불일치 · REQUIRED_CONSENT_MISSING 필수 동의 누락"),
+			@ApiResponse(responseCode = "409",
+					description = "INVITATION_ALREADY_ACCEPTED 이미 수락된 초대 · ACTIVATION_STATE_CHANGED 동시 요청으로 계정·초대·토큰 상태가 먼저 변경됨"),
+			@ApiResponse(responseCode = "410", description = "INVITATION_EXPIRED 초대 링크 만료 또는 재발송으로 교체됨"),
 			@ApiResponse(responseCode = "422", description = "WEAK_PASSWORD 비밀번호 정책 미충족")
 	})
 	@PostMapping("/manager-signup")
@@ -520,15 +549,26 @@ public class AuthController {
 					**응답**
 					- user_id / email / name / role (TRAINEE) / activated
 
-					계정 활성화와 **기수 소속(cohort_member) 활성화**가 함께 확정된다 — 초대 상태로 남아 있던
-					명단 항목이 이 시점에 실제 수강생이 된다. 409는 동시 제출로 상태가 먼저 바뀐 경우다.
+					계정 활성화와 **기수 소속(cohort_member ACTIVE) 생성**이 함께 확정된다 — 초대 원장에 있던
+					명단 항목이 이 시점에 실제 수강생이 된다.
+
+					**유효한 기수 명단 범위가 아니면 403 `INVITATION_NOT_IN_ROSTER`로 먼저 막는다.** 초대가 취소됐거나
+					대상 기수가 종료·삭제된 경우이며, 비밀번호를 쓰기 전에 판정한다. 전에는 이 상황이 멤버십 생성 단계에서
+					터져 "다시 시도해 주세요"(409)로 나갔는데, 다시 시도해도 결과가 같은 상황이라 오답이었다.
+
+					나머지 초대 링크 상태 코드는 `/auth/invitations/resolve`와 같다 — 만료 410, 이미 활성화 409
+					`INVITATION_ALREADY_ACCEPTED`(재수강생 재활성화 시도 포함), 무효 400.
+					`ACTIVATION_STATE_CHANGED`(409)는 동시 제출로 확정이 밀린 경우이며 새로고침 후 재시도를 안내한다.
 					"""
 	)
 	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "TRAINEE 계정·기수 소속 활성화와 초대 ACCEPTED 전환 성공"),
+			@ApiResponse(responseCode = "200", description = "TRAINEE 계정 활성화·기수 소속 생성과 초대 ACCEPTED 전환 성공"),
 			@ApiResponse(responseCode = "400",
-					description = "INVITATION_INVALID 교육생 초대 토큰·명단 범위가 유효하지 않음 · PASSWORD_CONFIRMATION_MISMATCH 비밀번호 확인 불일치 · REQUIRED_CONSENT_MISSING 필수 동의 누락"),
-			@ApiResponse(responseCode = "409", description = "ACTIVATION_STATE_CHANGED 동시 요청으로 계정·기수 소속·초대·토큰 상태가 먼저 변경됨"),
+					description = "INVITATION_INVALID 교육생 초대 토큰·목적·역할이 유효하지 않음 · PASSWORD_CONFIRMATION_MISMATCH 비밀번호 확인 불일치 · REQUIRED_CONSENT_MISSING 필수 동의 누락"),
+			@ApiResponse(responseCode = "403", description = "INVITATION_NOT_IN_ROSTER 초대 취소 또는 대상 기수 종료·삭제"),
+			@ApiResponse(responseCode = "409",
+					description = "INVITATION_ALREADY_ACCEPTED 이미 수락·활성화된 초대 · ACTIVATION_STATE_CHANGED 동시 요청으로 계정·기수 소속·초대·토큰 상태가 먼저 변경됨"),
+			@ApiResponse(responseCode = "410", description = "INVITATION_EXPIRED 초대 링크 만료 또는 재발송으로 교체됨"),
 			@ApiResponse(responseCode = "422", description = "WEAK_PASSWORD 비밀번호 정책 미충족")
 	})
 	@PostMapping("/trainee-activation")

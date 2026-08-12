@@ -78,6 +78,19 @@ public class JdbcCurriculumCatalogRepository implements CurriculumCatalogReposit
 			      ORDER BY a3.requested_at DESC
 			      LIMIT 1) = ?""";
 
+	/**
+	 * 한 번도 분석하지 않은 교안만 남기는 조건(13차 R2).
+	 *
+	 * <p>{@code NOT EXISTS}가 아니라 위와 <b>같은 서브쿼리가 NULL인지</b>로 판정한다.
+	 * 목록의 {@code analysisStatus}·헤더의 {@code notAnalyzedCount}가 모두 그 식을 쓰므로,
+	 * 다른 식으로 거르면 `분석 전 2`를 눌렀는데 3건이 나오는 일이 생긴다.
+	 */
+	private static final String NOT_ANALYZED_CONDITION = """
+			AND (SELECT a4.status FROM curriculum_analysis a4
+			      WHERE a4.version_id = v.version_id
+			      ORDER BY a4.requested_at DESC
+			      LIMIT 1) IS NULL""";
+
 	private final JdbcTemplate jdbcTemplate;
 
 	@Override
@@ -164,6 +177,10 @@ public class JdbcCurriculumCatalogRepository implements CurriculumCatalogReposit
 			if (criteria.status() != null) {
 				where.append(' ').append(LATEST_ANALYSIS_STATUS_CONDITION);
 				args.add(criteria.status().name());
+			}
+			// 상태 필터와 함께 오지 않는다 — 호출부가 400으로 먼저 끊는다(13차 R2).
+			if (criteria.notAnalyzedOnly()) {
+				where.append(' ').append(NOT_ANALYZED_CONDITION);
 			}
 		}
 

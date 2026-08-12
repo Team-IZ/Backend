@@ -43,13 +43,17 @@ public interface ProjectService {
     List<String> findRoundLabelsUsingCurriculum(UUID curriculumVersionId, UUID orgId);
 
     /**
-     * 이 교안 버전을 쓰는 회차들(11차 R3). 이름만으로는 재분석 경고를 좁힐 수 없어
+     * 이 교안 버전들을 쓰는 회차들(11차 R3). 이름만으로는 재분석 경고를 좁힐 수 없어
      * 응시 인원과 식별자를 함께 준다.
+     *
+     * <p>13차 R1 — 버전 <b>여러 개</b>를 받는다. 교안 목록의 {@code usedProjectCount}가
+     * 교안(모든 버전) 기준으로 세므로 상세도 같은 기준이어야 하기 때문이다. 호출부가
+     * 교안 한 벌의 버전 전부를 넘긴다.
      *
      * @param attendedCount 응시를 <b>시작한</b> 인원. 0이면 아직 아무도 응시하지 않은 회차라
      *                      재분석해도 발행된 리포트가 어긋나지 않는다
      */
-    List<CurriculumUsingProject> findProjectsUsingCurriculum(UUID curriculumVersionId, UUID orgId);
+    List<CurriculumUsingProject> findProjectsUsingCurricula(Collection<UUID> curriculumVersionIds, UUID orgId);
 
     record CurriculumUsingProject(
             UUID projectId,

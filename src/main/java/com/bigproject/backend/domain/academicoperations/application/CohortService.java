@@ -163,6 +163,23 @@ public class CohortService {
      * <p>구성원이 하나도 없는 기수는 GROUP BY 결과에 아예 나오지 않으므로,
      * 호출부는 <b>없는 키를 0으로</b> 읽어야 한다.
      */
+    /**
+     * 기수별 반 개수(13차 Q1). {@link #countActiveTrainees}와 같은 방식으로 한 번에 센다 —
+     * 기수 탭의 `반` 열 하나 때문에 기수마다 반 목록을 부르지 않게 하기 위한 것이다.
+     *
+     * <p>반이 없는 기수는 GROUP BY 결과에 나오지 않으므로 호출부가 <b>없는 키를 0으로</b> 읽어야 한다.
+     */
+    public java.util.Map<UUID, Integer> countClassrooms(java.util.List<UUID> cohortIds, UUID orgId) {
+        if (cohortIds.isEmpty()) {
+            return java.util.Map.of();
+        }
+        return classroomRepository.countByCohortIdIn(cohortIds, orgId).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        com.bigproject.backend.domain.academicoperations.infrastructure
+                                .ClassroomRepository.CohortClassroomCount::getCohortId,
+                        row -> Math.toIntExact(row.getCount())));
+    }
+
     public java.util.Map<UUID, Integer> countActiveTrainees(java.util.List<UUID> cohortIds, UUID orgId) {
         if (cohortIds.isEmpty()) {
             return java.util.Map.of();
