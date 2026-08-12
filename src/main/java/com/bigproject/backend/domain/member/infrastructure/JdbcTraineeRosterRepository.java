@@ -250,6 +250,39 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 		return count == null ? 0 : count;
 	}
 
+	/**
+	 * 회차 드롭다운 목록. <b>차수 오름차순</b>이라 마지막 원소가 가장 최근 회차이며, 화면이
+	 * `미프 1차 · 2차 · 3차`를 위에서 아래로 그리는 순서와 같다.
+	 *
+	 * <p>정렬·차수 표기는 {@code project.sequence_no}를 쓴다. {@code round_no}는 프로젝트 안의
+	 * 순번이라 미니프로젝트에서 전부 1이 되어 차수를 구분하지 못한다.
+	 *
+	 * <p><b>프로젝트 분류로 거르지 않는다.</b> 지표를 붙이는 {@code manager_trainee_roster_view}의
+	 * 회차 축(rd CTE)이 분류를 가리지 않으므로, 여기서만 미니프로젝트로 좁히면 드롭다운에 없는
+	 * 회차의 지표가 존재하게 된다 -- 고를 수 있는 회차와 지표가 있는 회차는 같아야 한다.
+	 */
+	@Override
+	public List<RoundOption> findRounds(UUID cohortId, UUID orgId) {
+		String sql = """
+				SELECT r.assessment_round_id, r.round_no,
+				       p.sequence_no AS cohort_round_no,
+				       r.round_name, p.project_id, p.name AS project_name
+				FROM project_assessment_round r
+				JOIN project p ON p.project_id = r.project_id AND p.deleted_at IS NULL
+				WHERE r.cohort_id = ? AND r.org_id = ? AND r.deleted_at IS NULL
+				ORDER BY p.sequence_no, r.round_no, r.assessment_round_id
+				""";
+		return jdbcTemplate.query(sql,
+				(ResultSet rs, int rowNum) -> new RoundOption(
+						rs.getObject("assessment_round_id", UUID.class),
+						rs.getInt("round_no"),
+						rs.getInt("cohort_round_no"),
+						rs.getString("round_name"),
+						rs.getObject("project_id", UUID.class),
+						rs.getString("project_name")),
+				cohortId, orgId);
+	}
+
 	@Override
 	public Optional<RosterRow> findTrainee(UUID traineeId, UUID cohortId, UUID orgId) {
 		String sql = ROSTER_SELECT + " WHERE r.user_id = ? AND r.cohort_id = ? AND r.org_id = ?";

@@ -385,22 +385,31 @@ public class ProjectServiceImpl implements ProjectService {
      */
     @Override
     public Optional<ProjectSummary> findCurrentProject(UUID cohortId, UUID orgId) {
+        // 요약은 고른 하나에만 매긴다. 목록이 느렸던 이유가 모집단 전체를 요약한 것이라
+        // (summarizeAll 주석), 여기서 같은 실수를 하면 이 API를 만든 뜻이 사라진다.
+        return resolveCurrentProject(cohortId, orgId)
+                .map(chosen -> summarizeAll(List.of(chosen), orgId).get(0));
+    }
+
+    /**
+     * 「이번 회차」 판정의 <b>유일한 구현</b>이다. 요약이 필요한 쪽은 {@link #findCurrentProject}가,
+     * 프로젝트만 필요한 쪽(교육생 명단의 기본 회차)은 이것을 쓴다 — 규칙이 두 곳으로 갈리면
+     * 같은 기수를 두고 화면마다 다른 차수를 말하게 된다.
+     */
+    @Override
+    public Optional<Project> resolveCurrentProject(UUID cohortId, UUID orgId) {
         List<Project> projects = findProjects(cohortId, orgId);
         if (projects.isEmpty()) {
             return Optional.empty();
         }
 
-        Project chosen = projects.stream()
+        return Optional.of(projects.stream()
                 .filter(project -> project.getLifecycleStatus() == ProjectLifecycleStatus.RUNNING)
                 .max(ORDER)
                 .or(() -> projects.stream()
                         .filter(project -> project.getLifecycleStatus() == ProjectLifecycleStatus.PLANNED)
                         .min(ORDER))
-                .orElseGet(() -> projects.stream().max(ORDER).orElseThrow());
-
-        // 요약은 고른 하나에만 매긴다. 목록이 느렸던 이유가 모집단 전체를 요약한 것이라
-        // (summarizeAll 주석), 여기서 같은 실수를 하면 이 API를 만든 뜻이 사라진다.
-        return Optional.of(summarizeAll(List.of(chosen), orgId).get(0));
+                .orElseGet(() -> projects.stream().max(ORDER).orElseThrow()));
     }
 
     /** 기수 안 운영 순서. {@code sequence_no}가 권위 축이고 날짜는 비어 있을 수 있어 보조다. */

@@ -4,6 +4,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -41,6 +42,20 @@ public interface TraineeRosterRepository {
 	 */
 	int countCohortTotal(UUID cohortId, UUID orgId, UUID scopedManagerId);
 
+	/**
+	 * 화면의 `회차 · 미프 N차` 드롭다운에 넣을 기수의 평가 회차 전부. <b>차수 오름차순</b>이다.
+	 *
+	 * <p>기본 회차를 여기서 정하지 않는다 -- 「이번 회차」 판정은 projectexecution의
+	 * {@code resolveCurrentProject}가 가지며(15차 R1) 그것이 목록의 마지막과 다를 수 있다.
+	 *
+	 * <p>기수 단위 회차 목록을 주는 API가 따로 없어 여기서 함께 낸다 — 없으면 화면이
+	 * {@code GET /cohorts/{id}/projects} 뒤에 프로젝트마다 {@code /rounds}를 다시 부르는
+	 * N+1이 된다. 명단과 같은 호출에서 나와야 고른 회차와 표가 어긋나지 않기도 한다.
+	 *
+	 * @return 회차가 하나도 없으면 빈 목록. 기수가 아직 프로젝트를 열지 않은 정상 상태다.
+	 */
+	List<RoundOption> findRounds(UUID cohortId, UUID orgId);
+
 	Optional<RosterRow> findTrainee(UUID traineeId, UUID cohortId, UUID orgId);
 
 	/** @return 실제로 바뀐 행 수(0이면 대상 없음 또는 이미 같은 상태) */
@@ -62,6 +77,23 @@ public interface TraineeRosterRepository {
 	int updateCohortMembership(UUID traineeId, UUID cohortId, UUID orgId, boolean left);
 
 	record CohortScope(UUID cohortId, UUID orgId) {
+	}
+
+	/**
+	 * 회차 드롭다운 한 항목.
+	 *
+	 * <p>화면의 `미프 3차`에서 3은 {@code cohortRoundNo}({@code project.sequence_no})다.
+	 * {@code roundNo}는 {@code (project_id, round_no)} UNIQUE라 프로젝트마다 1부터 다시 시작하고,
+	 * 미니프로젝트는 프로젝트당 회차가 1건뿐이라 <b>늘 1</b>이어서 차수를 구분하지 못한다.
+	 */
+	record RoundOption(
+			UUID assessmentRoundId,
+			int roundNo,
+			int cohortRoundNo,
+			String roundName,
+			UUID projectId,
+			String projectName
+	) {
 	}
 
 	/**

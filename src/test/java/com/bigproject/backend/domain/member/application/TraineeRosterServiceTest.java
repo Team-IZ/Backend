@@ -5,6 +5,7 @@ import com.bigproject.backend.domain.member.domain.AccountStatus;
 import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.member.domain.TraineeRosterRepository;
 import com.bigproject.backend.domain.member.domain.TraineeRosterSort;
+import com.bigproject.backend.domain.projectexecution.domain.Project;
 import com.bigproject.backend.global.exception.ApiException;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -36,8 +37,11 @@ class TraineeRosterServiceTest {
 			mock(com.bigproject.backend.domain.auth.domain.PasswordResetRepository.class);
 	private final com.bigproject.backend.domain.auth.application.InvitationResendDispatcher resendDispatcher =
 			mock(com.bigproject.backend.domain.auth.application.InvitationResendDispatcher.class);
+	// 「이번 회차」 판정(15차 R1). 기본 회차를 정할 때만 쓰이므로 회차를 명시한 경로에서는 호출되지 않는다.
+	private final com.bigproject.backend.domain.projectexecution.application.ProjectService projectService =
+			mock(com.bigproject.backend.domain.projectexecution.application.ProjectService.class);
 	private final TraineeRosterService service =
-			new TraineeRosterService(traineeRosterRepository, accountRepository, resendDispatcher);
+			new TraineeRosterService(traineeRosterRepository, accountRepository, resendDispatcher, projectService);
 
 	private final UUID cohortId = UUID.randomUUID();
 	private final UUID orgId = UUID.randomUUID();
@@ -111,6 +115,62 @@ class TraineeRosterServiceTest {
 				cohortId, orgId, null, false, null, null, TraineeRosterSort.NAME, PageRequest.of(0, 20));
 
 		assertThat(result.unassignedCount()).isEqualTo(3);
+	}
+
+	/**
+	 * 기본 회차는 목록의 <b>마지막</b>이 아니라 「이번 회차」다(15차 R1). 미프 2차가 진행 중인데
+	 * 3차가 이미 등록돼 있으면, 차수가 큰 3차를 고르는 것은 대시보드의 `이번 회차`와 어긋난다.
+	 */
+	@Test
+	void defaultsToTheCurrentRoundRatherThanTheLastRegisteredOne() {
+		UUID runningProjectId = UUID.randomUUID();
+		UUID runningRoundId = UUID.randomUUID();
+		when(traineeRosterRepository.findRounds(cohortId, orgId)).thenReturn(List.of(
+				new TraineeRosterRepository.RoundOption(
+						runningRoundId, 1, 2, "2차 이해도 확인", runningProjectId, "미니프로젝트 2"),
+				new TraineeRosterRepository.RoundOption(
+						UUID.randomUUID(), 1, 3, "3차 이해도 확인", UUID.randomUUID(), "미니프로젝트 3")));
+		Project running = mock(Project.class);
+		when(running.getProjectId()).thenReturn(runningProjectId);
+		when(projectService.resolveCurrentProject(cohortId, orgId)).thenReturn(Optional.of(running));
+		when(traineeRosterRepository.findRoster(any(), any())).thenReturn(new PageImpl<>(List.of()));
+
+		TraineeRosterService.RosterResult result = service.findRoster(
+				cohortId, orgId, null, false, null, null, TraineeRosterSort.NAME, PageRequest.of(0, 20));
+
+		assertThat(result.assessmentRoundId()).isEqualTo(runningRoundId);
+	}
+
+	/** 이번 회차 프로젝트에 회차가 아직 없으면(PLANNED에서 흔하다) 마지막 회차로 물러선다. */
+	@Test
+	void fallsBackToTheLastRoundWhenTheCurrentProjectHasNoRoundYet() {
+		UUID lastRoundId = UUID.randomUUID();
+		when(traineeRosterRepository.findRounds(cohortId, orgId)).thenReturn(List.of(
+				new TraineeRosterRepository.RoundOption(
+						lastRoundId, 1, 1, "1차 이해도 확인", UUID.randomUUID(), "미니프로젝트 1")));
+		Project roundless = mock(Project.class);
+		when(roundless.getProjectId()).thenReturn(UUID.randomUUID());
+		when(projectService.resolveCurrentProject(cohortId, orgId)).thenReturn(Optional.of(roundless));
+		when(traineeRosterRepository.findRoster(any(), any())).thenReturn(new PageImpl<>(List.of()));
+
+		TraineeRosterService.RosterResult result = service.findRoster(
+				cohortId, orgId, null, false, null, null, TraineeRosterSort.NAME, PageRequest.of(0, 20));
+
+		assertThat(result.assessmentRoundId()).isEqualTo(lastRoundId);
+	}
+
+	/** 요청이 회차를 지정하면 「이번 회차」 판정을 아예 부르지 않는다. */
+	@Test
+	void keepsTheRequestedRoundWithoutConsultingTheCurrentProject() {
+		UUID requestedRoundId = UUID.randomUUID();
+		when(traineeRosterRepository.findRoster(any(), any())).thenReturn(new PageImpl<>(List.of()));
+
+		TraineeRosterService.RosterResult result = service.findRoster(
+				cohortId, orgId, null, null, requestedRoundId, null, false,
+				null, null, TraineeRosterSort.NAME, PageRequest.of(0, 20));
+
+		assertThat(result.assessmentRoundId()).isEqualTo(requestedRoundId);
+		verify(projectService, never()).resolveCurrentProject(any(), any());
 	}
 
 	@Test

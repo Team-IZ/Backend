@@ -60,6 +60,12 @@ public enum MemberErrorCode implements ApiErrorCode {
 	ROSTER_FILTER_CONFLICT(HttpStatus.BAD_REQUEST, "반 필터와 미배정 필터는 함께 지정할 수 없습니다."),
 	/** 위험·우수 정렬은 어느 회차의 결과인지 지정해야 페이지 순서가 안정적이다. */
 	ROSTER_ASSESSMENT_ROUND_REQUIRED(HttpStatus.BAD_REQUEST, "위험·우수 정렬은 평가 회차를 지정해야 합니다."),
+	/**
+	 * 매니저가 "미배정만" 필터를 걸었다. 매니저 명단은 담당 반으로 좁혀져 있어 반이 없는 교육생은
+	 * 애초에 목록에 들어오지 않으므로 결과가 항상 비어 있다. 조용히 빈 표를 돌려주면 화면이
+	 * 데이터가 없다고 오해하므로 거절한다 — 이 필터는 오퍼레이터 화면(OP-06) 전용이다.
+	 */
+	ROSTER_UNASSIGNED_FILTER_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "미배정 필터는 오퍼레이터만 사용할 수 있습니다."),
 	/** 통합 타임라인의 cursor가 이 응답에서 발급한 형식이 아니다. */
 	TIMELINE_CURSOR_INVALID(HttpStatus.BAD_REQUEST, "타임라인 커서가 올바르지 않습니다."),
 	/** 이 화면이 쓰지 않는 계정 상태로 필터를 걸었다(LOCKED 등). */
