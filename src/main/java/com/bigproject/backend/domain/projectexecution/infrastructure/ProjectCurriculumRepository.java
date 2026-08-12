@@ -24,6 +24,13 @@ public interface ProjectCurriculumRepository extends JpaRepository<ProjectCurric
     // concept-candidates 조회용 — 이 프로젝트가 연결한 교안 버전 전체
     List<ProjectCurriculum> findAllByProjectIdAndOrgId(UUID projectId, UUID orgId);
 
+    /**
+     * 위 조회의 여러 프로젝트 판(15차 R1). 회차 목록이 회차마다 이것을 부르고, 그 안에서 다시
+     * 교안 버전마다 후보를 세어 목록 하나에 조회가 <b>회차 수 × 교안 수</b>만큼 붙었다 —
+     * 전량을 한 번에 읽고 호출부에서 프로젝트별로 나눈다({@code findAllBySectionIdIn}과 같은 방식).
+     */
+    List<ProjectCurriculum> findAllByProjectIdInAndOrgId(Collection<UUID> projectIds, UUID orgId);
+
     // 상세 조회용 — 화면이 그리는 순서(sequence_no)가 곧 표시 순서라 정렬해서 준다
     List<ProjectCurriculum> findAllByProjectIdAndOrgIdOrderBySequenceNoAsc(UUID projectId, UUID orgId);
 
