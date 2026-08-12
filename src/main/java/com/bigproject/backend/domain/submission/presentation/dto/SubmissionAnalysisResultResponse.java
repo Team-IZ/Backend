@@ -28,7 +28,7 @@ public record SubmissionAnalysisResultResponse(
 
 		String fallbackReason,
 
-		@Schema(description = "AI가 실제로 분석한 브랜치. ZIP 제출은 null이다.")
+		@Schema(description = "AI가 실제로 분석한 브랜치. ZIP 제출은 null이다.", nullable = true)
 		String resolvedBranch,
 
 		HeadCommit headCommit,
