@@ -5,6 +5,8 @@ import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
 import com.bigproject.backend.domain.auth.domain.AccountActivationTarget;
 import com.bigproject.backend.domain.auth.domain.ConsentCode;
 import com.bigproject.backend.domain.auth.domain.ConsentRecord;
+import com.bigproject.backend.domain.auth.domain.InvitationState;
+import com.bigproject.backend.domain.auth.domain.InvitationStateClassifier;
 import com.bigproject.backend.domain.auth.domain.TokenRequestMetadata;
 import com.bigproject.backend.domain.auth.presentation.dto.ActivateAccountResponse;
 import com.bigproject.backend.domain.auth.presentation.dto.ManagerSignupRequest;
@@ -21,12 +23,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
 public class AccountActivationService {
-	private static final String INVALID_INVITATION_MESSAGE = "유효하지 않거나 만료된 초대입니다.";
 	private static final String CAPTURE_CHANNEL = "INVITE_LINK";
 
 	private final AccountActivationRepository accountActivationRepository;
@@ -86,14 +87,7 @@ public class AccountActivationService {
 				request.aiAnalysisAgreed(),
 				request.organizationSharingAgreed()
 		);
-		AccountActivationTarget target = findTarget(
-				request.invitationToken(),
-				request.userId(),
-				InvitationPurpose.INVITE_TRAINEE
-		);
-		if (target.role() != Role.TRAINEE) {
-			throw invalidInvitation();
-		}
+		AccountActivationTarget target = findInvitedTrainee(request.invitationToken(), request.userId());
 		return activate(
 				target,
 				target.name(),
@@ -120,41 +114,48 @@ public class AccountActivationService {
 	 * 오퍼레이터 초대 토큰으로 슈퍼어드민이 되는 권한 상승 경로가 열린다.
 	 */
 	private AccountActivationTarget findInvitedStaff(String invitationToken, UUID userId) {
-		AccountActivationTarget superAdmin = findTargetOrEmpty(
-				invitationToken, userId, InvitationPurpose.INVITE_SUPER_ADMIN
-		).orElse(null);
-		if (superAdmin != null) {
-			if (superAdmin.role() != Role.SUPER_ADMIN) {
-				throw invalidInvitation();
-			}
-			return superAdmin;
+		InvitationState state = findState(invitationToken, userId);
+		Set<Role> allowedRoles;
+		if (InvitationPurpose.INVITE_SUPER_ADMIN.name().equals(state.purpose())) {
+			allowedRoles = Set.of(Role.SUPER_ADMIN);
+		} else if (InvitationPurpose.INVITE_OPERATOR_MANAGER.name().equals(state.purpose())) {
+			allowedRoles = Set.of(Role.OPERATOR, Role.MANAGER);
+		} else {
+			throw InvitationStateClassifier.invalid();
 		}
-
-		AccountActivationTarget target = findTarget(
-				invitationToken, userId, InvitationPurpose.INVITE_OPERATOR_MANAGER
-		);
-		if (target.role() != Role.OPERATOR && target.role() != Role.MANAGER) {
-			throw invalidInvitation();
+		InvitationStateClassifier.verify(state, Instant.now());
+		if (!allowedRoles.contains(state.role())) {
+			throw InvitationStateClassifier.invalid();
 		}
-		return target;
+		return state.toActivationTarget();
 	}
 
-	private Optional<AccountActivationTarget> findTargetOrEmpty(
-			String invitationToken,
-			UUID userId,
-			InvitationPurpose purpose
-	) {
+	private AccountActivationTarget findInvitedTrainee(String invitationToken, UUID userId) {
+		InvitationState state = findState(invitationToken, userId);
+		if (!InvitationPurpose.INVITE_TRAINEE.name().equals(state.purpose())) {
+			throw InvitationStateClassifier.invalid();
+		}
+		InvitationStateClassifier.verify(state, Instant.now());
+		if (state.role() != Role.TRAINEE) {
+			throw InvitationStateClassifier.invalid();
+		}
+		return state.toActivationTarget();
+	}
+
+	/**
+	 * 목적·역할 검사보다 {@link InvitationStateClassifier#verify}를 <b>먼저</b> 돌리지 않는다.
+	 * 목적이 다른 토큰은 애초에 이 흐름의 링크가 아니므로 만료·명단외 같은 안내를 붙이면 안 된다.
+	 * 반대로 역할 검사는 판정 뒤에 둔다 — 만료된 교육생 토큰은 "역할이 다름"이 아니라
+	 * "만료됨"으로 안내해야 사용자가 재발송을 요청할 수 있다.
+	 */
+	private InvitationState findState(String invitationToken, UUID userId) {
 		String tokenHash = tokenHasher.hash(invitationToken.trim());
-		return accountActivationRepository.findTargetForUpdate(tokenHash, userId, purpose, Instant.now());
-	}
-
-	private AccountActivationTarget findTarget(
-			String invitationToken,
-			UUID userId,
-			InvitationPurpose purpose
-	) {
-		return findTargetOrEmpty(invitationToken, userId, purpose)
-				.orElseThrow(this::invalidInvitation);
+		InvitationState state = accountActivationRepository.findStateForUpdate(tokenHash)
+				.orElseThrow(InvitationStateClassifier::invalid);
+		if (!state.userId().equals(userId)) {
+			throw InvitationStateClassifier.invalid();
+		}
+		return state;
 	}
 
 	private ActivateAccountResponse activate(
@@ -264,10 +265,6 @@ public class AccountActivationService {
 				throw new ApiException(AuthErrorCode.REQUIRED_CONSENT_MISSING);
 			}
 		}
-	}
-
-	private ApiException invalidInvitation() {
-		return new ApiException(AuthErrorCode.INVITATION_INVALID, INVALID_INVITATION_MESSAGE);
 	}
 
 	/**

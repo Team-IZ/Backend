@@ -76,8 +76,6 @@ public interface MemberInvitationRepository {
 
 	void invalidatePreviousTokens(InvitationToken replacement, Instant invalidatedAt);
 
-	void saveTraineeMembership(UUID memberId, UUID tokenId, UUID organizationId, UUID cohortId, UUID classroomId, UUID assignedBy, Instant joinedAt);
-
 	/**
 	 * 재발송에 필요한 초대 한 건.
 	 *
