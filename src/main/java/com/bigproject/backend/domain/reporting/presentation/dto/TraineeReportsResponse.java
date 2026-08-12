@@ -127,7 +127,9 @@ public record TraineeReportsResponse(
 	 *              {@code level}을 포함한 아래 값들이 전부 빠진다.
 	 * @param level 도달 단계 <b>0~4</b>. 0은 통과한 축이 하나도 없다는 뜻이며
 	 *              "안 물어본 것"({@code asked=false})이 아니라 "못한 것"이다 — 화면이 이 둘을 섞으면 안 된다.
-	 *              (DB {@code reach_display_code} L0~L4, AI {@code reachedStage} 0~4와 같은 눈금)
+	 *              눈금은 AI {@code reachedStage} 0~4와 같다. <b>DB {@code reach_display_code}는 원천이
+	 *              아니다</b> — 미니프로젝트에서 항상 L0라 쓸 수 없다
+	 *              ({@code JdbcTraineeReportQueryRepository.findConcepts} 주석 참고).
 	 * @param said  학생에게 보여주는 서술. 공개 범위가 SUMMARY 미만이면 비어 있다.
 	 * @param isRetryTarget 다시 보기 대상인가.
 	 * @param curriculumRef 교안 위치. 공개 범위 SUMMARY 이상일 때만.
@@ -168,7 +170,24 @@ public record TraineeReportsResponse(
 			boolean asked,
 
 			/** 도달 단계 0~4. {@code asked=false}면 키가 빠진다 — 물은 적이 없으므로 단계가 없다. */
-			@JsonInclude(JsonInclude.Include.NON_NULL) Integer level,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(minimum = "0", maximum = "4", example = "2", nullable = true,
+					description = """
+							통과한 축의 최댓값. **0~4 이외의 값은 나가지 않는다.**
+
+							| 값 | 뜻 |
+							|---|---|
+							| `0` | 물었지만 통과한 축이 하나도 없다. **1로 올리지 않는다** |
+							| `1` | 코드 이해까지 |
+							| `2` | 설계 논리까지(왜 이렇게 했나) |
+							| `3` | 대안 비교까지(다른 방법은) |
+							| `4` | 반례 대응까지(언제 깨지나) — 전부 통과 |
+
+							🔴 **`asked=false`면 이 키가 아예 빠진다.** 문항이 만들어지지 않은 개념이라
+							단계를 말할 대상이 없다. `0`(물었는데 못했다)과 섞으면 화면이 학생에게
+							"못했다"고 말하게 되는데 사실은 묻지 않은 것이다. `asked=true`인데 빠지는
+							경우는 없다.""")
+			Integer level,
 
 			@JsonInclude(JsonInclude.Include.NON_NULL) String said,
 			boolean isRetryTarget,
