@@ -661,6 +661,28 @@ class OpenApiDocumentTest {
 				.doesNotContain("assessmentOpenAt", "assessmentCloseAt");
 	}
 
+	/**
+	 * 22차 R10 ⓐ — 필드 하나가 없어서 15차 R1로 만든 엔드포인트를 아무도 쓰지 못했다.
+	 *
+	 * <p>{@code sequenceNo}(분자)는 있는데 `3차 / 6회`의 분모가 없어, 대시보드가 그것 하나 때문에
+	 * 목록 조회를 계속 부르고 있었다 — 그러면 {@code current}를 부를 이유가 사라진다.
+	 */
+	@Test
+	void givesTheDashboardTheDenominatorItWasCallingTheListFor() throws Exception {
+		JsonNode properties = spec().path("components").path("schemas")
+				.path("ProjectResponse").path("properties");
+
+		assertThat(properties.propertyNames()).contains("sequenceNo", "totalRounds");
+		// 세는 값이라 언제나 온다 — 회차가 없으면 0이지 null이 아니다.
+		assertThat(properties.path("totalRounds").path("type").toString())
+				.contains("integer").doesNotContain("\"null\"");
+
+		assertThat(spec().path("paths").path("/api/v0/cohorts/{cohortId}/projects/current")
+				.path("get").path("responses").path("200").path("content").path("application/json")
+				.path("schema").path("$ref").asString())
+				.isEqualTo("#/components/schemas/ProjectResponse");
+	}
+
 	private interface ResponseVisitor {
 		void visit(String operationId, String status, JsonNode response);
 	}

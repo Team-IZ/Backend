@@ -205,6 +205,17 @@ public class ProjectController {
 					`projectId` · `name` · `sequenceNo` · `status` · `startDate` · `endDate` +
 					`curriculumCount` · `conceptCount` · `conceptCandidateCount`.
 
+					## 🆕 22차 R10 ⓐ — `totalRounds`
+
+					**이 기수의 전체 회차 수**이며 화면의 `3차 / 6회`에서 분모다. `sequenceNo`(분자)는
+					있는데 이 값이 없어서, 15차 R1로 만든 이 API를 대시보드가 한 번도 쓰지 못하고
+					목록(`GET /cohorts/{id}/projects`)을 계속 부르고 있었다.
+
+					세는 데 조회가 늘지 않는다 — 「이번 회차」를 고르려고 어차피 읽던 목록의 길이다.
+
+					> ⓑ(진행 수치를 함께 싣기)는 아직 반영하지 않았다. 계약이 커지는 일이라
+					> 프론트도 ⓐ만이어도 좋다고 했고, 지금은 `class-progress`를 한 번 더 부르면 된다.
+
 					## 🔴 회차가 없으면 `204 No Content`다
 
 					**`404`가 아니다.** 회차를 아직 만들지 않은 기수는 실패가 아니라 정상 상태이고,

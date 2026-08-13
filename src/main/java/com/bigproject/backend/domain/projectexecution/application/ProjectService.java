@@ -242,7 +242,16 @@ public interface ProjectService {
              * endDate(날짜)를 마감이라고 그리던 것을 끝내려면 목록·상세가 실제 마감을 읽어야 한다.
              * 둘은 서버에서 연결돼 있지 않아 9기 5차가 12일 어긋난 채 표시되고 있었다.
              */
-            ProjectDependencyRepository.RoundSchedule schedule) {
+            ProjectDependencyRepository.RoundSchedule schedule,
+
+            /*
+             * 22차 R10 ⓐ — 이 기수의 전체 회차 수. 화면의 `3차 / 6회`에서 분모다.
+             *
+             * sequenceNo(분자)는 있는데 분모가 없어서, 대시보드가 15차 R1로 만든
+             * /projects/current를 한 번도 쓰지 못하고 목록을 계속 부르고 있었다.
+             * 요약을 만든 호출부가 자기가 본 모집단 크기를 그대로 넘긴다.
+             */
+            int totalRounds) {
 
         /**
          * 이름이 필요 없는 자리에서 쓴다 — 상세 조회는 교안·개념을 <b>객체로</b> 따로 싣고
@@ -250,14 +259,22 @@ public interface ProjectService {
          */
         public ProjectSummary(Project project, int curriculumCount, int conceptCount,
                 int conceptCandidateCount) {
-            this(project, curriculumCount, conceptCount, conceptCandidateCount, List.of(), List.of(), null);
+            this(project, curriculumCount, conceptCount, conceptCandidateCount, List.of(), List.of(), null, 0);
         }
 
         /** 회차 시각을 아직 읽지 않은 자리에서 쓴다(정렬 테스트 등 표시와 무관한 호출부). */
         public ProjectSummary(Project project, int curriculumCount, int conceptCount,
                 int conceptCandidateCount, List<String> curriculumNames, List<String> conceptNames) {
             this(project, curriculumCount, conceptCount, conceptCandidateCount,
-                    curriculumNames, conceptNames, null);
+                    curriculumNames, conceptNames, null, 0);
+        }
+
+        /** 회차 수를 세지 않는 자리(상세·생성 응답)에서 쓴다. */
+        public ProjectSummary(Project project, int curriculumCount, int conceptCount,
+                int conceptCandidateCount, List<String> curriculumNames, List<String> conceptNames,
+                ProjectDependencyRepository.RoundSchedule schedule) {
+            this(project, curriculumCount, conceptCount, conceptCandidateCount,
+                    curriculumNames, conceptNames, schedule, 0);
         }
 
         /** 제출 마감 시각. 회차가 없으면 {@code null} — 화면은 그때 「마감 미정」으로 그린다. */

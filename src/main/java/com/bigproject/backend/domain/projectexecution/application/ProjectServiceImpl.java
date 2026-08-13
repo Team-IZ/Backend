@@ -417,10 +417,15 @@ public class ProjectServiceImpl implements ProjectService {
      */
     @Override
     public Optional<ProjectSummary> findCurrentProject(UUID cohortId, UUID orgId) {
+        // 22차 R10 ⓐ — 목록을 한 번 읽어 「이번 회차」와 전체 회차 수를 함께 얻는다. 화면의
+        // `3차 / 6회`에서 분모가 이 값이고, 그것 하나가 없어서 대시보드가 이 API를 못 쓰고
+        // 목록을 계속 부르고 있었다. 여기서 세면 조회가 늘지 않는다 — 어차피 읽던 목록이다.
+        List<Project> projects = findProjects(cohortId, orgId);
+
         // 요약은 고른 하나에만 매긴다. 목록이 느렸던 이유가 모집단 전체를 요약한 것이라
         // (summarizeAll 주석), 여기서 같은 실수를 하면 이 API를 만든 뜻이 사라진다.
-        return resolveCurrentProject(cohortId, orgId)
-                .map(chosen -> summarizeAll(List.of(chosen), orgId).get(0));
+        return chooseCurrent(projects)
+                .map(chosen -> summarizeAll(List.of(chosen), orgId, projects.size()).get(0));
     }
 
     /**
@@ -430,7 +435,14 @@ public class ProjectServiceImpl implements ProjectService {
      */
     @Override
     public Optional<Project> resolveCurrentProject(UUID cohortId, UUID orgId) {
-        List<Project> projects = findProjects(cohortId, orgId);
+        return chooseCurrent(findProjects(cohortId, orgId));
+    }
+
+    /**
+     * 판정 규칙 자체. 이미 목록을 손에 든 호출부가 <b>다시 읽지 않고</b> 쓰도록 떼어 둔다 —
+     * {@link #findCurrentProject}는 전체 회차 수({@code totalRounds})를 세느라 어차피 목록이 필요하다.
+     */
+    private Optional<Project> chooseCurrent(List<Project> projects) {
         if (projects.isEmpty()) {
             return Optional.empty();
         }
@@ -596,7 +608,8 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public List<ProjectSummary> findProjectSummaries(UUID cohortId, UUID orgId) {
         requireCohort(cohortId, orgId);
-        return summarizeAll(findProjects(cohortId, orgId), orgId);
+        List<Project> projects = findProjects(cohortId, orgId);
+        return summarizeAll(projects, orgId, projects.size());
     }
 
     /**
@@ -625,7 +638,7 @@ public class ProjectServiceImpl implements ProjectService {
      *
      * <p>지금은 4건이다 — 교안 연결 · 개념 세트 · 개념 수 · 후보 수.
      */
-    private List<ProjectSummary> summarizeAll(List<Project> projects, UUID orgId) {
+    private List<ProjectSummary> summarizeAll(List<Project> projects, UUID orgId, int totalRounds) {
         if (projects.isEmpty()) {
             return List.of();
         }
@@ -697,7 +710,8 @@ public class ProjectServiceImpl implements ProjectService {
                             .filter(Objects::nonNull)
                             .toList(),
                     // 회차를 아직 만들지 않은 프로젝트는 키가 없다 — 22차 이전에 만들어진 것들이다.
-                    scheduleByProject.get(project.getProjectId())));
+                    scheduleByProject.get(project.getProjectId()),
+                    totalRounds));
         }
         return summaries;
     }
@@ -782,8 +796,10 @@ public class ProjectServiceImpl implements ProjectService {
         requireCohort(cohortId, orgId);
 
         // 모집단 전체를 먼저 요약한다. readiness 개수(10차 Q1)가 걸러지지 않은 모집단 기준이라
-        // 필터를 통과한 것만 요약해서는 만들 수 없다.
-        List<ProjectSummary> population = summarizeAll(findProjects(cohortId, orgId), orgId);
+        // 필터를 통과한 것만 요약해서는 만들 수 없다. totalRounds(22차 R10)도 같은 모집단이다 —
+        // 필터를 걸어도 `3차 / 6회`의 분모는 줄지 않아야 한다.
+        List<Project> projects = findProjects(cohortId, orgId);
+        List<ProjectSummary> population = summarizeAll(projects, orgId, projects.size());
 
         // 상태별 개수는 필터를 적용하지 않은 모집단이다 — 상태 칩이 자기 자신을 필터링하면
         // 언제나 자기 개수만 남아 다른 칩이 0이 된다. 0인 상태도 키를 채운다(키가 빠지는 것과 다르다).

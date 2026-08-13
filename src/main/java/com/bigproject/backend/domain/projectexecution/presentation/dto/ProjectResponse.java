@@ -45,6 +45,19 @@ public record ProjectResponse(
                 example = "2026-08-21T14:59:00Z", nullable = true)
         Instant submissionDueAt,
 
+        // 22차 R10 ⓐ — `3차 / 6회`의 분모. sequenceNo(분자)는 있는데 이것이 없어서
+        // 대시보드가 /projects/current를 못 쓰고 목록을 계속 부르고 있었다.
+        @Schema(description = """
+                이 기수의 **전체 회차 수**이며 화면의 `3차 / 6회`에서 뒤 숫자다.
+                `sequenceNo`가 분자이고 이 값이 분모다.
+
+                **필터와 무관한 모집단**이다 — 목록을 `?status=RUNNING`으로 걸러도 이 값은 줄지 않는다.
+                걸러진 개수는 `ProjectListResponse.total`이다.
+
+                회차 수를 세지 않는 응답(상세 조회 · 생성·수정 직후)에서는 `0`이다.""",
+                example = "6")
+        int totalRounds,
+
         // ── 9차 R1: 목록 화면이 셀마다 그리는 세 숫자 ────────────────────────────
         // 목록에 회차가 6~8건인데 화면이 직접 세려면 회차마다 교안·개념·후보를 따로 물어야 한다.
         // 목록 항목에 실어 주면 목록 조회 한 번으로 끝난다.
@@ -84,6 +97,7 @@ public record ProjectResponse(
                 project.getStartDate(),
                 project.getEndDate(),
                 summary.submissionDueAt(),
+                summary.totalRounds(),
                 summary.curriculumCount(),
                 summary.conceptCount(),
                 summary.conceptCandidateCount(),
