@@ -9,6 +9,7 @@ import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionRes
 import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.GithubSubmissionContent;
 import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.SubmissionContent;
 import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.ZipSubmissionContent;
+import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -115,8 +116,8 @@ public class MySubmissionService {
 			return row.submissionFailureReason();
 		}
 		if (hasLostExternalJobId(row)) {
-			return "분석 서버의 작업 정보가 유실되어 분석을 계속할 수 없습니다. "
-					+ "코드를 다시 제출해 분석을 재시도해 주세요. 다시 제출할 수 없다면 담당 매니저에게 문의해 주세요.";
+			// 같은 사실을 상세 조회(GET .../analysis)도 내려 준다. 문구가 갈라지지 않게 그쪽 상수를 쓴다.
+			return SubmissionAnalysisResponse.EXTERNAL_JOB_ID_LOST_MESSAGE;
 		}
 		return messageOf(row.analysisFailureCode());
 	}

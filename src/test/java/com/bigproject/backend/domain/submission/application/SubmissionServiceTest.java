@@ -16,6 +16,8 @@ import com.bigproject.backend.domain.submission.infrastructure.SubmissionContext
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionContextRepository.SubmissionContext;
 import com.bigproject.backend.domain.submission.infrastructure.SubmissionRepository;
 import com.bigproject.backend.domain.submission.presentation.dto.CreateGithubSubmissionRequest;
+import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisPhase;
+import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
 import com.bigproject.backend.global.ai.AiProxyWarmUp;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -82,7 +84,7 @@ class SubmissionServiceTest {
 	}
 
 	@Test
-	void rejectsAnActiveAnalysisWhoseExternalJobIdIsMissing() {
+	void reportsAnActiveAnalysisWhoseExternalJobIdIsMissingAsFailed() {
 		UUID submissionId = UUID.randomUUID();
 		Submission submission = Submission.acceptGithubUrl(ORG_ID, TEAM_ID, ROUND_ID, UUID.randomUUID(),
 				"main", null, USER_ID, Instant.now(), UUID.randomUUID());
@@ -98,10 +100,15 @@ class SubmissionServiceTest {
 		when(analysisJobRepository.findFirstBySubmissionIdOrderByExecutionNoDescStartedAtDescJobIdDesc(submissionId))
 				.thenReturn(Optional.of(job));
 
-		assertThatThrownBy(() -> service.getAnalysis(USER_ID, submissionId))
-				.isInstanceOf(SubmissionException.class)
-				.satisfies(exception -> assertThat(((SubmissionException) exception).errorCode())
-						.isEqualTo(SubmissionErrorCode.ANALYSIS_EXTERNAL_JOB_ID_MISSING));
+		SubmissionAnalysisResponse response = service.getAnalysis(USER_ID, submissionId);
+
+		// 오류가 아니라 실패 응답이다. 목록(TR-02)이 이미 "분석 실패"로 보여 주는 상태와 맞춘다.
+		assertThat(response.phase()).isEqualTo(SubmissionAnalysisPhase.FAILED);
+		assertThat(response.failureCode()).isEqualTo(SubmissionAnalysisResponse.EXTERNAL_JOB_ID_LOST);
+		assertThat(response.failureReason())
+				.isEqualTo(SubmissionAnalysisResponse.EXTERNAL_JOB_ID_LOST_MESSAGE);
+		assertThat(response.analysisJobId()).isEqualTo(job.getJobId());
+		assertThat(response.codeAnalysisId()).isNull();
 	}
 
 	private SubmissionContext openRoundContext() {

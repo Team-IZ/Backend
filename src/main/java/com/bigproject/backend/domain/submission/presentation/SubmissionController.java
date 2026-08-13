@@ -367,13 +367,18 @@ public class SubmissionController {
 					내려가며 원장의 job은 `SUCCEEDED`로 남는다 — 분석 자체는 실제로 성공했고 비용도 이미 나갔기
 					때문이다. 화면은 재제출을 안내하면 된다.
 
+					🔴 **`EXTERNAL_JOB_ID_LOST`도 `analysis_job.failure_code`에 없는 값이다.** 분석 행은
+					아직 진행 중(`QUEUED`·`RUNNING`)인데 AI가 발급한 작업 ID가 사라져 상태를 더 따라갈 수
+					없다는 뜻이며, 이때 `phase=FAILED`, `codeAnalysisId=null`로 내려간다. 서버 폴러가 1분 안에
+					같은 실행을 `MODEL_ERROR`로 닫고 재시도 여지가 남아 있으면 다시 요청하므로, 폴링을 계속하면
+					새 실행의 `QUEUED`가 이어질 수 있다. 화면은 재제출을 안내하면 된다.
+
 					## 오류
 
 					| 코드 | 상태 | 언제 |
 					| --- | --- | --- |
 					| `SUBMISSION_NOT_FOUND` | 404 | 그런 제출이 없다 |
-					| `SUBMISSION_ACCESS_DENIED` | 403 | 다른 팀의 제출이다 |
-					| `ANALYSIS_EXTERNAL_JOB_ID_MISSING` | 500 | 활성 분석 행은 있지만 AI 상태 조회에 필요한 외부 작업 ID가 없다 |""")
+					| `SUBMISSION_ACCESS_DENIED` | 403 | 다른 팀의 제출이다 |""")
 	@GetMapping("/{submissionId}/analysis")
 	public ResponseEntity<SubmissionAnalysisResponse> getAnalysis(@PathVariable UUID submissionId) {
 		UUID userId = currentUserResolver.resolveCurrentMemberId();
