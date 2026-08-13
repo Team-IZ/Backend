@@ -90,26 +90,60 @@ class AnalysisBatchServiceTest {
 	}
 
 	private AnalysisJob jobWithExternalId() {
+		return jobWithExternalId(1);
+	}
+
+	/** executionNo를 지정해 "이 시도가 마지막 허용 시도인가"에 의존하는 테스트를 지원한다. */
+	private AnalysisJob jobWithExternalId(int executionNo) {
 		AnalysisJob job = AnalysisJob.queued(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-				UUID.randomUUID(), "batch-key", "CODE_ANALYSIS", 1, "trace-1");
+				UUID.randomUUID(), "batch-key", "CODE_ANALYSIS", executionNo, "trace-1");
 		job.acceptExternalJob(UUID.randomUUID());
 		return job;
 	}
 
 	@Test
-	void clearsTheExternalJobIdWhenTheServerNoLongerKnowsIt() {
+	void marksTheJobFailedWithTemporaryErrorWhenTheServerNoLongerKnowsIt() {
 		AnalysisJob job = jobWithExternalId();
+		UUID externalJobId = job.getExternalJobId();
 		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
-		// AI 스펙: "job storage is in-memory; process restart causes 404" — 정상 동작 중에도 난다.
+		// AI 스펙: "job storage is in-memory; process restart causes 404" — 이 external_job_id는
+		// 다시 나타나지 않으므로(D1) 대기하지 않고 즉시 재시도 가능한 실패로 확정한다.
 		when(client.fetchProgress(any())).thenReturn(Optional.empty());
 
 		int updated = service.pollActiveJobs();
 
 		assertThat(updated).isEqualTo(1);
-		// 실패로 기록하지 않는다. 분석이 실패한 게 아니라 요청이 유실된 것이라 다시 보내야 한다.
-		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.QUEUED);
-		assertThat(job.getExternalJobId()).isNull();
-		assertThat(job.getFailureCode()).isNull();
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.FAILED);
+		assertThat(job.getFailureCode()).isEqualTo(AnalysisFailureCode.TEMPORARY_ERROR);
+		assertThat(job.getFailureReason()).isNotBlank();
+		assertThat(job.getCompletedAt()).isNotNull();
+		assertThat(job.getStartedAt()).isNotNull();
+		// 포렌식 목적으로 보존한다 — FAILED job의 external_job_id는 이후 어떤 경로에서도 다시 읽지 않는다.
+		assertThat(job.getExternalJobId()).isEqualTo(externalJobId);
+	}
+
+	@Test
+	void marksTheAttemptAnalysisFailedWhenThe404IsTheLastAllowedAttempt() {
+		AnalysisJob job = jobWithExternalId(MAX_ATTEMPTS);
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any())).thenReturn(Optional.empty());
+
+		service.pollActiveJobs();
+
+		// 마지막 시도라 재시도로 회복되지 않는다 — ANALYZING에 갇힌 응시를 여기서 닫아야 한다.
+		verify(sessionPreparer).markAttemptsAnalysisFailed(job.getAssessmentRoundId(), job.getTeamId());
+	}
+
+	@Test
+	void doesNotCloseTheAttemptWhenAnEarlier404LeavesRetriesRemaining() {
+		AnalysisJob job = jobWithExternalId(1);
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any())).thenReturn(Optional.empty());
+
+		service.pollActiveJobs();
+
+		// 재시도가 안전망(retryPendingSubmissions)으로 자동으로 다시 걸린다. 아직 응시를 닫으면 안 된다.
+		verify(sessionPreparer, never()).markAttemptsAnalysisFailed(any(), any());
 	}
 
 	@Test

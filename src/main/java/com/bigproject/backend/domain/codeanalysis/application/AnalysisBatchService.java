@@ -286,8 +286,10 @@ public class AnalysisBatchService {
 	 * 왕복 내내 DB 커넥션을 붙들고 있었다 — {@link #dispatchOne}이 같은 이유로 피하던 것을 폴링에서는
 	 * 하고 있었던 셈이다.
 	 *
-	 * <p>AI 서버가 job을 메모리에만 두어 재시작하면 404가 난다(스펙 명시). 그건 오류가 아니라 재요청
-	 * 신호이므로 실패로 기록하지 않고 {@code external_job_id}를 지워 다음 배치가 다시 보내게 한다.
+	 * <p>AI 서버가 job을 메모리에만 두어 재시작하면 404가 난다(스펙 명시). 이 external_job_id는
+	 * 다시 나타나지 않으므로 {@link #applyProgress}가 즉시 FAILED(TEMPORARY_ERROR)로 확정한다 —
+	 * QUEUED/RUNNING으로 남기면 이 메서드의 {@code findByStatusIn}이 그 행을 매 폴링마다 영원히
+	 * 다시 골라 스케줄러가 멈추지 않는 조회 루프가 된다(D1, 2026-08-13).
 	 *
 	 * @return 상태가 바뀐 실행 수
 	 */
@@ -314,10 +316,28 @@ public class AnalysisBatchService {
 		// 트랜잭션 밖이다. 이 호출이 5분 걸려도 붙들고 있는 DB 커넥션이 없다.
 		AnalysisProgress progress = analysisServerClient.fetchProgress(job.getExternalJobId()).orElse(null);
 		if (progress == null) {
-			// AI 서버가 모르는 job이다. 재시작으로 유실됐다는 뜻이라 같은 execution_no로 다시 보낸다.
-			log.warn("AI 서버가 모르는 작업이다. 재요청 대상으로 되돌린다: jobId={}, externalJobId={}",
+			// D1: 즉시 FAILED(TEMPORARY_ERROR)로 확정한다(그레이스 윈도 없음).
+			//   WHY: 이 404는 AI 스펙상 "job 저장소가 프로세스 재시작으로 통째로 비었다"는 확정
+			//        신호다 -- 같은 external_job_id는 다시 나타나지 않으므로 기다려도 회복되지
+			//        않는다. 종전처럼 external_job_id만 지우고 status를 QUEUED/RUNNING에 남기면
+			//        findByStatusIn이 이 행을 매 폴링(PT1M)마다 영원히 다시 고르고(무한 DB 루프),
+			//        BLOCKING_JOB_EXISTS가 status<>'FAILED'인 한 재요청도 영구히 막는다.
+			//   COST: 202 직후의 극히 짧은 전파 지연 같은 진짜 일시적 blip도 즉시 실패로 처리한다.
+			//        다만 재시도 소비량은 즉시 실패든 대기 후 실패든 동일(1회)이라 실질 비용은 낮고,
+			//        기존 retryPendingSubmissions/max-attempts 안전망이 그대로 흡수한다.
+			//   EXIT: 정말 그레이스가 필요해지면 AnalysisJob에 firstNotFoundAt 같은 전용 컬럼을
+			//        추가하는 스키마 변경이 필요하다(createdAt은 "언제부터 안 보였는지"의 대리
+			//        지표로 부정확해 기각).
+			log.warn("AI 서버가 모르는 작업이다. 실패로 확정하고 재시도 대상으로 넘긴다: jobId={}, externalJobId={}",
 					job.getJobId(), job.getExternalJobId());
-			job.acceptExternalJob(null);
+			Instant now = Instant.now();
+			// pollActiveJobs가 다루는 job은 이미 dispatchOne에서 markAttemptsAnalyzing이 호출된
+			// 상태다. 마지막 시도에서 끝나면 이 호출 없이는 measurement_attempt가 ANALYZING에
+			// 영원히 남는다 -- DB 레벨 루프는 고쳐도 UI 레벨에서 같은 증상이 조용히 재현된다.
+			markAttemptsFailedIfTerminal(job, AnalysisFailureCode.TEMPORARY_ERROR);
+			job.markFailed(AnalysisFailureCode.TEMPORARY_ERROR,
+					"AI 서버가 external_job_id를 모른다(404). App Runner pause/resume으로 작업 저장소가 재시작됐을 수 있다.",
+					job.getStartedAt(), now);
 			saveJob(job);
 			return true;
 		}
