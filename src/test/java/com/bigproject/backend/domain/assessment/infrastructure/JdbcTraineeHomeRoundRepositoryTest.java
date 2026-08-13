@@ -41,6 +41,19 @@ class JdbcTraineeHomeRoundRepositoryTest {
 	}
 
 	@Test
+	void ordersRoundsByProjectSequenceNoBecauseRoundNoIsNotUniqueWithinACohort() {
+		repository.findAllByTraineeUserId(traineeUserId);
+
+		String sql = capturedSql();
+		// round_no는 (project_id, round_no)로만 유일해 미니프로젝트에서는 전부 1이다.
+		// 그 값으로만 정렬하면 지난 회차가 `1차 · 4차 · 3차 · 2차`로 나간다(24차 R5).
+		assertThat(sql)
+				.contains("p.sequence_no AS project_sequence_no")
+				.contains("LEFT JOIN project p")
+				.contains("ORDER BY p.sequence_no DESC NULLS LAST, v.round_no DESC");
+	}
+
+	@Test
 	void doesNotReadAvailableSubmissionMethodsFromView() {
 		repository.findAllByTraineeUserId(traineeUserId);
 

@@ -23,13 +23,23 @@ import java.util.UUID;
 public class JdbcTraineeHomeRoundRepository implements TraineeHomeRoundRepository {
 
 	/*
-	 * trainee_home_round_view 단일 조회 + cohort 조인 1개.
+	 * trainee_home_round_view 단일 조회 + cohort·project 조인 2개.
 	 * View에는 cohort_id만 있고 기수 표시명이 없어 cohort.name만 따로 가져온다.
-	 * 정렬은 서비스가 구획별로 다시 하므로 여기서는 안정적인 기본 순서만 준다.
+	 *
+	 * 🔴 project.sequence_no를 함께 읽는 이유 — round_no로는 회차를 줄 세울 수 없다.
+	 *   uq_project_assessment_round_no_active가 (project_id, round_no)라 round_no는
+	 *   **프로젝트 안에서만** 유일하고, 정의서가 "MINI_PROJECT는 활성 회차 정확히 1건,
+	 *   round_no=1"을 요구하므로 미니프로젝트만 쓰는 지금은 기수의 모든 회차가 1이다.
+	 *   그 값으로 정렬하면 순서가 사실상 DB가 준 순서 그대로 통과한다 — 실제로 지난 회차가
+	 *   `1차 · 4차 · 3차 · 2차`로 나갔다(24차 R5).
+	 *   기수 안 운영 순서를 가진 축은 project.sequence_no다(정의서: "sequence_no는 기수 내
+	 *   전체 프로젝트 운영 순서"). GET /reports가 이미 같은 축으로 정렬한다
+	 *   (JdbcTraineeReportQueryRepository.findRounds).
 	 */
 	private static final String FIND_ROUNDS = """
 			SELECT v.assessment_round_id,
 			       v.round_no,
+			       p.sequence_no AS project_sequence_no,
 			       v.round_name,
 			       v.round_status,
 			       v.project_id,
@@ -78,8 +88,9 @@ public class JdbcTraineeHomeRoundRepository implements TraineeHomeRoundRepositor
 			       v.as_of_at
 			FROM trainee_home_round_view v
 			LEFT JOIN cohort c ON c.cohort_id = v.cohort_id AND c.deleted_at IS NULL
+			LEFT JOIN project p ON p.project_id = v.project_id AND p.deleted_at IS NULL
 			WHERE v.trainee_user_id = ?
-			ORDER BY v.round_no DESC
+			ORDER BY p.sequence_no DESC NULLS LAST, v.round_no DESC
 			""";
 
 	/*
@@ -150,6 +161,7 @@ public class JdbcTraineeHomeRoundRepository implements TraineeHomeRoundRepositor
 	private static final RowMapper<TraineeHomeRound> ROUND_MAPPER = (rs, rowNum) -> new TraineeHomeRound(
 			toUuid(rs, "assessment_round_id"),
 			toInteger(rs, "round_no"),
+			toInteger(rs, "project_sequence_no"),
 			rs.getString("round_name"),
 			rs.getString("round_status"),
 			toUuid(rs, "project_id"),
