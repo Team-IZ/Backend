@@ -664,8 +664,19 @@ public class OperationsServiceImpl implements OperationsService {
 								CohortCostRepository.MonthlyAmount::amount, (a, b) -> a));
 
 		BigDecimal total = orgByMonth.getOrDefault(basisMonth, BigDecimal.ZERO);
-		// 지난달 행이 아예 없으면 "첫 달"이라 null이다 — 0과 구분해야 화면이 `—`를 그린다.
-		BigDecimal previousTotal = orgByMonth.get(previousMonth);
+		/*
+		 * 지난달 행이 아예 없으면 "첫 달"이라 null이다 — 0과 구분해야 화면이 `—`를 그린다.
+		 *
+		 * 22차 R11 — 여기에 더해, 지난달이 이 기수의 개강 전이면 그것도 null이다. 이 값은 기관
+		 * 전체 합계인데 cohortId로 물은 응답에 실려서, 아직 시작도 안 한 기수가 다른 기수의
+		 * 지난달 총액을 물려받았다. 10기(9월 개강)를 물으면 8월 previousTotal에 9기 총액이 와서
+		 * 화면이 `-100%` 급감을 그렸다 — 10기는 8월에 쓸 수 있는 세션이 아예 없다.
+		 *
+		 * 합계 자체를 기수로 좁히지는 않는다. 이 두 값이 기관 전체인 것은 화면이 제목에
+		 * 범위를 따로 쓰는 의도된 계약이다(이 API 설명의 「범위가 섞여 있다」). 고칠 것은
+		 * "비교할 지난달이 이 기수에 존재하는가"이며, 없으면 비교를 그리지 않는 것이 맞다.
+		 */
+		BigDecimal previousTotal = previousMonth.isBefore(firstMonth) ? null : orgByMonth.get(previousMonth);
 		BigDecimal changePct = changePercent(total, previousTotal);
 
 		// ── 기수 카드 (기준 월에 실제로 비용이 난 기수만) ──
