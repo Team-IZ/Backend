@@ -50,6 +50,27 @@ public interface CurriculumTeachesMappingRepository extends JpaRepository<Curric
             @Param("status") MappingStatus status);
 
     /**
+     * 위 개수 조회의 일괄 판(15차 R1). 회차 목록이 교안 버전마다 이것을 부르고 있었다 —
+     * 버전 전체를 한 번에 세고 호출부가 버전별로 나눈다.
+     *
+     * <p>{@code versionId}가 없는 버전은 <b>행 자체가 나오지 않는다</b>(GROUP BY라 0건은 그룹이
+     * 생기지 않는다). 호출부는 없는 키를 0으로 읽어야 한다.
+     *
+     * @return {@code [versionId, count]} 두 칸짜리 배열의 목록
+     */
+    @Query("""
+            select tm.versionId, count(tm) from CurriculumTeachesMapping tm
+            where tm.versionId in :versionIds
+              and tm.orgId = :orgId
+              and tm.mappingStatus = :status
+            group by tm.versionId
+            """)
+    List<Object[]> countActiveCandidatesByVersionIds(
+            @Param("versionIds") Collection<UUID> versionIds,
+            @Param("orgId") UUID orgId,
+            @Param("status") MappingStatus status);
+
+    /**
      * project_verification_concept 생성 시 검증용:
      * source_mapping_id가 가리키는 teaches_id가 실제로 이 매핑의 teaches_id와 일치하는지,
      * 그리고 이 매핑이 프로젝트에 연결된 정확한 curriculum_version_id 범위 안에 있는지 확인한다.

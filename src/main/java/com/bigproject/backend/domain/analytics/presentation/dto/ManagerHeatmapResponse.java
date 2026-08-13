@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.analytics.presentation.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -14,17 +15,27 @@ import java.util.UUID;
  * {@code scope}가 한 번만 싣는다. 셀에 소속 식별자를 반복하지 않으므로 계층이 바뀌어도
  * {@code null}로 비는 칸이 생기지 않는다.
  */
-@JsonInclude(JsonInclude.Include.NON_NULL)
 public record ManagerHeatmapResponse(
 		UUID cohortId, UUID projectId, UUID assessmentRoundId,
-		Level level, AttemptView attemptView, OffsetDateTime asOfAt,
-		Scope scope, List<Concept> concepts, Row summary, List<Row> rows, Navigation navigation) {
+		Level level, AttemptView attemptView,
+		@JsonInclude(JsonInclude.Include.NON_NULL)
+		@Schema(description = "집계 대상 셀이 하나도 없으면 키가 빠진다") OffsetDateTime asOfAt,
+		@JsonInclude(JsonInclude.Include.NON_NULL)
+		@Schema(description = "CLASS 계층은 고정 상위가 없어 키가 빠진다") Scope scope,
+		List<Concept> concepts,
+		@JsonInclude(JsonInclude.Include.NON_NULL)
+		@Schema(description = "집계 대상 셀이 하나도 없으면 키가 빠진다") Row summary,
+		List<Row> rows, Navigation navigation) {
 	public enum Level { CLASS, TEAM, TRAINEE }
 	public enum AttemptView { INITIAL, REVIEW }
 
 	/** 이 조회에서 <b>고정된</b> 상위 계층이다. CLASS 계층은 고정 상위가 없어 {@code null}이다. */
-	@JsonInclude(JsonInclude.Include.NON_NULL)
-	public record Scope(UUID classroomId, String classroomName, UUID teamId, String teamName) {
+	public record Scope(
+			UUID classroomId, String classroomName,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "TEAM·CLASS 계층에서는 키가 빠진다") UUID teamId,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "TEAM·CLASS 계층에서는 키가 빠진다") String teamName) {
 	}
 
 	/**
@@ -43,8 +54,14 @@ public record ManagerHeatmapResponse(
 	 * <p>{@code memberCount}는 <b>명부 인원</b>이라 응시하지 않은 사람을 포함하며
 	 * 셀의 {@code validCount}와 다르다. 개인 행은 인원 개념이 없어 {@code null}이다.
 	 */
-	@JsonInclude(JsonInclude.Include.NON_NULL)
-	public record Row(UUID rowId, String rowName, Integer memberCount, List<Cell> cells) {
+	public record Row(
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "합계 행에서는 키가 빠진다") UUID rowId,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "합계 행에서는 키가 빠진다") String rowName,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "개인 행은 인원 개념이 없어 키가 빠진다") Integer memberCount,
+			List<Cell> cells) {
 	}
 
 	/**
@@ -59,11 +76,17 @@ public record ManagerHeatmapResponse(
 	 * <p>{@code initialLevel}·{@code comparisonLevel}·{@code delta}는 {@code REVIEW}
 	 * 전용이라 {@code INITIAL} 응답에서는 <b>키 자체가 빠진다</b>.
 	 */
-	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record Cell(
 			int problemNo, BigDecimal value, String status,
 			Integer validCount, Integer notAttendedCount, Integer invalidCount, Integer interruptedCount,
-			Boolean groupShortfall, Integer initialLevel, Integer comparisonLevel, Integer delta) {
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "반 행에만 채운다. 그 외에는 키가 빠진다") Boolean groupShortfall,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "REVIEW 전용. INITIAL 응답에서는 키가 빠진다") Integer initialLevel,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "REVIEW 전용. INITIAL 응답에서는 키가 빠진다") Integer comparisonLevel,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "REVIEW 전용. INITIAL 응답에서는 키가 빠진다") Integer delta) {
 	}
 
 	/**

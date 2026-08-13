@@ -19,8 +19,9 @@ import java.util.UUID;
  * {@code provider_model_code}(공급자 원본 식별자, 예: {@code nemotron-3-ultra-550b-a55b})가 아니라
  * {@code model_code}(전체 코드, 예: {@code nvidia/nemotron-3-ultra-550b-a55b})를 보내야 AI가 모델을
  * 인식한다. 필드 이름은 그대로 두고 값만 바꾼다 — AI 쪽 요청 스키마의 필드명을 이쪽에서 정할 수는
- * 없다. {@code reporting.application.ReportBatchService}는 아직 {@code provider_model_code}를
- * 쓴다(별개 확인 필요, 이 정정의 범위 밖).
+ * 없다. {@code reporting.application.ReportBatchService}도 같은 결론에 도달해 지금은
+ * {@code provider_model_code}를 보내지 않는다(설정값 {@code ai.report.model-code}를 쓰며 그 형식이
+ * {@code model_code}와 같다).
  *
  * <p><b>왜 model_code로 찾는가.</b> {@code model_code}에만 UNIQUE가 있다
  * ({@code uq_ai_model_model_code}). {@code provider_model_code}는 {@code (provider, ...)} 복합

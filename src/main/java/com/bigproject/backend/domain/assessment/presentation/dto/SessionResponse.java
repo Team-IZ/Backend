@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.assessment.presentation.dto;
 
+import com.bigproject.backend.domain.assessment.domain.AssessmentSessionStatus;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionHead;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionStage;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -25,12 +26,21 @@ public record SessionResponse(
 				allowableValues = {"FIRST", "REVIEW"})
 		String mode,
 
-		@Schema(description = "READY(시작 전) · IN_PROGRESS(진행 중)", allowableValues = {"READY", "IN_PROGRESS"})
+		// 이 조회는 READY·IN_PROGRESS만 돌려주지만(종료된 세션은 findCurrent가 고르지 않는다)
+		// 값 집합 자체는 세션 상태 8종이다. 좁혀서 내보내면 같은 컬럼이 API마다 다른 타입이 된다.
+		@Schema(description = "이 조회는 사실상 READY(시작 전) · IN_PROGRESS(진행 중)만 돌려준다",
+				implementation = AssessmentSessionStatus.class)
 		String status,
 
-		@Schema(description = "지금 서 있는 문제 번호(1~3). 시작 전이면 null") Integer currentProblemNo,
+		@Schema(description = """
+				지금 서 있는 문제 번호. 시작 전이면 null. 생성된 문제만 1부터 세므로 항상
+				1~problemTotal 범위이며, 그대로 `GET .../problems/{problemNo}`에 넣으면 된다""",
+				nullable = true)
+		Integer currentProblemNo,
 
-		@Schema(description = "생성된 문제 수. 화면의 `문제 n/N`의 N이다. NOT_GENERATED 문제가 있으면 3보다 작다")
+		@Schema(description = """
+				생성된 문제 수. 화면의 `문제 n/N`의 N이다. 코드 근거를 못 찾아 문항이 만들어지지 않은
+				개념(NOT_GENERATED)이 있으면 3보다 작다 — 그 문제는 세션에 아예 나오지 않는다""")
 		int problemTotal,
 
 		@Schema(description = "세션 시작 시각. 경과 시간 표시의 기산점") Instant startedAt,

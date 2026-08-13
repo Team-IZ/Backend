@@ -19,9 +19,12 @@ public final class SessionModels {
 	/**
 	 * 세션 한 건의 머리 정보. {@code assessment_session} + {@code measurement_attempt} 조인 결과다.
 	 *
-	 * @param mode          {@code attempt_type}. {@code REVIEW}면 다시 보기이며 힌트가 없고 판정에 반영되지 않는다
-	 * @param timeLimitAt   정책 시간 상한. NULL이면 상한이 없다(정의서 §6 "시간은 안내만 하고 강제로 끊지 않는다"의
-	 *                      예외가 70분 하드 상한이라, 값이 있으면 그때 닫는다)
+	 * @param mode                    {@code attempt_type}. {@code REVIEW}면 다시 보기이며 힌트가 없고 판정에 반영되지 않는다
+	 * @param timeLimitAt             정책 시간 상한. NULL이면 상한이 없다(정의서 §6 "시간은 안내만 하고 강제로 끊지 않는다"의
+	 *                                예외가 60분 하드 상한이라, 값이 있으면 그때 닫는다)
+	 * @param currentProblemStartedAt 지금 문제의 L1 축이 교육생에게 처음 표시된 시각({@code problem_stage.question_presented_at}).
+	 *                                문제별 20분 제한의 기준점이며, 세션 레벨과 달리 이 값을 담는 컬럼을 따로 두지 않고
+	 *                                이미 있는 컬럼을 그대로 읽는다 — L1이 표시된 순간이 곧 그 문제가 시작된 순간이다.
 	 */
 	public record SessionHead(
 			UUID sessionId,
@@ -36,8 +39,18 @@ public final class SessionModels {
 			Instant startedAt,
 			Instant timeLimitAt,
 			Instant reviewDueAt,
-			UUID sourceSubmissionId
+			UUID sourceSubmissionId,
+			Instant currentProblemStartedAt
 	) {
+		/** 기존 호출부 호환용. 문제별 시간 제한을 검사하지 않는 맥락(테스트 등)에서는 null로 둔다. */
+		public SessionHead(
+				UUID sessionId, UUID orgId, UUID attemptId, UUID userId, UUID assessmentRoundId,
+				String mode, String status, UUID currentProblemId, UUID currentProblemStageId,
+				Instant startedAt, Instant timeLimitAt, Instant reviewDueAt, UUID sourceSubmissionId) {
+			this(sessionId, orgId, attemptId, userId, assessmentRoundId, mode, status, currentProblemId,
+					currentProblemStageId, startedAt, timeLimitAt, reviewDueAt, sourceSubmissionId, null);
+		}
+
 		public boolean isReview() {
 			return "REVIEW".equals(mode);
 		}

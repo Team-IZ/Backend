@@ -23,13 +23,15 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @Schema(description = "문제 하나의 코드·질문·지금까지의 문답")
 public record ProblemActivityResponse(
-		@Schema(description = "문제 번호(1~3)") int problemNo,
+		@Schema(description = "문제 번호. 생성된 문제만 1부터 세므로 항상 1~problemTotal 범위다")
+		int problemNo,
 		@Schema(description = "생성된 문제 수. 화면의 `문제 n/N`") int problemTotal,
 		@Schema(description = "문제 제목. 검증하는 교안 개념 이름이다") String title,
 		@Schema(description = "코드 패널") Code code,
 		@Schema(description = "이 문제에서 지금까지 확정된 문답. 화면은 위에서 아래로 쌓는다")
 		List<Turn> turns,
-		@Schema(description = "지금 물어보는 질문. 문제가 끝났으면 null") CurrentQuestion current
+		@Schema(description = "지금 물어보는 질문. 문제가 끝났으면 null", nullable = true)
+		CurrentQuestion current
 ) {
 
 	@Schema(description = "코드 패널. snippet은 파일 전체이며 자를 위치는 화면이 정한다")
@@ -59,7 +61,7 @@ public record ProblemActivityResponse(
 	public record Turn(
 			@Schema(description = "질문 순번. 화면의 `◆ 질문 2`") int sequenceNo,
 			String questionText,
-			@Schema(description = "이 턴 직전에 보여준 힌트. 첫 시도면 null") String hintText,
+			@Schema(description = "이 턴 직전에 보여준 힌트. 첫 시도면 null", nullable = true) String hintText,
 			String answerText,
 			Instant answeredAt,
 			@Schema(description = "강조할 구간. 질문마다 옮겨간다") Highlight highlight

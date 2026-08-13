@@ -22,7 +22,7 @@ class JdbcTraineeRosterInvitationSqlTest {
 				.thenReturn(2);
 		JdbcTraineeRosterRepository repository = new JdbcTraineeRosterRepository(jdbcTemplate);
 
-		repository.countCohortTotal(UUID.randomUUID(), UUID.randomUUID());
+		repository.countCohortTotal(UUID.randomUUID(), UUID.randomUUID(), null);
 
 		ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
 		verify(jdbcTemplate).queryForObject(sql.capture(), eq(Integer.class), any(Object[].class));

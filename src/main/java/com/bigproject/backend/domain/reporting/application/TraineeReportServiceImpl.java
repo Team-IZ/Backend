@@ -140,7 +140,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		//    publishAfter는 회차가 정해 둔 "이 시각 전에는 발행하지 않는다" 값이다.
 		if (round.reportId() == null || round.publishedAt() == null) {
 			return new RoundReportResponse(id, reportId, label, "PENDING_PUBLISH",
-					iso(round.reportPublishNotBeforeAt()), null, null, null, null, null, null, null, null);
+					iso(round.reportPublishNotBeforeAt()), null, null, null, null,
+					null, null, null, null, null, null);
 		}
 
 		// ⑤ 발행됐지만 공개 범위 미지정 — 발행과 공개는 다른 사건이다.
@@ -181,6 +182,11 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				// PUBLISHED 분기에서만 채운다. 앞의 ①~⑤는 활성 스냅샷이 없거나(발행 전)
 				// 볼 수 없는 상태라 완전성을 말할 대상 자체가 없다.
 				completion(round.completionStatus()),
+				// 19차 Q1 — 생성 실패(장애)와 문항 없음(정상)을 화면이 가를 수 있게 건수를 준다.
+				// 문항 없음은 위 concepts에 asked=false로 들어가고, 생성 실패는 아예 빠지므로
+				// 배열만 봐서는 "왜 3개가 아닌가"를 알 수 없다.
+				round.sampleCount(),
+				round.missingCount(),
 				concepts,
 				retryState(round),
 				iso(round.reviewDueAt()),
@@ -238,7 +244,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				row.problemId() == null ? null : row.problemId().toString(),
 				row.conceptDisplayName(),
 				true,
-				reachLevel(row.reachDisplayCode()),
+				row.reachLevel(),
 				row.resultExplanation(),
 				row.reviewRequired(),
 				row.canViewExplanation() ? curriculumRef(row.curriculumLocationJson()) : null,
@@ -246,26 +252,6 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				explain(row, fullScope, retryPending),
 				comparedReach(row.reviewBeforeAfterItemsJson())
 		);
-	}
-
-	/**
-	 * `L0`~`L4` → 0~4.
-	 *
-	 * <p><b>0은 1로 올리지 않는다.</b> 통과한 축이 하나도 없는데 1로 보내면 화면이
-	 * `무엇을 하는지까지`(= L1 통과) 라벨을 붙여 학생에게 사실과 다른 말을 하게 된다.
-	 * 계약을 5단(0~4)으로 맞춘 이유가 이것이다.
-	 */
-	private static int reachLevel(String reachDisplayCode) {
-		if (reachDisplayCode == null || reachDisplayCode.length() < 2) {
-			return 0;
-		}
-		return switch (reachDisplayCode) {
-			case "L1" -> 1;
-			case "L2" -> 2;
-			case "L3" -> 3;
-			case "L4" -> 4;
-			default -> 0;
-		};
 	}
 
 	/** 다시 보기 상태. REVIEW 응시 기록이 없으면 대상이 아니다. */
@@ -364,8 +350,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				return null;
 			}
 			return new ComparedReachResponse(
-					reachLevel(first.get("before").asString()),
-					reachLevel(first.get("after").asString())
+					axisLevel(first.get("before").asString()),
+					axisLevel(first.get("after").asString())
 			);
 		} catch (Exception exception) {
 			log.warn("다시 보기 비교 JSON을 읽지 못했습니다. 비교 없이 내보냅니다.", exception);
@@ -373,10 +359,27 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		}
 	}
 
+	/**
+	 * 축 코드 `L0`~`L4` → 0~4. 다시 보기 비교 JSON({@code reviewBeforeAfterItems})만 축 코드를 쓴다 —
+	 * 개념 카드의 {@code level}은 이미 숫자로 조회된다.
+	 *
+	 * <p><b>0은 1로 올리지 않는다.</b> 통과한 축이 하나도 없는데 1로 보내면 화면이
+	 * `무엇을 하는지까지`(= L1 통과) 라벨을 붙여 학생에게 사실과 다른 말을 하게 된다.
+	 */
+	private static int axisLevel(String axisCode) {
+		return switch (axisCode == null ? "" : axisCode) {
+			case "L1" -> 1;
+			case "L2" -> 2;
+			case "L3" -> 3;
+			case "L4" -> 4;
+			default -> 0;
+		};
+	}
+
 	/** 본문이 없는 상태들. 화면은 status만 보고 그린다. */
 	private static RoundReportResponse statusOnly(String id, String reportId, String label, String status) {
 		return new RoundReportResponse(id, reportId, label, status,
-				null, null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null, null, null);
 	}
 
 	private static String iso(Instant instant) {

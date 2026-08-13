@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.member.presentation.dto;
 
 import com.bigproject.backend.domain.member.domain.CommitEmail;
+import com.bigproject.backend.domain.member.domain.CommitEmailStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.Instant;
@@ -12,14 +13,17 @@ public record CommitEmailResponse(
 		@Schema(description = "커밋 이메일 등록 여부. commitEmail 존재 여부에서 파생되는 값입니다.", example = "true")
 		boolean registered,
 
-		@Schema(description = "등록된 커밋 이메일. 미등록이면 null입니다.", example = "gildong@example.com")
+		@Schema(description = "등록된 커밋 이메일. 미등록이면 null입니다.", example = "gildong@example.com",
+				nullable = true)
 		String commitEmail,
 
+		// 값 집합을 인라인으로 다시 적지 않는다. 같은 세 값이 CommitEmailStatus 로도 나가고 있어
+		// 생성기가 같은 뜻의 타입을 두 개 만들고, 한쪽만 늘어나면 조용히 갈라진다(20차 R9).
 		@Schema(
 				description = """
 						커밋 이메일 검증 상태. PUT으로 등록·변경하면 항상 PENDING이 되며, \
 						VERIFIED는 별도 검증 완료 경로에서만 부여됩니다.""",
-				allowableValues = {"PENDING", "VERIFIED", "UNVERIFIED"},
+				implementation = CommitEmailStatus.class,
 				example = "PENDING"
 		)
 		String status,
@@ -27,6 +31,7 @@ public record CommitEmailResponse(
 		@Schema(
 				description = "검증 완료 방식. 자가 입력만으로는 부여되지 않으므로 PENDING 상태에서는 항상 null입니다.",
 				allowableValues = {"OAUTH", "MANAGER_CONFIRMED"},
+				nullable = true,
 				example = "null"
 		)
 		String verificationMethod,
