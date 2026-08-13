@@ -61,7 +61,7 @@ public record ProjectEvaluationSummaryResponse(
 			long totalCount,
 			@Schema(description = "최초 응시를 마친 인원", example = "23")
 			long attendedCount,
-			@Schema(description = "개념 하나 이상에서 2단 미달인 인원(불합격)", example = "4")
+			@Schema(description = "개념 하나 이상에서 2단 미달인 인원(불합격). 응시를 마친 사람만 셉니다.", example = "4")
 			long failedCount,
 			@Schema(description = "응시 창이 닫히도록 끝내 안 본 인원(확정 미응시). 아직 창이 열려 있는 사람은 세지 않습니다.", example = "2")
 			long notAttendedCount,
@@ -115,11 +115,15 @@ public record ProjectEvaluationSummaryResponse(
 					|---|---|
 					| `AVAILABLE` | 응시를 마쳐 결과가 있다 |
 					| `IN_PROGRESS` | 아직 응시 중이거나 시작 전이다 |
-					| `NOT_ATTENDED` | 창이 닫히도록 끝내 안 봤다 |
+					| `INCOMPLETE` | 끝내지 못한 채 응시 창이 닫혔다(중단) |
+					| `NOT_ATTENDED` | 창이 닫히도록 아예 안 봤다 |
 					| `INVALID` | 무효 확정된 수행이다 |
+
+					🔴 **`AVAILABLE`이 아니면 합격·불합격을 말하지 않습니다.** 아직 풀지 않은 문제는 도달
+					단계가 0이라, 판정을 걸면 응시 중인 사람이 전부 불합격으로 잡힙니다.
 					""", example = "AVAILABLE")
 			String resultStatus,
-			@Schema(description = "코드에 있는데 2단 미달인 개념 수. 목록의 '막힘 N' 배지입니다.", example = "1")
+			@Schema(description = "코드에 있는데 2단 미달인 개념 수. 목록의 '막힘 N' 배지이며 `AVAILABLE`이 아니면 항상 0입니다.", example = "1")
 			long stuckConceptCount,
 			@Schema(description = "개념별 도달 결과이며 표시 순서 오름차순입니다.")
 			List<ConceptOutcome> concepts

@@ -40,6 +40,9 @@ public class EvaluationService {
 	/** 2단 미달이면 불합격이다(정의서 §3 "개념 1개 이상에서 2단 미달"). */
 	private static final int PASS_LEVEL = 2;
 
+	/** 판정이 끝난 수행. 이 상태의 사람만 합격·불합격을 말할 수 있다. */
+	private static final String SETTLED_STATUS = "AVAILABLE";
+
 	private final EvaluationQueryRepository repository;
 	private final ManagerViewScopeGuard scopeGuard;
 
@@ -72,7 +75,7 @@ public class EvaluationService {
 				!conceptRows.isEmpty(),
 				summarize(trainees, attendedCount),
 				classWarnings(trainees, attendedCount),
-				conceptAggregates(traineeRows, conceptsByUser),
+				conceptAggregates(trainees),
 				trainees
 		);
 	}
@@ -97,6 +100,8 @@ public class EvaluationService {
 				.findStages(scope.round().assessmentRoundId(), userId).stream()
 				.collect(Collectors.groupingBy(StageRow::problemId));
 
+		String resultStatus = resultStatus(traineeRow);
+		boolean settled = SETTLED_STATUS.equals(resultStatus);
 		List<TraineeEvaluationDetailResponse.Concept> concepts = conceptRows.stream()
 				.map(row -> new TraineeEvaluationDetailResponse.Concept(
 						row.conceptId(),
@@ -104,7 +109,7 @@ public class EvaluationService {
 						row.displayOrder(),
 						row.generated(),
 						row.reachLevel(),
-						retryTarget(row),
+						retryTarget(row, settled),
 						steps(stagesByProblem.getOrDefault(row.problemId(), List.of()))))
 				.toList();
 
@@ -117,7 +122,7 @@ public class EvaluationService {
 				traineeRow.classId(),
 				traineeRow.className(),
 				scope.round().reportPublished(),
-				resultStatus(traineeRow),
+				resultStatus,
 				concepts
 		);
 	}
@@ -135,6 +140,8 @@ public class EvaluationService {
 
 	private ProjectEvaluationSummaryResponse.Trainee toTrainee(
 			TraineeRow row, List<ConceptResultRow> conceptRows) {
+		String resultStatus = resultStatus(row);
+		boolean settled = SETTLED_STATUS.equals(resultStatus);
 		List<ProjectEvaluationSummaryResponse.ConceptOutcome> concepts = conceptRows.stream()
 				.map(concept -> new ProjectEvaluationSummaryResponse.ConceptOutcome(
 						concept.conceptId(),
@@ -142,7 +149,7 @@ public class EvaluationService {
 						concept.displayOrder(),
 						concept.generated(),
 						concept.reachLevel(),
-						retryTarget(concept)))
+						retryTarget(concept, settled)))
 				.toList();
 
 		return new ProjectEvaluationSummaryResponse.Trainee(
@@ -150,21 +157,31 @@ public class EvaluationService {
 				row.name(),
 				row.classId(),
 				row.className(),
-				resultStatus(row),
+				resultStatus,
 				concepts.stream().filter(ProjectEvaluationSummaryResponse.ConceptOutcome::retryTarget).count(),
 				concepts
 		);
 	}
 
 	/**
-	 * 코드에 없던 개념은 대상이 아니다 — 못한 것이 아니라 묻지 못한 것이라 다시 보여줄 것이 없다.
+	 * 다시 보기 대상은 <b>수행이 끝난 사람에게만</b> 붙는다.
+	 *
+	 * <p>도달 단계만 보면 아직 응시 중인 사람의 안 푼 문제가 전부 "0단 = 2단 미달"이라 대상이 된다.
+	 * 실제로 그랬다 — 1번 문제를 푸는 중인 교육생이 2·3번 때문에 '막힘 2'로 뜨고 불합격 인원에도
+	 * 잡혔다. 묻지도 않은 것을 못했다고 판정한 셈이라, 판정 자체를 종료된 수행으로 제한한다.
+	 *
+	 * <p>코드에 없던 개념도 대상이 아니다 — 못한 것이 아니라 묻지 못한 것이라 다시 보여줄 것이 없다.
 	 */
-	private boolean retryTarget(ConceptResultRow row) {
-		return row.generated() && row.reachLevel() < PASS_LEVEL;
+	private boolean retryTarget(ConceptResultRow row, boolean settled) {
+		return settled && row.generated() && row.reachLevel() < PASS_LEVEL;
 	}
 
 	/**
 	 * 무효 확정을 가장 먼저 본다. 무효인 수행은 응시를 마쳤더라도 결과로 읽으면 안 된다.
+	 *
+	 * <p>{@code INCOMPLETE}(중단)를 {@code IN_PROGRESS}와 가른다. 응시 창이 닫히도록 끝내지 못한 사람은
+	 * 더 손쓸 것이 없는 확정 상태인데, 하나로 접으면 마감이 지난 뒤에도 화면에 "아직 응시 중"으로 남는다.
+	 * 제출 현황 탭이 {@code MISSED}와 {@code OPEN}을 가르는 것과 같은 원칙이다.
 	 */
 	private String resultStatus(TraineeRow row) {
 		if ("CONFIRMED_INVALID".equals(row.validityReviewStatus())) {
@@ -173,7 +190,10 @@ public class EvaluationService {
 		if ("NOT_ATTENDED".equals(row.terminalReasonCode())) {
 			return "NOT_ATTENDED";
 		}
-		return "COMPLETED".equals(row.completionStatus()) ? "AVAILABLE" : "IN_PROGRESS";
+		if ("SESSION_INCOMPLETE".equals(row.terminalReasonCode())) {
+			return "INCOMPLETE";
+		}
+		return "COMPLETED".equals(row.completionStatus()) ? SETTLED_STATUS : "IN_PROGRESS";
 	}
 
 	private ProjectEvaluationSummaryResponse.Summary summarize(
@@ -217,26 +237,28 @@ public class EvaluationService {
 		return warnings;
 	}
 
+	/**
+	 * 이미 판정이 끝난 {@code trainees}에서 접는다 — 원본 행에서 다시 세면 '막힘' 기준이 두 곳에 생기고,
+	 * 진행 중인 사람을 빼는 규칙이 한쪽에만 반영되는 사고가 난다.
+	 *
+	 * <p>'코드에 없던 사람'은 응시 여부와 무관하다 — 그 개념이 코드에 없었다는 것은 제출한 코드의 성질이지
+	 * 그 사람이 어디까지 했는가가 아니다.
+	 */
 	private List<ProjectEvaluationSummaryResponse.ConceptAggregate> conceptAggregates(
-			List<TraineeRow> traineeRows, Map<UUID, List<ConceptResultRow>> conceptsByUser) {
-		Map<UUID, String> nameByUser = traineeRows.stream()
-				.collect(Collectors.toMap(TraineeRow::userId, TraineeRow::name, (first, second) -> first));
-
+			List<ProjectEvaluationSummaryResponse.Trainee> trainees) {
 		Map<UUID, Aggregate> byConcept = new LinkedHashMap<>();
-		conceptsByUser.values().stream()
-				.flatMap(List::stream)
-				.sorted(Comparator.comparingInt(ConceptResultRow::displayOrder))
-				.forEach(row -> {
-					Aggregate aggregate = byConcept.computeIfAbsent(row.conceptId(),
-							key -> new Aggregate(row.conceptName(), row.displayOrder()));
-					var person = new ProjectEvaluationSummaryResponse.Person(
-							row.userId(), nameByUser.getOrDefault(row.userId(), null));
-					if (!row.generated()) {
-						aggregate.notInCode().add(person);
-					} else if (row.reachLevel() < PASS_LEVEL) {
-						aggregate.stuck().add(person);
-					}
-				});
+		for (var trainee : trainees) {
+			var person = new ProjectEvaluationSummaryResponse.Person(trainee.userId(), trainee.name());
+			for (var concept : trainee.concepts()) {
+				Aggregate aggregate = byConcept.computeIfAbsent(concept.conceptId(),
+						key -> new Aggregate(concept.concept(), concept.displayOrder()));
+				if (!concept.inCode()) {
+					aggregate.notInCode().add(person);
+				} else if (concept.retryTarget()) {
+					aggregate.stuck().add(person);
+				}
+			}
+		}
 
 		return byConcept.entrySet().stream()
 				.map(entry -> new ProjectEvaluationSummaryResponse.ConceptAggregate(

@@ -22,7 +22,13 @@ public record TraineeEvaluationDetailResponse(
 		String className,
 		@Schema(description = "회차 리포트 발행 여부. 발행 전에는 채점 근거(note)가 아직 없습니다.")
 		boolean reportPublished,
-		@Schema(description = "AVAILABLE · IN_PROGRESS · NOT_ATTENDED · INVALID", example = "AVAILABLE")
+		@Schema(description = """
+				`AVAILABLE`(응시 완료) · `IN_PROGRESS`(응시 중) · `INCOMPLETE`(끝내지 못하고 창이 닫힘) ·
+				`NOT_ATTENDED`(아예 안 봄) · `INVALID`(무효 확정).
+
+				🔴 **`AVAILABLE`이 아니면 `retryTarget`이 항상 false입니다** — 아직 풀지 않은 문제를
+				2단 미달로 판정하면 응시 중인 사람이 전부 다시 보기 대상이 됩니다.
+				""", example = "AVAILABLE")
 		String resultStatus,
 		@Schema(description = "개념별 결과이며 표시 순서 오름차순입니다.")
 		List<Concept> concepts

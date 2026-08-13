@@ -42,7 +42,7 @@ public class ManagerEvaluationController {
 
 	@Operation(
 			operationId = "findProjectEvaluationSummary",
-			summary = "프로젝트 회차 결과 종합 조회 (매니저) | ✅ 사용 가능",
+			summary = "[프로젝트 상세 - 결과 탭] 프로젝트 회차 결과 종합 조회 (매니저) | ✅ 사용 가능",
 			description = """
 					결과 탭의 **왼쪽 교육생 목록과 '프로젝트 종합' 화면**을 그린다.
 
@@ -74,6 +74,10 @@ public class ManagerEvaluationController {
 					💡 **발행 전 집계는 임시 값이다.** 아직 응시하지 않은 인원이 빠져 있고, 발행 시점의
 					값으로 굳는다. 화면은 발행 전에 '다시 보기 대상' 숫자를 아예 보여주지 않는다.
 
+					🔴 **합격·불합격은 응시를 마친 사람(`AVAILABLE`)에게만 붙는다.** 아직 풀지 않은 문제는
+					도달 단계가 0이라, 판정을 그대로 걸면 응시 중인 사람이 전부 불합격으로 잡힌다 —
+					`retryTarget`·`stuckConceptCount`·`failedCount`가 모두 그 규칙을 따른다.
+
 					⚠️ **`retryTargetCount`를 서버가 더해 주지 않는다** — 화면 규칙상 발행 전에는 그 합을
 					감추기 때문에 `failedCount`와 `notAttendedCount`를 따로 준다.
 					"""
@@ -100,7 +104,7 @@ public class ManagerEvaluationController {
 
 	@Operation(
 			operationId = "findTraineeEvaluationDetail",
-			summary = "교육생 채점 결과 상세 조회 (매니저) | ✅ 사용 가능",
+			summary = "[프로젝트 상세 - 결과 탭] 교육생 채점 결과 상세 조회 (매니저) | ✅ 사용 가능",
 			description = """
 					결과 탭에서 사람을 클릭했을 때 **오른쪽에 그리는 값**이다. 개념마다 도달 단계와
 					축 4단계 사다리, 그 안에 접힌 채점 근거가 온다.
@@ -109,7 +113,7 @@ public class ManagerEvaluationController {
 
 					| 필드 | 설명 |
 					|---|---|
-					| `resultStatus` | `AVAILABLE` · `IN_PROGRESS` · `NOT_ATTENDED` · `INVALID` |
+					| `resultStatus` | `AVAILABLE` · `IN_PROGRESS` · `INCOMPLETE`(중단) · `NOT_ATTENDED` · `INVALID` |
 					| `concepts[]` | 개념별 `inCode` · `reachLevel` · `retryTarget` · `steps[]` |
 
 					### concepts[].steps[]

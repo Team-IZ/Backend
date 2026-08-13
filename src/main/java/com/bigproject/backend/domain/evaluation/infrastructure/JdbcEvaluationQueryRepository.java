@@ -229,9 +229,18 @@ public class JdbcEvaluationQueryRepository implements EvaluationQueryRepository 
 	}
 
 	/**
-	 * 채점 근거는 활성 스냅샷의 {@code ANSWER_EXCERPT}에서 읽는다. 리포트를 만들기 전에는 그 행이
-	 * 없으므로 {@code note}가 null이고, 화면의 '채점 근거' 펼침은 비어 있게 된다 — 발행 전에는
-	 * 도달 단계와 통과 여부까지만 보여줄 수 있다는 뜻이다.
+	 * 채점 근거는 활성 스냅샷의 {@code RESULT_EXPLANATION}에서 읽는다.
+	 *
+	 * <p>처음에 {@code ANSWER_EXCERPT}를 봤다가 실데이터에서 한 건도 못 찾았다. 근거 뷰의
+	 * {@code review_target_status}가 그 카테고리를 쓰길래 따라간 것이었는데, 그쪽은 <b>다시 보기 대상
+	 * 표시용 판정</b>이지 근거 텍스트의 출처가 아니다. 의미로도 이쪽이 맞다 — 화면이 펼쳐 읽는 것은
+	 * 판정 설명이지 학생 답변 인용({@code quote_excerpt})이 아니다.
+	 *
+	 * <p>{@code problem_stage_id}로 붙인다. {@code problem_id}로 맞추면 한 문제의 근거가 그 문제의 모든
+	 * 축에 같은 값으로 붙는다.
+	 *
+	 * <p>리포트를 만들기 전에는 이 행이 없으므로 {@code note}가 null이고, 화면의 '채점 근거' 펼침은
+	 * 비어 있게 된다 — 발행 전에는 도달 단계와 통과 여부까지만 보여줄 수 있다는 뜻이다.
 	 */
 	@Override
 	public List<StageRow> findStages(UUID assessmentRoundId, UUID userId) {
@@ -260,7 +269,7 @@ public class JdbcEvaluationQueryRepository implements EvaluationQueryRepository 
 						AND rpt.assessment_round_id = att.assessment_round_id
 						AND rpt.lifecycle_status = 'ACTIVE'
 					WHERE re.problem_stage_id = ps.problem_stage_id
-						AND re.evidence_category = 'ANSWER_EXCERPT'
+						AND re.evidence_category = 'RESULT_EXPLANATION'
 					ORDER BY re.display_order NULLS LAST
 					LIMIT 1
 				) ev ON TRUE

@@ -178,6 +178,44 @@ class EvaluationServiceTest {
 		assertThat(response.concepts().get(0).retryTarget()).isFalse();
 	}
 
+	@Test
+	void doesNotJudgeAnAttemptThatIsStillRunning() {
+		// 실데이터에서 잡힌 결함 -- 1번 문제를 푸는 중인 사람의 2·3번이 "0단 = 2단 미달"로 읽혀
+		// '막힘 2'에 불합격 인원까지 잡혔다. 묻지도 않은 것을 못했다고 판정하면 안 된다.
+		when(repository.findTrainees(any(), any(), any(), any()))
+				.thenReturn(List.of(trainee(USER_A, "심예린", "IN_PROGRESS", null, "NOT_REQUIRED")));
+		when(repository.findConceptResults(any(), any(), any(), any(), any())).thenReturn(List.of(
+				concept(USER_A, CONCEPT_ID, "JWT 인증·인가", 1, true, 3),
+				concept(USER_A, UUID.randomUUID(), "JPA 엔티티 관계 설정", 2, true, 0)));
+
+		var response = service.findSummary(EMAIL, PROJECT_ID, 1, null);
+
+		assertThat(response.trainees().get(0).resultStatus()).isEqualTo("IN_PROGRESS");
+		assertThat(response.trainees().get(0).stuckConceptCount()).isZero();
+		assertThat(response.trainees().get(0).concepts())
+				.extracting(ProjectEvaluationSummaryResponse.ConceptOutcome::retryTarget)
+				.containsOnly(false);
+		assertThat(response.summary().failedCount()).isZero();
+		assertThat(response.conceptAggregates())
+				.extracting(ProjectEvaluationSummaryResponse.ConceptAggregate::stuckCount)
+				.containsOnly(0L);
+	}
+
+	@Test
+	void separatesAnAbandonedSessionFromOneStillRunning() {
+		// 응시 창이 닫히도록 끝내지 못한 사람은 확정 상태다. IN_PROGRESS로 접으면 마감 뒤에도
+		// 화면에 "아직 응시 중"으로 남는다.
+		when(repository.findTrainees(any(), any(), any(), any())).thenReturn(List.of(
+				trainee(USER_A, "가", "IN_PROGRESS", "SESSION_INCOMPLETE", "NOT_REQUIRED"),
+				trainee(USER_B, "나", "IN_PROGRESS", null, "NOT_REQUIRED")));
+
+		var response = service.findSummary(EMAIL, PROJECT_ID, 1, null);
+
+		assertThat(response.trainees())
+				.extracting(ProjectEvaluationSummaryResponse.Trainee::resultStatus)
+				.containsExactly("INCOMPLETE", "IN_PROGRESS");
+	}
+
 	private RoundScope round(boolean published) {
 		return new RoundScope(ROUND_ID, PROJECT_ID, ORG_ID, COHORT_ID, "미프 3차", 1, "3차", published, null);
 	}

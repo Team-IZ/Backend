@@ -102,7 +102,8 @@ public interface EvaluationQueryRepository {
 	 * @param passed    그 단계를 통과했는지. 도움을 받고 통과해도 true다.
 	 * @param helpCount 힌트를 받고 답한 횟수 0~2. 통과 여부와 <b>따로</b> 읽어야 한다 —
 	 *                  2회까지 받고 통과할 수도, 2회 받고도 못 넘을 수도 있다.
-	 * @param note      채점 근거 한 줄. {@code report_evidence}에서 오므로 <b>리포트 생성 전에는 null</b>이다.
+	 * @param note      채점 근거 한 줄. 활성 스냅샷의 {@code report_evidence}
+	 *                  ({@code RESULT_EXPLANATION})에서 오므로 <b>리포트 생성 전에는 null</b>이다.
 	 */
 	record StageRow(
 			UUID problemId,
