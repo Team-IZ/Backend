@@ -10,11 +10,11 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.List;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -81,6 +81,18 @@ public class JdbcProjectDependencyRepository implements ProjectDependencyReposit
 				});
 		return names;
 	}
+	/**
+	 * 반(class) 하나에 편성된 팀들이 참여 중인 프로젝트 ID 목록(중복 제거).
+	 * team을 거쳐 이어 붙인다 — Project 자체는 class 연관이 없다. 이 반에 팀이
+	 * 하나도 편성되지 않았으면 빈 목록이다.
+	 */
+	@Override
+	public List<UUID> findProjectIdsByClassId(UUID classId, UUID orgId) {
+		return jdbcTemplate.query(
+				"SELECT DISTINCT project_id FROM team WHERE class_id = ? AND org_id = ? AND deleted_at IS NULL",
+				(rs, rowNum) -> rs.getObject("project_id", UUID.class),
+				classId, orgId);
+	}
 
 	/**
 	 * {@code assessment_round_attendance}는 (회차 × 사람) 한 줄인 뷰다. 한 회차가 여러 반으로
@@ -106,22 +118,6 @@ public class JdbcProjectDependencyRepository implements ProjectDependencyReposit
 		return counts;
 	}
 
-	@Override
-	public List<UUID> findProjectIdsByClassId(UUID classId, UUID orgId) {
-		String sql = """
-				SELECT DISTINCT t.project_id
-				FROM team t
-				WHERE t.class_id = ? AND t.org_id = ?
-				""";
-		List<UUID> projectIds = new ArrayList<>();
-		jdbcTemplate.query(sql,
-				(ResultSet rs) -> {
-					projectIds.add(rs.getObject("project_id", UUID.class));
-				},
-				classId, orgId);
-		return projectIds;
-	}
-
 	/**
 	 * IN 절을 물음표로 펼치지 않고 배열 하나로 넘긴다 — 대상 수가 조회마다 달라지면
 	 * 매번 다른 SQL이 되어 실행 계획 캐시가 무의미해진다.
@@ -133,6 +129,7 @@ public class JdbcProjectDependencyRepository implements ProjectDependencyReposit
 	private boolean exists(String sql, UUID projectId) {
 		return Boolean.TRUE.equals(jdbcTemplate.queryForObject(sql, Boolean.class, projectId));
 	}
+
 	/**
 	 * 18차 R5 — 제출 마감 시각 갱신.
 	 *

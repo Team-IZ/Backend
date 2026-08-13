@@ -63,14 +63,17 @@ public class SubmissionController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "GitHub 저장소 URL 제출·재제출 | ⚠️ 사용 불가",
+			summary = "GitHub 저장소 URL 제출·재제출 | ✅ 사용 가능",
 			description = """
-					🔴 **실제 AI 배포 서버와 연동할 수 없다.** 제출 접수 자체(`201 CREATED`까지)는 정상 동작하지만,
-					접수 직후 트리거되는 코드 분석이 배포된 AI 서버에 닿지 못해 **그 뒤 흐름이 끝까지 가지 않는다.**
-					GitHub 저장소를 clone·분석하는 주체가 AI 서버이고 백엔드에는 그 경로가 없기 때문이다.
-					분석이 없으면 문제·질문·힌트가 만들어지지 않으므로 이해도 검증 세션도 열리지 않는다.
-					동작을 끝까지 확인하려면 ZIP 업로드(`POST /submissions/zip`)를 쓴다 — 그쪽은 백엔드가 파일을
-					직접 실어 보낸다.
+					**제출 → 분석 → 세션까지 끝까지 간다.** 접수 직후 트리거되는 코드 분석은 AI 원본 서버
+					(`ai.origin-base-url`)의 `POST /analyses`로 나가며 저장소 주소와 브랜치를 함께 싣는다 —
+					clone·분석의 주체는 AI 서버이지만 그쪽으로 주소를 넘기는 경로는 백엔드에 있다.
+
+					접수 전에 **AI 프록시를 먼저 깨운다**(`GET /api/health`). 원본은 PAUSED 상태를 스스로 깨우지
+					못하고, 프록시가 원본이 RUNNING이 될 때까지 동기로 기다린다(유휴 후 첫 호출 80초 안팎,
+					상한 `ai.proxy.warm-up-timeout` 기본 150초). 깨우지 못하면 접수 자체를 `AI_SERVER_UNAVAILABLE`로
+					거절한다 — 접수만 받아 두면 실패가 한참 뒤 분석 화면에서야 드러나고 그때는 마감이 지나 있다.
+					ZIP 업로드도 같은 순서를 탄다.
 
 					**제출 시점에 백엔드는 GitHub에 접근하지 않는다.** 검사하는 것은 URL 형식과 호스트뿐이고,
 					저장소가 실제로 존재하는지·접근 가능한지는 분석 단계에서 판정된다. 따라서 형식만 맞으면 즉시
@@ -123,6 +126,7 @@ public class SubmissionController {
 					| `SUBMISSION_DEADLINE_PASSED` | 409 | 마감이 지났다 |
 					| `SUBMISSION_METHOD_NOT_ALLOWED` | 409 | 기관 정책이 GitHub 제출을 막았다 |
 					| `IDEMPOTENCY_KEY_CONFLICT` | 409 | 같은 키를 다른 회차에 재사용했다 |
+					| `AI_SERVER_UNAVAILABLE` | 503 | AI 프록시를 깨우지 못했다. **재시도하면 된다** |
 
 					ZIP 업로드는 같은 리소스를 만들지만 `POST /submissions/zip`으로 분리돼 있다.""")
 	@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -204,6 +208,7 @@ public class SubmissionController {
 					| `IDEMPOTENCY_KEY_CONFLICT` | 409 | 같은 키를 다른 회차에 재사용했다 |
 					| `FILE_TOO_LARGE` | 413 | 허용 크기를 넘었다 |
 					| `ARTIFACT_STORE_FAILED` | 500 | 파일 저장에 실패했다 |
+					| `AI_SERVER_UNAVAILABLE` | 503 | AI 프록시를 깨우지 못했다. **재시도하면 된다** |
 
 					> **2026-08-09 보류 해제.** 종전에는 "AI 서버에 ZIP을 전달할 자리가 없다"는 이유로 이
 					> 경로를 막아 두었으나, `POST /api/v0/analyses`에 `multipart/form-data`(`payload` +

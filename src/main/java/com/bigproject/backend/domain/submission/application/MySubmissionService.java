@@ -135,19 +135,44 @@ public class MySubmissionService {
 	}
 
 	/**
-	 * GitHub 제출에서만 만든다. ZIP은 저장소·브랜치·커밋이 전부 NULL이라 담을 값이 없다.
+	 * 두 수단이 같은 카드를 채운다. <b>필드는 배타적이다</b> — GitHub은 저장소·브랜치, ZIP은 파일
+	 * 이름·크기이고, 커밋은 분석이 끝났으면 둘 다 갖는다.
 	 *
 	 * <p>브랜치는 {@code resolved_branch}(분석이 실제로 읽은 것)를 앞에 둔다. 교육생이 비워 냈으면
 	 * 저장소 기본 브랜치가 답이고, 아직 분석 전이면 적어 낸 값이 답이다.
+	 *
+	 * <p>커밋의 원천이 수단마다 다르다. GitHub은 제출 행({@code source_commit_*})에 있고, ZIP은
+	 * {@code ck_submission_method_2}가 그 컬럼을 NULL로 강제해 <b>분석 결과에서만</b> 온다
+	 * ({@code code_analysis.head_commit_*}). 그래서 ZIP의 커밋 줄은 분석 성공 후에 나타난다.
 	 */
 	private SubmissionContent contentOf(MySubmissionRow row) {
-		if (!GITHUB_URL.equals(row.submissionMethod()) || row.repoUrl() == null) {
+		if (row.submissionId() == null) {
 			return null;
 		}
-		String branch = firstNonBlank(row.resolvedBranch(), row.requestedBranch(), row.defaultBranch());
-		LastCommit commit = row.commitSha() == null ? null
-				: new LastCommit(row.commitSha(), row.commitMessage(), row.commitCommittedAt());
-		return new SubmissionContent(row.repoUrl(), branch, commit);
+		if (GITHUB_URL.equals(row.submissionMethod())) {
+			if (row.repoUrl() == null) {
+				return null;
+			}
+			return new SubmissionContent(
+					row.repoUrl(),
+					firstNonBlank(row.resolvedBranch(), row.requestedBranch(), row.defaultBranch()),
+					null, null,
+					commitOf(row.commitSha(), row.commitMessage(), row.commitCommittedAt()));
+		}
+		// ZIP. 아티팩트 행이 없으면(접수 도중 등) 카드에 채울 것이 없으므로 키 자체를 빼 준다.
+		if (row.artifactFileName() == null) {
+			return null;
+		}
+		return new SubmissionContent(
+				null, null,
+				row.artifactFileName(),
+				row.artifactFileSize(),
+				commitOf(row.analysisCommitSha(), row.analysisCommitMessage(),
+						row.analysisCommitCommittedAt()));
+	}
+
+	private LastCommit commitOf(String sha, String message, Instant committedAt) {
+		return sha == null ? null : new LastCommit(sha, message, committedAt);
 	}
 
 	private String firstNonBlank(String... values) {

@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.http.MediaType;
 
 /**
  * 화면 하나 대 API 하나가 아니라 화면이 필요로 하는 조합을 그대로 내려주는 BFF(Backend for Frontend) 성격
@@ -49,7 +50,7 @@ public class BffController {
             @ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
             @ApiResponse(responseCode = "403", description = "NOT_A_TRAINEE 교육생 계정이 아님"),
     })
-    @GetMapping("/bff/me/current-round")
+	@GetMapping(value = "/bff/me/current-round", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<CurrentRoundResponse> findCurrentRound() {
         return ResponseEntity.ok(currentRoundService.findCurrentRound());
     }

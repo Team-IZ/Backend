@@ -58,6 +58,7 @@ public interface ProjectDependencyRepository {
 	List<UUID> findProjectIdsByClassId(UUID classId, UUID orgId);
 
 	/**
+
 	 * 제출 마감 <b>시각</b>을 바꾼다(18차 R5).
 	 *
 	 * <p>{@code project_assessment_round}는 이 도메인의 JPA 엔티티가 아니라 컬럼 하나만 쓴다 —

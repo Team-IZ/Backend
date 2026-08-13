@@ -51,6 +51,7 @@ import java.util.List;
 import java.util.UUID;
 
 @Tag(name = "Project Execution", description = "프로젝트 구성·일정·요구사항 API")
+@Tag(name = "Project", description = "프로젝트 진행 현황 조회")
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController
@@ -67,7 +68,7 @@ public class ProjectController {
 
 	@Operation(
 			operationId = "findProjects",
-			summary = "프로젝트 목록 조회 | ✅ 사용 가능",
+			summary = "기수 프로젝트 목록 | ✅ 사용 가능",
 			description = """
 					기수 안의 프로젝트를 조회한다. **검색·필터·정렬을 서버가 처리하므로 화면은 파라미터만
 					넘기면 된다**(9차 R3).
@@ -278,6 +279,7 @@ public class ProjectController {
 	}
 
 	@Operation(
+
 			operationId = "findCurrentProject",
 			summary = "기수의 이번 회차 조회 | ✅ 사용 가능",
 			description = """
@@ -518,7 +520,7 @@ public class ProjectController {
 	}
 
 	@Operation(
-			summary = "요구사항 등록·수정 | ✅ 사용 가능",
+			summary = "프로젝트 요구사항 전체 교체 | ✅ 사용 가능",
 			description = """
 					요구사항 문구 목록을 전체 교체한다. 보낸 목록이 그대로 최종 상태가 된다 —
 					기존에 있었는데 이번 목록에 없는 문구는 자동 폐기(retire)되고, 새 문구는 추가된다.
@@ -765,7 +767,7 @@ public class ProjectController {
 	}
 
 	@Operation(
-			summary = "회차 목록 조회 | ✅ 사용 가능",
+			summary = "프로젝트 회차 목록 | ✅ 사용 가능",
 			description = """
 					⚠ 임시: 전용 회차(round) 엔티티가 아직 없어, 같은 기수의 미니프로젝트 목록을 회차로 취급한다.
 					각 항목이 곧 하나의 회차이며, roundId는 projectId와 같다.
@@ -796,7 +798,7 @@ public class ProjectController {
 	}
 
 	@Operation(
-			summary = "회차 일정 수정(제출 마감·응시 창) | ✅ 사용 가능",
+			summary = "프로젝트 회차 일정 수정 | ✅ 사용 가능",
 			description = """
 					⚠ 임시: roundId는 projectId와 동일하게 취급한다. 실제로는
 					`PATCH /projects/{projectId}`(일정 수정)와 완전히 동일한 동작이다.
