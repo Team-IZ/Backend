@@ -255,7 +255,13 @@ public class AnalysisBatchService {
 					traceId
 			));
 			job.acceptExternalJob(externalJobId);
-			analysisJobRepository.save(job);
+			// D2(2026-08-13): external_job_id는 updatable=false라 save()/merge()는 이 컬럼을 쓰지
+			// 않는다 — 전용 쿼리로만 반영한다. 트랜잭션이 필수라 이 클래스의 다른 쓰기 단위와
+			// 같은 TransactionTemplate으로 감싼다. jobId는 람다 안에서 쓰므로 effectively final인
+			// 별도 지역변수로 뗀다(job 자체는 위에서 재대입되어 그렇지 않다).
+			UUID jobId = job.getJobId();
+			transactions.executeWithoutResult(status ->
+					analysisJobRepository.assignExternalJobId(jobId, externalJobId));
 			// 요청이 접수됐다는 사실을 응시에도 남긴다. 교육생 홈의 "분석 중" 표시 근거다.
 			sessionPreparer.markAttemptsAnalyzing(target.getAssessmentRoundId(), target.getTeamId());
 		} catch (AnalysisServerException exception) {

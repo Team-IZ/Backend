@@ -291,7 +291,8 @@ class AnalysisBatchServiceTest {
 		catalogHasTheConfiguredModel();
 		when(dispatchRepository.findDispatchTarget(target.getSubmissionId(), MAX_ATTEMPTS)).thenReturn(Optional.of(target));
 		when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-		when(client.requestAnalysis(any())).thenReturn(UUID.randomUUID());
+		UUID externalJobId = UUID.randomUUID();
+		when(client.requestAnalysis(any())).thenReturn(externalJobId);
 
 		service.dispatchSubmission(target.getSubmissionId());
 
@@ -310,9 +311,10 @@ class AnalysisBatchServiceTest {
 		assertThat(sent.commitEmail()).isNull();
 		assertThat(sent.focusItems()).isNull();
 
+		// external_job_id는 updatable=false라 save()가 아니라 전용 쿼리로만 반영된다(D2, 2026-08-13).
 		ArgumentCaptor<AnalysisJob> jobCaptor = ArgumentCaptor.forClass(AnalysisJob.class);
-		verify(jobRepository, org.mockito.Mockito.atLeastOnce()).save(jobCaptor.capture());
-		assertThat(jobCaptor.getValue().getExternalJobId()).isNotNull();
+		verify(jobRepository).save(jobCaptor.capture());
+		verify(jobRepository).assignExternalJobId(jobCaptor.getValue().getJobId(), externalJobId);
 	}
 
 	@Test
