@@ -63,8 +63,11 @@ public class SubmissionController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "GitHub 저장소 URL 제출·재제출 | ✅ 사용 가능",
+			summary = "GitHub 저장소 URL 제출·재제출 | ⚠️ 사용 불가",
 			description = """
+					> ⚠️ **사용 불가 (2026-08-13 기준)** — 2026-08-23 오전 3시 16분 경에 `nvidia provider error`으로
+					> 확인 후 사용가능 전환 예정.
+
 					**제출 → 분석 → 세션까지 끝까지 간다.** 접수 직후 트리거되는 코드 분석은 AI 원본 서버
 					(`ai.origin-base-url`)의 `POST /analyses`로 나가며 저장소 주소와 브랜치를 함께 싣는다 —
 					clone·분석의 주체는 AI 서버이지만 그쪽으로 주소를 넘기는 경로는 백엔드에 있다.
