@@ -46,6 +46,8 @@ public enum SubmissionErrorCode {
 
 	// ── 조회 ──
 	SUBMISSION_NOT_FOUND(HttpStatus.NOT_FOUND, "제출을 찾을 수 없습니다."),
+	/** 매니저 제출 현황 조회. 프로젝트가 없거나, 삭제됐거나, 그 번호의 회차가 없다. 셋을 구분하지 않는다. */
+	PROJECT_ROUND_NOT_FOUND(HttpStatus.NOT_FOUND, "프로젝트 회차를 찾을 수 없습니다."),
 	/**
 	 * 분석이 아직 성공하지 않아 결과가 없다. 진행 중·실패와 구분하려면
 	 * {@code GET /submissions/{submissionId}/analysis}의 {@code phase}를 본다.
