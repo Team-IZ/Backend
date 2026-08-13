@@ -35,7 +35,7 @@ public class ClassProgressService {
 			throw new ApiException(AnalyticsErrorCode.ROUND_NO_INVALID);
 		}
 		ClassProgressQueryRepository.RoundScope round = classProgressQueryRepository.findRound(projectId, roundNo)
-				.orElseThrow(() -> new ApiException(AnalyticsErrorCode.PROJECT_ROUND_NOT_FOUND));
+				.orElseThrow(() -> new ApiException(roundMissingCode(projectId)));
 		if (!round.organizationId().equals(actor.organizationId())) {
 			throw new ApiException(AnalyticsErrorCode.PROJECT_CROSS_ORGANIZATION);
 		}
@@ -112,5 +112,21 @@ public class ClassProgressService {
 				classes,
 				conceptMatches
 		);
+	}
+
+	/**
+	 * 회차를 못 찾았을 때 <b>무엇이 없는지</b>를 가른다(22차 R6).
+	 *
+	 * <p>회차가 하나라도 있으면 요청한 번호가 없는 것이라 화면은 드롭다운을 되돌리면 된다.
+	 * 하나도 없으면 <b>물을 수 있는 회차가 아직 없다</b>는 뜻이라 「회차 준비 중」으로 그리고
+	 * 기다려야 한다 — 같은 404를 받고도 화면이 해야 할 일이 정반대다.
+	 *
+	 * <p>뒤쪽은 22차 이전에 만들어진 프로젝트에서만 난다. 그때는 프로젝트를 만들어도 회차를
+	 * 만들지 않았다. 지금은 생성이 회차를 함께 만들므로 새 프로젝트에서는 나오지 않는다.
+	 */
+	private AnalyticsErrorCode roundMissingCode(UUID projectId) {
+		return classProgressQueryRepository.hasAnyRound(projectId)
+				? AnalyticsErrorCode.PROJECT_ROUND_NOT_FOUND
+				: AnalyticsErrorCode.PROJECT_ROUND_NOT_CREATED;
 	}
 }

@@ -14,6 +14,7 @@ import com.bigproject.backend.domain.projectexecution.domain.Project;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectCategory;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectCurriculum;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectDependencyRepository;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectDependencyRepository.RoundSchedule;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectLifecycleStatus;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectListSort;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectReadiness;
@@ -29,6 +30,7 @@ import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectVeri
 import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumException;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectExecutionErrorCode;
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.global.exception.ApiException;
 
 import lombok.RequiredArgsConstructor;
@@ -39,6 +41,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -345,7 +348,8 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public Project createProject(UUID orgId, UUID cohortId, String name, ProjectCategory category,
-                                 LocalDate startDate, LocalDate endDate, UUID actorUserId) {
+                                 LocalDate startDate, LocalDate endDate, Instant submissionDueAt,
+                                 UUID actorUserId) {
         // 삭제된 회차도 이름·순번을 계속 점유한다 — 두 UNIQUE 제약이 부분 인덱스가 아니기 때문이다.
         // 살아 있는 것만 세면 검사는 통과하고 INSERT가 DB에서 터져 500이 난다(ProjectRepository 주석 참고).
         if (projectRepository.existsByCohortIdAndOrgIdAndName(cohortId, orgId, name)) {
@@ -358,7 +362,34 @@ public class ProjectServiceImpl implements ProjectService {
                 ? Project.createMiniProject(orgId, cohortId, name, nextSequenceNo, startDate, endDate, actorUserId)
                 : Project.createBigProject(orgId, cohortId, name, nextSequenceNo, startDate, endDate, actorUserId);
 
-        return projectRepository.save(project);
+        Project saved = projectRepository.save(project);
+
+        // 22차 R5·R6 — 회차를 함께 만든다. 여태 만들지 않아서 화면으로 만든 프로젝트는 회차가 없는
+        // 채로 남았고, 현황 탭이 회차를 못 찾았으며 제출 마감을 저장할 자리도 없었다.
+        // 같은 트랜잭션이라 회차 INSERT가 실패하면 프로젝트도 함께 롤백된다 — 회차 없는 프로젝트를
+        // 다시 만들지 않기 위해서다.
+        projectDependencyRepository.createAssessmentRound(
+                saved.getProjectId(), orgId, cohortId, name,
+                submissionDueAt != null ? submissionDueAt : deriveSubmissionDueAt(endDate),
+                actorUserId);
+
+        return saved;
+    }
+
+    /**
+     * 마감을 안 보냈을 때의 파생 규칙 — <b>종료일의 23:59 KST</b>.
+     *
+     * <p>기존 회차들이 그 규칙으로 들어가 있어 화면이 이미 그렇게 읽고 있다. 값을 만들어 넣지 않고
+     * 비워 둘 수는 없다 — {@code submission_due_at}이 DB에서 NOT NULL이다.
+     *
+     * <p>여기서 파생한 뒤에는 {@code endDate}와 <b>다시 연결되지 않는다.</b> 기간을 늘려도 마감은
+     * 움직이지 않으며, 함께 옮기려면 일정 수정에서 마감을 같이 보내야 한다(18차 R5의 판단 그대로).
+     * 학생에게 이미 알린 마감이 조용히 바뀌는 것을 막기 위해서다.
+     */
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+    static Instant deriveSubmissionDueAt(LocalDate endDate) {
+        return endDate.atTime(23, 59).atZone(KST).toInstant();
     }
 
     @Override
@@ -386,10 +417,19 @@ public class ProjectServiceImpl implements ProjectService {
      */
     @Override
     public Optional<ProjectSummary> findCurrentProject(UUID cohortId, UUID orgId) {
+        // 22차 R7·R8 — 204(회차가 없다)와 404(그런 기수가 없다)를 가른다. 여태 둘 다 204라
+        // 지워진 기수를 열어도 화면이 「이번 회차 없음」으로 그렸다.
+        requireCohort(cohortId, orgId);
+
+        // 22차 R10 ⓐ — 목록을 한 번 읽어 「이번 회차」와 전체 회차 수를 함께 얻는다. 화면의
+        // `3차 / 6회`에서 분모가 이 값이고, 그것 하나가 없어서 대시보드가 이 API를 못 쓰고
+        // 목록을 계속 부르고 있었다. 여기서 세면 조회가 늘지 않는다 — 어차피 읽던 목록이다.
+        List<Project> projects = findProjects(cohortId, orgId);
+
         // 요약은 고른 하나에만 매긴다. 목록이 느렸던 이유가 모집단 전체를 요약한 것이라
         // (summarizeAll 주석), 여기서 같은 실수를 하면 이 API를 만든 뜻이 사라진다.
-        return resolveCurrentProject(cohortId, orgId)
-                .map(chosen -> summarizeAll(List.of(chosen), orgId).get(0));
+        return chooseCurrent(projects)
+                .map(chosen -> summarizeAll(List.of(chosen), orgId, projects.size()).get(0));
     }
 
     /**
@@ -399,7 +439,14 @@ public class ProjectServiceImpl implements ProjectService {
      */
     @Override
     public Optional<Project> resolveCurrentProject(UUID cohortId, UUID orgId) {
-        List<Project> projects = findProjects(cohortId, orgId);
+        return chooseCurrent(findProjects(cohortId, orgId));
+    }
+
+    /**
+     * 판정 규칙 자체. 이미 목록을 손에 든 호출부가 <b>다시 읽지 않고</b> 쓰도록 떼어 둔다 —
+     * {@link #findCurrentProject}는 전체 회차 수({@code totalRounds})를 세느라 어차피 목록이 필요하다.
+     */
+    private Optional<Project> chooseCurrent(List<Project> projects) {
         if (projects.isEmpty()) {
             return Optional.empty();
         }
@@ -554,14 +601,34 @@ public class ProjectServiceImpl implements ProjectService {
 
         int candidateCount = countConceptCandidates(projectId, orgId);
         ProjectSummary summary = new ProjectSummary(
-                project, curricula.size(), concepts.size(), candidateCount);
+                project, curricula.size(), concepts.size(), candidateCount,
+                List.of(), List.of(),
+                // 22차 R5·R9 — 상세가 실제 마감과 회차 시각을 그리는 근거다.
+                projectDependencyRepository.findRoundSchedules(List.of(projectId)).get(projectId));
 
         return new ProjectDetail(summary, curricula, concepts, requirementTitles);
     }
 
     @Override
     public List<ProjectSummary> findProjectSummaries(UUID cohortId, UUID orgId) {
-        return summarizeAll(findProjects(cohortId, orgId), orgId);
+        requireCohort(cohortId, orgId);
+        List<Project> projects = findProjects(cohortId, orgId);
+        return summarizeAll(projects, orgId, projects.size());
+    }
+
+    /**
+     * 22차 R7 — 「이 기수엔 없다」와 「그런 기수가 없다」를 가른다.
+     *
+     * <p>{@code ?cohort=}가 붙은 링크는 남이 보낸 것이거나 그 사이 지워진 기수일 수 있다.
+     * 둘 다 빈 화면이 되면 운영자는 <b>아직 아무것도 안 만든 기수</b>로 읽는다.
+     *
+     * <p>{@code GET /cohorts/{id}/projects/current}는 이미 없으면 204라 이 판정과 어긋나지 않는다 —
+     * 그쪽은 "지금 진행 중인 회차가 없다"가 정상 상태라 목록과 뜻이 다르다.
+     */
+    private void requireCohort(UUID cohortId, UUID orgId) {
+        if (!projectDependencyRepository.cohortExists(cohortId, orgId)) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND);
+        }
     }
 
     /**
@@ -575,7 +642,7 @@ public class ProjectServiceImpl implements ProjectService {
      *
      * <p>지금은 4건이다 — 교안 연결 · 개념 세트 · 개념 수 · 후보 수.
      */
-    private List<ProjectSummary> summarizeAll(List<Project> projects, UUID orgId) {
+    private List<ProjectSummary> summarizeAll(List<Project> projects, UUID orgId, int totalRounds) {
         if (projects.isEmpty()) {
             return List.of();
         }
@@ -613,6 +680,11 @@ public class ProjectServiceImpl implements ProjectService {
         Map<UUID, String> curriculumNameByVersion = curriculumNamesByVersion(linksByProject);
         Map<UUID, String> conceptNameByMapping = conceptNamesByMapping(conceptsBySet);
 
+        // ⑦ 회차 시각(22차 R5·R9). 목록·상세가 endDate를 마감이라고 그리던 것을 끝낸다.
+        //    프로젝트 수와 무관하게 조회 1건이라 위 규칙(고정 개수의 쿼리)을 깨지 않는다.
+        Map<UUID, RoundSchedule> scheduleByProject = projectDependencyRepository
+                .findRoundSchedules(projectIds);
+
         List<ProjectSummary> summaries = new ArrayList<>(projects.size());
         for (Project project : projects) {
             List<ProjectCurriculum> links = linksByProject.getOrDefault(project.getProjectId(), List.of());
@@ -640,7 +712,10 @@ public class ProjectServiceImpl implements ProjectService {
                     concepts.stream()
                             .map(concept -> conceptNameByMapping.get(concept.getSourceMappingId()))
                             .filter(Objects::nonNull)
-                            .toList()));
+                            .toList(),
+                    // 회차를 아직 만들지 않은 프로젝트는 키가 없다 — 22차 이전에 만들어진 것들이다.
+                    scheduleByProject.get(project.getProjectId()),
+                    totalRounds));
         }
         return summaries;
     }
@@ -720,9 +795,15 @@ public class ProjectServiceImpl implements ProjectService {
      */
     @Override
     public ProjectList findProjectList(UUID cohortId, UUID orgId, ProjectListCriteria criteria) {
+        // 22차 R7 — 없는 기수에 200 · 빈 목록으로 답하면 「아직 회차를 안 만든 기수」와 구분되지
+        // 않는다. 남이 보낸 링크나 그 사이 지워진 기수를 열어도 운영자에게는 정상으로 보였다.
+        requireCohort(cohortId, orgId);
+
         // 모집단 전체를 먼저 요약한다. readiness 개수(10차 Q1)가 걸러지지 않은 모집단 기준이라
-        // 필터를 통과한 것만 요약해서는 만들 수 없다.
-        List<ProjectSummary> population = summarizeAll(findProjects(cohortId, orgId), orgId);
+        // 필터를 통과한 것만 요약해서는 만들 수 없다. totalRounds(22차 R10)도 같은 모집단이다 —
+        // 필터를 걸어도 `3차 / 6회`의 분모는 줄지 않아야 한다.
+        List<Project> projects = findProjects(cohortId, orgId);
+        List<ProjectSummary> population = summarizeAll(projects, orgId, projects.size());
 
         // 상태별 개수는 필터를 적용하지 않은 모집단이다 — 상태 칩이 자기 자신을 필터링하면
         // 언제나 자기 개수만 남아 다른 칩이 0이 된다. 0인 상태도 키를 채운다(키가 빠지는 것과 다르다).
@@ -905,7 +986,10 @@ public class ProjectServiceImpl implements ProjectService {
                 project,
                 Math.toIntExact(curriculumCount),
                 Math.toIntExact(conceptCount),
-                countConceptCandidates(projectId, orgId));
+                countConceptCandidates(projectId, orgId),
+                List.of(), List.of(),
+                // 생성·수정 응답도 목록과 같은 마감을 말해야 한다 — 방금 정한 값을 되읽는 자리다.
+                projectDependencyRepository.findRoundSchedules(List.of(projectId)).get(projectId));
     }
 
     private List<LinkedCurriculum> findLinkedCurricula(UUID projectId, UUID orgId) {

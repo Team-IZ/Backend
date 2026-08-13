@@ -546,6 +546,170 @@ class OpenApiDocumentTest {
 		assertThat(team.path("properties").path("analysis").has("$ref")).isFalse();
 	}
 
+	/**
+	 * 22차 R4 — 명단 행의 열 개 필드가 {@code required} + non-nullable로 나가는데 실제로는 null이 온다.
+	 *
+	 * <p>{@code joinedAt}은 초대 대기 행에 등록일이 없어서, 회차 지표 아홉은
+	 * {@code manager_trainee_roster_view} LEFT JOIN이 붙지 않아서 null이다 — <b>둘 다 정상 상태</b>다.
+	 * 그런데 선언이 non-null이라 화면이 {@code .slice(0, 10)}을 바로 불렀고 미배정 필터에서 명단이
+	 * 통째로 사라졌다. 같은 사고가 아홉 자리 더 남아 있던 것을 함께 닫는다.
+	 */
+	@Test
+	void admitsTheRosterFieldsThatAreNullUntilTheRoundMetricsAttach() throws Exception {
+		JsonNode properties = spec().path("components").path("schemas")
+				.path("TraineeRosterEntry").path("properties");
+
+		List<String> notNullable = new ArrayList<>();
+		for (String field : List.of("joinedAt", "assessmentRoundId", "attemptId", "roundResultStatus",
+				"rowAggregationStatus", "matchedRiskTypeCodes", "conceptResultItems",
+				"lowStageConceptCount", "expectedConceptCount", "excellentOccurrenceCount")) {
+			if (!properties.path(field).path("type").toString().contains("\"null\"")) {
+				notNullable.add(field);
+			}
+		}
+
+		assertThat(notNullable)
+				.as("required는 그대로 두되 타입이 null을 허용해야 화면이 「아직 없음」을 그릴 수 있다")
+				.isEmpty();
+
+		// 키는 항상 나간다 — 빠지는 것이 아니라 값이 null이다.
+		assertThat(spec().path("components").path("schemas").path("TraineeRosterEntry")
+				.path("required").toString())
+				.contains("joinedAt", "assessmentRoundId", "rowAggregationStatus");
+
+		// 근거가 없으면 빈 배열로 통일하는 값이라 여기만 null이 아니다(JdbcTraineeRosterRepository#intArray).
+		assertThat(properties.path("excellentAssessmentSequenceNos").path("type").toString())
+				.doesNotContain("\"null\"");
+	}
+
+	/**
+	 * 22차 R5 — 제출 마감 시각의 <b>입구와 출구</b>가 둘 다 반쪽이었다.
+	 *
+	 * <p>생성에는 받을 자리가 없었고(일정 수정에만 있었다), 목록·상세는 읽을 자리가 없었다.
+	 * 그래서 화면이 {@code endDate}를 마감이라고 계속 그렸고 9기 5차가 <b>12일 어긋난</b> 값을
+	 * 보여주고 있었다. 한 곳만 열면 다른 화면이 여전히 거짓말을 하므로 세 자리를 함께 본다.
+	 */
+	@Test
+	void letsTheSubmissionDeadlineBeSetOnCreateAndReadBackEverywhereItIsDrawn() throws Exception {
+		JsonNode schemas = spec().path("components").path("schemas");
+
+		// 입구 — 생성 모달이 시작·마감을 한 번에 정한다. 선택 필드라 required는 아니다.
+		assertThat(schemas.path("CreateProjectRequest").path("properties").propertyNames())
+				.contains("submissionDueAt");
+		assertThat(schemas.path("CreateProjectRequest").path("required").toString())
+				.doesNotContain("submissionDueAt");
+
+		// 출구 — 목록(기간 열·대시보드 이번 회차)과 상세(타임라인·일정 수정 초기값) 둘 다.
+		for (String schema : List.of("ProjectResponse", "ProjectDetailResponse")) {
+			assertThat(schemas.path(schema).path("properties").propertyNames())
+					.as("%s가 마감을 못 읽으면 화면이 endDate를 마감이라고 그린다", schema)
+					.contains("submissionDueAt");
+			// 22차 이전에 만들어져 회차 레코드가 없는 프로젝트는 null이다.
+			assertThat(schemas.path(schema).path("properties").path("submissionDueAt")
+					.path("type").toString()).contains("\"null\"");
+		}
+	}
+
+	/**
+	 * 22차 R7 — 없는 기수를 물어도 200이 나가고 있었다.
+	 *
+	 * <p>「이 기수엔 없다」와 「그런 기수가 없다」가 구분되지 않아, 남이 보낸 링크나 그 사이 지워진
+	 * 기수를 열어도 운영자에게는 <b>아직 아무것도 안 만든 기수</b>로 보였다. 교안은 더 나빴다 —
+	 * 기관 단위 목록이라 <b>없는 기수인데 다른 기수와 똑같은 7건</b>이 그대로 나갔다.
+	 */
+	@Test
+	void tellsAMissingCohortApartFromAnEmptyOne() throws Exception {
+		List<String> missing = new ArrayList<>();
+		for (String path : List.of("/api/v0/cohorts/{cohortId}/projects",
+				"/api/v0/cohorts/{cohortId}/curricula",
+				"/api/v0/cohorts/{cohortId}/classrooms")) {
+			JsonNode responses = spec().path("paths").path(path).path("get").path("responses");
+			if (!responses.path("404").path("content").path("application/json").path("examples")
+					.toString().contains("COHORT_NOT_FOUND")) {
+				missing.add(path);
+			}
+		}
+
+		assertThat(missing)
+				.as("없는 기수에 200을 주면 화면이 「빈 기수」로 읽는다")
+				.isEmpty();
+	}
+
+	/**
+	 * 22차 R9 — 서버는 응시 창·리포트 발행 시각을 이미 계산해 두고 <b>교육생에게만</b> 주고 있었다.
+	 *
+	 * <p>운영자 회차 상세에는 {@code date-time}이 하나도 없어서 개요 타임라인이
+	 * "코드 분석 완료 시점부터 24시간" 같은 규칙 문장만 그렸다. 그 문의를 받는 사람이 정작
+	 * 시각을 모르는 상태였다.
+	 */
+	@Test
+	void givesTheOperatorTheRoundWindowsTheTraineeAlreadySees() throws Exception {
+		JsonNode properties = spec().path("components").path("schemas")
+				.path("ProjectDetailResponse").path("properties");
+
+		for (String field : List.of("submissionDueAt", "roundAssessmentOpenAt",
+				"roundAssessmentDueAt", "reportPublishNotBeforeAt")) {
+			assertThat(properties.path(field).path("format").asString(null))
+					.as("%s는 날짜가 아니라 시각이어야 한다", field)
+					.isEqualTo("date-time");
+			// 회차가 열리기 전에는 정해지지 않는 값이라 null이 온다.
+			assertThat(properties.path(field).path("type").toString()).contains("\"null\"");
+		}
+
+		// 개인별 값은 회차 단위가 아니라서 싣지 않는다 — 운영자에게 필요한 것은 회차의 창이다.
+		assertThat(properties.propertyNames())
+				.doesNotContain("assessmentOpenAt", "assessmentCloseAt");
+	}
+
+	/**
+	 * 22차 R10 ⓐ — 필드 하나가 없어서 15차 R1로 만든 엔드포인트를 아무도 쓰지 못했다.
+	 *
+	 * <p>{@code sequenceNo}(분자)는 있는데 `3차 / 6회`의 분모가 없어, 대시보드가 그것 하나 때문에
+	 * 목록 조회를 계속 부르고 있었다 — 그러면 {@code current}를 부를 이유가 사라진다.
+	 */
+	@Test
+	void givesTheDashboardTheDenominatorItWasCallingTheListFor() throws Exception {
+		JsonNode properties = spec().path("components").path("schemas")
+				.path("ProjectResponse").path("properties");
+
+		assertThat(properties.propertyNames()).contains("sequenceNo", "totalRounds");
+		// 세는 값이라 언제나 온다 — 회차가 없으면 0이지 null이 아니다.
+		assertThat(properties.path("totalRounds").path("type").toString())
+				.contains("integer").doesNotContain("\"null\"");
+
+		assertThat(spec().path("paths").path("/api/v0/cohorts/{cohortId}/projects/current")
+				.path("get").path("responses").path("200").path("content").path("application/json")
+				.path("schema").path("$ref").asString())
+				.isEqualTo("#/components/schemas/ProjectResponse");
+	}
+
+	/**
+	 * 22차 R8 — 오퍼레이터 화면이 부르는 조회에서 <b>「없음」과 「실패」를 가를 코드</b>가 없었다.
+	 *
+	 * <p>{@code UNAUTHENTICATED}·{@code ACCESS_DENIED}만으로는 화면이 갈 곳을 못 정한다.
+	 * 프론트가 지목한 자리 중 기수를 받는 것부터 {@code COHORT_NOT_FOUND}를 채운다 —
+	 * 「이 기수엔 아직 없다」와 「그런 기수가 없다」가 갈리면 화면이 「기수를 다시 고르세요」를
+	 * 말할 수 있다.
+	 */
+	@Test
+	void letsTheOperatorScreensTellNothingYetApartFromNoSuchCohort() throws Exception {
+		List<String> missing = new ArrayList<>();
+		for (String path : List.of("/api/v0/cohorts/{cohortId}/projects/current",
+				"/api/v0/curricula/comparable-cohorts")) {
+			if (!spec().path("paths").path(path).path("get").path("responses").path("404")
+					.path("content").path("application/json").path("examples")
+					.toString().contains("COHORT_NOT_FOUND")) {
+				missing.add(path);
+			}
+		}
+
+		assertThat(missing).isEmpty();
+
+		// 204(회차가 없다)는 그대로다 — 404(그런 기수가 없다)와 뜻이 다르다.
+		assertThat(spec().path("paths").path("/api/v0/cohorts/{cohortId}/projects/current")
+				.path("get").path("responses").has("204")).isTrue();
+	}
+
 	private interface ResponseVisitor {
 		void visit(String operationId, String status, JsonNode response);
 	}

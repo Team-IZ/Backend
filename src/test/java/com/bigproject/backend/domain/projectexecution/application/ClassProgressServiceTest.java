@@ -184,13 +184,31 @@ class ClassProgressServiceTest {
 		verify(classProgressQueryRepository, never()).findClassProgress(any(), any());
 	}
 
+	/** 회차는 있는데 <b>그 번호</b>가 없다. 화면은 회차 드롭다운을 되돌리면 된다. */
 	@Test
 	void rejectsUnknownRound() {
 		when(classProgressQueryRepository.findRound(projectId, 9)).thenReturn(Optional.empty());
+		when(classProgressQueryRepository.hasAnyRound(projectId)).thenReturn(true);
 
 		assertThatThrownBy(() -> service.findClassProgress(projectId, 9, ACTOR_EMAIL))
 				.isInstanceOfSatisfying(ApiException.class, exception ->
 						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.PROJECT_ROUND_NOT_FOUND));
+	}
+
+	/**
+	 * 22차 R6 — 회차가 <b>하나도 없는</b> 프로젝트. 같은 404지만 화면이 할 일이 정반대라
+	 * 코드를 나눈다 — 드롭다운을 되돌릴 것이 아니라 「회차 준비 중」으로 그리고 기다려야 한다.
+	 *
+	 * <p>22차 이전에 만들어진 프로젝트에서만 난다. 그때는 프로젝트를 만들어도 회차를 만들지 않았다.
+	 */
+	@Test
+	void tellsTheRoundWasNeverCreatedApartFromAskingForAMissingNumber() {
+		when(classProgressQueryRepository.findRound(projectId, 1)).thenReturn(Optional.empty());
+		when(classProgressQueryRepository.hasAnyRound(projectId)).thenReturn(false);
+
+		assertThatThrownBy(() -> service.findClassProgress(projectId, 1, ACTOR_EMAIL))
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.PROJECT_ROUND_NOT_CREATED));
 	}
 
 	private void givenClass(

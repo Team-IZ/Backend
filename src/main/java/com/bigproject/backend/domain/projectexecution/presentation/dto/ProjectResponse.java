@@ -7,6 +7,7 @@ import com.bigproject.backend.domain.projectexecution.domain.ProjectLifecycleSta
 import com.bigproject.backend.domain.projectexecution.domain.ProjectReadiness;
 import io.swagger.v3.oas.annotations.media.Schema;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -30,6 +31,32 @@ public record ProjectResponse(
         // `마감 미설정` 분기를 그려 놓고 영원히 확인하지 못했다.
         @Schema(description = "종료일. **날짜만이며 시각 의미가 없다** — 9차 Q2 참고. "
                 + "항상 값이 있다(생성·수정 모두 필수이며 DB도 NOT NULL이다)") LocalDate endDate,
+
+        // 22차 R5 — 목록과 대시보드가 상세와 다른 마감을 말하면 안 된다. 여태 이 값이 없어서
+        // 화면이 endDate를 마감이라고 그렸고, 9기 5차가 실제 마감과 12일 어긋난 채 표시됐다.
+        @Schema(description = """
+                **실제 제출 마감 시각**이며 `endDate`와 다른 값이다.
+
+                `endDate`는 회차 기간의 종료 **날짜**일 뿐 시각 의미가 없다. 화면의 「제출 마감」은
+                반드시 이 값으로 그려야 한다 — 둘은 서버에서 연결돼 있지 않아 기간을 늘려도
+                마감은 움직이지 않는다.
+
+                22차 이전에 만들어져 **회차 레코드가 없는 프로젝트는 `null`**이다.""",
+                example = "2026-08-21T14:59:00Z", nullable = true)
+        Instant submissionDueAt,
+
+        // 22차 R10 ⓐ — `3차 / 6회`의 분모. sequenceNo(분자)는 있는데 이것이 없어서
+        // 대시보드가 /projects/current를 못 쓰고 목록을 계속 부르고 있었다.
+        @Schema(description = """
+                이 기수의 **전체 회차 수**이며 화면의 `3차 / 6회`에서 뒤 숫자다.
+                `sequenceNo`가 분자이고 이 값이 분모다.
+
+                **필터와 무관한 모집단**이다 — 목록을 `?status=RUNNING`으로 걸러도 이 값은 줄지 않는다.
+                걸러진 개수는 `ProjectListResponse.total`이다.
+
+                회차 수를 세지 않는 응답(상세 조회 · 생성·수정 직후)에서는 `0`이다.""",
+                example = "6")
+        int totalRounds,
 
         // ── 9차 R1: 목록 화면이 셀마다 그리는 세 숫자 ────────────────────────────
         // 목록에 회차가 6~8건인데 화면이 직접 세려면 회차마다 교안·개념·후보를 따로 물어야 한다.
@@ -69,6 +96,8 @@ public record ProjectResponse(
                 summary.readiness(),
                 project.getStartDate(),
                 project.getEndDate(),
+                summary.submissionDueAt(),
+                summary.totalRounds(),
                 summary.curriculumCount(),
                 summary.conceptCount(),
                 summary.conceptCandidateCount(),

@@ -51,6 +51,31 @@ public enum CurriculumErrorCode implements ApiErrorCode {
     CURRICULUM_FILE_REQUIRED(HttpStatus.BAD_REQUEST, "업로드할 파일이 없습니다."),
 
     /**
+     * 같은 기관에 <b>같은 제목의 교안이 이미 있다</b>(22차 R2).
+     *
+     * <p>{@code uq_curriculum_material_org_id_normalized_title}가 <b>부분 인덱스가 아니라 전역
+     * UNIQUE</b>라, 논리 삭제된 교안도 제목을 계속 점유한다. 종전에는 이 충돌이 그대로 DB까지
+     * 내려가 {@code DataIntegrityViolationException} → <b>코드 없는 500</b>으로 나갔다.
+     * 스펙에도 없는 상태였고, 화면은 제목 입력란에 인라인 오류를 띄울 근거가 없었다.
+     *
+     * <p>파일 크기와 무관하게 나므로 "50KB짜리도 500"이라는 증상의 한 축이었다.
+     * 회차 이름의 {@code PROJECT_NAME_DUPLICATED}와 같은 성격·같은 상태 코드다.
+     */
+    CURRICULUM_TITLE_DUPLICATED(HttpStatus.CONFLICT, "이미 존재하는 교안 제목입니다."),
+
+    /**
+     * 업로드한 파일을 <b>저장하지 못했다</b>(22차 R2).
+     *
+     * <p>저장 경로가 쓸 수 없는 상태일 때 난다 — 배포 환경의 파일시스템이 읽기 전용이거나
+     * 디스크가 찼을 때다. 종전에는 {@code UncheckedIOException}이 그대로 올라가
+     * <b>코드 없는 500</b>이 됐다.
+     *
+     * <p>사용자가 할 수 있는 일이 재시도뿐이고 시간이 지나면 풀릴 수 있어
+     * {@link #CURRICULUM_FILE_UNREADABLE}과 같은 성격의 503이다.
+     */
+    CURRICULUM_FILE_STORE_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "업로드한 파일을 저장하지 못했습니다."),
+
+    /**
      * 분석 상태 필터와 `분석 전`만 보기를 함께 걸었다(13차 R2).
      *
      * <p>둘은 서로를 배제한다 — `분석 전`은 분석 상태가 <b>없는</b> 교안이라 어떤 상태로도 좁혀지지
