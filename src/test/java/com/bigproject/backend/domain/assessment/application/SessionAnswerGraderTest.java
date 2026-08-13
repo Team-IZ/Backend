@@ -15,7 +15,13 @@ import com.bigproject.backend.global.ai.AiProxyWarmUp;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.MutablePropertySources;
+import org.springframework.core.env.PropertySourcesPropertyResolver;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
 import java.util.List;
@@ -142,6 +148,41 @@ class SessionAnswerGraderTest {
 				.isInstanceOf(SessionException.class)
 				.extracting(exception -> ((SessionException) exception).getErrorCode())
 				.isEqualTo(SessionErrorCode.GRADING_FAILED);
+	}
+
+	/**
+	 * 설정한 모델이 실제로 요청에 실리는지. 비어 있으면 필드가 통째로 빠져 AI가 자기 기본 모델로
+	 * 채점하고, 어떤 모델이 학생을 평가했는지가 우리 설정 어디에도 남지 않는다.
+	 */
+	@Test
+	void 설정한_채점_모델을_요청에_싣는다() {
+		ReflectionTestUtils.setField(grader, "providerModelCode", "minimaxai/minimax-m3");
+
+		grader.grade(head(), List.of(problem()), stageL2(), AnswerSlot.QUESTION, "답변", "trace");
+
+		assertThat(capture().providerModelCode()).isEqualTo("minimaxai/minimax-m3");
+	}
+
+	/**
+	 * 설정 키를 <b>애너테이션에서 직접 읽어</b> application.yaml에 대고 푼다. 양쪽 이름을 따로 적으면
+	 * 이 시험이 지키는 것이 없다 — 실제로 이 필드는 yaml에 대응하는 키가 아예 없어 오랫동안 빈 값이었고,
+	 * 요청 본문에서 필드가 조용히 빠지는 것 말고는 아무 증상이 없었다. 목 기반 시험이 잡지 못하는
+	 * 종류라 여기서 고정한다.
+	 *
+	 * <p>환경변수는 일부러 보지 않는다({@code AI_SESSION_MODEL_CODE}가 실행 환경에 있으면 결과가
+	 * 사람마다 달라진다). yaml 하나만 실어 기본값이 무엇인지를 본다.
+	 */
+	@Test
+	void application_yaml이_채점_모델_키를_채운다() throws Exception {
+		String expression = SessionAnswerGrader.class.getDeclaredField("providerModelCode")
+				.getAnnotation(Value.class).value();
+
+		MutablePropertySources sources = new MutablePropertySources();
+		new YamlPropertySourceLoader().load("application", new ClassPathResource("application.yaml"))
+				.forEach(sources::addLast);
+
+		assertThat(new PropertySourcesPropertyResolver(sources).resolvePlaceholders(expression))
+				.isEqualTo("minimaxai/minimax-m3");
 	}
 
 	@Test
