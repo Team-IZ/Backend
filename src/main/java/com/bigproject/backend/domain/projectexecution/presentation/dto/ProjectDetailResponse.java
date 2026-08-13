@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.projectexecution.presentation.dto;
 import com.bigproject.backend.domain.projectexecution.application.ProjectService.ProjectDetail;
 import com.bigproject.backend.domain.projectexecution.domain.Project;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectCategory;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectDependencyRepository;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectLifecycleStatus;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectReadiness;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -49,6 +50,40 @@ public record ProjectDetailResponse(
                 22차 이전에 만들어져 **회차 레코드가 없는 프로젝트는 `null`**이다.""",
                 example = "2026-08-21T14:59:00Z", nullable = true)
         Instant submissionDueAt,
+
+        /*
+         * 22차 R9 — 교육생 홈(CurrentRoundResponse)은 date-time을 9개 받는데 운영자 회차 상세는
+         * 0개였다. 서버는 응시 창·리포트 발행 시각을 이미 계산해 두고 교육생에게만 주고 있었고,
+         * 그래서 개요 타임라인이 "코드 분석 완료 시점부터 24시간" 같은 규칙 문장만 그렸다.
+         * 운영자가 「이 회차 응시 창이 언제 닫히나」에 답할 수 없는 상태였다 — 그 문의를 받는
+         * 사람이 정작 시각을 모른다.
+         *
+         * 개인별 값(assessmentOpenAt 같은 것)은 싣지 않는다. 회차 단위가 아니라 사람마다 다르고,
+         * 운영자에게 필요한 것은 회차의 창이다(프론트가 요청서에서 직접 빼도 된다고 했다).
+         */
+        @Schema(description = """
+                회차 응시 창이 **열리는** 시각이다. 개인별 응시 창이 아니라 회차 단위 값이다.
+
+                회차가 열리기 전에는 `null`이다 — 응시 창은 코드 분석이 끝나야 정해진다.
+                DB CHECK도 `PLANNED` 회차에서는 이 값이 비어 있는 것을 허용한다.""",
+                example = "2026-08-22T00:00:00Z", nullable = true)
+        Instant roundAssessmentOpenAt,
+
+        @Schema(description = """
+                회차 응시 창이 **닫히는** 시각이다. 개요 타임라인의 `응시 창`이 이 값으로 그려진다.
+
+                회차가 열리기 전에는 `null`이다.""",
+                example = "2026-08-23T00:00:00Z", nullable = true)
+        Instant roundAssessmentDueAt,
+
+        @Schema(description = """
+                리포트를 이 시각 **이전에는 발행하지 않는다**는 하한이다. 타임라인의 `리포트 발행`이
+                이 값으로 그려진다.
+
+                응시가 닫혀야 정해지므로 그 전에는 `null`이다. DB가 `submission_due_at`·
+                `assessment_due_at`보다 뒤일 것을 CHECK로 강제한다.""",
+                example = "2026-08-24T00:00:00Z", nullable = true)
+        Instant reportPublishNotBeforeAt,
 
         @Schema(description = "연결된 교안 수 = curricula의 길이", example = "2") int curriculumCount,
         @Schema(description = "확정된 검증 개념 수 = concepts의 길이", example = "3") int conceptCount,
@@ -107,6 +142,7 @@ public record ProjectDetailResponse(
 
     public static ProjectDetailResponse from(ProjectDetail detail) {
         Project project = detail.summary().project();
+        ProjectDependencyRepository.RoundSchedule schedule = detail.summary().schedule();
         return new ProjectDetailResponse(
                 project.getProjectId(),
                 project.getCohortId(),
@@ -118,6 +154,10 @@ public record ProjectDetailResponse(
                 project.getStartDate(),
                 project.getEndDate(),
                 detail.summary().submissionDueAt(),
+                // 회차가 없는 프로젝트(22차 이전 생성)는 schedule 자체가 null이라 셋 다 null이다.
+                schedule == null ? null : schedule.assessmentOpenAt(),
+                schedule == null ? null : schedule.assessmentDueAt(),
+                schedule == null ? null : schedule.reportPublishNotBeforeAt(),
                 detail.summary().curriculumCount(),
                 detail.summary().conceptCount(),
                 detail.summary().conceptCandidateCount(),

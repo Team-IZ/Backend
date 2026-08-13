@@ -321,6 +321,23 @@ public class ProjectController {
 					- startDate / endDate: 프로젝트 기간. **endDate는 날짜만이며 시각 의미가 없다**(9차 Q2)
 					- curriculumCount / conceptCount / conceptCandidateCount: 목록 응답과 같은 세 숫자
 
+					**응답 (200) — 회차 시각 넷**(22차 R5·R9)
+
+					개요 타임라인이 **규칙 문장 대신 실제 시각**을 그리는 근거다. 여태 운영자 화면은
+					`응시 창: 코드 분석 완료 시점부터 24시간`처럼 규칙만 말했는데, 교육생은 자기 홈에서
+					그 시각을 정확히 보고 있었다 — 문의를 받는 사람이 정작 시각을 몰랐다.
+
+					| 필드 | 무엇 | 언제 null인가 |
+					|---|---|---|
+					| `submissionDueAt` | **실제 제출 마감.** `endDate`가 아니다 | 회차가 없는 프로젝트(22차 이전 생성) |
+					| `roundAssessmentOpenAt` | 회차 응시 창이 열리는 시각 | 회차가 열리기 전(코드 분석 전) |
+					| `roundAssessmentDueAt` | 회차 응시 창이 닫히는 시각 | 〃 |
+					| `reportPublishNotBeforeAt` | 리포트 발행 하한 | 응시가 닫히기 전 |
+
+					**개인별 시각은 여기 없다.** `assessmentOpenAt`·`assessmentCloseAt`은 사람마다 다른
+					값이라 교육생 홈(`CurrentRoundResponse`)과 명단에 있다. 운영자에게 필요한 것은
+					회차의 창이다.
+
 					**응답 (200) — 되읽기**
 
 					| 필드 | 무엇 | 쓰기 경로 |

@@ -635,6 +635,32 @@ class OpenApiDocumentTest {
 				.isEmpty();
 	}
 
+	/**
+	 * 22차 R9 — 서버는 응시 창·리포트 발행 시각을 이미 계산해 두고 <b>교육생에게만</b> 주고 있었다.
+	 *
+	 * <p>운영자 회차 상세에는 {@code date-time}이 하나도 없어서 개요 타임라인이
+	 * "코드 분석 완료 시점부터 24시간" 같은 규칙 문장만 그렸다. 그 문의를 받는 사람이 정작
+	 * 시각을 모르는 상태였다.
+	 */
+	@Test
+	void givesTheOperatorTheRoundWindowsTheTraineeAlreadySees() throws Exception {
+		JsonNode properties = spec().path("components").path("schemas")
+				.path("ProjectDetailResponse").path("properties");
+
+		for (String field : List.of("submissionDueAt", "roundAssessmentOpenAt",
+				"roundAssessmentDueAt", "reportPublishNotBeforeAt")) {
+			assertThat(properties.path(field).path("format").asString(null))
+					.as("%s는 날짜가 아니라 시각이어야 한다", field)
+					.isEqualTo("date-time");
+			// 회차가 열리기 전에는 정해지지 않는 값이라 null이 온다.
+			assertThat(properties.path(field).path("type").toString()).contains("\"null\"");
+		}
+
+		// 개인별 값은 회차 단위가 아니라서 싣지 않는다 — 운영자에게 필요한 것은 회차의 창이다.
+		assertThat(properties.propertyNames())
+				.doesNotContain("assessmentOpenAt", "assessmentCloseAt");
+	}
+
 	private interface ResponseVisitor {
 		void visit(String operationId, String status, JsonNode response);
 	}
