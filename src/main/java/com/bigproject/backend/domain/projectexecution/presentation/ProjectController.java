@@ -18,6 +18,8 @@ import com.bigproject.backend.domain.projectexecution.presentation.dto.ProjectLi
 import com.bigproject.backend.domain.projectexecution.presentation.dto.ProjectResponse;
 import com.bigproject.backend.domain.projectexecution.presentation.dto.ReplaceRequirementsRequest;
 import com.bigproject.backend.domain.projectexecution.presentation.dto.UpdateProjectScheduleRequest;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectExecutionErrorCode;
+import com.bigproject.backend.global.exception.ApiException;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -174,76 +176,77 @@ public class ProjectController {
 			operationId = "findProjectsForManager",
 			summary = "담당 반 프로젝트 목록 | ✅ 사용 가능",
 			description = """
-					매니저가 자기 코호트의 회차 목록을 조회한다(MG-01 대시보드, MG-07 프로젝트 목록).
+             매니저가 자기 코호트 또는 담당 반 하나의 회차 목록을 조회한다(MG-01 대시보드, MG-07 프로젝트 목록).
 
-					**응답 계약은 `GET /cohorts/{cohortId}/projects`와 완전히 같다** — 매니저 전용
-					진입점만 새로 낸 것이지 조회 로직을 새로 만들지 않았다. `search`·`curriculumId`·
-					`status`·`sort`·`counts`·`readiness` 전부 그대로 동작한다.
+             **응답 계약은 `GET /cohorts/{cohortId}/projects`와 완전히 같다** — 매니저 전용
+             진입점만 새로 낸 것이지 조회 로직을 새로 만들지 않았다. `search`·`curriculumId`·
+             `status`·`sort`·`counts`·`readiness` 전부 그대로 동작한다.
 
-					## 요청 (쿼리 파라미터)
+             ## 요청 (쿼리 파라미터)
 
-					| 파라미터 | 필수 | 타입 | 설명 |
-					|---|---|---|---|
-					| `cohort` | **필수** | UUID | 조회할 기수 ID |
-					| `search` / `curriculumId` / `status` / `sort` | 선택 | — | `GET /cohorts/{cohortId}/projects`와 동일 |
+             | 파라미터 | 필수 | 타입 | 설명 |
+             |---|---|---|---|
+             | `cohort` | `classId`와 **정확히 하나** | UUID | 기수 전체를 조회한다 |
+             | `classId` | `cohort`와 **정확히 하나** | UUID | 그 반의 팀이 편성된 프로젝트만 좁힌다(team.class_id 경유) |
+             | `category` | 선택 | enum | `MINI_PROJECT` · `BIG_PROJECT`로 좁힌다. 생략하면 전체 |
+             | `search` / `curriculumId` / `status` / `sort` | 선택 | — | `GET /cohorts/{cohortId}/projects`와 동일 |
 
-					MG-01 "마감이 있는 것부터"는 `sort=DUE_SOON`으로, MG-07 기본 정렬은
-					`sort=READINESS`(생략 시 기본값)로 그대로 커버된다.
+             MG-01 "마감이 있는 것부터"는 `sort=DUE_SOON`으로, MG-07 기본 정렬은
+             `sort=READINESS`(생략 시 기본값)로 그대로 커버된다.
 
-					⚠️ **아직 없는 것** — 정의 문서(MG-07)의 "담당 반 합계"·"진행 58/71"·"A반 미제출 2팀"
-					같은 반별·제출별 집계는 이 응답에 없다. `Project`에는 반(class) 연관이 없고,
-					제출 현황은 Submission 도메인(현재 미착수)에서 와야 한다. 지금은 회차 목록과
-					`readiness`·교안/개념 집계까지만 내려주고, 반별 진행 집계는 Submission 도메인
-					착수 후 별도로 얹는다.
-					"""
+             ⚠️ **`cohort`·`classId` 중 하나만 보내야 한다.** 둘 다 없거나 둘 다 있으면
+             400 `PROJECT_LIST_SCOPE_AMBIGUOUS`다.
+
+             ⚠️ **아직 없는 것** — 정의 문서(MG-07)의 "A반 미제출 2팀" 같은 제출 단위 집계는
+             이 응답에 없다. 제출 현황은 Submission 도메인에서 와야 한다. 지금은 회차 목록과
+             `readiness`·교안/개념 집계까지만 내려주고, 제출 집계는 Submission 도메인
+             착수 후 별도로 얹는다.
+             """
 	)
 	@PreAuthorize("hasAnyRole('MANAGER')")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "프로젝트 목록 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED status·sort에 없는 값을 지정함"),
+			@ApiResponse(responseCode = "400", description = "PROJECT_LIST_SCOPE_AMBIGUOUS cohort·classId 중 정확히 하나가 아님 · VALIDATION_FAILED status·sort에 없는 값을 지정함"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 매니저가 아님"),
 	})
 	@GetMapping("/projects")
 	public ResponseEntity<ProjectListResponse> findProjectsForManager(
-			@Parameter(description = "기수 ID") @RequestParam UUID cohort,
+			@Parameter(description = "기수 ID. classId와 정확히 하나만 준다")
+			@RequestParam(required = false) UUID cohort,
+			@Parameter(description = "반 ID로 좁힌다(team.class_id 경유, 여러 개 가능 — 담당 반이 여럿이면 합쳐서 본다). cohort와 정확히 하나만 준다")
+			@RequestParam(required = false) List<UUID> classId,
 			@Parameter(description = "회차 이름 부분검색(대소문자 무시)", example = "미니")
 			@RequestParam(required = false) String search,
 			@Parameter(description = "교안으로 좁힌다. 교안 버전 ID와 자료(material) ID를 모두 받는다")
 			@RequestParam(required = false) UUID curriculumId,
 			@Parameter(description = "상태로 좁힌다. 생략하면 전체")
 			@RequestParam(required = false) ProjectLifecycleStatus status,
+			@Parameter(description = "MINI_PROJECT·BIG_PROJECT로 좁힌다. 생략하면 전체")
+			@RequestParam(required = false) ProjectCategory category,
 			@Parameter(description = "정렬 기준", example = "READINESS")
 			@RequestParam(required = false, defaultValue = "READINESS") ProjectListSort sort
 	) {
+		if ((cohort == null) == (classId == null || classId.isEmpty())) {
+			throw new ApiException(ProjectExecutionErrorCode.PROJECT_LIST_SCOPE_AMBIGUOUS);
+		}
 		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
 		ProjectService.ProjectList list = projectService.findProjectList(
-				cohort, orgId, new ProjectService.ProjectListCriteria(search, curriculumId, status, sort));
+				cohort, orgId,
+				new ProjectService.ProjectListCriteria(search, curriculumId, status, sort, classId, category));
 		return ResponseEntity.ok(ProjectListResponse.from(list));
 	}
 
-	@Operation(
-			operationId = "findProjectsByClass",
-			summary = "담당 반 프로젝트 목록 | ",
-			description = """
-                매니저가 담당하는 반 하나의 프로젝트 목록을 조회한다(MG-01 대시보드, MG-07 프로젝트 목록).
-
-                team.class_id를 경유해 이 반의 팀이 하나라도 편성된 프로젝트만 좁힌다.
-                `search`·`curriculumId`·`status`·`sort` 필터는 `GET /cohorts/{cohortId}/projects`와 동일하다.
-
-                ⚠️ 이 반에 아직 팀이 편성되지 않은 프로젝트는 결과에서 빠진다.
-                """
-	)
+	/**
+	 * @deprecated {@code GET /projects?classId=}로 대체(19차). 프론트 연동 확인 전까지
+	 *             경로는 남기되 Swagger 목록에서는 숨긴다.
+	 */
+	@Deprecated(forRemoval = true)
+	@Operation(hidden = true)
 	@PreAuthorize("hasAnyRole('MANAGER')")
-	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "프로젝트 목록 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED status·sort에 없는 값을 지정함"),
-			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 매니저가 아님"),
-	})
 	@GetMapping("/classes/{classId}/projects")
 	public ResponseEntity<ProjectListResponse> findProjectsByClass(
-			@Parameter(description = "반 ID") @PathVariable UUID classId,
+			@PathVariable UUID classId,
 			@RequestParam(required = false) String search,
 			@RequestParam(required = false) UUID curriculumId,
 			@RequestParam(required = false) ProjectLifecycleStatus status,
@@ -251,50 +254,27 @@ public class ProjectController {
 			@RequestParam(required = false, defaultValue = "READINESS") ProjectListSort sort
 	) {
 		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-		ProjectService.ProjectList list = projectService.findProjectListByClass(
-				classId, orgId, new ProjectService.ProjectListCriteria(search, curriculumId, status, sort), category);
-		return ResponseEntity.ok(ProjectListResponse.from(list));
+		ProjectService.ProjectList list = projectService.findProjectList(
+				null, orgId,
+				new ProjectService.ProjectListCriteria(search, curriculumId, status, sort, List.of(classId), category));		return ResponseEntity.ok(ProjectListResponse.from(list));
 	}
 
-	@Operation(
-			operationId = "findActiveProjectsByClass",
-			summary = "진행 중 프로젝트·회차 조회 | ✅ 사용 가능",
-			description = """
-                매니저 대시보드(MG-01)가 쓰는, 반 하나의 진행 중 회차 조회다.
-
-                내부적으로 `GET /classes/{classId}/projects`(MG-07)와 같은 조회 로직을 쓴다 —
-                `status`로 좁힌 결과만 돌려준다는 점만 다르다.
-
-                ## 요청 (쿼리 파라미터)
-
-                | 파라미터 | 필수 | 타입 | 설명 |
-                |---|---|---|---|
-                | `status` | 선택(기본 `RUNNING`) | enum | `PLANNED` · `RUNNING` · `CLOSED` |
-                | `sort` | 선택(기본 `DUE_SOON`) | enum | 대시보드는 마감 임박 순이 기본이다 |
-
-                진행 중 회차가 없으면 `projects[]`가 빈 배열로 온다 — 화면은 이때
-                `status=PLANNED&sort=START_DATE`로 다시 불러 "다음 회차 시작일"을 보여준다.
-                """
-	)
+	/**
+	 * @deprecated {@code GET /projects?classId=&status=RUNNING&sort=DUE_SOON}로 대체(19차).
+	 */
+	@Deprecated(forRemoval = true)
+	@Operation(hidden = true)
 	@PreAuthorize("hasAnyRole('MANAGER')")
-	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "조회 성공"),
-			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED status·sort에 없는 값을 지정함"),
-			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 매니저가 아님"),
-	})
 	@GetMapping("/classes/{classId}/active-projects")
 	public ResponseEntity<ProjectListResponse> findActiveProjectsByClass(
-			@Parameter(description = "반 ID") @PathVariable UUID classId,
-			@Parameter(description = "상태로 좁힌다", example = "RUNNING")
+			@PathVariable UUID classId,
 			@RequestParam(required = false, defaultValue = "RUNNING") ProjectLifecycleStatus status,
-			@Parameter(description = "정렬 기준", example = "DUE_SOON")
 			@RequestParam(required = false, defaultValue = "DUE_SOON") ProjectListSort sort
 	) {
 		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-		ProjectService.ProjectList list = projectService.findProjectListByClass(
-				classId, orgId, new ProjectService.ProjectListCriteria(null, null, status, sort), null);
-		return ResponseEntity.ok(ProjectListResponse.from(list));
+		ProjectService.ProjectList list = projectService.findProjectList(
+				null, orgId,
+				new ProjectService.ProjectListCriteria(null, null, status, sort, List.of(classId), null));		return ResponseEntity.ok(ProjectListResponse.from(list));
 	}
 
 	@Operation(

@@ -656,32 +656,56 @@ public class ProjectServiceImpl implements ProjectService {
         return counts;
     }
 
+    /**
+     * 목록 한 벌 + 필터와 무관한 상태별 개수(19차 — classId 필터 흡수).
+     *
+     * <p>{@code criteria.classId()}가 있으면 그 반의 팀이 편성된 프로젝트로 모집단을 좁히고,
+     * 없으면 {@code cohortId} 기수 전체가 모집단이다. 반과 기수를 동시에 좁힐 이유가 없어
+     * 정확히 하나만 쓴다 — 반이 정해지면 그 반이 속한 기수는 이미 정해져 있다.
+     */
+    /**
+     * 목록 한 벌 + 필터와 무관한 상태별 개수(19차 — classId 필터 흡수).
+     *
+     * <p>{@code criteria.classId()}가 있으면 그 반들의 팀이 편성된 프로젝트로 모집단을 좁히고,
+     * 없으면 {@code cohortId} 기수 전체가 모집단이다. 매니저가 담당하는 반은 보통 1~3개라
+     * 반마다 한 번씩 조회해 합치는 것으로 충분하다 — 반 수가 수십 단위로 늘면 그때
+     * {@link ProjectDependencyRepository}에 다건 조회를 추가한다.
+     */
     @Override
     public ProjectList findProjectList(UUID cohortId, UUID orgId, ProjectListCriteria criteria) {
-        List<ProjectSummary> population = findProjects(cohortId, orgId).stream()
-                .map(project -> summarize(project, orgId))
-                .toList();
-        return buildProjectList(population, orgId, criteria, null);
+        List<ProjectSummary> population;
+        if (criteria.classId() != null && !criteria.classId().isEmpty()) {
+            Set<UUID> projectIds = new LinkedHashSet<>();
+            for (UUID classId : criteria.classId()) {
+                projectIds.addAll(projectDependencyRepository.findProjectIdsByClassId(classId, orgId));
+            }
+            if (projectIds.isEmpty()) {
+                return emptyProjectList();
+            }
+            population = projectRepository
+                    .findByProjectIdInAndOrgIdAndDeletedAtIsNull(projectIds, orgId).stream()
+                    .map(project -> summarize(project, orgId))
+                    .toList();
+        } else {
+            population = findProjects(cohortId, orgId).stream()
+                    .map(project -> summarize(project, orgId))
+                    .toList();
+        }
+        return buildProjectList(population, orgId, criteria, criteria.category());
     }
 
     /**
-     * 반(class) 하나가 담당하는 프로젝트 목록. team.class_id를 경유해 좁힌다 —
-     * 이 반의 팀이 하나도 편성되지 않은 프로젝트는 결과에서 빠진다.
+     * @deprecated {@link #findProjectList}가 {@code criteria.classId()}로 같은 일을 한다
+     *             (19차). 기존 {@code /classes/{classId}/...} 엔드포인트가 아직 이 시그니처로
+     *             호출하므로, 그 엔드포인트를 걷어낼 때까지는 지우지 않고 새 메서드로 위임만 한다.
      */
     @Override
+    @Deprecated(forRemoval = true)
     public ProjectList findProjectListByClass(
             UUID classId, UUID orgId, ProjectListCriteria criteria, ProjectCategory category) {
-
-        List<UUID> projectIds = projectDependencyRepository.findProjectIdsByClassId(classId, orgId);
-        if (projectIds.isEmpty()) {
-            return emptyProjectList();
-        }
-
-        List<ProjectSummary> population = projectRepository
-                .findByProjectIdInAndOrgIdAndDeletedAtIsNull(projectIds, orgId).stream()
-                .map(project -> summarize(project, orgId))
-                .toList();
-        return buildProjectList(population, orgId, criteria, category);
+        ProjectListCriteria merged = new ProjectListCriteria(
+                criteria.search(), criteria.curriculumId(), criteria.status(), criteria.sort(), List.of(classId), category);
+        return findProjectList(null, orgId, merged);
     }
 
     /** 팀이 하나도 편성되지 않은 반을 위한 빈 목록. 카운트 키는 전부 채우고 값만 0이다. */

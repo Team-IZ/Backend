@@ -132,7 +132,10 @@ public enum ProjectExecutionErrorCode implements ApiErrorCode {
      * 확정된(CONFIRMED) 팀은 구성을 바꿀 수 없다(정의 문서 "확정하면 학생들이 코드를 제출할 수
      * 있게 되고, 팀은 잠깁니다"). [편성 다시 열기]로 DRAFT로 되돌린 뒤에만 편집할 수 있다.
      */
-    TEAM_CONFIRMED_LOCKED(HttpStatus.CONFLICT, "확정된 팀은 편성 다시 열기 후에만 바꿀 수 있습니다.");
+    TEAM_CONFIRMED_LOCKED(HttpStatus.CONFLICT, "확정된 팀은 편성 다시 열기 후에만 바꿀 수 있습니다."),
+
+    /** 목록 조회 시 cohort와 classId 중 정확히 하나만 지정해야 하는데 둘 다 없거나 둘 다 있다. */
+    PROJECT_LIST_SCOPE_AMBIGUOUS(HttpStatus.BAD_REQUEST, "cohort와 classId 중 정확히 하나를 지정해야 합니다.");
 
     private final HttpStatus status;
     private final String defaultMessage;

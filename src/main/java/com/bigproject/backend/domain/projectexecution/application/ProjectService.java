@@ -142,25 +142,35 @@ public interface ProjectService {
     /** 목록 한 벌 + 필터와 무관한 상태별 개수. */
     ProjectList findProjectList(UUID cohortId, UUID orgId, ProjectListCriteria criteria);
     /**
-     * 반(class) 하나가 담당하는 프로젝트 목록. team.class_id를 경유해 좁힌다 —
-     * 이 반의 팀이 하나도 편성되지 않은 프로젝트는 결과에서 빠진다.
+     * @deprecated {@link #findProjectList}에 {@code classId}를 담아 호출하는 것과 같다(19차).
      */
+    @Deprecated(forRemoval = true)
     ProjectList findProjectListByClass(UUID classId, UUID orgId, ProjectListCriteria criteria, ProjectCategory category);
-
     /**
      * @param search        회차 이름 부분검색(대소문자 무시). null·공백이면 전체
      * @param curriculumId  교안으로 좁힌다. <b>교안 버전 ID와 자료(material) ID를 모두 받는다</b> —
      *                      화면이 어느 쪽을 들고 있든 되도록. null이면 전체
      * @param status        상태로 좁힌다. null이면 전체
      * @param sort          null이면 {@link ProjectListSort#READINESS}
+     * @param classId       반으로 좁힌다(team.class_id 경유). null이면 기수 전체
+     * @param category      MINI_PROJECT·BIG_PROJECT로 좁힌다. null이면 전체
+     */
+    /**
+     * @param classId  반으로 좁힌다(team.class_id 경유, 여러 반이면 합집합). null·빈 리스트면 기수 전체
      */
     record ProjectListCriteria(
             String search,
             UUID curriculumId,
             ProjectLifecycleStatus status,
-            ProjectListSort sort) {
-    }
+            ProjectListSort sort,
+            List<UUID> classId,
+            ProjectCategory category) {
 
+        /** classId·category 없이 기수 전체를 볼 때 쓰던 기존 4-인자 생성자. 호출부를 안 건드리려고 남긴다. */
+        public ProjectListCriteria(String search, UUID curriculumId, ProjectLifecycleStatus status, ProjectListSort sort) {
+            this(search, curriculumId, status, sort, null, null);
+        }
+    }
     /**
      * @param projects        필터·정렬이 적용된 목록
      * @param counts          <b>필터를 적용하지 않은</b> 기수 전체 모집단의 상태별 개수.
