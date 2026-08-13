@@ -104,7 +104,12 @@ public record TraineeRosterResponse(
 			@Schema(description = "계정 상태. INVITED(초대 대기)는 아직 활성화 전이라 상태를 직접 바꿀 수 없다") AccountStatus status,
 			@Schema(description = "현재 소속 반 ID. 반 배정이 없으면 null", nullable = true) UUID classroomId,
 			@Schema(description = "현재 소속 반 이름. 반 배정이 없으면 null", nullable = true) String className,
-			@Schema(description = "기수 등록일") OffsetDateTime joinedAt,
+			@Schema(description = """
+					기수 등록일입니다. **초대 대기(INVITED) 행은 null입니다** — 초대를 수락해야 cohort_member가
+					생기고 그때 등록일이 찍히므로, 아직 수락하지 않은 사람에게는 등록일이라는 사실 자체가
+					없습니다. 명단은 실제 소속과 초대 대기를 한 표에 모아 그리므로 두 종류가 섞여 옵니다.
+					""", nullable = true)
+			OffsetDateTime joinedAt,
 			@Schema(description = "중도 이탈일. 이탈하지 않았으면 null", nullable = true) OffsetDateTime leftAt,
 			@Schema(description = """
 					계정 비활성화 사유 코드입니다. RESIGNED(퇴사) · ADMIN_SUSPENDED(운영자 조치) ·
@@ -142,17 +147,42 @@ public record TraineeRosterResponse(
 					이미 활성화됐거나 초대가 취소된 계정은 넘길 토큰이 없어 `null`입니다.
 					""", nullable = true)
 			UUID pendingInvitationTokenId,
+
+			/*
+			 * 아래 회차 지표는 manager_trainee_roster_view를 LEFT JOIN해서 붙인다. 조인이 붙지 않는 행
+			 * (초대 대기라 응시 이력이 없다 · 오퍼레이터 조회라 매니저 스코프가 없다 · 그 회차에 아직
+			 * 제출이 없다)은 전부 null이며, 그것이 정상 상태다. 22차 R4 — required로 두고 타입만 null을
+			 * 허용한다. 「키는 항상 있다, 값은 null일 수 있다」가 이 행들의 사실이다.
+			 */
+			@Schema(description = "지표를 계산한 평가 회차이며 응답 최상위의 assessmentRoundId와 같은 값입니다. 지표가 붙지 않은 행은 null입니다.",
+					nullable = true)
 			UUID assessmentRoundId,
+			@Schema(description = "그 회차의 응시 시도 ID이며 아직 응시하지 않았으면 null입니다.", nullable = true)
 			UUID attemptId,
+			@Schema(description = """
+					응시 시도 상태입니다. `NOT_STARTED`(미시작) · `SUBMITTED` · `ANALYZING` · `SESSION_READY` ·
+					`SESSION_IN_PROGRESS` · `COMPLETED`(완료) · `FAILED` · `EXPIRED`.
+					지표가 붙지 않은 행은 null입니다.
+					""", example = "COMPLETED", nullable = true)
 			String roundResultStatus,
+			@Schema(description = """
+					문항별 결과의 JSON 배열이며 **문자열로 직렬화돼 있습니다.** 각 항목은 `problemId` ·
+					`problemNo` · `conceptId` · `generationStatus` · `reachLevel`(0~4단, 미생성·무응답이면 null)을
+					가집니다. 지표가 붙지 않은 행은 null입니다.
+					""", nullable = true)
 			String conceptResultItems,
 			@Schema(description = """
 					`2단 이하` 칸의 **분모**이며 그 회차에 이 교육생에게 실제로 만들어진 문항 수입니다.
 					사람마다 다릅니다 — 코드에 근거가 없어 문항이 생성되지 않은(`NOT_GENERATED`) 개념은
 					검증 세션에서도 물을 수 없어 분모에서 빠집니다. 화면의 `1/2`가 이 값입니다.
-					""", example = "2")
+					지표가 붙지 않은 행은 null입니다.
+					""", example = "2", nullable = true)
 			Integer expectedConceptCount,
+			@Schema(description = "도달 단계 0~2단(저단계)인 문항 수입니다. 응답한 문항이 하나도 없으면 null이며 화면은 그때 `—`를 그립니다.",
+					example = "1", nullable = true)
 			Integer lowStageConceptCount,
+			@Schema(description = "이 교육생이 우수로 발견된 누적 횟수입니다. 지표가 붙지 않은 행은 null입니다.",
+					example = "3", nullable = true)
 			Integer excellentOccurrenceCount,
 			@Schema(description = """
 					이 교육생이 우수로 발견된 프로젝트 차수 전부입니다(원장: report_evidence,
@@ -166,7 +196,8 @@ public record TraineeRosterResponse(
 					`STAGE_DECLINE`(단계 하락) · `PERSISTENT_LOW`(지속 저점) · `INVALID_ATTEMPT`(무효 응시) ·
 					`CONTRIBUTION_UNDERSTANDING_GAP`(기여·이해도 괴리) · `LOW_PARTICIPATION`(저기여) 5종이며
 					동시에 여러 개가 걸릴 수 있습니다. 해소(`RESOLVED`)된 사유는 들어오지 않습니다.
-					""", example = "{INVALID_ATTEMPT}")
+					지표가 붙지 않은 행은 null입니다 — 위험이 없다는 뜻의 빈 배열과 다릅니다.
+					""", example = "{INVALID_ATTEMPT}", nullable = true)
 			String matchedRiskTypeCodes,
 			@Schema(description = """
 					배지 한 칸에 넣을 **단일** 코드입니다. 정책 문서 §7의 2층 구조를 그대로 담습니다 —
@@ -184,6 +215,8 @@ public record TraineeRosterResponse(
 					`세션 중단 · 07-14`처럼 사유·일자를 그릴 때 이 값을 씁니다.
 					""", nullable = true)
 			OffsetDateTime roundTerminalAt,
+			@Schema(description = "이 행의 지표 집계 상태이며 현재는 값이 있으면 항상 `COMPLETE`입니다. 지표가 붙지 않은 행은 null입니다.",
+					example = "COMPLETE", nullable = true)
 			String rowAggregationStatus
 	) {
 		public static Trainee from(TraineeRosterRepository.RosterRow row) {

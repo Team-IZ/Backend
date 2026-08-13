@@ -546,6 +546,42 @@ class OpenApiDocumentTest {
 		assertThat(team.path("properties").path("analysis").has("$ref")).isFalse();
 	}
 
+	/**
+	 * 22차 R4 — 명단 행의 열 개 필드가 {@code required} + non-nullable로 나가는데 실제로는 null이 온다.
+	 *
+	 * <p>{@code joinedAt}은 초대 대기 행에 등록일이 없어서, 회차 지표 아홉은
+	 * {@code manager_trainee_roster_view} LEFT JOIN이 붙지 않아서 null이다 — <b>둘 다 정상 상태</b>다.
+	 * 그런데 선언이 non-null이라 화면이 {@code .slice(0, 10)}을 바로 불렀고 미배정 필터에서 명단이
+	 * 통째로 사라졌다. 같은 사고가 아홉 자리 더 남아 있던 것을 함께 닫는다.
+	 */
+	@Test
+	void admitsTheRosterFieldsThatAreNullUntilTheRoundMetricsAttach() throws Exception {
+		JsonNode properties = spec().path("components").path("schemas")
+				.path("TraineeRosterEntry").path("properties");
+
+		List<String> notNullable = new ArrayList<>();
+		for (String field : List.of("joinedAt", "assessmentRoundId", "attemptId", "roundResultStatus",
+				"rowAggregationStatus", "matchedRiskTypeCodes", "conceptResultItems",
+				"lowStageConceptCount", "expectedConceptCount", "excellentOccurrenceCount")) {
+			if (!properties.path(field).path("type").toString().contains("\"null\"")) {
+				notNullable.add(field);
+			}
+		}
+
+		assertThat(notNullable)
+				.as("required는 그대로 두되 타입이 null을 허용해야 화면이 「아직 없음」을 그릴 수 있다")
+				.isEmpty();
+
+		// 키는 항상 나간다 — 빠지는 것이 아니라 값이 null이다.
+		assertThat(spec().path("components").path("schemas").path("TraineeRosterEntry")
+				.path("required").toString())
+				.contains("joinedAt", "assessmentRoundId", "rowAggregationStatus");
+
+		// 근거가 없으면 빈 배열로 통일하는 값이라 여기만 null이 아니다(JdbcTraineeRosterRepository#intArray).
+		assertThat(properties.path("excellentAssessmentSequenceNos").path("type").toString())
+				.doesNotContain("\"null\"");
+	}
+
 	private interface ResponseVisitor {
 		void visit(String operationId, String status, JsonNode response);
 	}
