@@ -46,12 +46,19 @@ class ResponseRecordRequiredConverterTest {
 		assertThat(schema.getRequired()).containsExactlyInAnyOrder("name", "dataRetentionDays");
 	}
 
+	/**
+	 * 17차 R2. 예전에는 클래스 레벨 {@code @JsonInclude(NON_NULL)} 하나로 전 필드가 required를
+	 * 잃었다 — {@code scope}·{@code publishedAt}·{@code releasedAt} 셋만 상태에 따라 키가 빠지는데도
+	 * {@code reportId}처럼 항상 오는 필드까지 optional로 나갔다. 어노테이션을 필드 단위로 내려
+	 * 항상 오는 값과 조건부인 값을 갈랐다.
+	 */
 	@Test
-	void skipsRecordsWhoseKeysCanDisappear() {
-		// @JsonInclude(NON_NULL)이라 상태에 따라 키 자체가 빠진다 — "항상 온다"고 말할 수 없다.
+	void marksOnlyTheFieldsThatCanDisappearAsOptional() {
 		Schema<?> schema = resolve(ReportDisclosureResponse.class).get("ReportDisclosureResponse");
 
-		assertThat(schema.getRequired()).isNullOrEmpty();
+		assertThat(schema.getRequired())
+				.contains("reportId", "assessmentRoundId", "releaseStatus", "bodyVisible", "visibleFields")
+				.doesNotContain("scope", "publishedAt", "releasedAt");
 	}
 
 	/**

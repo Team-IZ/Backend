@@ -46,6 +46,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ClassroomController {
 
+	private static final String MANAGER_ROLE = "ROLE_MANAGER";
+
 	private final ClassroomService classroomService;
 	private final CurrentUserResolver currentUserResolver;
 
@@ -53,7 +55,14 @@ public class ClassroomController {
 			operationId = "findClassrooms",
 			summary = "기수 반 목록 조회 | ✅ 사용 가능",
 			description = """
-					기수에 편성된 반 전체를 조회한다. 조회 범위인 기관은 액세스 토큰에서 가져온다.
+					기수에 편성된 반을 조회한다. 조회 범위인 기관은 액세스 토큰에서 가져온다.
+
+					**역할에 따라 범위가 다르다.** 오퍼레이터는 기수의 반 전체를, **매니저는 자신이 현재
+					담당하는 반만** 본다(`manager_assignment`가 ACTIVE인 반).
+
+					매니저를 좁히는 이유는 이 목록이 교육생 명단 화면의 `반 · 전체` 드롭다운을 채우기 때문이다 —
+					`GET /cohorts/{cohortId}/trainees`가 매니저에게 담당 반 교육생만 주는데 드롭다운만 기수 전체
+					10개를 보여주면, 고를 수는 있는데 고르면 늘 비는 반이 생긴다. **두 API는 같은 모집단이어야 한다.**
 
 					**요청**
 					- cohortId (경로): 반을 조회할 기수 ID
@@ -88,7 +97,16 @@ public class ClassroomController {
 			Authentication authentication
 	) {
 		UUID organizationId = extractOrganizationId(authentication);
-		List<ClassroomResponse> classrooms = classroomService.findClassroomViews(cohortId, organizationId).stream()
+
+		// 매니저는 담당 반만 본다. 이 목록이 명단 화면의 `반 · 전체` 드롭다운을 채우므로
+		// 교육생 명단 조회의 매니저 스코프와 같은 모집단이어야 한다 — 드롭다운만 기수 전체를
+		// 보여주면 고를 수는 있는데 고르면 늘 비는 반이 생긴다.
+		boolean manager = authentication.getAuthorities().stream()
+				.anyMatch(authority -> MANAGER_ROLE.equals(authority.getAuthority()));
+		UUID scopedManagerId = manager ? currentUserResolver.resolveCurrentMemberId() : null;
+
+		List<ClassroomResponse> classrooms = classroomService
+				.findClassroomViews(cohortId, organizationId, scopedManagerId).stream()
 				.map(ClassroomResponse::from)
 				.toList();
 		return ResponseEntity.ok(new ClassroomListResponse(classrooms));

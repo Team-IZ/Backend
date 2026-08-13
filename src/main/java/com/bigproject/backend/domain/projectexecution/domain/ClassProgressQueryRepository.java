@@ -24,6 +24,14 @@ public interface ClassProgressQueryRepository {
 	 */
 	Optional<RoundScope> findRound(UUID projectId, int roundNo);
 
+	/**
+	 * 이 프로젝트에 <b>살아 있는 회차가 하나라도</b> 있는지(22차 R6).
+	 *
+	 * <p>{@link #findRound}가 비었을 때 "없는 번호를 물었다"와 "회차가 아직 하나도 없다"를 가르는 데
+	 * 쓴다. 둘은 화면이 해야 할 일이 다르다 — 앞은 드롭다운을 되돌리는 것이고, 뒤는 기다리는 것이다.
+	 */
+	boolean hasAnyRound(UUID projectId);
+
 	List<ClassProgressRow> findClassProgress(UUID assessmentRoundId, UUID organizationId);
 
 	/**

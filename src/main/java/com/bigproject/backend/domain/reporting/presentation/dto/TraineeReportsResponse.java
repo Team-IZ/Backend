@@ -1,7 +1,9 @@
 package com.bigproject.backend.domain.reporting.presentation.dto;
 
 import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
+import com.bigproject.backend.domain.reporting.domain.ReportCompletionStatus;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.util.List;
 import java.util.Map;
@@ -51,23 +53,66 @@ public record TraineeReportsResponse(
 	 *                <b>화면이 {@code qa} 유무로 범위를 되짚지 않게</b> 하려고 값으로 내려준다 —
 	 *                {@code FULL}인데 문항이 아직 없어 {@code qa}가 비는 경우를 {@code SUMMARY}로
 	 *                오인하는 것을 막는다.
+	 * @param completionStatus 리포트가 <b>몇 개 문제로 만들어졌는가</b>. {@code PUBLISHED}에서만.
+	 *                자세한 뜻은 아래 주석을 볼 것 — 같은 이름이 OP-05에서는 다른 뜻이다.
 	 * @param concepts {@code PUBLISHED}에서만.
 	 * @param retryState {@code NONE} · {@code PENDING} · {@code DONE}. PUBLISHED에서만.
 	 */
-	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record RoundReportResponse(
 			String id,
-			String reportId,
+			@JsonInclude(JsonInclude.Include.NON_NULL) String reportId,
 			String label,
+			@Schema(allowableValues = {"PUBLISHED", "PENDING_PUBLISH", "PENDING_VISIBILITY",
+					"NOT_ATTEMPTED", "VOID_ATTEMPT", "STOPPED"})
 			String status,
-			String publishAfter,
-			String publishedAt,
-			String curriculum,
-			DisclosureScope disclosureScope,
-			List<ConceptReportResponse> concepts,
-			String retryState,
-			String retryDueAt,
-			String retryCompletedAt
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "PENDING_PUBLISH에서만. 그 외에는 키가 빠진다") String publishAfter,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "PUBLISHED에서만. 그 외에는 키가 빠진다") String publishedAt,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "PUBLISHED에서만. 그 외에는 키가 빠진다") String curriculum,
+			@JsonInclude(JsonInclude.Include.NON_NULL) DisclosureScope disclosureScope,
+
+			// 여기 PARTIAL은 "일부 문제의 AI 생성이 실패해 개념 카드가 빠졌다"는 뜻이다.
+			// OP-05의 동명 값과 뜻이 다르니 설명은 ReportCompletionStatus javadoc을 볼 것 —
+			// 설명을 필드가 아니라 타입에 둔 이유도 거기 적혀 있다.
+			@JsonInclude(JsonInclude.Include.NON_NULL) ReportCompletionStatus completionStatus,
+
+			/*
+			 * 🔴 19차 Q1 — "생성 실패와 문항 없음이 화면에서 같아 보인다"에 답하는 두 값이다.
+			 *
+			 * 두 사건은 **원천이 다르고 응답에 나타나는 방식도 다르다.**
+			 *
+			 *   문항 없음  → concepts[]에 asked=false 카드로 **들어온다**
+			 *                (assessment_problem.generation_status='NOT_GENERATED', 분석 단계)
+			 *   생성 실패  → concepts[]에서 **아예 빠진다**
+			 *                (report_generation_item.status<>'SUCCEEDED', 리포트 생성 단계)
+			 *
+			 * 즉 생성 실패가 asked=false로 오는 일은 없다. 다만 "빠진다"는 것만으로는 화면이
+			 * 몇 개가 왜 없는지 알 수 없어서, 그 건수를 여기서 직접 준다.
+			 */
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = """
+					이 리포트가 만들려 한 문제 수. `concepts[]` 길이와 비교하면 몇 개가 빠졌는지 알 수 있다.
+					**3으로 하드코딩하지 말 것** — 문항 수는 회차 설정에 따라 달라진다.""")
+			Integer expectedConceptCount,
+
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = """
+					**AI 생성이 실패해 빠진 개념 수**(시스템 장애). `0`이면 빠진 것이 없다.
+
+					`asked: false`(문항 없음)와 **다른 사건**이다 — 그쪽은 학생 코드에 개념이 없어
+					묻지 못한 정상 상태이고 `concepts[]`에 카드로 들어온다. 이 값은 결과가 나왔어야
+					하는데 못 나온 것이라 학생 잘못이 아니며, *"묻지 않았어요"* 로 안내하면 안 된다.
+
+					`completionStatus=PARTIAL`의 원인 건수이기도 하다.""")
+			Integer missingConceptCount,
+
+			@JsonInclude(JsonInclude.Include.NON_NULL) List<ConceptReportResponse> concepts,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "PUBLISHED에서만", allowableValues = {"NONE", "PENDING", "DONE"}) String retryState,
+			@JsonInclude(JsonInclude.Include.NON_NULL) String retryDueAt,
+			@JsonInclude(JsonInclude.Include.NON_NULL) String retryCompletedAt
 	) {
 	}
 
@@ -77,9 +122,14 @@ public record TraineeReportsResponse(
 	 * @param problemId 이 개념을 물은 문항 식별자. <b>개념 이름은 회차마다 반복된다</b>
 	 *                  (`예외 처리와 롤백 전략`이 1·2·4차에 모두 나온다) — 이름으로 개념을 지목하면
 	 *                  다시 보기 대상을 잘못 짚을 수 있어 안정 키를 함께 내려준다.
+	 * @param asked 물었는가. <b>{@code false}면 이 개념은 그 학생 코드에 없어 문항이 만들어지지
+	 *              않았다</b>({@code assessment_problem.generation_status='NOT_GENERATED'}). 그때는
+	 *              {@code level}을 포함한 아래 값들이 전부 빠진다.
 	 * @param level 도달 단계 <b>0~4</b>. 0은 통과한 축이 하나도 없다는 뜻이며
-	 *              "안 물어본 것"이 아니라 "못한 것"이다 — 화면이 이 둘을 섞으면 안 된다.
-	 *              (DB {@code reach_display_code} L0~L4, AI {@code reachedStage} 0~4와 같은 눈금)
+	 *              "안 물어본 것"({@code asked=false})이 아니라 "못한 것"이다 — 화면이 이 둘을 섞으면 안 된다.
+	 *              눈금은 AI {@code reachedStage} 0~4와 같다. <b>DB {@code reach_display_code}는 원천이
+	 *              아니다</b> — 미니프로젝트에서 항상 L0라 쓸 수 없다
+	 *              ({@code JdbcTraineeReportQueryRepository.findConcepts} 주석 참고).
 	 * @param said  학생에게 보여주는 서술. 공개 범위가 SUMMARY 미만이면 비어 있다.
 	 * @param isRetryTarget 다시 보기 대상인가.
 	 * @param curriculumRef 교안 위치. 공개 범위 SUMMARY 이상일 때만.
@@ -104,18 +154,59 @@ public record TraineeReportsResponse(
 	 * <p>프론트에서 {@code said?}·{@code qa?}로 바꾸고 {@code ConceptCard.tsx}·{@code QaList.tsx}에
 	 * 미존재 분기를 두면 된다.
 	 */
-	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record ConceptReportResponse(
-			String problemId,
+			@Schema(nullable = true) String problemId,
 			String name,
-			int level,
-			String said,
+
+			/*
+			 * 🔴 문항 없음 — 제3의 값. level=0 과 합치면 안 된다.
+			 *
+			 * false 면 그 학생 코드에 이 개념이 없어 문항 자체가 만들어지지 않았다는 뜻이며,
+			 * 이때 level 을 포함한 아래 값들이 전부 빠진다. 0단(물었는데 통과한 축이 없다)과
+			 * 섞으면 학생에게 "못했다"고 말하게 되는데 사실은 묻지 않은 것이다.
+			 *
+			 * GET /reports/class-diagnosis 가 level0 과 unasked 를 엄격히 구분하는 것과 같은 규칙이다.
+			 */
+			boolean asked,
+
+			/** 도달 단계 0~4. {@code asked=false}면 키가 빠진다 — 물은 적이 없으므로 단계가 없다. */
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(minimum = "0", maximum = "4", example = "2", nullable = true,
+					description = """
+							통과한 축의 최댓값. **0~4 이외의 값은 나가지 않는다.**
+
+							| 값 | 뜻 |
+							|---|---|
+							| `0` | 물었지만 통과한 축이 하나도 없다. **1로 올리지 않는다** |
+							| `1` | 코드 이해까지 |
+							| `2` | 설계 논리까지(왜 이렇게 했나) |
+							| `3` | 대안 비교까지(다른 방법은) |
+							| `4` | 반례 대응까지(언제 깨지나) — 전부 통과 |
+
+							🔴 **`asked=false`면 이 키가 아예 빠진다.** 문항이 만들어지지 않은 개념이라
+							단계를 말할 대상이 없다. `0`(물었는데 못했다)과 섞으면 화면이 학생에게
+							"못했다"고 말하게 되는데 사실은 묻지 않은 것이다. `asked=true`인데 빠지는
+							경우는 없다.""")
+			Integer level,
+
+			@JsonInclude(JsonInclude.Include.NON_NULL) String said,
 			boolean isRetryTarget,
-			CurriculumRefResponse curriculumRef,
-			List<QaEntryResponse> qa,
-			List<String> explain,
-			ComparedReachResponse comparedReach
+			@JsonInclude(JsonInclude.Include.NON_NULL) CurriculumRefResponse curriculumRef,
+			@JsonInclude(JsonInclude.Include.NON_NULL) List<QaEntryResponse> qa,
+			@JsonInclude(JsonInclude.Include.NON_NULL) List<String> explain,
+			@JsonInclude(JsonInclude.Include.NON_NULL) ComparedReachResponse comparedReach
 	) {
+
+		/**
+		 * 묻지 못한 개념. <b>이름만 있고 판정이 없다.</b>
+		 *
+		 * <p>{@code isRetryTarget}이 항상 {@code false}인 이유는 다시 볼 문항이 없기 때문이다 —
+		 * 재시험 대상은 "물었는데 2단 미만"이지 "묻지 못함"이 아니다.
+		 */
+		public static ConceptReportResponse unasked(String problemId, String name) {
+			return new ConceptReportResponse(
+					problemId, name, false, null, null, false, null, null, null, null);
+		}
 	}
 
 	/** 교안 위치. 화면의 `교안 3장 · 36~46쪽` 줄을 만든다. */

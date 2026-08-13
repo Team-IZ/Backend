@@ -5,6 +5,7 @@ import com.bigproject.backend.domain.member.application.MemberInvitationService;
 import com.bigproject.backend.domain.member.application.TraineeCsvParser;
 import com.bigproject.backend.domain.member.application.TraineeRosterService;
 import com.bigproject.backend.domain.member.domain.AccountStatus;
+import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.member.domain.TraineeRosterRepository;
 import com.bigproject.backend.domain.member.domain.TraineeRosterSort;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
@@ -56,6 +57,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class TraineeController {
 	private static final String REQUEST_ID_HEADER = "X-Request-Id";
+	private static final String MANAGER_ROLE = "ROLE_MANAGER";
 
 	private final MemberInvitationService memberInvitationService;
 	private final TraineeCsvParser traineeCsvParser;
@@ -283,11 +285,12 @@ public class TraineeController {
 
 					| 파라미터 | 필수 | 타입 | 설명 |
 					| --- | --- | --- | --- |
-					| `classroomId` | 선택 | UUID | 특정 반으로 좁힌다. `unassignedOnly`와 함께 지정하면 400 |
-					| `unassignedOnly` | 선택 | boolean | 반 배정이 없는 교육생만. 기본 `false` |
+					| `classroomId` | 선택 | UUID | 특정 반으로 좁힌다. 생략하면 (매니저는 담당 반, 오퍼레이터는 기수) 전체. `unassignedOnly`와 함께 지정하면 400 |
+					| `unassignedOnly` | 선택 | boolean | 반 배정이 없는 교육생만. 기본 `false`. **오퍼레이터 전용** — 매니저가 `true`로 보내면 400 |
 					| `accountStatus` | 선택 | enum | `INVITED`(초대 대기) · `ACTIVE`(활성) · `INACTIVE`(비활성). 비우면 전체(화면의 `계정 · 전체`) |
 					| `query` | 선택 | string | 이름·이메일 부분검색. 비우면 전체 |
-					| `sort` | 선택 | enum | `NAME`(이름순, 기본) · `RECENT_ENROLLED`(최근 등록순) |
+					| `sort` | 선택 | enum | `NAME`(이름순, 기본) · `RECENT_ENROLLED`(최근 등록순) · `RISK`(위험순) · `EXCELLENCE`(우수순) |
+					| `assessmentRoundId` | 선택 | UUID | **이 화면의 `회차 · 미프 N차` 필터.** 도달 단계·2단 이하·위험 배지·우수 누적 같은 회차 지표를 이 회차 기준으로 채운다. **생략하면 서버가 「이번 회차」를 고른다**(아래 표) |
 					| `page` | 선택 | int | 0부터 시작. 기본 `0` |
 					| `size` | 선택 | int | 페이지당 개수. 기본 `20`, 최대 `100` |
 
@@ -296,6 +299,48 @@ public class TraineeController {
 
 					⚠️ **`classroomId`와 `unassignedOnly`는 함께 못 쓴다.** 화면에서 `반 · 전체 / 미배정 / A반…`이
 					단일 드롭다운이라 동시에 지정될 일이 없고, 들어오면 400으로 막는다.
+
+					💡 **`assessmentRoundId`를 생략하면 서버가 「이번 회차」를 골라 답한다.** 화면이 첫 진입에
+					이미 `회차 · 미프 3차`를 고른 상태로 떠야 하는데, 그 값을 알려면 회차 목록을 먼저 받아야 해서
+					호출이 두 번이 된다. 응답의 `rounds[]`(드롭다운 선택지)와 `assessmentRoundId`(**실제로 쓴 회차**)를
+					함께 돌려주므로 한 번의 호출로 표와 드롭다운을 같이 그릴 수 있다.
+
+					판정은 `GET /cohorts/{cohortId}/projects/current`와 **완전히 같은 규칙**이다(15차 R1) —
+					서버가 규칙을 한 벌만 갖는다.
+
+					| 순서 | 고르는 것 |
+					| --- | --- |
+					| ① | `RUNNING`인 프로젝트. 여럿이면 **가장 늦게 시작한** 것 |
+					| ② | 없으면 **가장 이른 `PLANNED`** — 다음에 열릴 회차가 지금의 관심사다 |
+					| ③ | 그것도 없으면 **마지막 프로젝트**(전부 `CLOSED`인 기수) |
+
+					⚠️ **`rounds[]`의 마지막 원소가 기본값이라고 가정하지 마라.** 미프 2차가 진행 중이고 3차가
+					아직 안 열렸으면 기본값은 **2차**다. 드롭다운의 선택 상태는 반드시 응답의
+					`assessmentRoundId`에 맞춰야 대시보드의 `이번 회차`와 같은 차수를 가리킨다.
+
+					③이 `CLOSED`를 돌려주므로 **화면은 "진행 중"이라고 단정하면 안 된다.**
+					이번 회차 프로젝트에 회차가 아직 없으면 목록의 마지막 회차로 물러선다 — 아무것도 고르지
+					못하면 지표 칸이 통째로 비기 때문이다.
+
+					⚠️ **`assessmentRoundId`는 회차 지표만 바꾸고, 명단에 어느 교육생이 나오는지는 안 바꾼다.**
+					회차를 고르면 그 회차의 도달·위험·우수 지표로 화면이 다시 그려지지만, 행 자체(누가 명단에
+					있는지)는 기수 소속 기준 그대로다. 예를 들어 회차 시작 전(팀 미배정 시점)에도 프로필 행은
+					남아 있고 도달·배지 칸만 비어 있다 — 회차가 명단의 **필터**가 아니라 **지표의 기준 시점**이기
+					때문이다.
+
+					⚠️ **회차 지표는 매니저에게만 채워진다.** 원천인 `manager_trainee_roster_view`가
+					`manager_assignment` 기반인데 테이블정의서가 *'기수 전체 배정과 오퍼레이터 배정은 만들지
+					않는다'*고 못박아, 오퍼레이터가 부르면 회차를 지정하든 말든 아래 회차 지표 열이 전부 `null`이다.
+					오퍼레이터 화면(OP-06)은 이 열들을 그리지 않으므로 문제되지 않는다.
+
+					⚠️ **`sort=RISK`·`EXCELLENCE`는 기준 회차가 있어야 한다.** 보통은 위처럼 서버가 최근 회차를
+					골라 주므로 그냥 쓰면 되지만, **기수에 회차가 하나도 없으면**(= `rounds[]`가 빈 배열) 고를 것이
+					없어 `ROSTER_ASSESSMENT_ROUND_REQUIRED`(400)로 막는다.
+
+					⚠️ **매니저는 `unassignedOnly`를 쓸 수 없다.** 매니저 명단은 담당 반으로 좁혀져 있어 반이 없는
+					교육생은 애초에 들어오지 않으므로 결과가 항상 빈다. 조용히 빈 표를 주면 화면이 데이터가 없다고
+					오해하므로 `ROSTER_UNASSIGNED_FILTER_NOT_ALLOWED`(400)로 거절한다 — 이 필터는 오퍼레이터
+					화면(OP-06)의 `소속 반 · 미배정` 전용이다. 같은 이유로 `unassignedCount`도 매니저에게는 늘 `0`이다.
 
 					## 응답 (200)
 
@@ -306,8 +351,28 @@ public class TraineeController {
 					| `size` | int | 페이지당 개수 |
 					| `totalElements` | long | **필터 적용 후** 전체 건수 |
 					| `totalPages` | int | 전체 페이지 수 |
-					| `unassignedCount` | int | 반 배정이 없는 교육생 수. 화면 상단 `미배정 N` 배지 |
+					| `unassignedCount` | int | 반 배정이 없는 교육생 수. 화면 상단 `미배정 N` 배지. **매니저는 늘 `0`** |
 					| `cohortTotal` | int | 기수 전체 교육생 수. 화면 상단 `명단 393명` |
+					| `rounds[]` | array | **`회차 · 미프 N차` 드롭다운 선택지.** 차수 오름차순이라 마지막이 가장 최근 |
+					| `assessmentRoundId` | UUID? | **실제로 조회에 쓴 회차.** 드롭다운의 선택 상태를 이 값에 맞춘다. 회차가 없으면 `null` |
+
+					### rounds[] 각 항목 — 회차 드롭다운
+
+					| 필드 | 타입 | 설명 |
+					| --- | --- | --- |
+					| `assessmentRoundId` | UUID | 회차 ID. 요청의 `assessmentRoundId`에 그대로 넣는 값 |
+					| `roundNo` | int | 프로젝트 안의 회차 번호. 미니프로젝트는 **늘 1**이라 차수 표기에 쓸 수 없다 |
+					| `cohortRoundNo` | int | **기수 안의 회차 순번.** 화면의 `미프 3차`에서 3이 이 값 |
+					| `roundName` | string | 회차 이름 |
+					| `projectId` | UUID | 회차가 속한 프로젝트 ID |
+					| `projectName` | string | 회차가 속한 프로젝트 이름 |
+
+					💡 **기수 단위 회차 목록 API가 따로 없어 명단과 같은 응답에 싣는다.** 없으면 화면이
+					`GET /cohorts/{cohortId}/projects` 뒤에 프로젝트마다 `/rounds`를 다시 부르는 N+1이 된다.
+
+					⚠️ **차수는 `cohortRoundNo`이지 `roundNo`가 아니다.** `roundNo`는 `(project_id, round_no)`가
+					UNIQUE라 프로젝트마다 1부터 다시 시작하는데, 미니프로젝트는 프로젝트당 회차가 1건뿐이라
+					전부 1이 되어 `미프 1차·2차·3차`를 구분하지 못한다.
 
 					### content[] 각 항목
 
@@ -326,6 +391,24 @@ public class TraineeController {
 					| `inactivatedById` | UUID? | 비활성화한 사용자 ID. 활성이면 `null` |
 					| `inactivatedByName` | string? | 비활성화한 사용자 이름. 화면 표시용 |
 					| `inactivatedAt` | date-time? | 비활성화 시각. 활성이면 `null` |
+					| `pendingInvitationTokenId` | UUID? | 아직 수락·취소되지 않은 초대 토큰(11차 R2). `null`이 아닐 때만 재발송 버튼(`POST /cohorts/{cohortId}/trainees/invitations/resend`)을 켠다. 이미 활성화됐거나 초대가 취소됐으면 `null` |
+
+					#### 여기부터는 회차 지표다 — **매니저에게만** 채워지고 오퍼레이터는 전부 `null`이다
+
+					| 필드 | 타입 | 설명 |
+					| --- | --- | --- |
+					| `assessmentRoundId` | UUID? | 지표를 계산한 평가 회차. 응답 최상위의 `assessmentRoundId`와 같은 값 |
+					| `attemptId` | UUID? | 그 회차의 응시 시도 ID. 아직 응시하지 않았으면 `null` |
+					| `roundResultStatus` | enum? | 응시 시도 상태. `NOT_STARTED`(미시작) · `SUBMITTED` · `ANALYZING` · `SESSION_READY` · `SESSION_IN_PROGRESS` · `COMPLETED`(완료) · `FAILED` · `EXPIRED` |
+					| `conceptResultItems` | string? | 문항별 결과의 JSON 배열(문자열로 직렬화됨). 각 항목은 `problemId`·`problemNo`·`conceptId`·`generationStatus`·`reachLevel`(0~4단, 미생성·무응답이면 `null`)을 가진다 |
+					| `expectedConceptCount` | int? | `저단계 개수`의 분모. 실제로 생성된(`generationStatus='GENERATED'`) 문항 수이며 사람마다 다르다 |
+					| `lowStageConceptCount` | int? | 도달 단계 0~2단(저단계)인 문항 수. 응답한 문항이 하나도 없으면 `null`(화면의 `—`) |
+					| `excellentOccurrenceCount` | int? | 이 교육생이 우수로 발견된 누적 횟수 |
+					| `excellentAssessmentSequenceNos` | int[] | 우수로 발견된 프로젝트 차수(`analysis_sequence_no`) 전부. **조회 회차를 포함**하므로 이 배열에 조회 차수가 있으면 이번 회차도 우수다. 최신 차수부터 내림차순, 근거 없으면 빈 배열 |
+					| `matchedRiskTypeCodes` | string? | 이번 회차에 걸린 위험 유형 코드 배열(문자열로 직렬화됨). `STAGE_DECLINE`(단계 하락) · `PERSISTENT_LOW`(지속 저점) · `INVALID_ATTEMPT`(무효 응시) · `CONTRIBUTION_UNDERSTANDING_GAP`(기여·이해도 괴리) · `LOW_PARTICIPATION`(저기여) 중 동시에 여러 개가 걸릴 수 있다. 해소(`RESOLVED`)된 사유는 들어오지 않는다 |
+					| `roundPrimaryStatusCode` | enum? | 배지 한 칸에 넣을 **단일** 코드. 1층 응시상태(`NOT_ATTENDED` 미응시 → `SESSION_INCOMPLETE` 응시 중단 → `INVALID_ATTEMPT` 무효 응시)가 있으면 2층 위험 유형(`LOW_PARTICIPATION` → `CONTRIBUTION_UNDERSTANDING_GAP` → `STAGE_DECLINE` → `PERSISTENT_LOW`)은 보지 않는다. 걸린 것이 없으면 `null`(정상). 중도 이탈은 여기 들어오지 않는다 — 계정 상태의 비활성화 사유로 이미 드러난다 |
+					| `roundTerminalAt` | date-time? | `roundPrimaryStatusCode`가 `NOT_ATTENDED`·`SESSION_INCOMPLETE`일 때만 값이 있는 시각. 화면이 `우수 누적` 칸에 정상 결과 대신 `세션 중단 · 07-14`처럼 사유·일자를 그릴 때 쓴다 |
+					| `rowAggregationStatus` | string? | 이 행의 지표 집계 상태. 현재는 항상 `COMPLETE`다 |
 
 					#### inactivatedReasonCode 값
 
@@ -356,7 +439,7 @@ public class TraineeController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "명단 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "ROSTER_FILTER_CONFLICT classroomId와 unassignedOnly를 함께 지정함 · VALIDATION_FAILED accountStatus·sort에 없는 값을 지정했거나 page·size 값이 올바르지 않음"),
+			@ApiResponse(responseCode = "400", description = "ROSTER_FILTER_CONFLICT classroomId와 unassignedOnly를 함께 지정함 · ROSTER_UNASSIGNED_FILTER_NOT_ALLOWED 매니저가 unassignedOnly를 지정함(오퍼레이터 전용) · ROSTER_ASSESSMENT_ROUND_REQUIRED sort가 RISK·EXCELLENCE인데 기수에 회차가 하나도 없음 · VALIDATION_FAILED accountStatus·sort에 없는 값을 지정했거나 page·size 값이 올바르지 않음"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 만료됨"),
 			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터·매니저 권한이 아님"),
 			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 조회할 기수를 찾을 수 없음. 다른 기관의 기수도 존재를 알리지 않고 여기로 묶는다"),
@@ -369,7 +452,7 @@ public class TraineeController {
 			@PathVariable UUID cohortId,
 			@Parameter(description = "특정 반으로 좁힌다. unassignedOnly와 함께 지정할 수 없다")
 			@RequestParam(required = false) UUID classroomId,
-			@Parameter(description = "true면 반 배정이 없는 교육생만 조회한다")
+			@Parameter(description = "true면 반 배정이 없는 교육생만 조회한다. 오퍼레이터 전용이며 매니저가 지정하면 400")
 			@RequestParam(required = false, defaultValue = "false") boolean unassignedOnly,
 			@Parameter(description = "계정 상태 필터. INVITED/ACTIVE/INACTIVE만 지원하며 생략하면 전체")
 			@RequestParam(required = false) AccountStatus accountStatus,
@@ -377,6 +460,8 @@ public class TraineeController {
 			@RequestParam(required = false) String query,
 			@Parameter(description = "정렬 기준", example = "NAME")
 			@RequestParam(required = false, defaultValue = "NAME") TraineeRosterSort sort,
+			@Parameter(description = "회차 지표를 채울 평가 회차 ID. 생략하면 가장 최근 회차를 서버가 고르며, 실제로 쓴 값은 응답의 assessmentRoundId에 담긴다")
+			@RequestParam(required = false) UUID assessmentRoundId,
 			@Parameter(description = "0부터 시작하는 페이지 번호", example = "0")
 			@RequestParam(defaultValue = "0") @Min(0) int page,
 			@Parameter(description = "페이지당 개수(최대 100)", example = "20")
@@ -385,8 +470,26 @@ public class TraineeController {
 	) {
 		UUID organizationId = extractOrganizationId(authentication);
 
+		// 매니저는 담당 반만 본다. 오퍼레이터는 기수 전체를 보므로 스코프를 걸지 않는다 —
+		// 이 엔드포인트는 두 역할이 함께 쓰므로 권한 애너테이션만으로는 갈라지지 않는다.
+		boolean manager = authentication.getAuthorities().stream()
+				.anyMatch(authority -> MANAGER_ROLE.equals(authority.getAuthority()));
+
+		// 미배정 필터는 오퍼레이터 전용이다. 매니저 목록은 담당 반으로 좁혀져 있어 반이 없는
+		// 교육생은 애초에 들어오지 않으므로, 허용하면 조용히 빈 목록을 돌려주게 된다 —
+		// 화면이 잘못 부른 것을 결과가 없는 것처럼 보이게 하지 않는다.
+		if (manager && unassignedOnly) {
+			throw new ApiException(MemberErrorCode.ROSTER_UNASSIGNED_FILTER_NOT_ALLOWED);
+		}
+
+		// 회차 지표 조인에 쓰는 매니저이자 목록을 좁히는 매니저다. 오퍼레이터는 null이다 —
+		// manager_trainee_roster_view가 manager_assignment 기반이고 테이블정의서가 '오퍼레이터
+		// 배정은 만들지 않는다'고 못박아, 오퍼레이터 ID로 조인해 봐야 어차피 한 행도 붙지 않는다.
+		UUID scopedManagerId = manager ? currentUserResolver.resolveCurrentMemberId() : null;
+
 		TraineeRosterService.RosterResult result = traineeRosterService.findRoster(
-				cohortId, organizationId, classroomId, unassignedOnly, accountStatus, query, sort,
+				cohortId, organizationId, scopedManagerId, scopedManagerId, assessmentRoundId,
+				classroomId, unassignedOnly, accountStatus, query, sort,
 				PageRequest.of(page, size));
 
 		Page<TraineeRosterRepository.RosterRow> rosterPage = result.page();
@@ -397,7 +500,9 @@ public class TraineeController {
 				rosterPage.getTotalElements(),
 				rosterPage.getTotalPages(),
 				result.unassignedCount(),
-				result.cohortTotal()
+				result.cohortTotal(),
+				result.rounds().stream().map(TraineeRosterResponse.RoundOption::from).toList(),
+				result.assessmentRoundId()
 		);
 		return ResponseEntity.ok(response);
 	}

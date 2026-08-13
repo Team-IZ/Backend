@@ -176,20 +176,48 @@ public class CurriculumController {
 					**응답 (200)**
 					- versionId / materialId: 교안 버전 ID / 원장 ID
 					- versionNo: 버전 번호
-					- originalFileName / pageCount: 파일명 / 페이지 수
+					- originalFileName: 파일명
+					- pageCount: 페이지 수. **분석 전이면 null**
+					- analysisStatus: 분석 상태. **한 번도 분석하지 않았으면 null**
+					- teachesCount: 승인된 가르친 항목 수
 					- createdAt: 등록 시각
+
+					## 🔴 분석 여부를 pageCount로 추측하지 말 것 (18차 R2)
+
+					종전에는 상태 필드가 없어 화면이 `pageCount == null`로 분석 여부를 추측하고
+					있었다. 그건 **"쪽수를 아직 모른다"는 뜻이지 "분석 중"이 아니고**, 분석이
+					**실패**한 교안과도 구분되지 않는다. `analysisStatus`를 쓴다.
+
+					| `analysisStatus` | 화면 |
+					|---|---|
+					| `null` | `분석 전` · 못 고름 |
+					| `PENDING` · `RUNNING` | `분석 중 — 끝나면 고를 수 있습니다` · 못 고름 |
+					| `SUCCEEDED` | 고를 수 있음 |
+					| `FAILED` | `분석 실패 — 다시 올려 주세요` · 못 고름 |
+
+					⚠️ 값이 **4종 + null**이다(요청서의 `ANALYZING`·`READY`·`FAILED` 3종이 아니다).
+					`PENDING`과 `RUNNING`을 화면에서 `분석 중` 하나로 접으시면 되고, **`null`(분석 전)과
+					`FAILED`(분석 실패)는 갈라야 한다** — 전자는 기다리면 되고 후자는 다시 올려야 한다.
+
+					`teachesCount`는 고르기 **전에** 이 교안에서 검증 개념 3건을 뽑을 수 있는지
+					알려 준다. `GET /projects/{projectId}/concept-candidates`가 세는 것과 같은 값이다.
+
+					**조회는 교안 수와 무관하게 고정 3건**이라 목록이 길어져도 느려지지 않는다.
 					"""
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "교안 목록 조회 성공"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수·삭제된 기수 포함) — 22차 R7"),
     })
     @GetMapping("/cohorts/{cohortId}/curricula")
     public ResponseEntity<List<CurriculumVersionResponse>> findLinkableCurricula(
-            @Parameter(description = "경로상 기수 ID(현재 미검증)") @PathVariable UUID cohortId
+            @Parameter(description = "기수 ID. 목록을 좁히지는 않지만 **존재하지 않으면 404**다(22차 R7)")
+            @PathVariable UUID cohortId
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-        List<CurriculumVersionResponse> response = curriculumService.findLinkableCurricula(orgId).stream()
+        List<CurriculumVersionResponse> response = curriculumService
+                .findLinkableCurriculaForCohort(cohortId, orgId).stream()
                 .map(CurriculumVersionResponse::from)
                 .toList();
         return ResponseEntity.ok(response);
@@ -288,8 +316,9 @@ public class CurriculumController {
 					"""
     )
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "비교 가능한 기수 목록 조회 성공"),
+            @ApiResponse(responseCode = "200", description = "비교 가능한 기수 목록 조회 성공(후보가 없으면 빈 배열)"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기준 기수를 찾을 수 없음 — 「비교 대상이 없다」와 구분된다(22차 R8)"),
     })
     @GetMapping("/curricula/comparable-cohorts")
     public ResponseEntity<List<UUID>> findComparableCohorts(
@@ -303,7 +332,7 @@ public class CurriculumController {
             summary = "교안 등록 | ✅ 사용 가능",
             description = """
 					PDF 파일을 업로드해 새 교안(material)과 첫 버전(version)을 만든다.
-					⚠ 파일은 현재 로컬 디스크에 저장된다(uploads/curricula/) — 나중에 S3 등으로 교체 예정.
+					⚠ 파일은 현재 로컬 디스크에 저장된다 — 나중에 S3 등으로 교체 예정.
 					⚠ 등록 직후엔 분석이 안 된 상태다. 섹션·검증개념을 쓰려면 별도로
 					`POST /curricula/{materialId}/analyses`를 호출해야 한다.
 
@@ -314,12 +343,34 @@ public class CurriculumController {
 
 					**응답 (201)**
 					- 생성된 교안 버전 정보(응답 필드는 "기수 연결 교안 목록"과 동일)
+
+					## 🔴 22차 R2 — 코드 없는 500으로 나가던 두 실패
+
+					`50KB짜리도 500`이라는 보고를 따라간 결과 **크기와 무관한 두 실패**가 있었다.
+					둘 다 `ApiExceptionHandler`를 거치지 못해 코드 없는 500으로 나갔고, 스펙에도
+					없는 상태였다. 이제 각각 코드를 가진다.
+
+					| 코드 | 상태 | 언제 |
+					|---|---|---|
+					| `CURRICULUM_TITLE_DUPLICATED` | 409 | 같은 기관에 **같은 제목**의 교안이 이미 있다 |
+					| `CURRICULUM_FILE_STORE_FAILED` | 503 | 저장 경로가 읽기 전용이거나 가득 찼다 |
+
+					**제목 중복이 특히 잘 걸린다.** `uq_curriculum_material_org_id_normalized_title`이
+					부분 인덱스가 아니라 전역 UNIQUE라 **논리 삭제된 교안도 제목을 계속 점유**한다.
+					같은 제목으로 다시 시험하면 파일이 무엇이든 이 충돌이 난다. 화면은 이 코드로
+					제목 입력란에 인라인 오류를 띄우면 된다(회차 이름의 `PROJECT_NAME_DUPLICATED`와 같다).
+
+					> **Lambda 6MB 상한(요청서 ②)은 이 커밋의 범위가 아니다.** 본문이 base64로
+					> 부풀어(×4/3) 실질 4.5MB에서 막히는 것이라 앱이 손댈 수 있는 층이 아니고,
+					> presigned S3로 그 층을 비켜가는 것이 답이다 — 계약 변경이라 별건이다.
 					"""
     )
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "교안 등록 성공"),
             @ApiResponse(responseCode = "400", description = "CURRICULUM_FILE_REQUIRED 업로드할 파일이 없음 · VALIDATION_FAILED title 등 필수값 누락"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "409", description = "CURRICULUM_TITLE_DUPLICATED 같은 기관에 이미 있는 교안 제목 — 제목 입력란에 인라인 오류(22차 R2)"),
+            @ApiResponse(responseCode = "503", description = "CURRICULUM_FILE_STORE_FAILED 업로드한 파일을 저장하지 못함 — 재시도 안내(22차 R2)"),
     })
     @PostMapping(value = "/curricula", consumes = "multipart/form-data")
     public ResponseEntity<CurriculumVersionResponse> registerCurriculum(

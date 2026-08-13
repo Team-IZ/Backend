@@ -64,7 +64,6 @@ public class AiCurriculumClient {
                                 String canonicalDescription, BigDecimal confidence,
                                 Integer descriptionPageStart, Integer descriptionPageEnd,
                                 String kind, String evidence, List<String> siblingNames) {
-        // 기존 코드가 참조하던 description() 접근자 이름 호환용
         public String description() {
             return canonicalDescription;
         }
@@ -75,31 +74,21 @@ public class AiCurriculumClient {
                                 List<TeachesResult> teaches) {
     }
 
-    /** AI 응답의 result 필드 안에 실제 분석 산출물(sections 등)이 담겨 온다. */
     public record CurriculumResultPayload(String versionId, Integer analysisVersion,
                                           String heuristicVersion, String promptVersion,
                                           String extractionStatus, String qualityStatus,
                                           Boolean fallbackUsed, List<SectionResult> sections) {
     }
 
-    /**
-     * AI 서버 GET /api/v0/curricula/{job_id} 응답 최상위 구조.
-     * sections는 최상위가 아니라 result 안에 있다 — 2026-08-11 실측(엑셀로 받은 실제 응답)으로
-     * 확정. 예전 record는 sections를 최상위에서 찾아 항상 null이 되었고, 그 결과가
-     * "SUCCEEDED인데 섹션이 비어있다"는 INVALID_AI_RESPONSE로 잘못 보고되고 있었다.
-     */
     public record AnalysisResult(String jobId, String versionId, String status,
                                  String failureReason, String startedAt, String completedAt,
                                  CurriculumResultPayload result) {
-        // 기존 코드(reconcileOne 등)가 result.sections()로 바로 접근하던 부분과의 호환용
         public List<SectionResult> sections() {
             return result != null ? result.sections() : null;
         }
     }
 
-    /** AI 원본 서버(FastAPI) POST /api/v0/curricula 호출. PDF를 다시 전송한다. */
     public CurriculumAccepted requestAnalysis(UUID versionId, String courseLabel, byte[] pdfBytes, String idempotencyKey) {
-        // 깨우지 못한 채 원본으로 보내면 404가 돌아온다 — "교안 형식이 잘못됐다"로 읽히는 실패다.
         if (!proxyWarmUp.warmUp()) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_AI_UNAVAILABLE);
         }

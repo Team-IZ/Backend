@@ -1,15 +1,18 @@
 package com.bigproject.backend.global.config;
 
 import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.domain.assessment.domain.AssessmentValidityErrorCode;
 import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
 import com.bigproject.backend.domain.member.domain.MemberErrorCode;
+import com.bigproject.backend.domain.notification.domain.NotificationErrorCode;
 import com.bigproject.backend.domain.organization.domain.OrganizationErrorCode;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectExecutionErrorCode;
 import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
 import com.bigproject.backend.global.exception.ApiErrorCode;
 import com.bigproject.backend.global.exception.ErrorResponse;
+import com.bigproject.backend.global.security.ManagerViewAccessErrorCode;
 import io.swagger.v3.core.converter.AnnotatedType;
 import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
@@ -24,6 +27,7 @@ import io.swagger.v3.oas.models.media.Content;
 import io.swagger.v3.oas.models.media.MediaType;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.responses.ApiResponse;
+import io.swagger.v3.oas.models.responses.ApiResponses;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.context.annotation.Bean;
@@ -33,10 +37,14 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @OpenAPIDefinition(
@@ -78,7 +86,9 @@ public class SwaggerConfig {
 	private static final Map<String, String> ERROR_CODE_CATALOG = Stream.<ApiErrorCode[]>of(
 					OrganizationErrorCode.values(), ReportErrorCode.values(), AuthErrorCode.values(),
 					AcademicOperationsErrorCode.values(), MemberErrorCode.values(), AnalyticsErrorCode.values(),
-					ProjectExecutionErrorCode.values(), CurriculumErrorCode.values())
+					ProjectExecutionErrorCode.values(), CurriculumErrorCode.values(),
+					ManagerViewAccessErrorCode.values(), NotificationErrorCode.values(),
+					AssessmentValidityErrorCode.values())
 			.flatMap(Arrays::stream)
 			.collect(LinkedHashMap::new, (map, code) -> map.put(code.name(), code.defaultMessage()), Map::putAll);
 
@@ -96,6 +106,22 @@ public class SwaggerConfig {
 			"502", List.of("BAD_GATEWAY"),
 			"503", List.of("SERVICE_UNAVAILABLE")
 	);
+
+	/**
+	 * 설명에 적힌 오류 표의 한 행. {@code | `CODE` | 404 | 언제 |} 처럼 <b>코드와 상태가 나란히 있는
+	 * 표 행</b>만 잡는다 — 문장 속에서 코드 이름이 지나가는 것은 그 오퍼레이션의 오류가 아닐 수 있다.
+	 */
+	private static final Pattern ERROR_TABLE_ROW =
+			Pattern.compile("^\\|\\s*`?([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)`?\\s*\\|\\s*(\\d{3})\\s*\\|",
+					Pattern.MULTILINE);
+
+	/**
+	 * 토큰이 필요한 경로가 <b>언제나</b> 낼 수 있는 응답. 시큐리티 필터가 컨트롤러보다 먼저 답하므로
+	 * 어느 오퍼레이션의 오류 표에도 적혀 있지 않지만, 실제로는 가장 자주 나가는 실패다.
+	 */
+	private static final Map<String, String> SECURITY_FAILURES = new LinkedHashMap<>(Map.of(
+			"401", "UNAUTHENTICATED — 토큰이 없거나 만료됐다",
+			"403", "ACCESS_DENIED — 이 역할로는 부를 수 없다"));
 
 	/** {@code summary}에 붙은 준비 상태 마커 → 기계가 읽는 벤더 확장값. */
 	private static final Map<String, String> READINESS_BY_MARKER = Map.of(
@@ -132,6 +158,7 @@ public class SwaggerConfig {
 	public OpenApiCustomizer izGetOpenApiCustomizer() {
 		return openApi -> {
 			registerErrorSchemas(openApi);
+			flattenEmptyParents(openApi);
 			applyNullability(openApi);
 			openApi.addSecurityItem(new SecurityRequirement().addList(BEARER_AUTH));
 
@@ -143,6 +170,7 @@ public class SwaggerConfig {
 				pathItem.readOperations().forEach(operation -> {
 					applyReadinessExtension(operation);
 					applySecurity(operation, publicPath);
+					ensureErrorResponses(operation, publicPath);
 					applyErrorSchema(operation, publicPath);
 				});
 			});
@@ -160,6 +188,121 @@ public class SwaggerConfig {
 		ModelConverters.getInstance()
 				.readAll(new AnnotatedType(ErrorResponse.class))
 				.forEach(openApi.getComponents()::addSchemas);
+	}
+
+	/**
+	 * <b>내용이 없는 부모 스키마를 {@code allOf}에서 걷어낸다.</b>
+	 *
+	 * <p>{@code oneOf}로 두 갈래를 나누려면 Java 쪽에 공통 상위 타입이 하나 필요하다
+	 * ({@code MySubmissionResponse.SubmissionContent}가 그렇다). 그런데 swagger-core는 그 상위 타입을
+	 * <b>부모 스키마로 등록하고</b> 자식마다 {@code allOf: [$ref(부모), {실제 속성}]}을 만든다. 상위 타입이
+	 * 값을 하나도 갖지 않는 마커라면 이 부모는 {@code {}} — 아무 말도 하지 않는 스키마다.
+	 *
+	 * <p>그 빈 스키마가 남으면 두 가지가 나빠진다. 생성기가 <b>쓸모없는 타입을 하나 더 만들고</b>,
+	 * 무엇보다 "속성도 {@code required}도 없는 객체"라 스펙 검사에서 <b>새 위반으로 잡힌다</b> —
+	 * {@code required}를 채우려고 타입을 나눴는데 그 과정에서 같은 위반을 하나 만드는 셈이다(23차 R1).
+	 *
+	 * <p>{@code @Schema(hidden = true)}로는 지워지지 않는다. 자식의 합성은 부모 애너테이션이 아니라
+	 * <b>타입 계층</b>에서 나오기 때문이다. 그래서 스펙 단계에서 정리한다 — 병합 대상은
+	 * <b>정말로 비어 있는</b>(속성·required·enum·타입·조합이 모두 없는) 부모뿐이라, 값을 가진 상속
+	 * 구조는 건드리지 않는다.
+	 */
+	private void flattenEmptyParents(OpenAPI openApi) {
+		if (openApi.getComponents() == null || openApi.getComponents().getSchemas() == null) {
+			return;
+		}
+		Map<String, Schema> schemas = openApi.getComponents().getSchemas();
+
+		Set<String> emptyParents = schemas.entrySet().stream()
+				.filter(entry -> isEmptySchema(entry.getValue()))
+				.map(Map.Entry::getKey)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		if (emptyParents.isEmpty()) {
+			return;
+		}
+
+		schemas.values().forEach(schema -> dropEmptyParents(schema, emptyParents));
+		// 참조가 모두 사라진 뒤에만 지운다. 다른 곳에서 아직 가리키고 있으면 깨진 $ref가 된다.
+		emptyParents.stream()
+				.filter(name -> !isReferenced(schemas, name))
+				.forEach(schemas::remove);
+	}
+
+	private boolean isEmptySchema(Schema<?> schema) {
+		return schema != null
+				&& schema.getProperties() == null
+				&& schema.getRequired() == null
+				&& schema.getEnum() == null
+				&& schema.getType() == null
+				&& schema.getTypes() == null
+				&& schema.getAllOf() == null
+				&& schema.getOneOf() == null
+				&& schema.getAnyOf() == null
+				&& schema.get$ref() == null
+				&& schema.getItems() == null
+				&& schema.getAdditionalProperties() == null;
+	}
+
+	/**
+	 * 빈 부모를 뺀 뒤 {@code allOf}에 하나만 남으면 그것을 자기 자신에 펼친다. 남은 하나가 곧 그 타입의
+	 * 실제 정의이므로, {@code allOf} 껍데기를 유지할 이유가 없다.
+	 */
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private void dropEmptyParents(Schema schema, Set<String> emptyParents) {
+		List<Schema> members = schema.getAllOf();
+		if (members == null) {
+			return;
+		}
+		List<Schema> kept = new ArrayList<>(members.stream()
+				.filter(member -> member.get$ref() == null
+						|| !emptyParents.contains(refName(member.get$ref())))
+				.toList());
+		if (kept.size() == members.size()) {
+			return;
+		}
+		if (kept.size() != 1) {
+			schema.setAllOf(kept.isEmpty() ? null : kept);
+			return;
+		}
+
+		Schema<?> only = kept.get(0);
+		schema.setAllOf(null);
+		if (only.get$ref() != null) {
+			schema.set$ref(only.get$ref());
+			return;
+		}
+		schema.setType(only.getType());
+		schema.setTypes(only.getTypes());
+		schema.setProperties(only.getProperties());
+		if (only.getRequired() != null) {
+			only.getRequired().forEach(schema::addRequiredItem);
+		}
+	}
+
+	private boolean isReferenced(Map<String, Schema> schemas, String name) {
+		String ref = Components.COMPONENTS_SCHEMAS_REF + name;
+		return schemas.values().stream().anyMatch(schema -> containsRef(schema, ref));
+	}
+
+	private boolean containsRef(Schema<?> schema, String ref) {
+		if (schema == null) {
+			return false;
+		}
+		if (ref.equals(schema.get$ref())) {
+			return true;
+		}
+		return Stream.of(schema.getAllOf(), schema.getOneOf(), schema.getAnyOf())
+				.filter(Objects::nonNull)
+				.flatMap(List::stream)
+				.anyMatch(member -> containsRef(member, ref))
+				|| (schema.getProperties() != null
+						&& schema.getProperties().values().stream()
+								.anyMatch(property -> containsRef((Schema<?>) property, ref)))
+				|| containsRef(schema.getItems(), ref);
+	}
+
+	private String refName(String ref) {
+		return ref.substring(ref.lastIndexOf('/') + 1);
 	}
 
 	/** {@code nullable: true}를 3.1 표기({@link NullableSchemas})로 옮긴다. */
@@ -282,6 +425,69 @@ public class SwaggerConfig {
 		if (operation.getSecurity() == null || operation.getSecurity().isEmpty()) {
 			operation.setSecurity(List.of(new SecurityRequirement().addList(BEARER_AUTH)));
 		}
+	}
+
+	/**
+	 * <b>설명에만 적혀 있던 오류를 실제 응답 정의로 올린다.</b>
+	 *
+	 * <p>{@code @ApiResponse}를 적지 않은 오퍼레이션은 성공 하나만 선언된 채로 나간다. 사람이 읽는
+	 * 설명에는 오류 표가 있어도 <b>기계는 그것을 읽지 않으므로</b>, 프론트 생성기가 화면에서 쓸 에러
+	 * 코드 상수를 만들지 못한다. 실제로 그래서 재시도 안내를 붙일 근거가 없다는 요청이 왔다
+	 * (23차 R4 — {@code AI_SERVER_UNAVAILABLE}이 설명문에만 있었다).
+	 *
+	 * <p>두 가지를 채운다.
+	 * <ol>
+	 *   <li><b>설명의 오류 표</b> — {@code | `CODE` | 404 | 언제 |} 모양의 행만 읽는다. 표 밖에서
+	 *       코드 이름이 지나가는 문장은 대상이 아니다. 상태별로 묶어 응답 하나를 만든다</li>
+	 *   <li><b>인증·인가</b> — 토큰이 필요한 경로는 <b>언제나</b> 401·403을 낼 수 있다. 컨트롤러에
+	 *       닿기도 전에 시큐리티 필터가 답하는 것이라 어느 오퍼레이션에도 표로 적혀 있지 않다</li>
+	 * </ol>
+	 *
+	 * <p>이미 선언된 상태는 건드리지 않는다 — 손으로 적은 설명이 더 정확하다.
+	 */
+	private void ensureErrorResponses(Operation operation, boolean publicPath) {
+		ApiResponses responses = operation.getResponses();
+		if (responses == null) {
+			return;
+		}
+		errorTableCodes(operation.getDescription()).forEach((status, codes) -> {
+			if (responses.get(status) == null) {
+				responses.addApiResponse(status, new ApiResponse().description(String.join(" · ", codes)));
+			}
+		});
+		if (!publicPath) {
+			SECURITY_FAILURES.forEach((status, description) -> {
+				if (responses.get(status) == null) {
+					responses.addApiResponse(status, new ApiResponse().description(description));
+				}
+			});
+		}
+	}
+
+	/**
+	 * 설명에 적힌 오류 표를 상태별 코드 목록으로 바꾼다.
+	 *
+	 * <p>표 행만 읽는 이유는 본문이 코드 이름을 <b>설명하려고</b> 언급하는 일이 잦기 때문이다 —
+	 * "그 실패는 {@code REPO_NOT_FOUND}로 드러난다" 같은 문장까지 응답으로 만들면, 그 오퍼레이션이
+	 * 내지 않는 오류가 스펙에 생긴다.
+	 */
+	private Map<String, List<String>> errorTableCodes(String description) {
+		if (description == null || description.isBlank()) {
+			return Map.of();
+		}
+		Map<String, List<String>> byStatus = new LinkedHashMap<>();
+		Matcher matcher = ERROR_TABLE_ROW.matcher(description);
+		while (matcher.find()) {
+			String status = matcher.group(2);
+			if (!isError(status)) {
+				continue;
+			}
+			List<String> codes = byStatus.computeIfAbsent(status, key -> new ArrayList<>());
+			if (!codes.contains(matcher.group(1))) {
+				codes.add(matcher.group(1));
+			}
+		}
+		return byStatus;
 	}
 
 	private void applyErrorSchema(Operation operation, boolean publicPath) {
