@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.submission.application;
 
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisResultQueryRepository;
+import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJob;
 import com.bigproject.backend.domain.submission.domain.Repository;
 import com.bigproject.backend.domain.submission.domain.RepositoryStatus;
 import com.bigproject.backend.domain.submission.domain.Submission;
@@ -58,6 +59,7 @@ class SubmissionServiceTest {
 	private SubmissionArtifactStorage artifactStorage;
 	private ApplicationEventPublisher eventPublisher;
 	private AiProxyWarmUp aiProxyWarmUp;
+	private AnalysisJobRepository analysisJobRepository;
 	private SubmissionService service;
 
 	@BeforeEach
@@ -66,7 +68,7 @@ class SubmissionServiceTest {
 		githubRepositoryRepository = mock(GithubRepositoryRepository.class);
 		submissionArtifactRepository = mock(SubmissionArtifactRepository.class);
 		submissionContextRepository = mock(SubmissionContextRepository.class);
-		AnalysisJobRepository analysisJobRepository = mock(AnalysisJobRepository.class);
+		analysisJobRepository = mock(AnalysisJobRepository.class);
 		artifactStorage = mock(SubmissionArtifactStorage.class);
 		eventPublisher = mock(ApplicationEventPublisher.class);
 		aiProxyWarmUp = mock(AiProxyWarmUp.class);
@@ -77,6 +79,29 @@ class SubmissionServiceTest {
 				artifactStorage, mock(JdbcAnalysisResultQueryRepository.class),
 				mock(JdbcMeasurementAttemptOpener.class), eventPublisher, aiProxyWarmUp);
 		ReflectionTestUtils.setField(service, "maxZipBytes", 52428800L);
+	}
+
+	@Test
+	void rejectsAnActiveAnalysisWhoseExternalJobIdIsMissing() {
+		UUID submissionId = UUID.randomUUID();
+		Submission submission = Submission.acceptGithubUrl(ORG_ID, TEAM_ID, ROUND_ID, UUID.randomUUID(),
+				"main", null, USER_ID, Instant.now(), UUID.randomUUID());
+		ReflectionTestUtils.setField(submission, "submissionId", submissionId);
+		SubmissionContext context = openRoundContext();
+		AnalysisJob job = AnalysisJob.queued(ORG_ID, ROUND_ID, TEAM_ID, submissionId,
+				"batch-key", "CODE_ANALYSIS", 1, "trace-id");
+		ReflectionTestUtils.setField(job, "jobId", UUID.randomUUID());
+
+		when(submissionRepository.findById(submissionId)).thenReturn(Optional.of(submission));
+		when(submissionContextRepository.findSubmissionContext(USER_ID, ROUND_ID))
+				.thenReturn(Optional.of(context));
+		when(analysisJobRepository.findFirstBySubmissionIdOrderByExecutionNoDescStartedAtDescJobIdDesc(submissionId))
+				.thenReturn(Optional.of(job));
+
+		assertThatThrownBy(() -> service.getAnalysis(USER_ID, submissionId))
+				.isInstanceOf(SubmissionException.class)
+				.satisfies(exception -> assertThat(((SubmissionException) exception).errorCode())
+						.isEqualTo(SubmissionErrorCode.ANALYSIS_EXTERNAL_JOB_ID_MISSING));
 	}
 
 	private SubmissionContext openRoundContext() {

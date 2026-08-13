@@ -26,6 +26,7 @@ import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnaly
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
 import com.bigproject.backend.global.ai.AiProxyWarmUp;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -51,6 +52,7 @@ import java.util.zip.ZipInputStream;
  * 실제 AI 호출은 이 서비스가 아니라 {@code codeanalysis} 모듈의 배치가 이벤트를 받아 수행한다.
  */
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class SubmissionService {
 
@@ -315,8 +317,24 @@ public class SubmissionService {
 
 		return analysisJobRepository
 				.findFirstBySubmissionIdOrderByExecutionNoDescStartedAtDescJobIdDesc(submissionId)
-				.map(job -> withSessionReadiness(job, userId))
+				.map(job -> analysisResponse(job, userId))
 				.orElseGet(() -> SubmissionAnalysisResponse.notStarted(submissionId));
+	}
+
+	/**
+	 * 활성 job은 AI 상태 조회에 쓸 {@code external_job_id}가 반드시 있어야 한다.
+	 *
+	 * <p>POST 자체가 실패해 {@code FAILED}로 닫힌 job은 외부 ID가 없는 것이 정상일 수 있으므로
+	 * 예외로 바꾸지 않는다. 반면 QUEUED/RUNNING인데 비어 있으면 폴러가 해당 행을 건너뛰고
+	 * 클라이언트는 진행 중 응답만 계속 받게 되므로 즉시 서버 데이터 오류로 알린다.
+	 */
+	private SubmissionAnalysisResponse analysisResponse(AnalysisJob job, UUID userId) {
+		if (job.isActive() && job.getExternalJobId() == null) {
+			log.error("활성 분석 작업의 external_job_id가 없다: analysisJobId={}, submissionId={}, status={}",
+					job.getJobId(), job.getSubmissionId(), job.getStatus());
+			throw new SubmissionException(SubmissionErrorCode.ANALYSIS_EXTERNAL_JOB_ID_MISSING);
+		}
+		return withSessionReadiness(job, userId);
 	}
 
 	/**

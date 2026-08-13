@@ -184,6 +184,24 @@ class SubmissionControllerTest {
 
 	@Test
 	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
+	void returnsAnErrorWhenTheActiveAnalysisHasNoExternalJobId() throws Exception {
+		UUID userId = UUID.randomUUID();
+		UUID submissionId = UUID.randomUUID();
+		when(currentUserResolver.resolveCurrentMemberId()).thenReturn(userId);
+		when(submissionService.getAnalysis(userId, submissionId))
+				.thenThrow(new SubmissionException(SubmissionErrorCode.ANALYSIS_EXTERNAL_JOB_ID_MISSING));
+
+		mockMvc.perform(get("/api/v0/submissions/{submissionId}/analysis", submissionId))
+				.andExpect(status().isInternalServerError())
+				.andExpect(jsonPath("$.code").value("ANALYSIS_EXTERNAL_JOB_ID_MISSING"))
+				.andExpect(jsonPath("$.message").value(
+						"분석 서버의 작업 정보가 유실되어 분석을 계속할 수 없습니다. "
+								+ "코드를 다시 제출해 분석을 재시도해 주세요. "
+								+ "다시 제출할 수 없다면 담당 매니저에게 문의해 주세요."));
+	}
+
+	@Test
+	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
 	void returnsDomainErrorCodeWhenDeadlineHasPassed() throws Exception {
 		when(currentUserResolver.resolveCurrentMemberId()).thenReturn(UUID.randomUUID());
 		when(submissionService.submitGithubUrl(any(), any(), any()))

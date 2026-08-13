@@ -53,6 +53,13 @@ public enum SubmissionErrorCode {
 	 * {@code GET /submissions/{submissionId}/analysis}의 {@code phase}를 본다.
 	 */
 	ANALYSIS_RESULT_NOT_FOUND(HttpStatus.NOT_FOUND, "분석 결과가 아직 없습니다."),
+	/**
+	 * 분석 실행 행은 활성인데 AI가 발급한 외부 작업 ID가 없다. 이 상태에서는 폴러가
+	 * {@code GET /analyses/{jobId}}를 만들 수 없으므로 진행 중으로 응답하면 클라이언트가 영원히 기다린다.
+	 */
+	ANALYSIS_EXTERNAL_JOB_ID_MISSING(HttpStatus.INTERNAL_SERVER_ERROR,
+			"분석 서버의 작업 정보가 유실되어 분석을 계속할 수 없습니다. "
+					+ "코드를 다시 제출해 분석을 재시도해 주세요. 다시 제출할 수 없다면 담당 매니저에게 문의해 주세요."),
 	SUBMISSION_ACCESS_DENIED(HttpStatus.FORBIDDEN, "다른 팀의 제출은 조회할 수 없습니다."),
 
 	// ── AI 연동 ──

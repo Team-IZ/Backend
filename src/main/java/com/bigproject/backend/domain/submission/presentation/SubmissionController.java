@@ -372,7 +372,8 @@ public class SubmissionController {
 					| 코드 | 상태 | 언제 |
 					| --- | --- | --- |
 					| `SUBMISSION_NOT_FOUND` | 404 | 그런 제출이 없다 |
-					| `SUBMISSION_ACCESS_DENIED` | 403 | 다른 팀의 제출이다 |""")
+					| `SUBMISSION_ACCESS_DENIED` | 403 | 다른 팀의 제출이다 |
+					| `ANALYSIS_EXTERNAL_JOB_ID_MISSING` | 500 | 활성 분석 행은 있지만 AI 상태 조회에 필요한 외부 작업 ID가 없다 |""")
 	@GetMapping("/{submissionId}/analysis")
 	public ResponseEntity<SubmissionAnalysisResponse> getAnalysis(@PathVariable UUID submissionId) {
 		UUID userId = currentUserResolver.resolveCurrentMemberId();
