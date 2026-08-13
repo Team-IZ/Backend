@@ -417,6 +417,10 @@ public class ProjectServiceImpl implements ProjectService {
      */
     @Override
     public Optional<ProjectSummary> findCurrentProject(UUID cohortId, UUID orgId) {
+        // 22차 R7·R8 — 204(회차가 없다)와 404(그런 기수가 없다)를 가른다. 여태 둘 다 204라
+        // 지워진 기수를 열어도 화면이 「이번 회차 없음」으로 그렸다.
+        requireCohort(cohortId, orgId);
+
         // 22차 R10 ⓐ — 목록을 한 번 읽어 「이번 회차」와 전체 회차 수를 함께 얻는다. 화면의
         // `3차 / 6회`에서 분모가 이 값이고, 그것 하나가 없어서 대시보드가 이 API를 못 쓰고
         // 목록을 계속 부르고 있었다. 여기서 세면 조회가 늘지 않는다 — 어차피 읽던 목록이다.

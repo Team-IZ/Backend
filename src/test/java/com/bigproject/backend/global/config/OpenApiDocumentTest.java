@@ -683,6 +683,33 @@ class OpenApiDocumentTest {
 				.isEqualTo("#/components/schemas/ProjectResponse");
 	}
 
+	/**
+	 * 22차 R8 — 오퍼레이터 화면이 부르는 조회에서 <b>「없음」과 「실패」를 가를 코드</b>가 없었다.
+	 *
+	 * <p>{@code UNAUTHENTICATED}·{@code ACCESS_DENIED}만으로는 화면이 갈 곳을 못 정한다.
+	 * 프론트가 지목한 자리 중 기수를 받는 것부터 {@code COHORT_NOT_FOUND}를 채운다 —
+	 * 「이 기수엔 아직 없다」와 「그런 기수가 없다」가 갈리면 화면이 「기수를 다시 고르세요」를
+	 * 말할 수 있다.
+	 */
+	@Test
+	void letsTheOperatorScreensTellNothingYetApartFromNoSuchCohort() throws Exception {
+		List<String> missing = new ArrayList<>();
+		for (String path : List.of("/api/v0/cohorts/{cohortId}/projects/current",
+				"/api/v0/curricula/comparable-cohorts")) {
+			if (!spec().path("paths").path(path).path("get").path("responses").path("404")
+					.path("content").path("application/json").path("examples")
+					.toString().contains("COHORT_NOT_FOUND")) {
+				missing.add(path);
+			}
+		}
+
+		assertThat(missing).isEmpty();
+
+		// 204(회차가 없다)는 그대로다 — 404(그런 기수가 없다)와 뜻이 다르다.
+		assertThat(spec().path("paths").path("/api/v0/cohorts/{cohortId}/projects/current")
+				.path("get").path("responses").has("204")).isTrue();
+	}
+
 	private interface ResponseVisitor {
 		void visit(String operationId, String status, JsonNode response);
 	}

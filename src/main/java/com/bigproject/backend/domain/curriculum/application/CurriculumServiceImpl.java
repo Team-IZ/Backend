@@ -208,6 +208,11 @@ public class CurriculumServiceImpl implements CurriculumService {
 
     @Override
     public List<UUID> findComparableCohorts(UUID cohortId, UUID orgId) {
+        // 22차 R8 — 「비교 대상이 없다」와 「기준 기수가 없다」를 가른다. 둘 다 빈 배열이면
+        // 화면이 비교 드롭다운을 비워 두고 이유를 말하지 못한다.
+        if (!catalogRepository.cohortExists(cohortId, orgId)) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND);
+        }
         List<UUID> myCurriculumVersionIds = projectService.findLinkedCurriculumVersionIds(cohortId, orgId);
         if (myCurriculumVersionIds.isEmpty()) {
             return List.of();

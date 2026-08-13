@@ -316,8 +316,9 @@ public class CurriculumController {
 					"""
     )
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "비교 가능한 기수 목록 조회 성공"),
+            @ApiResponse(responseCode = "200", description = "비교 가능한 기수 목록 조회 성공(후보가 없으면 빈 배열)"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기준 기수를 찾을 수 없음 — 「비교 대상이 없다」와 구분된다(22차 R8)"),
     })
     @GetMapping("/curricula/comparable-cohorts")
     public ResponseEntity<List<UUID>> findComparableCohorts(

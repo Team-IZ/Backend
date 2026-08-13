@@ -236,11 +236,16 @@ public class ProjectController {
 					|---|---|
 					| 204 | 그 기수에 회차가 하나도 없다 (**정상**) |
 					| 401 | 액세스 토큰이 없거나 유효하지 않다 |
+					| 404 | **그런 기수가 없다**(22차 R7·R8). 204와 다르다 |
+
+					> 22차 이전에는 없는 기수도 204라 「이번 회차 없음」으로 그려졌다. 지금은
+					> `COHORT_NOT_FOUND`로 갈리므로 화면이 「기수를 다시 고르세요」를 말할 수 있다.
 					""")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "이번 회차 조회 성공"),
 			@ApiResponse(responseCode = "204", description = "그 기수에 회차가 하나도 없음. 정상 상태이며 본문이 없다"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수·삭제된 기수 포함) — 22차 R7·R8"),
 	})
 	// `/{projectId}`가 아니라 `/cohorts/{cohortId}/projects/current`라 경로 충돌이 없다 —
 	// 이 뿌리에는 UUID 경로 변수가 뒤에 오지 않는다.
