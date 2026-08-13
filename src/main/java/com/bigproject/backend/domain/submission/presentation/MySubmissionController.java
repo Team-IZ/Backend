@@ -36,7 +36,7 @@ public class MySubmissionController {
 
 	@Operation(
 			operationId = "findMySubmission",
-			summary = "내 팀의 제출 현황 조회 | ✅ 사용 가능",
+			summary = "[프로젝트 상세 - 제출현황 탭] 내 팀의 제출 현황 조회 | ✅ 사용 가능",
 			description = """
 					TR-02 `제출` 화면 전체를 이 응답 하나로 그린다. 제출 폼·분석 진행·재제출 가능 여부가
 					모두 `status` 하나에서 갈린다.
