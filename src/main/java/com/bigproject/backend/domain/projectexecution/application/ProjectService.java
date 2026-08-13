@@ -83,6 +83,16 @@ public interface ProjectService {
      */
     Optional<ProjectSummary> findCurrentProject(UUID cohortId, UUID orgId);
 
+    /**
+     * {@link #findCurrentProject}와 <b>같은 판정</b>을 하되 요약을 매기지 않고 프로젝트만 돌려준다.
+     *
+     * <p>요약({@code ProjectSummary})은 교안 연결·개념 세트·개념 수를 더 읽으므로, 프로젝트 식별자만
+     * 필요한 호출부에는 과하다. 교육생 명단이 기본 회차를 정할 때 이것을 쓴다 — 명단 드롭다운과
+     * {@code GET /cohorts/{cohortId}/projects/current}가 <b>같은 회차를 가리켜야</b> 하므로 규칙을
+     * 복제하지 않고 여기 하나만 둔다.
+     */
+    Optional<Project> resolveCurrentProject(UUID cohortId, UUID orgId);
+
     Project findProject(UUID projectId, UUID orgId);
 
     Project updateSchedule(UUID projectId, UUID orgId, LocalDate startDate, LocalDate endDate, UUID actorUserId);

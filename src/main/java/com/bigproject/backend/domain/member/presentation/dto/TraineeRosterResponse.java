@@ -24,8 +24,71 @@ public record TraineeRosterResponse(
 				둘 다 필터와 무관하게 같은 수를 보여줘야 해서 목록 한 페이지로는 만들 수 없습니다.
 				unassignedCount와 같은 모집단이라 '393명 중 미배정 12'가 그대로 성립합니다.
 				""", example = "393")
-		int cohortTotal
+		int cohortTotal,
+
+		@Schema(description = """
+				화면의 '회차 · 미프 N차' 드롭다운에 그대로 넣는 이 기수의 평가 회차 전부입니다.
+				**차수 오름차순**이라 화면이 '미프 1차 · 2차 · 3차'를 위에서 아래로 그리는 순서와 같습니다.
+				선택 상태는 이 배열의 순서가 아니라 assessmentRoundId에 맞추십시오 — 마지막 원소가
+				기본 선택이라는 보장이 없습니다.
+
+				기수 단위 회차 목록을 주는 API가 따로 없어 명단과 같은 응답에 싣습니다 — 없으면 화면이
+				GET /cohorts/{cohortId}/projects 뒤에 프로젝트마다 /rounds를 다시 부르는 N+1이 됩니다.
+				기수가 아직 프로젝트를 열지 않았으면 빈 배열입니다.
+				""")
+		List<RoundOption> rounds,
+
+		@Schema(description = """
+				**실제로 조회에 쓴 회차**입니다. 요청이 assessmentRoundId를 생략하면 서버가 「이번 회차」를
+				골라 이 값으로 답하므로, 화면은 첫 진입에 회차를 모르는 채로도 드롭다운의 선택 상태를
+				이 값으로 맞출 수 있습니다.
+
+				판정은 GET /cohorts/{cohortId}/projects/current와 같은 규칙입니다 —
+				RUNNING 중 가장 늦게 시작한 것 → 없으면 가장 이른 PLANNED → 그것도 없으면 마지막 프로젝트.
+
+				⚠️ **rounds의 마지막 원소와 다를 수 있습니다.** 미프 2차가 진행 중이고 3차가 아직 안 열렸으면
+				이 값은 2차입니다. 드롭다운 선택은 rounds의 순서가 아니라 **반드시 이 값**에 맞추십시오.
+
+				content[].assessmentRoundId와 같은 값이며, 기수에 회차가 하나도 없으면 null입니다.
+				""", nullable = true)
+		UUID assessmentRoundId
 ) {
+
+	/**
+	 * springdoc이 스키마를 <b>단순 클래스 이름</b>으로 키잉하므로 이름을 명시한다.
+	 * 히트맵의 {@code RoundColumn}과 필드가 겹치지만 같은 타입이 아니다 — 이쪽은 드롭다운용이라
+	 * 집계 상태({@code aggregationStatus})를 싣지 않는다.
+	 */
+	@Schema(name = "TraineeRosterRoundOption", description = "명단 화면의 회차 드롭다운 한 항목")
+	public record RoundOption(
+			@Schema(description = "회차 ID이며 요청의 assessmentRoundId에 그대로 넣는 값입니다.")
+			UUID assessmentRoundId,
+			@Schema(description = """
+					프로젝트 안의 회차 번호이며 (project_id, round_no) UNIQUE라 프로젝트마다 1부터 다시
+					시작합니다. 미니프로젝트는 프로젝트당 회차가 1건뿐이라 **늘 1**이므로 화면의 차수
+					표기에는 쓸 수 없습니다 — cohortRoundNo를 쓰십시오.
+					""", example = "1")
+			int roundNo,
+			@Schema(description = "**기수 안의 회차 순번**이며 화면의 '미프 3차'에서 3이 이 값입니다.", example = "3")
+			int cohortRoundNo,
+			@Schema(description = "회차 이름", example = "3차 이해도 확인")
+			String roundName,
+			@Schema(description = "회차가 속한 프로젝트 ID")
+			UUID projectId,
+			@Schema(description = "회차가 속한 프로젝트 이름", example = "미니프로젝트 3")
+			String projectName
+	) {
+		public static RoundOption from(TraineeRosterRepository.RoundOption round) {
+			return new RoundOption(
+					round.assessmentRoundId(),
+					round.roundNo(),
+					round.cohortRoundNo(),
+					round.roundName(),
+					round.projectId(),
+					round.projectName()
+			);
+		}
+	}
 
 	/**
 	 * springdoc은 스키마를 <b>단순 클래스 이름</b>으로 키잉하므로 이름을 명시하지 않으면
@@ -83,9 +146,44 @@ public record TraineeRosterResponse(
 			UUID attemptId,
 			String roundResultStatus,
 			String conceptResultItems,
+			@Schema(description = """
+					`2단 이하` 칸의 **분모**이며 그 회차에 이 교육생에게 실제로 만들어진 문항 수입니다.
+					사람마다 다릅니다 — 코드에 근거가 없어 문항이 생성되지 않은(`NOT_GENERATED`) 개념은
+					검증 세션에서도 물을 수 없어 분모에서 빠집니다. 화면의 `1/2`가 이 값입니다.
+					""", example = "2")
+			Integer expectedConceptCount,
 			Integer lowStageConceptCount,
 			Integer excellentOccurrenceCount,
+			@Schema(description = """
+					이 교육생이 우수로 발견된 프로젝트 차수 전부입니다(원장: report_evidence,
+					evidence_category=PARTICIPANT_RESULT_OCCURRENCE). **조회 회차를 포함**하므로
+					`assessmentRoundId`에 해당하는 차수가 이 배열에 있으면 이번 회차도 우수입니다.
+					최신 차수부터 내림차순이며, 근거가 없으면 빈 배열입니다. `우수 3회 · 1·2·3차`가 이 값입니다.
+					""", example = "[3, 2, 1]")
+			int[] excellentAssessmentSequenceNos,
+			@Schema(description = """
+					이번 회차에 걸린 위험 유형 **전부**입니다(원장: InterviewCandidateReason).
+					`STAGE_DECLINE`(단계 하락) · `PERSISTENT_LOW`(지속 저점) · `INVALID_ATTEMPT`(무효 응시) ·
+					`CONTRIBUTION_UNDERSTANDING_GAP`(기여·이해도 괴리) · `LOW_PARTICIPATION`(저기여) 5종이며
+					동시에 여러 개가 걸릴 수 있습니다. 해소(`RESOLVED`)된 사유는 들어오지 않습니다.
+					""", example = "{INVALID_ATTEMPT}")
 			String matchedRiskTypeCodes,
+			@Schema(description = """
+					배지 한 칸에 넣을 **단일** 코드입니다. 정책 문서 §7의 2층 구조를 그대로 담습니다 —
+					1층 응시상태(`NOT_ATTENDED` 미응시 → `SESSION_INCOMPLETE` 응시 중단 →
+					`INVALID_ATTEMPT` 무효 응시)가 있으면 2층 위험 유형(저기여 → 기여·이해도 괴리 →
+					단계 하락 → 지속 저점)은 보지 않습니다. 걸린 것이 없으면 `null`(정상)입니다.
+
+					**중도 이탈은 이 값에 들어오지 않습니다** — 계정 상태의 비활성화 사유로 이미
+					드러나므로 화면은 `status=INACTIVE`일 때 그 사유·일자를 계정 칸에 그리면 됩니다.
+					""", example = "SESSION_INCOMPLETE", nullable = true)
+			String roundPrimaryStatusCode,
+			@Schema(description = """
+					`roundPrimaryStatusCode`가 `NOT_ATTENDED`·`SESSION_INCOMPLETE`일 때만 값이 있는
+					시각입니다. 그 회차엔 우수 누적을 그릴 수 없으므로, 화면이 `우수 누적` 칸에 대신
+					`세션 중단 · 07-14`처럼 사유·일자를 그릴 때 이 값을 씁니다.
+					""", nullable = true)
+			OffsetDateTime roundTerminalAt,
 			String rowAggregationStatus
 	) {
 		public static Trainee from(TraineeRosterRepository.RosterRow row) {
@@ -108,9 +206,13 @@ public record TraineeRosterResponse(
 					row.attemptId(),
 					row.roundResultStatus(),
 					row.conceptResultItems(),
+					row.expectedConceptCount(),
 					row.lowStageConceptCount(),
 					row.excellentOccurrenceCount(),
+					row.excellentAssessmentSequenceNos(),
 					row.matchedRiskTypeCodes(),
+					row.roundPrimaryStatusCode(),
+					row.roundTerminalAt(),
 					row.rowAggregationStatus()
 			);
 		}

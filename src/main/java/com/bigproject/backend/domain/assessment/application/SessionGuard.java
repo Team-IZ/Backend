@@ -6,8 +6,10 @@ import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionHead
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionStage;
 import com.bigproject.backend.domain.assessment.infrastructure.JdbcSessionRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -23,6 +25,10 @@ import java.util.UUID;
 public class SessionGuard {
 
 	private final JdbcSessionRepository repository;
+
+	/** 문제별 정책 시간 상한(분). 정의서 §2의 문제당 상한 20분이 기본값이다. */
+	@Value("${session.problem-time-limit-minutes:20}")
+	private int problemTimeLimitMinutes;
 
 	/** 남의 세션은 "없음"으로 보인다 — 존재 여부를 알려줄 이유가 없다. */
 	public SessionHead owned(UUID userId, UUID sessionId) {
@@ -41,9 +47,14 @@ public class SessionGuard {
 	/**
 	 * 쓰기를 받을 수 있는 세션인지 본다.
 	 *
-	 * <p>시간 상한을 넘겼으면 <b>여기서 닫는다.</b> 스케줄러를 두지 않는 이유는 세션이 30~70분짜리라
-	 * 다음 요청이 반드시 오고, 그때 닫으면 "70분이 지났는데 답이 계속 들어오는" 상태가 남지 않기
+	 * <p>시간 상한을 넘겼으면 <b>여기서 닫는다.</b> 스케줄러를 두지 않는 이유는 세션이 20~60분짜리라
+	 * 다음 요청이 반드시 오고, 그때 닫으면 "60분이 지났는데 답이 계속 들어오는" 상태가 남지 않기
 	 * 때문이다. 아무도 다시 오지 않는 세션은 리포트 생성 배치가 걷어 간다.
+	 *
+	 * <p>문제별 상한도 같은 방식으로 다음 요청에서 잡는다. 다만 세션을 닫지 않고 <b>그 문제만 접어</b>
+	 * 다음 문제로 넘긴다 — 힌트를 다 쓰고도 미달일 때와 같은 전이다({@link JdbcSessionRepository
+	 * #expireCurrentProblem}). 세션 상한 검사를 먼저 하는 이유는 세션이 이미 끝났다면 문제 하나를
+	 * 더 접을 이유가 없기 때문이다.
 	 */
 	public SessionHead running(UUID userId, UUID sessionId) {
 		SessionHead head = live(userId, sessionId);
@@ -53,6 +64,12 @@ public class SessionGuard {
 		if (head.timeLimitAt() != null && Instant.now().isAfter(head.timeLimitAt())) {
 			repository.end(sessionId, "POLICY_TIME_LIMIT_EXCEEDED", null);
 			throw new SessionException(SessionErrorCode.SESSION_TIMEOUT);
+		}
+		if (head.currentProblemStartedAt() != null
+				&& Instant.now().isAfter(head.currentProblemStartedAt().plus(Duration.ofMinutes(problemTimeLimitMinutes)))) {
+			SessionStage stage = currentStage(head);
+			repository.expireCurrentProblem(sessionId, head.currentProblemId(), stage.problemNo(), head.isReview());
+			throw new SessionException(SessionErrorCode.PROBLEM_TIME_LIMIT_EXCEEDED);
 		}
 		return head;
 	}

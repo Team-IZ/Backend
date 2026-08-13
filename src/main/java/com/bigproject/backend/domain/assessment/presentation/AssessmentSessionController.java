@@ -74,14 +74,19 @@ public class AssessmentSessionController {
 					| `sessionId` | UUID | 이후 네 경로가 모두 이 값을 쓴다 |
 					| `mode` | enum | `FIRST`(1차) · `REVIEW`(다시 보기). REVIEW는 힌트가 없고 판정에 반영되지 않는다 |
 					| `status` | enum | `READY`(시작 전 안내) · `IN_PROGRESS`(진행 중) |
-					| `currentProblemNo` | int? | 지금 서 있는 문제 번호(1~3). 시작 전이면 `null` |
+					| `currentProblemNo` | int? | 지금 서 있는 문제 번호(1~`problemTotal`). 시작 전이면 `null` |
 					| `problemTotal` | int | 생성된 문제 수. 화면의 `문제 n/N`의 N |
 					| `startedAt` | date-time? | 경과 시간 표시의 기산점. 시작 전이면 `null` |
 					| `timeLimitAt` | date-time? | 정책 시간 상한. 상한이 없으면 `null` |
 					| `reviewDueAt` | date-time? | 다시 보기 마감. `mode=FIRST`이면 `null` |
 
-					⚠️ `problemTotal`은 **3이 아닐 수 있다.** `NOT_GENERATED` 문제에는 단계를 만들지 않으므로
-					화면의 `n/3` 하드코딩은 틀린다.
+					⚠️ `problemTotal`은 **3이 아닐 수 있다.** 코드에 근거가 없어 문항이 만들어지지 않은 개념
+					(`NOT_GENERATED`)에는 단계를 만들지 않으므로 화면의 `n/3` 하드코딩은 틀린다.
+
+					💡 **번호는 생성된 문제만 1부터 센다.** 원본 `assessment_problem.problem_no`에는 빈틈이
+					생길 수 있으나(1번이 `NOT_GENERATED`면 2·3만 남는다) 세션 API는 그것을 다시 매겨
+					`1~problemTotal`을 준다. 그래서 화면은 **받은 번호를 그대로** 쓰면 되고, 생성되지 않은
+					문제는 애초에 열 수 없다.
 
 					진행 중인 세션을 다시 보기보다 먼저 고른다. 둘 다 없으면 **`204 No Content`**이며 화면은
 					`진행 중인 회차 없음`으로 그린다.""")
@@ -137,7 +142,11 @@ public class AssessmentSessionController {
 					| 파라미터 | 필수 | 타입 | 설명 |
 					|---|---|---|---|
 					| `sessionId` | 필수 | UUID | 세션 식별자 |
-					| `problemNo` | 필수 | int | 문제 번호 `1`~`3` |
+					| `problemNo` | 필수 | int | 문제 번호 `1`~`problemTotal`. `GET /current`·`POST /answers`가 준 값을 그대로 쓴다 |
+
+					💡 번호는 **생성된 문항만 1부터 센 값**이다. 문항이 만들어지지 않은 개념
+					(`NOT_GENERATED`)은 세션에 나오지 않으므로 이 경로로 열 수도 없다 —
+					화면이 `1..problemTotal`을 순서대로 부르면 빈 번호에 걸리지 않는다.
 
 					## 응답
 
@@ -199,7 +208,9 @@ public class AssessmentSessionController {
 	@GetMapping("/{sessionId}/problems/{problemNo}")
 	public ResponseEntity<ProblemActivityResponse> findProblem(
 			@PathVariable UUID sessionId,
-			@Parameter(description = "문제 번호(1~3)") @PathVariable @Min(1) @Max(3) int problemNo) {
+			// 상한 3은 문제 슬롯이 최대 3개라는 뜻이다(ck_assessment_problem_problem_no). 생성된 문제만
+			// 1부터 세므로 실제 유효 범위는 1~problemTotal이고, 그보다 큰 번호는 PROBLEM_NOT_FOUND다.
+			@Parameter(description = "문제 번호(1~problemTotal)") @PathVariable @Min(1) @Max(3) int problemNo) {
 		UUID userId = currentUserResolver.resolveCurrentMemberId();
 		return ResponseEntity.ok(sessionService.findProblem(userId, sessionId, problemNo));
 	}

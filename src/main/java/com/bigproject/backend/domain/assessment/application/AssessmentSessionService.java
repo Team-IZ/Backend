@@ -57,8 +57,8 @@ public class AssessmentSessionService {
 	private final SessionTurnStore turnStore;
 	private final SessionAnswerGrader grader;
 
-	/** 정책 시간 상한(분). 정의서 §2의 하드 상한 70분이 기본값이다. */
-	@Value("${session.time-limit-minutes:70}")
+	/** 정책 시간 상한(분). 정의서 §2의 하드 상한 60분이 기본값이다. */
+	@Value("${session.time-limit-minutes:60}")
 	private int timeLimitMinutes;
 
 	/**

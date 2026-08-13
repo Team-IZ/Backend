@@ -38,7 +38,7 @@ class JdbcTraineeRosterRepositorySqlTest {
 		JdbcTraineeRosterRepository repository = repositoryOrSkip();
 
 		assertThatCode(() -> repository.findCohortScope(cohortId)).doesNotThrowAnyException();
-		assertThatCode(() -> repository.countUnassigned(cohortId, organizationId)).doesNotThrowAnyException();
+		assertThatCode(() -> repository.countUnassigned(cohortId, organizationId, null)).doesNotThrowAnyException();
 		assertThatCode(() -> repository.findTrainee(traineeId, cohortId, organizationId))
 				.doesNotThrowAnyException();
 		assertThatCode(() -> repository.updateStatus(traineeId, "INACTIVE", UUID.randomUUID(),
@@ -76,11 +76,11 @@ class JdbcTraineeRosterRepositorySqlTest {
 	void cohortWideCountsParseAndShareTheSamePopulation() {
 		JdbcTraineeRosterRepository repository = repositoryOrSkip();
 
-		assertThatCode(() -> repository.countCohortTotal(cohortId, organizationId)).doesNotThrowAnyException();
-		assertThatCode(() -> repository.countUnassigned(cohortId, organizationId)).doesNotThrowAnyException();
+		assertThatCode(() -> repository.countCohortTotal(cohortId, organizationId, null)).doesNotThrowAnyException();
+		assertThatCode(() -> repository.countUnassigned(cohortId, organizationId, null)).doesNotThrowAnyException();
 		// 미배정은 기수 전체의 부분집합이라 어떤 데이터에서도 총원을 넘을 수 없다.
-		assertThat(repository.countUnassigned(cohortId, organizationId))
-				.isLessThanOrEqualTo(repository.countCohortTotal(cohortId, organizationId));
+		assertThat(repository.countUnassigned(cohortId, organizationId, null))
+				.isLessThanOrEqualTo(repository.countCohortTotal(cohortId, organizationId, null));
 	}
 
 	private JdbcTraineeRosterRepository repositoryOrSkip() {

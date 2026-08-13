@@ -23,7 +23,8 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @Schema(description = "문제 하나의 코드·질문·지금까지의 문답")
 public record ProblemActivityResponse(
-		@Schema(description = "문제 번호(1~3)") int problemNo,
+		@Schema(description = "문제 번호. 생성된 문제만 1부터 세므로 항상 1~problemTotal 범위다")
+		int problemNo,
 		@Schema(description = "생성된 문제 수. 화면의 `문제 n/N`") int problemTotal,
 		@Schema(description = "문제 제목. 검증하는 교안 개념 이름이다") String title,
 		@Schema(description = "코드 패널") Code code,

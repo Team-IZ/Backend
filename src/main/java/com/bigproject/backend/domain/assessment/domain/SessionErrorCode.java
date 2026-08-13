@@ -5,7 +5,7 @@ import org.springframework.http.HttpStatus;
 /**
  * 검증 세션(TR-03) API의 에러 코드. 프론트가 메시지가 아니라 <b>코드</b>로 분기한다.
  *
- * <p>세션은 30~70분 전체화면이고 나가는 경로가 없다. 그래서 실패를 뭉뚱그리면 학생이 할 수 있는 일이
+ * <p>세션은 20~60분 전체화면이고 나가는 경로가 없다. 그래서 실패를 뭉뚱그리면 학생이 할 수 있는 일이
  * 없어진다 — "다시 시도하면 되는가"와 "이 시험은 끝났는가"를 코드로 갈라 준다.
  */
 public enum SessionErrorCode {
@@ -17,8 +17,13 @@ public enum SessionErrorCode {
 	SESSION_ALREADY_ENDED(HttpStatus.CONFLICT, "이미 끝난 세션입니다."),
 	/** 아직 START를 부르지 않았다. 인트로 동의 없이 답을 받으면 정의서가 요구하는 고지 기록이 남지 않는다. */
 	SESSION_NOT_STARTED(HttpStatus.CONFLICT, "아직 시작하지 않은 세션입니다."),
-	/** 정책 시간 상한(기본 70분)을 넘겼다. 답한 데까지는 저장되고 세션은 닫힌다. */
+	/** 정책 시간 상한(기본 60분)을 넘겼다. 답한 데까지는 저장되고 세션은 닫힌다. */
 	SESSION_TIMEOUT(HttpStatus.CONFLICT, "시간이 다 되어 세션이 종료되었습니다."),
+	/**
+	 * 문제별 제한(기본 20분)을 넘겼다. 힌트를 다 쓰고도 미달일 때와 같은 전이로 문제가 닫힌다 —
+	 * 세션은 끝나지 않고 다음 문제로 넘어가거나(마지막 문제였으면 세션이 끝난다).
+	 */
+	PROBLEM_TIME_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "이 문제의 제한 시간이 지나 다음 문제로 넘어갔습니다."),
 
 	// ── 문제·단계 ──
 	PROBLEM_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 문제를 찾을 수 없습니다."),
