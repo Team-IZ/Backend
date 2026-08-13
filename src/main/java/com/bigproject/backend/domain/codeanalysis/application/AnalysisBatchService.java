@@ -13,6 +13,8 @@ import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepo
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository.AnalysisModel;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAiUsageRecorder;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisJobDiagnostics;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisJobDiagnostics.JobSnapshot;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisRequestContextRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAssessmentSessionPreparer;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisResultRepository;
@@ -23,9 +25,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * 코드 분석 배치.
@@ -71,11 +76,15 @@ public class AnalysisBatchService {
 
 	private static final String METHOD_GITHUB_URL = "GITHUB_URL";
 
+	private static final List<AnalysisJobStatus> ACTIVE_JOB_STATUSES =
+			List.of(AnalysisJobStatus.QUEUED, AnalysisJobStatus.RUNNING);
+
 	private final AnalysisDispatchRepository dispatchRepository;
 	private final AnalysisJobRepository analysisJobRepository;
 	private final AnalysisModelRepository analysisModelRepository;
 	private final JdbcAnalysisResultRepository analysisResultRepository;
 	private final JdbcAiUsageRecorder aiUsageRecorder;
+	private final JdbcAnalysisJobDiagnostics analysisJobDiagnostics;
 	private final JdbcAssessmentSessionPreparer sessionPreparer;
 	private final AnalysisServerClient analysisServerClient;
 	private final JdbcAnalysisRequestContextRepository requestContextRepository;
@@ -112,6 +121,24 @@ public class AnalysisBatchService {
 	private final int maxAttempts;
 
 	/**
+	 * AI가 404로 "모르는 작업"이라고 답할 때 얼마나 기다려 주는가. {@link #handleUnknownJob} 참조.
+	 *
+	 * <p>아주 크게 잡으면(예: {@code P30D}) 사실상 "절대 포기하지 않고 계속 폴링"이 된다. 그 경우
+	 * AI가 정말 유실한 job은 수동 개입 전까지 활성으로 남고 그 제출은 결과가 나오지 않는다.
+	 */
+	private final Duration unknownJobGrace;
+
+	/** 이 횟수만큼 JOB_NOT_FOUND가 연속되면 유예시간 전이라도 유실로 확정한다. */
+	private final int unknownJobMaxConsecutive;
+
+	/**
+	 * AI 앱의 {@code JOB_NOT_FOUND} 관측 상태. DB 스키마를 변경하지 않기 위해 프로세스 메모리에만 둔다.
+	 * 따라서 백엔드가 재시작되거나 여러 인스턴스가 서로 다른 요청을 받으면 관측 횟수와 최초 시각은
+	 * 각 인스턴스에서 다시 시작한다. {@code external_job_id} 자체는 DB에 계속 보존된다.
+	 */
+	private final ConcurrentMap<UUID, UnknownJobObservation> unknownJobObservations = new ConcurrentHashMap<>();
+
+	/**
 	 * 생성자를 직접 쓴다({@code @RequiredArgsConstructor}가 아니다). 설정값을 필드 {@code @Value}로
 	 * 주입하면 단위 테스트에서 항상 기본값(null·0)이라 모델 조회와 재시도 상한이 조용히 빗나간다 —
 	 * 생성자 인자로 받으면 테스트가 값을 명시하게 된다.
@@ -122,23 +149,36 @@ public class AnalysisBatchService {
 			AnalysisModelRepository analysisModelRepository,
 			JdbcAnalysisResultRepository analysisResultRepository,
 			JdbcAiUsageRecorder aiUsageRecorder,
+			JdbcAnalysisJobDiagnostics analysisJobDiagnostics,
 			JdbcAssessmentSessionPreparer sessionPreparer,
 			AnalysisServerClient analysisServerClient,
 			JdbcAnalysisRequestContextRepository requestContextRepository,
 			PlatformTransactionManager transactionManager,
 			@Value("${ai.analysis.model-code}") String analysisModelCode,
-			@Value("${ai.analysis.max-attempts}") int maxAttempts) {
+			@Value("${ai.analysis.max-attempts}") int maxAttempts,
+			@Value("${ai.analysis.unknown-job-grace:PT10M}") Duration unknownJobGrace,
+			@Value("${ai.analysis.unknown-job-max-consecutive:3}") int unknownJobMaxConsecutive) {
 		this.dispatchRepository = dispatchRepository;
 		this.analysisJobRepository = analysisJobRepository;
 		this.analysisModelRepository = analysisModelRepository;
 		this.analysisResultRepository = analysisResultRepository;
 		this.aiUsageRecorder = aiUsageRecorder;
+		this.analysisJobDiagnostics = analysisJobDiagnostics;
 		this.sessionPreparer = sessionPreparer;
 		this.analysisServerClient = analysisServerClient;
 		this.requestContextRepository = requestContextRepository;
 		this.transactions = new TransactionTemplate(transactionManager);
 		this.analysisModelCode = analysisModelCode;
 		this.maxAttempts = maxAttempts;
+		if (unknownJobGrace.isNegative() || unknownJobGrace.isZero()) {
+			throw new IllegalArgumentException("unknown-job-grace는 0보다 커야 한다: " + unknownJobGrace);
+		}
+		if (unknownJobMaxConsecutive < 1) {
+			throw new IllegalArgumentException(
+					"unknown-job-max-consecutive는 1 이상이어야 한다: " + unknownJobMaxConsecutive);
+		}
+		this.unknownJobGrace = unknownJobGrace;
+		this.unknownJobMaxConsecutive = unknownJobMaxConsecutive;
 	}
 
 	/**
@@ -197,11 +237,13 @@ public class AnalysisBatchService {
 	/**
 	 * 제출 1건을 요청한다.
 	 *
-	 * <p>순서가 중요하다. <b>job 행을 먼저 QUEUED로 저장하고</b> AI를 부른다. 반대로 하면 202를 받고도
-	 * 행이 없는 순간이 생기고, 그 사이에 프로세스가 죽으면 AI에는 실행이 있는데 우리 원장에는 없다.
+	 * <p>순서가 중요하다. AI가 202로 준 작업 ID를 객체에 반영한 뒤 <b>ID를 포함해 최초 INSERT</b>한다.
+	 * 정상 접수된 활성 행이 외부 ID 없이 DB에 존재하는 창 자체를 없애기 위해서다. AI 접수 직후
+	 * 프로세스가 죽어 INSERT를 못 했더라도, 다음 안전망 요청은 같은 submissionId·executionNo 멱등키를
+	 * 보내므로 AI가 기존 작업 ID를 다시 돌려주고 원장을 복구할 수 있다.
 	 *
 	 * <p>{@code @Transactional}을 이 메서드에 걸지 않는다. {@link #dispatchSubmission}·
-	 * {@link #dispatchDueSubmissions} 둘 다 같은 클래스 안에서 이 메서드를 호출하는데, Spring AOP는
+	 * {@link #retryPendingSubmissions} 둘 다 같은 클래스 안에서 이 메서드를 호출하는데, Spring AOP는
 	 * 프록시를 거치지 않는 자기 호출에 트랜잭션 어드바이스를 적용하지 못한다 — 붙여 봐야 조용히
 	 * 무시된다. 대신 각 {@code save()}가 Spring Data JPA의 기본 동작으로 자기 완결적 트랜잭션이 되고,
 	 * 그 편이 오히려 맞다: 하나의 트랜잭션으로 감싸면 AI 서버 HTTP 호출 동안 DB 커넥션을 붙들게 된다.
@@ -209,7 +251,7 @@ public class AnalysisBatchService {
 	private void dispatchOne(DispatchTarget target, Instant now) {
 		String traceId = UUID.randomUUID().toString();
 		// 모델 확정을 job 생성보다 먼저 한다. 여기서 실패하면 job 행을 남기지 않는 것이 맞다 --
-		// findDispatchTarget·findDueSubmissions 둘 다 "analysis_job 행이 하나라도 있으면 제외"라
+		// 즉시 디스패치·안전망 조회 모두 blocking job이 있으면 제외하므로
 		// FAILED 행을 만들어 두면 설정을 고쳐도 그 제출은 두 번 다시 집히지 않는다.
 		// 모델 미설정은 특정 제출의 문제가 아니라 기관 전체가 못 도는 설정 문제이므로,
 		// 제출을 재시도 가능한 상태로 남겨 두는 편이 맞다.
@@ -230,8 +272,6 @@ public class AnalysisBatchService {
 				traceId
 		);
 		job.recordRequest(model.getModelId(), QUESTION_BUDGET);
-		job = analysisJobRepository.save(job);
-
 		try {
 			UUID externalJobId = analysisServerClient.requestAnalysis(new AnalysisRequest(
 					target.getMethod(),
@@ -255,9 +295,17 @@ public class AnalysisBatchService {
 					traceId
 			));
 			job.acceptExternalJob(externalJobId);
-			analysisJobRepository.save(job);
+			job = analysisJobRepository.save(job);
+			log.info("분석 작업 ID 저장: jobId={}, externalJobId={}, status={}, executionNo={}",
+					job.getJobId(), externalJobId, job.getStatus(), job.getExecutionNo());
+			// 🔍 진단용(2026-08-13). save() 가 예외 없이 끝나는데도 external_job_id 가 NULL 인 사례가
+			// 있어, 커밋된 행을 새 트랜잭션에서 다시 읽어 확인한다. 원인이 잡히면 지운다.
+			verifyPersisted("요청 접수 직후", job, externalJobId);
 			// 요청이 접수됐다는 사실을 응시에도 남긴다. 교육생 홈의 "분석 중" 표시 근거다.
 			sessionPreparer.markAttemptsAnalyzing(target.getAssessmentRoundId(), target.getTeamId());
+			// 실DB에 measurement_attempt UPDATE 트리거가 남아 있는지 판별하는 경계다. 여기서 바로
+			// NULL이면 위 UPDATE의 DB 부수효과이고, 여기서 유지된 뒤 폴링 때 NULL이면 다른 writer다.
+			verifyPersisted("응시 ANALYZING 전이 직후", job, externalJobId);
 		} catch (AnalysisServerException exception) {
 			// 요청이 거절되면 그 자체가 분석 실패다. QUEUED로 남겨 두면 폴링이 영원히 붙들고 있는데,
 			// external_job_id 가 없어 조회할 대상조차 없다.
@@ -286,17 +334,29 @@ public class AnalysisBatchService {
 	 * 왕복 내내 DB 커넥션을 붙들고 있었다 — {@link #dispatchOne}이 같은 이유로 피하던 것을 폴링에서는
 	 * 하고 있었던 셈이다.
 	 *
-	 * <p>AI 서버가 job을 메모리에만 두어 재시작하면 404가 난다(스펙 명시). 그건 오류가 아니라 재요청
-	 * 신호이므로 실패로 기록하지 않고 {@code external_job_id}를 지워 다음 배치가 다시 보내게 한다.
+	 * <p>404는 즉시 판단하지 않는다. {@code external_job_id}는 어떤 경우에도 지우지 않는다 —
+	 * 자세한 이유는 {@link #handleUnknownJob}에 있다.
 	 *
 	 * @return 상태가 바뀐 실행 수
 	 */
 	public int pollActiveJobs() {
-		List<AnalysisJob> active = analysisJobRepository.findByStatusIn(
-				List.of(AnalysisJobStatus.QUEUED, AnalysisJobStatus.RUNNING));
+		List<AnalysisJob> active = analysisJobRepository.findByStatusIn(ACTIVE_JOB_STATUSES);
+		// 🔍 진단용(2026-08-13). 폴링이 DB에서 무엇을 읽었는지 그대로 남긴다. GET 이 나가는데
+		// 컬럼이 NULL 이라면 이 줄과 DB 조회 결과가 어긋나는 지점이 곧 원인이다.
+		active.forEach(candidate -> log.info("🔍 폴링 대상 조회: jobId={}, status={}, external_job_id={}",
+				candidate.getJobId(), candidate.getStatus(), candidate.getExternalJobId()));
 		int updated = 0;
 		for (AnalysisJob job : active) {
 			if (job.getExternalJobId() == null) {
+				try {
+					analysisJobDiagnostics.logExternalIdLoss(job.getJobId());
+					if (closeJobMissingExternalId(job)) {
+						updated++;
+					}
+				} catch (RuntimeException exception) {
+					log.error("외부 작업 ID가 없는 분석 job 종료 실패. 다음 폴링에서 다시 시도한다: jobId={}",
+							job.getJobId(), exception);
+				}
 				continue;
 			}
 			try {
@@ -310,17 +370,30 @@ public class AnalysisBatchService {
 		return updated;
 	}
 
+	/**
+	 * 접수 진행 중이 아닌 활성 job에 외부 ID가 없으면 더는 폴링할 수 없으므로 실패로 닫는다.
+	 * 전역 스케줄러를 멈추는 대신 이 행만 활성 조회에서 제외해 다른 정상 job의 폴링은 계속한다.
+	 */
+	private boolean closeJobMissingExternalId(AnalysisJob job) {
+		Instant now = Instant.now();
+		log.error("활성 분석 job에 external_job_id가 없어 해당 job의 폴링을 종료한다: "
+					+ "jobId={}, submissionId={}, status={}, executionNo={}",
+				job.getJobId(), job.getSubmissionId(), job.getStatus(), job.getExecutionNo());
+		markAttemptsFailedIfTerminal(job, AnalysisFailureCode.MODEL_ERROR);
+		job.markFailed(AnalysisFailureCode.MODEL_ERROR,
+				"AI 서버 작업 ID가 없어 상태 조회를 계속할 수 없다. 해당 분석 실행의 폴링을 종료한다.",
+				job.getStartedAt(), now);
+		saveJob(job);
+		return true;
+	}
+
 	private boolean applyProgress(AnalysisJob job) {
 		// 트랜잭션 밖이다. 이 호출이 5분 걸려도 붙들고 있는 DB 커넥션이 없다.
 		AnalysisProgress progress = analysisServerClient.fetchProgress(job.getExternalJobId()).orElse(null);
 		if (progress == null) {
-			// AI 서버가 모르는 job이다. 재시작으로 유실됐다는 뜻이라 같은 execution_no로 다시 보낸다.
-			log.warn("AI 서버가 모르는 작업이다. 재요청 대상으로 되돌린다: jobId={}, externalJobId={}",
-					job.getJobId(), job.getExternalJobId());
-			job.acceptExternalJob(null);
-			saveJob(job);
-			return true;
+			return handleUnknownJob(job);
 		}
+		unknownJobObservations.remove(job.getExternalJobId());
 		// 사용량은 성공·실패를 가리지 않고 먼저 적재한다. 실패한 분석도 토큰은 이미 썼고,
 		// 그게 monthly_ai_budget 집행 근거다 -- 실패했다고 빼면 예산이 새는 쪽으로 틀린다.
 		recordUsage(job, progress);
@@ -359,14 +432,125 @@ public class AnalysisBatchService {
 	}
 
 	/**
+	 * AI가 이 job을 모른다고(404) 했을 때. <b>{@code external_job_id}를 지우지 않는다.</b>
+	 *
+	 * <h2>왜 지우면 안 되는가 (2026-08-13)</h2>
+	 *
+	 * <p>종전에는 404를 "AI가 재시작해 job을 유실했다"는 확정 신호로 읽고 {@code external_job_id}를
+	 * NULL로 되돌렸다. 그 전제가 틀렸다 — AI 쪽 모델 실행 오류나 지연으로도 404가 난다. 실제로
+	 * {@code jobId=b34b532a}는 200 OK로 RUNNING까지 갔다가 뒤이은 404 한 번에 ID가 지워졌다.
+	 *
+	 * <p>게다가 지운 뒤 상태가 "재요청 대상"이 되지도 않았다. {@link #pollActiveJobs}는
+	 * {@code external_job_id}가 NULL인 job을 건너뛰고, 디스패치는 QUEUED·RUNNING을 blocking job으로
+	 * 보고 막는다({@code AnalysisDispatchRepository.BLOCKING_JOB_EXISTS}). 폴링도 재요청도 되지 않는
+	 * <b>영구 정체</b>였다. 주석과 실제 동작이 어긋나 있었다.
+	 *
+	 * <h2>그래서 응답 출처·최초 시각·연속 횟수로 가른다</h2>
+	 *
+	 * <p>AI 앱이 명시한 {@code JOB_NOT_FOUND}만 센다. 최초 관측 시각부터
+	 * {@code ai.analysis.unknown-job-grace}가 지나거나 연속 횟수가
+	 * {@code ai.analysis.unknown-job-max-consecutive}에 먼저 도달하면 {@code TEMPORARY_ERROR}로
+	 * 닫는다. 정상 응답이 한 번이라도 오면 시각·횟수를 초기화한다. 이 관측 상태는 DB 스키마를
+	 * 바꾸지 않고 프로세스 메모리에만 저장하므로 백엔드 재시작 시 초기화된다. HTML·빈 본문의
+	 * 프록시 404는 이 메서드에 들어오지 않고 웜업 후 재조회한다.
+	 *
+	 * <p>닫을 때도 {@code external_job_id}는 그대로 남긴다 — AI 로그와 대조할 유일한 열쇠다.
+	 *
+	 * @return 분석 상태가 종료 상태로 바뀌었는가. 관측 정보만 누적한 경우는 {@code false}.
+	 */
+	private boolean handleUnknownJob(AnalysisJob job) {
+		Instant now = Instant.now();
+		UnknownJobObservation observation = unknownJobObservations.compute(job.getExternalJobId(), (externalJobId, current) ->
+				current == null
+						? new UnknownJobObservation(now, 1)
+						: new UnknownJobObservation(current.firstSeenAt(), current.consecutiveCount() + 1));
+		Duration elapsed = Duration.between(observation.firstSeenAt(), now);
+		boolean countExceeded = observation.consecutiveCount() >= unknownJobMaxConsecutive;
+		boolean graceExceeded = elapsed.compareTo(unknownJobGrace) >= 0;
+		if (!countExceeded && !graceExceeded) {
+			log.warn("AI 앱이 JOB_NOT_FOUND를 반환했다. 외부 ID를 유지하고 다시 확인한다: "
+							+ "jobId={}, externalJobId={}, 연속횟수={}/{}, 최초404={}, 경과={}, 최대유예={}",
+					job.getJobId(), job.getExternalJobId(), observation.consecutiveCount(),
+					unknownJobMaxConsecutive, observation.firstSeenAt(), elapsed, unknownJobGrace);
+			return false;
+		}
+
+		unknownJobObservations.remove(job.getExternalJobId(), observation);
+		log.error("AI 앱의 JOB_NOT_FOUND를 작업 유실로 확정해 재요청 대상으로 닫는다: "
+						+ "jobId={}, externalJobId={}, executionNo={}, 연속횟수={}, 최초404={}, 경과={}, 최대유예={}",
+				job.getJobId(), job.getExternalJobId(), job.getExecutionNo(),
+				observation.consecutiveCount(), observation.firstSeenAt(), elapsed, unknownJobGrace);
+		markAttemptsFailedIfTerminal(job, AnalysisFailureCode.TEMPORARY_ERROR);
+		job.markFailed(AnalysisFailureCode.TEMPORARY_ERROR,
+				"AI 서버가 JOB_NOT_FOUND를 연속 " + observation.consecutiveCount()
+						+ "회 반환했다(최초 응답 후 " + elapsed + "). "
+						+ "AI 쪽에서 유실된 것으로 보고 재요청 대상으로 닫는다: externalJobId=" + job.getExternalJobId(),
+				job.getStartedAt(), now);
+		saveJob(job);
+		return true;
+	}
+
+	private record UnknownJobObservation(Instant firstSeenAt, int consecutiveCount) {
+	}
+
+	/**
 	 * 상태 전이를 원장에 반영한다. <b>자기 트랜잭션</b>이다.
 	 *
-	 * <p>{@code pollActiveJobs}에 트랜잭션이 없어져 더티 체킹이 걸리지 않으므로 명시적으로 저장한다 —
-	 * 종전에는 메서드 전체를 감싼 트랜잭션이 커밋될 때 자동으로 나갔다. 엔티티는 준영속 상태라
-	 * {@code save()}가 merge로 처리한다.
+	 * <p>준영속 엔티티의 {@code save/merge}를 쓰지 않는다. 상태·시각·실패 정보만 SET하는 전용 쿼리를
+	 * 사용하고 {@code external_job_id}는 외부 ID 일치 여부를 확인하는 WHERE 조건으로만 둔다. 이 구조면
+	 * 폴링뿐 아니라 앞으로 상태 필드가 추가돼도 외부 ID를 NULL로 덮는 SQL을 만들 수 없다.
 	 */
 	private void saveJob(AnalysisJob job) {
-		transactions.executeWithoutResult(status -> analysisJobRepository.save(job));
+		UUID externalJobId = job.getExternalJobId();
+		Integer updated = transactions.execute(status -> externalJobId == null
+				? analysisJobRepository.transitionActiveJobWithoutExternalId(
+						job.getJobId(), job.getStatus(), job.getStartedAt(), job.getCompletedAt(),
+						job.getFailureReason(), job.getFailureCode(), ACTIVE_JOB_STATUSES)
+				: analysisJobRepository.transitionActiveJob(
+						job.getJobId(), externalJobId, job.getStatus(), job.getStartedAt(), job.getCompletedAt(),
+						job.getFailureReason(), job.getFailureCode(), ACTIVE_JOB_STATUSES));
+		if (updated == null || updated != 1) {
+			throw new IllegalStateException("분석 job 상태 전이 대상이 일치하지 않는다: jobId="
+					+ job.getJobId() + ", externalJobId=" + externalJobId + ", status=" + job.getStatus());
+		}
+		// 🔍 진단용(2026-08-13). 상태 전이 저장이 external_job_id 를 함께 덮어쓰는지 본다.
+		verifyPersisted("상태 전이 저장 직후(" + job.getStatus() + ")", job, externalJobId);
+	}
+
+	/**
+	 * 🔍 진단용(2026-08-13). 커밋된 행을 JPA 캐시가 아닌 <b>raw JDBC</b>로 다시 읽어
+	 * {@code external_job_id}와 PostgreSQL 행 버전({@code xmin})을 확인한다.
+	 *
+	 * <p>추론으로는 더 좁힐 수 없어서 넣었다. 정상 접수 건은 외부 ID를 포함해 INSERT하고,
+	 * 후속 상태 전이는 이 컬럼을 SET 절에 넣지 않는 명시 쿼리만 사용한다.
+	 *
+	 * <p>원인이 잡히면 이 메서드와 호출부를 지운다 — 상태 전이마다 SELECT 가 한 번 더 나간다.
+	 */
+	private void verifyPersisted(String where, AnalysisJob job, UUID expected) {
+		try {
+			JobSnapshot snapshot = analysisJobDiagnostics.findSnapshot(job.getJobId()).orElse(null);
+			if (snapshot == null) {
+				log.error("🔍 {} raw DB 재조회에서 행이 없다: jobId={}, 메모리 external_job_id={}",
+						where, job.getJobId(), expected);
+				return;
+			}
+			UUID stored = snapshot.externalJobId();
+			if (expected == null ? stored == null : expected.equals(stored)) {
+				log.info("🔍 {} raw DB 재조회 일치: jobId={}, external_job_id={}, status={}, xmin={}, "
+							+ "observerApplication={}, observerPid={}, observerClient={}",
+						where, job.getJobId(), stored, snapshot.status(), snapshot.rowVersion(),
+						snapshot.observerApplication(), snapshot.observerPid(), snapshot.observerClient());
+				return;
+			}
+			log.error("🔍 {} raw DB 재조회 불일치! 메모리={} 인데 DB={} 다: jobId={}, status={}, xmin={}, "
+							+ "observerApplication={}, observerPid={}, observerClient={}",
+					where, expected, stored, job.getJobId(), snapshot.status(), snapshot.rowVersion(),
+					snapshot.observerApplication(), snapshot.observerPid(), snapshot.observerClient());
+			analysisJobDiagnostics.logExternalIdLoss(job.getJobId());
+		} catch (RuntimeException exception) {
+			// 진단 SELECT 실패가 정상 분석 요청이나 상태 전이를 되돌리면 안 된다.
+			log.warn("🔍 {} raw DB 재조회 진단 실패: jobId={}", where, job.getJobId(), exception);
+		}
 	}
 
 	/**
