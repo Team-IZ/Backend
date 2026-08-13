@@ -77,8 +77,13 @@ public class AnalysisJob {
 	@Column(name = "trace_id", nullable = false, columnDefinition = "text")
 	private String traceId;
 
-	/** AI 서버가 202 응답으로 반환한 작업 ID. */
-	@Column(name = "external_job_id")
+	/**
+	 * AI 서버가 202 응답으로 반환한 작업 ID.
+	 *
+	 * <p>정상 접수 건은 이 값을 채운 뒤 최초 INSERT한다. {@code updatable=false}이므로 이후 어떤 JPA
+	 * UPDATE에도 이 컬럼이 포함되지 않고, 폴링 상태 전이는 엔티티 merge 자체를 사용하지 않는다.
+	 */
+	@Column(name = "external_job_id", updatable = false)
 	private UUID externalJobId;
 
 	/** 15종. 분석 실행 5종 + 저장소 접근 5종(S-03) + ZIP 검증 5종(S-15). */
@@ -118,11 +123,11 @@ public class AnalysisJob {
 	}
 
 	/**
-	 * 분석 요청을 접수 대기 상태로 만든다. AI 서버를 부르기 <b>전에</b> 저장한다.
+	 * 분석 요청을 접수 대기 상태로 만든다.
 	 *
-	 * <p>호출 후에 만들면 202를 받고도 행이 없는 순간이 생기고, 그 사이 프로세스가 죽으면 AI 쪽에는
-	 * 실행이 있는데 우리 원장에는 없는 상태가 된다. 먼저 QUEUED로 남겨 두면 최악이라도 고아 job이
-	 * 남을 뿐이고, 그건 폴링이 정리할 수 있다.
+	 * <p>정상 경로에서는 아직 영속화하지 않는다. AI가 202로 준 작업 ID를 {@link #acceptExternalJob}
+	 * 으로 먼저 붙이고, ID를 포함한 한 번의 INSERT로 저장한다. 요청 자체가 실패한 경우에만 외부 ID가
+	 * 없는 FAILED 행을 저장해 실패 이력을 남긴다.
 	 *
 	 * <p>{@code uq_analysis_job_active(batch_key, job_type) WHERE status IN ('QUEUED','RUNNING')}가
 	 * 같은 제출의 동시 실행을 DB에서 막는다.
@@ -145,8 +150,14 @@ public class AnalysisJob {
 		this.questionBudget = questionBudget == null ? null : questionBudget.shortValue();
 	}
 
-	/** AI 서버가 202로 준 작업 ID를 붙인다. uq_analysis_job_external_job_id 가 중복을 막는다. */
+	/** 202 응답의 작업 ID를 최초 INSERT 전에 한 번만 반영한다. */
 	public void acceptExternalJob(UUID externalJobId) {
+		if (externalJobId == null) {
+			throw new IllegalArgumentException("externalJobId는 null일 수 없다.");
+		}
+		if (this.externalJobId != null && !this.externalJobId.equals(externalJobId)) {
+			throw new IllegalStateException("externalJobId는 최초 기록 후 변경할 수 없다.");
+		}
 		this.externalJobId = externalJobId;
 	}
 
