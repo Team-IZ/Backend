@@ -518,6 +518,34 @@ class OpenApiDocumentTest {
 				.isFalse();
 	}
 
+	/**
+	 * 22차 R1 — {@code required} + {@code $ref}는 "키도 있고 값도 반드시 객체다"라는 뜻이다.
+	 * 그런데 이 둘은 <b>미제출·미분석을 null로 판정하라</b>고 설명에 적혀 있다 — 설명과 타입이
+	 * 정반대를 말한다. 생성 타입이 {@code Submission}(non-null)으로 나와 컴파일러가 null 검사를
+	 * 요구하지 않고, 미제출 팀에서 {@code .} 접근이 그대로 터진다.
+	 *
+	 * <p>{@code required}는 그대로 둔다. record를 Jackson이 직렬화하면 값이 null이어도 <b>키는 나가므로</b>
+	 * "키는 항상 있다"는 사실이다. 고칠 것은 값 쪽이다 — {@code oneOf: [$ref, null]}.
+	 */
+	@Test
+	void letsTheTeamRowSayThereIsNoSubmissionOrAnalysisYet() throws Exception {
+		JsonNode team = spec().path("components").path("schemas").path("Team");
+
+		// 키는 항상 나간다. required에서 빼면 화면이 "키가 없을 수도 있다"로 읽어 옵셔널 체이닝이 는다.
+		assertThat(team.path("required").toString()).contains("submission", "analysis");
+
+		assertThat(team.path("properties").path("submission").path("oneOf").toString())
+				.contains("#/components/schemas/Submission")
+				.contains("\"null\"");
+		assertThat(team.path("properties").path("analysis").path("oneOf").toString())
+				.contains("#/components/schemas/Analysis")
+				.contains("\"null\"");
+
+		// $ref는 형제 키를 못 쓴다. 참조가 감싸이지 않고 남으면 "null이면서 참조"라는 읽을 수 없는 조합이 된다.
+		assertThat(team.path("properties").path("submission").has("$ref")).isFalse();
+		assertThat(team.path("properties").path("analysis").has("$ref")).isFalse();
+	}
+
 	private interface ResponseVisitor {
 		void visit(String operationId, String status, JsonNode response);
 	}

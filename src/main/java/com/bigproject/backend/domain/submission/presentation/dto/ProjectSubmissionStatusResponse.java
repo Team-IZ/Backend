@@ -96,9 +96,11 @@ public record ProjectSubmissionStatusResponse(
 			String teamName,
 			@Schema(description = "DRAFT · CONFIRMED", example = "CONFIRMED")
 			String teamStatus,
-			@Schema(description = "아직 아무도 제출하지 않았으면 null입니다. **레코드 존재가 아니라 이 값으로 미제출을 판정합니다.**")
+			@Schema(description = "아직 아무도 제출하지 않았으면 null입니다. **레코드 존재가 아니라 이 값으로 미제출을 판정합니다.**",
+					nullable = true)
 			Submission submission,
-			@Schema(description = "제출에 매인 최신 분석 시도입니다. 제출이 없거나 아직 분석이 걸리지 않았으면 null입니다.")
+			@Schema(description = "제출에 매인 최신 분석 시도입니다. 제출이 없거나 아직 분석이 걸리지 않았으면 null입니다.",
+					nullable = true)
 			Analysis analysis,
 			@Schema(description = "요구사항 P/F 판정이며 sequenceNo 오름차순입니다. 분석 전이면 빈 배열입니다.")
 			List<RequirementResult> requirementResults,
