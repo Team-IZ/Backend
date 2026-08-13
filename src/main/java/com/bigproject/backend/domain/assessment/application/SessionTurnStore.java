@@ -36,8 +36,17 @@ public class SessionTurnStore {
 	private final JdbcSessionRepository repository;
 	private final SessionGuard guard;
 
-	/** 채점에 필요한 것을 한 번에 읽는다. 이 트랜잭션이 끝난 뒤 AI를 부른다. */
-	@Transactional(readOnly = true)
+	/**
+	 * 채점에 필요한 것을 한 번에 읽는다. 이 트랜잭션이 끝난 뒤 AI를 부른다.
+	 *
+	 * <p><b>{@code readOnly}가 아니다.</b> 하는 일은 읽기뿐이지만 {@link SessionGuard#running}이
+	 * 시간 상한을 넘긴 세션을 <b>그 자리에서 닫는다</b>(세션 상한이면 {@code end}, 문제 상한이면
+	 * {@code expireCurrentProblem}). {@code readOnly=true}면 Hibernate가 커넥션에
+	 * {@code setReadOnly(true)}를 걸고 PostgreSQL이 그 UPDATE를 {@code 25006}으로 거절하므로,
+	 * 상한을 넘긴 제출이 {@code SESSION_TIMEOUT}(409) 대신 500이 되고 세션은 열린 채 남는다 —
+	 * 다음 제출도 같은 500을 받는다. 힌트 열기·활동 기록이 같은 이유로 쓰기 트랜잭션이다.
+	 */
+	@Transactional
 	public GradingInput loadForGrading(UUID userId, UUID sessionId, String answerText) {
 		if (answerText == null || answerText.isBlank()) {
 			throw new SessionException(SessionErrorCode.ANSWER_TEXT_REQUIRED);
