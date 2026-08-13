@@ -34,6 +34,36 @@ public interface TraineeReportQueryRepository {
 	List<StageAnswerRow> findStageAnswers(UUID userId);
 
 	/**
+	 * <b>묻지 못한 개념</b>({@code assessment_problem.generation_status='NOT_GENERATED'}).
+	 *
+	 * <p>{@link #findConcepts}와 따로 읽는 이유는 원천이 다르기 때문이다. 그쪽은
+	 * {@code trainee_report_problem_view}이고 그 뷰는 {@code report_evidence}에서 시작하는데,
+	 * 문항이 만들어지지 않은 개념에는 근거 행이 없어 뷰에 아예 나타나지 않는다.
+	 *
+	 * <p>그래서 이 조회가 없으면 화면에 개념이 <b>2개만</b> 뜨고 학생은 나머지 하나가 어디 갔는지
+	 * 알 수 없다. {@code GET /reports/class-diagnosis}가 {@code level0}과 {@code unasked}를 엄격히
+	 * 구분하는 것과 같은 이유로, 교육생 리포트도 "못한 것"과 "안 물어본 것"을 갈라야 한다 —
+	 * 한 배열에 섞어 담되 {@code asked=false}로 구분하며, <b>도달 단계 자체를 내보내지 않는다.</b>
+	 * 묻지 않은 개념에 0단을 붙이면 "물었는데 하나도 통과하지 못했다"와 같은 말이 된다.
+	 */
+	List<UnaskedConceptRow> findUnaskedConcepts(UUID userId);
+
+	/**
+	 * 묻지 못한 개념 하나.
+	 *
+	 * @param reasonCode {@code NO_MATCHING_CODE_EVIDENCE} 하나로 고정돼 있다
+	 *                   ({@code ck_assessment_problem_not_generated_reason_code}).
+	 */
+	record UnaskedConceptRow(
+			UUID reportId,
+			UUID problemId,
+			String conceptDisplayName,
+			int conceptDisplayOrder,
+			String reasonCode
+	) {
+	}
+
+	/**
 	 * {@code trainee_report_round_view} 한 행.
 	 *
 	 * @param assessmentRoundId 회차 선택의 <b>권위 식별자</b>. reportId는 없을 수도 있는 보조 키다
@@ -41,6 +71,12 @@ public interface TraineeReportQueryRepository {
 	 * @param attemptId         응시 기록. null이면 미응시다.
 	 * @param terminalReasonCode measurement_attempt 종료 사유. 중단·미제출 판정에 쓴다.
 	 * @param validityReviewStatus 무효 응시 검토 상태. PENDING·CONFIRMED_INVALID면 화면이 `확인 필요`다.
+	 * @param sampleCount  이 리포트가 만들려 한 문제 수({@code report_generation_item} 건수).
+	 * @param missingCount AI 생성이 <b>실패한</b> 문제 수({@code status <> SUCCEEDED}).
+	 *                     {@code completionStatus=PARTIAL}의 원인 건수이며, 19차 Q1의
+	 *                     "문항 없음과 생성 실패를 어떻게 가르나"에 답하는 값이다.
+	 * @param completionStatus  활성 스냅샷의 {@code FULL}·{@code PARTIAL}. 스냅샷이 없으면 null이다.
+	 *                          {@code ck_report_snapshot_completion_status}가 두 값만 허용한다.
 	 * @param reportPublishNotBeforeAt 발행 예정 시각. 화면 `PENDING_PUBLISH`의 `publishAfter`.
 	 * @param reviewStatus      다시 보기(REVIEW attempt) 상태. 없으면 null.
 	 */
@@ -51,6 +87,9 @@ public interface TraineeReportQueryRepository {
 			String projectName,
 			UUID reportId,
 			UUID snapshotId,
+			String completionStatus,
+			int sampleCount,
+			int missingCount,
 			UUID attemptId,
 			String attemptStatus,
 			String terminalReasonCode,
@@ -69,8 +108,10 @@ public interface TraineeReportQueryRepository {
 	/**
 	 * {@code trainee_report_problem_view} 한 행 = 개념 하나.
 	 *
-	 * @param reachDisplayCode `L0`~`L4`. <b>L0은 통과한 축이 하나도 없다는 뜻</b>이며
-	 *                         0으로 내보낸다(5단 계약).
+	 * @param reachLevel 도달 단계 <b>0~4</b>. <b>0은 통과한 축이 하나도 없다는 뜻</b>이다(5단 계약).
+	 *                   뷰의 {@code reach_display_code}는 쓰지 않는다 — 미니프로젝트에서 항상 L0라
+	 *                   말이 되지 않는 값이다. 원천은 {@code report_evidence.trace_payload.reachedLevel},
+	 *                   없으면 {@code problem_stage}의 통과 축 최댓값이다(SQL 주석 참고).
 	 * @param curriculumLocationJson 교안 위치 JSON 원문. 공개 범위가 SUMMARY 이상일 때만 채워진다.
 	 * @param reviewBeforeAfterItemsJson 다시 보기 전/후 비교. 화면 `comparedReach`의 원천.
 	 */
@@ -79,7 +120,7 @@ public interface TraineeReportQueryRepository {
 			UUID problemId,
 			String conceptDisplayName,
 			int conceptDisplayOrder,
-			String reachDisplayCode,
+			int reachLevel,
 			String resultExplanation,
 			String answerExcerpt,
 			String curriculumLocationJson,

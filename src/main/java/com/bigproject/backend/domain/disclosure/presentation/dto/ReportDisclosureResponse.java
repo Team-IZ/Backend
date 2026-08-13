@@ -33,7 +33,6 @@ import java.util.UUID;
 
 		`scope`는 NOT_CONFIGURED이면 키가 없다. `publishedAt`은 발행 전이면, `releasedAt`은 RELEASED가
 		아니면 마찬가지로 키가 없다 — null을 실어 보내지 않는다.""")
-@JsonInclude(JsonInclude.Include.NON_NULL)
 public record ReportDisclosureResponse(
 
 		@Schema(description = "리포트 식별자")
@@ -44,12 +43,16 @@ public record ReportDisclosureResponse(
 
 		TraineeReleaseStatus releaseStatus,
 
+		@JsonInclude(JsonInclude.Include.NON_NULL)
+		@Schema(description = "NOT_CONFIGURED이면 키가 없다")
 		DisclosureScope scope,
 
+		@JsonInclude(JsonInclude.Include.NON_NULL)
 		@Schema(description = "발행 시각. 발행 전이면 키가 없다")
 		Instant publishedAt,
 
-		@Schema(description = "공개 처리 시각. RELEASED에서만 있다")
+		@JsonInclude(JsonInclude.Include.NON_NULL)
+		@Schema(description = "공개 처리 시각. RELEASED에서만 있다. 그 외에는 키가 없다")
 		Instant releasedAt,
 
 		@Schema(description = "교육생이 본문을 읽을 수 있는가")

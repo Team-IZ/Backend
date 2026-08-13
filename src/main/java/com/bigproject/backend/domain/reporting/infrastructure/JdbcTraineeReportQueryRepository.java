@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.reporting.infrastructure;
 
 import com.bigproject.backend.domain.reporting.domain.TraineeReportQueryRepository;
+import com.bigproject.backend.domain.reporting.domain.TraineeReportQueryRepository.UnaskedConceptRow;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -46,6 +47,9 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				       p.name                       AS project_name,
 				       rpt.report_id,
 				       rs.snapshot_id,
+				       rs.completion_status,
+				       rs.sample_count,
+				       rs.missing_count,
 				       ma.attempt_id,
 				       ma.status                    AS attempt_status,
 				       ma.terminal_reason_code,
@@ -96,6 +100,9 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				rs.getString("project_name"),
 				rs.getObject("report_id", UUID.class),
 				rs.getObject("snapshot_id", UUID.class),
+				rs.getString("completion_status"),
+				rs.getInt("sample_count"),
+				rs.getInt("missing_count"),
 				rs.getObject("attempt_id", UUID.class),
 				rs.getString("attempt_status"),
 				rs.getString("terminal_reason_code"),
@@ -113,23 +120,65 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 
 	@Override
 	public List<ConceptRow> findConcepts(UUID userId) {
-		// 개념 단위 판정은 뷰가 이미 만들어 둔 것을 그대로 쓴다 — 공개 범위에 따른
-		// can_view_explanation 판정이 뷰 안에 있어서 여기서 다시 쓰면 갈라진다.
+		/*
+		 * 개념 단위 판정은 뷰가 이미 만들어 둔 것을 그대로 쓴다 — 공개 범위에 따른
+		 * can_view_explanation 판정이 뷰 안에 있어서 여기서 다시 쓰면 갈라진다.
+		 *
+		 * 🔴 도달 단계만은 예외다. 뷰의 reach_display_code 는
+		 * COALESCE(assessment_problem.best_success_stage,'L0') 인데,
+		 * ck_assessment_problem_best_success_stage_2 가 problem_scope='TEAM_SHARED_PROBLEM' 행의
+		 * 그 컬럼을 항상 NULL 로 강제한다. 미니프로젝트는 전부 팀 공유 문제라 어떤 데이터를 넣어도
+		 * 전 개념이 L0(0단)으로 나갔다 — 같은 응답의 said 문장·isRetryTarget 과 정면으로 어긋나
+		 * "하나도 못 했다면서 무엇을 했다고 설명하는" 리포트가 됐다(20차 R2·R3).
+		 *
+		 * 그래서 원천을 둘로 잡는다.
+		 *
+		 *   ① report_evidence.trace_payload->>'reachedLevel' — 발행 시점에 얼린 값이다.
+		 *      ReportEvidenceFactory 가 AI reachedStage(없으면 problem_stage 집계)로 적고,
+		 *      isRetryTarget(decision_code)도 같은 값에서 갈린다. 리포트는 스냅샷이므로
+		 *      발행 당시 값을 쓰는 것이 맞고, 두 필드가 같은 원천을 보게 된다.
+		 *   ② 그 키가 없는 행(구 스냅샷·시드)은 problem_stage 에서 다시 센다.
+		 *      도달 단계 = MAX(axis_code) FILTER (status='PASSED'), 없으면 0단이다.
+		 *      세션·단계는 교육생별로 독립이라 본인 INITIAL 응시의 세션만 탄다.
+		 *
+		 * 뷰를 고치지 않는 이유는 정의서 변경 + DB 마이그레이션이 함께 필요해 배포 단위가
+		 * 달라지기 때문이다. 뷰가 교정되면 ①②를 걷어내고 컬럼 하나로 되돌린다.
+		 */
 		String sql = """
-				SELECT report_id,
-				       problem_id,
-				       concept_display_name,
-				       concept_display_order,
-				       reach_display_code,
-				       result_explanation,
-				       answer_excerpt,
-				       curriculum_location,
-				       review_required,
-				       review_before_after_items,
-				       can_view_explanation
-				FROM trainee_report_problem_view
-				WHERE user_id = ?
-				ORDER BY report_id, concept_display_order
+				SELECT v.report_id,
+				       v.problem_id,
+				       v.concept_display_name,
+				       v.concept_display_order,
+				       COALESCE(
+				           NULLIF(re.trace_payload->>'reachedLevel', '')::INTEGER,
+				           stage.reached_level,
+				           0
+				       )                                AS reach_level,
+				       v.result_explanation,
+				       v.answer_excerpt,
+				       v.curriculum_location,
+				       v.review_required,
+				       v.review_before_after_items,
+				       v.can_view_explanation
+				FROM trainee_report_problem_view v
+				LEFT JOIN report_evidence re
+				       ON re.snapshot_id       = v.snapshot_id
+				      AND re.problem_id        = v.problem_id
+				      AND re.evidence_category = 'RESULT_EXPLANATION'
+				LEFT JOIN LATERAL (
+				       SELECT MAX(SUBSTRING(ps.axis_code FROM 2)::INTEGER) AS reached_level
+				       FROM problem_stage ps
+				       JOIN assessment_session s
+				              ON s.session_id = ps.session_id
+				       JOIN measurement_attempt ma
+				              ON ma.attempt_id   = s.attempt_id
+				             AND ma.user_id      = v.user_id
+				             AND ma.attempt_type = 'INITIAL'
+				       WHERE ps.problem_id = v.problem_id
+				         AND ps.status     = 'PASSED'
+				) stage ON TRUE
+				WHERE v.user_id = ?
+				ORDER BY v.report_id, v.concept_display_order
 				""";
 
 		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> new ConceptRow(
@@ -137,13 +186,62 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				rs.getObject("problem_id", UUID.class),
 				rs.getString("concept_display_name"),
 				rs.getInt("concept_display_order"),
-				rs.getString("reach_display_code"),
+				rs.getInt("reach_level"),
 				rs.getString("result_explanation"),
 				rs.getString("answer_excerpt"),
 				rs.getString("curriculum_location"),
 				rs.getBoolean("review_required"),
 				rs.getString("review_before_after_items"),
 				rs.getBoolean("can_view_explanation")
+		), userId);
+	}
+
+	@Override
+	public List<UnaskedConceptRow> findUnaskedConcepts(UUID userId) {
+		/*
+		 * 뷰를 쓸 수 없다 — trainee_report_problem_view 는 report_evidence 에서 시작하는데
+		 * NOT_GENERATED 개념에는 근거 행이 없어 뷰에 나타나지 않는다(그 자리에서 사라지는 것이
+		 * 정확히 이 조회가 메우려는 구멍이다).
+		 *
+		 * 그래서 리포트 → 응시 → 코드분석 → 문제 슬롯 순으로 베이스 테이블을 직접 탄다.
+		 * assessment_problem 은 근거를 못 찾은 개념에도 NOT_GENERATED 슬롯을 남기므로
+		 * (JdbcAnalysisResultRepository 참고) 여기서 개념 이름을 되찾을 수 있다.
+		 *
+		 * 발행·공개된 리포트만 본다. 묻지 못했다는 사실도 리포트 본문의 일부라, 공개 범위가
+		 * 정해지기 전에 내보내면 PENDING_VISIBILITY 회차에서 개념 카드가 새어 나간다.
+		 * 범위는 SUMMARY 로 충분하다 — 개념 이름과 "묻지 못함"까지는 요약에 들어간다.
+		 */
+		String sql = """
+				SELECT rpt.report_id,
+				       ap.problem_id,
+				       COALESCE(t.canonical_name, ap.title) AS concept_display_name,
+				       pvc.sequence_no                      AS concept_display_order,
+				       ap.not_generated_reason_code
+				FROM report rpt
+				JOIN measurement_attempt ma
+				       ON ma.assessment_round_id = rpt.assessment_round_id
+				      AND ma.user_id             = rpt.user_id
+				      AND ma.attempt_type        = 'INITIAL'
+				JOIN assessment_problem ap
+				       ON ap.code_analysis_id   = ma.code_analysis_id
+				      AND ap.generation_status  = 'NOT_GENERATED'
+				LEFT JOIN project_verification_concept pvc
+				       ON pvc.project_concept_id = ap.project_verification_concept_id
+				LEFT JOIN teaches t
+				       ON t.teaches_id = pvc.teaches_id
+				WHERE rpt.user_id = ?
+				  AND rpt.lifecycle_status <> 'SUPERSEDED'
+				  AND rpt.trainee_release_status = 'RELEASED'
+				  AND rpt.trainee_disclosure_scope IN ('SUMMARY', 'FULL')
+				ORDER BY rpt.report_id, pvc.sequence_no, ap.problem_no
+				""";
+
+		return jdbcTemplate.query(sql, (ResultSet rs, int rowNum) -> new UnaskedConceptRow(
+				rs.getObject("report_id", UUID.class),
+				rs.getObject("problem_id", UUID.class),
+				rs.getString("concept_display_name"),
+				rs.getInt("concept_display_order"),
+				rs.getString("not_generated_reason_code")
 		), userId);
 	}
 

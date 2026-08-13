@@ -70,8 +70,17 @@ public class AiUsageRecorder {
 
 	private boolean persist(AiUsageEnvelope usage, AiUsageAttribution attribution) {
 		AiUsage.FeatureCode featureCode = parse(AiUsage.FeatureCode.class, usage.featureCode());
-		AiUsage.ContextType contextType = parse(AiUsage.ContextType.class, usage.contextType());
 		AiUsage.Status status = parse(AiUsage.Status.class, usage.status());
+
+		/*
+		 * 유형은 호출부가 덮어쓸 수 있다. AI의 contextType enum은 5종뿐이라 우리 12종 중 일부는
+		 * AI가 보낼 방법이 없고(REPORT_GENERATION_ITEM이 그렇다), 그런 경우 실제 귀속 대상을
+		 * 아는 쪽은 호출부다. AiUsageAttribution#contextTypeOverride javadoc 참고.
+		 *
+		 * 덮어쓸 때도 AI 값을 먼저 파싱한다 — 모르는 값이 오면 그 사실 자체를 로그로 남겨야 한다.
+		 */
+		AiUsage.ContextType fromAi = parse(AiUsage.ContextType.class, usage.contextType());
+		AiUsage.ContextType contextType = attribution.resolveContextType(fromAi);
 
 		if (featureCode == null || contextType == null || status == null) {
 			// enum 컬럼이 전부 NOT NULL이라 모르는 값이면 저장할 방법이 없다.
@@ -146,11 +155,16 @@ public class AiUsageRecorder {
 
 	/**
 	 * AI가 자기 jobId를 대신 넣어 보내는 컨텍스트인가.
-	 * AI 저장소 {@code app/schemas/usage.py}가 이 둘만 "Spring이 저장 시점에 교체해야 한다"고 적어 뒀다.
+	 *
+	 * <p>앞의 둘은 AI 저장소 {@code app/schemas/usage.py}가 "Spring이 저장 시점에 교체해야 한다"고
+	 * 적어 둔 것이다. {@code REPORT_GENERATION_ITEM}은 AI가 보낼 수조차 없는 값이라 <b>여기 오는
+	 * 순간 이미 호출부가 유형을 덮어쓴 것</b>이고, 그렇다면 ID도 함께 넘겼어야 한다 —
+	 * 유형만 바꾸고 ID를 안 바꾸면 {@code REPORT_GENERATION_ITEM}을 가리키는 AI jobId가 남는다.
 	 */
 	private static boolean needsContextIdOverride(AiUsage.ContextType contextType) {
 		return contextType == AiUsage.ContextType.REPORT_SNAPSHOT
-				|| contextType == AiUsage.ContextType.CURRICULUM_ANALYSIS;
+				|| contextType == AiUsage.ContextType.CURRICULUM_ANALYSIS
+				|| contextType == AiUsage.ContextType.REPORT_GENERATION_ITEM;
 	}
 
 	/** 기수·프로젝트가 모두 있어야 완전 귀속이다. 하나만 있으면 부분 귀속으로 드러낸다. */

@@ -377,6 +377,8 @@ public class TraineeController {
 			@RequestParam(required = false) String query,
 			@Parameter(description = "정렬 기준", example = "NAME")
 			@RequestParam(required = false, defaultValue = "NAME") TraineeRosterSort sort,
+			@Parameter(description = "회차별 결과를 합칠 평가 회차 ID")
+			@RequestParam(required = false) UUID assessmentRoundId,
 			@Parameter(description = "0부터 시작하는 페이지 번호", example = "0")
 			@RequestParam(defaultValue = "0") @Min(0) int page,
 			@Parameter(description = "페이지당 개수(최대 100)", example = "20")
@@ -384,9 +386,18 @@ public class TraineeController {
 			Authentication authentication
 	) {
 		UUID organizationId = extractOrganizationId(authentication);
+		if ((sort == TraineeRosterSort.RISK || sort == TraineeRosterSort.EXCELLENCE)
+				&& assessmentRoundId == null) {
+			throw new ApiException(com.bigproject.backend.domain.member.domain.MemberErrorCode.ROSTER_ASSESSMENT_ROUND_REQUIRED);
+		}
+		UUID managerId = null;
+		if (assessmentRoundId != null || sort == TraineeRosterSort.RISK || sort == TraineeRosterSort.EXCELLENCE) {
+			managerId = currentUserResolver.resolveCurrentMemberId();
+		}
 
 		TraineeRosterService.RosterResult result = traineeRosterService.findRoster(
-				cohortId, organizationId, classroomId, unassignedOnly, accountStatus, query, sort,
+				cohortId, organizationId, managerId, assessmentRoundId,
+				classroomId, unassignedOnly, accountStatus, query, sort,
 				PageRequest.of(page, size));
 
 		Page<TraineeRosterRepository.RosterRow> rosterPage = result.page();

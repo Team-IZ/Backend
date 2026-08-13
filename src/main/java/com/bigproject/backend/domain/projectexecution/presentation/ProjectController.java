@@ -49,6 +49,7 @@ import java.util.List;
 import java.util.UUID;
 
 @Tag(name = "Project Execution", description = "프로젝트 구성·일정·요구사항 API")
+@Tag(name = "Project", description = "프로젝트 진행 현황 조회")
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController
@@ -65,7 +66,7 @@ public class ProjectController {
 
 	@Operation(
 			operationId = "findProjects",
-			summary = "프로젝트 목록 조회 | ✅ 사용 가능",
+			summary = "기수 프로젝트 목록 | ✅ 사용 가능",
 			description = """
 					기수 안의 프로젝트를 조회한다. **검색·필터·정렬을 서버가 처리하므로 화면은 파라미터만
 					넘기면 된다**(9차 R3).
@@ -171,130 +172,74 @@ public class ProjectController {
 	}
 
 	@Operation(
-			operationId = "findProjectsForManager",
-			summary = "담당 반 프로젝트 목록 | ✅ 사용 가능",
+			operationId = "findCurrentProject",
+			summary = "기수의 이번 회차 조회 | ✅ 사용 가능",
 			description = """
-					매니저가 자기 코호트의 회차 목록을 조회한다(MG-01 대시보드, MG-07 프로젝트 목록).
+					그 기수에서 **지금 굴러가는 회차 하나**를 돌려준다. OP-01 대시보드의 `이번 회차`
+					블록이 이 응답 하나로 그려진다.
 
-					**응답 계약은 `GET /cohorts/{cohortId}/projects`와 완전히 같다** — 매니저 전용
-					진입점만 새로 낸 것이지 조회 로직을 새로 만들지 않았다. `search`·`curriculumId`·
-					`status`·`sort`·`counts`·`readiness` 전부 그대로 동작한다.
+					## 🔴 회차 선택 규칙을 서버가 갖는다
 
-					## 요청 (쿼리 파라미터)
+					「지금 어느 회차인가」는 화면 취향이 아니라 **도메인 사실**이다. 종전에는 화면이
+					`GET /cohorts/{id}/projects`로 전량을 받아 스스로 골랐는데, 그 규칙은 합의된 적이
+					없어 서버 정렬이 바뀌면 조용히 다른 회차가 뜨고 같은 판단이 필요한 화면이 늘면
+					규칙이 두 곳으로 갈렸다.
 
-					| 파라미터 | 필수 | 타입 | 설명 |
-					|---|---|---|---|
-					| `cohort` | **필수** | UUID | 조회할 기수 ID |
-					| `search` / `curriculumId` / `status` / `sort` | 선택 | — | `GET /cohorts/{cohortId}/projects`와 동일 |
+					| 순서 | 고르는 것 | 왜 |
+					|---|---|---|
+					| ① | `RUNNING` 중 **가장 늦게 시작한** 것 | 회차가 겹쳐 열렸으면 나중에 연 쪽이 지금이다 |
+					| ② | 없으면 **가장 이른 `PLANNED`** | 다음에 열릴 회차가 지금의 관심사다 |
+					| ③ | 그것도 없으면 **마지막 회차** | 전부 끝난 기수도 마지막 결과를 그려야 한다 |
 
-					MG-01 "마감이 있는 것부터"는 `sort=DUE_SOON`으로, MG-07 기본 정렬은
-					`sort=READINESS`(생략 시 기본값)로 그대로 커버된다.
+					⚠️ **③이 `CLOSED`를 돌려준다.** 이 응답이 왔다고 "진행 중"이라고 단정하면 안 된다 —
+					`status`를 보고 그린다. 응답에 `status`가 함께 나가는 이유다.
 
-					⚠️ **아직 없는 것** — 정의 문서(MG-07)의 "담당 반 합계"·"진행 58/71"·"A반 미제출 2팀"
-					같은 반별·제출별 집계는 이 응답에 없다. `Project`에는 반(class) 연관이 없고,
-					제출 현황은 Submission 도메인(현재 미착수)에서 와야 한다. 지금은 회차 목록과
-					`readiness`·교안/개념 집계까지만 내려주고, 반별 진행 집계는 Submission 도메인
-					착수 후 별도로 얹는다.
-					"""
-	)
-	@PreAuthorize("hasAnyRole('MANAGER')")
+					정렬 축은 `sequenceNo`가 먼저이고 `startDate`가 보조다. 정의서가 `sequence_no`를
+					"기수 내 전체 프로젝트 운영 순서"로 정의하므로 그것이 권위 축이고, 날짜는 비어
+					있을 수 있다.
+
+					## 응답
+
+					`GET /projects/{projectId}`의 요약과 **같은 모양**이다 —
+					`projectId` · `name` · `sequenceNo` · `status` · `startDate` · `endDate` +
+					`curriculumCount` · `conceptCount` · `conceptCandidateCount`.
+
+					## 🔴 회차가 없으면 `204 No Content`다
+
+					**`404`가 아니다.** 회차를 아직 만들지 않은 기수는 실패가 아니라 정상 상태이고,
+					404로 답하면 "그런 기수가 없다"와 구분되지 않는다. 본문이 없으므로 화면은
+					`이번 회차 없음`을 그리면 된다.
+
+					## 왜 목록 대신 이것을 쓰나
+
+					목록은 회차 전량과 상태별 집계를 함께 만든다. 대시보드는 그중 **하나만** 쓰고
+					나머지를 버렸다. 이 API는 고른 회차 하나만 요약하므로 그 낭비가 없다.
+
+					> 15차 R1로 목록(`GET /cohorts/{id}/projects`) 자체의 N+1도 함께 고쳤다.
+					> 목록이 여전히 필요한 화면(OP-03)은 그쪽을 계속 쓰면 된다.
+
+					## 오류
+
+					| 상태 | 언제 |
+					|---|---|
+					| 204 | 그 기수에 회차가 하나도 없다 (**정상**) |
+					| 401 | 액세스 토큰이 없거나 유효하지 않다 |
+					""")
 	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "프로젝트 목록 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED status·sort에 없는 값을 지정함"),
+			@ApiResponse(responseCode = "200", description = "이번 회차 조회 성공"),
+			@ApiResponse(responseCode = "204", description = "그 기수에 회차가 하나도 없음. 정상 상태이며 본문이 없다"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 매니저가 아님"),
 	})
-	@GetMapping("/projects")
-	public ResponseEntity<ProjectListResponse> findProjectsForManager(
-			@Parameter(description = "기수 ID") @RequestParam UUID cohort,
-			@Parameter(description = "회차 이름 부분검색(대소문자 무시)", example = "미니")
-			@RequestParam(required = false) String search,
-			@Parameter(description = "교안으로 좁힌다. 교안 버전 ID와 자료(material) ID를 모두 받는다")
-			@RequestParam(required = false) UUID curriculumId,
-			@Parameter(description = "상태로 좁힌다. 생략하면 전체")
-			@RequestParam(required = false) ProjectLifecycleStatus status,
-			@Parameter(description = "정렬 기준", example = "READINESS")
-			@RequestParam(required = false, defaultValue = "READINESS") ProjectListSort sort
+	// `/{projectId}`가 아니라 `/cohorts/{cohortId}/projects/current`라 경로 충돌이 없다 —
+	// 이 뿌리에는 UUID 경로 변수가 뒤에 오지 않는다.
+	@GetMapping("/cohorts/{cohortId}/projects/current")
+	public ResponseEntity<ProjectResponse> findCurrentProject(
+			@Parameter(description = "기수 ID") @PathVariable UUID cohortId
 	) {
 		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-		ProjectService.ProjectList list = projectService.findProjectList(
-				cohort, orgId, new ProjectService.ProjectListCriteria(search, curriculumId, status, sort));
-		return ResponseEntity.ok(ProjectListResponse.from(list));
-	}
-
-	@Operation(
-			operationId = "findProjectsByClass",
-			summary = "담당 반 프로젝트 목록 | ",
-			description = """
-                매니저가 담당하는 반 하나의 프로젝트 목록을 조회한다(MG-01 대시보드, MG-07 프로젝트 목록).
-
-                team.class_id를 경유해 이 반의 팀이 하나라도 편성된 프로젝트만 좁힌다.
-                `search`·`curriculumId`·`status`·`sort` 필터는 `GET /cohorts/{cohortId}/projects`와 동일하다.
-
-                ⚠️ 이 반에 아직 팀이 편성되지 않은 프로젝트는 결과에서 빠진다.
-                """
-	)
-	@PreAuthorize("hasAnyRole('MANAGER')")
-	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "프로젝트 목록 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED status·sort에 없는 값을 지정함"),
-			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 매니저가 아님"),
-	})
-	@GetMapping("/classes/{classId}/projects")
-	public ResponseEntity<ProjectListResponse> findProjectsByClass(
-			@Parameter(description = "반 ID") @PathVariable UUID classId,
-			@RequestParam(required = false) String search,
-			@RequestParam(required = false) UUID curriculumId,
-			@RequestParam(required = false) ProjectLifecycleStatus status,
-			@RequestParam(required = false) ProjectCategory category,
-			@RequestParam(required = false, defaultValue = "READINESS") ProjectListSort sort
-	) {
-		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-		ProjectService.ProjectList list = projectService.findProjectListByClass(
-				classId, orgId, new ProjectService.ProjectListCriteria(search, curriculumId, status, sort), category);
-		return ResponseEntity.ok(ProjectListResponse.from(list));
-	}
-
-	@Operation(
-			operationId = "findActiveProjectsByClass",
-			summary = "진행 중 프로젝트·회차 조회 | ✅ 사용 가능",
-			description = """
-                매니저 대시보드(MG-01)가 쓰는, 반 하나의 진행 중 회차 조회다.
-
-                내부적으로 `GET /classes/{classId}/projects`(MG-07)와 같은 조회 로직을 쓴다 —
-                `status`로 좁힌 결과만 돌려준다는 점만 다르다.
-
-                ## 요청 (쿼리 파라미터)
-
-                | 파라미터 | 필수 | 타입 | 설명 |
-                |---|---|---|---|
-                | `status` | 선택(기본 `RUNNING`) | enum | `PLANNED` · `RUNNING` · `CLOSED` |
-                | `sort` | 선택(기본 `DUE_SOON`) | enum | 대시보드는 마감 임박 순이 기본이다 |
-
-                진행 중 회차가 없으면 `projects[]`가 빈 배열로 온다 — 화면은 이때
-                `status=PLANNED&sort=START_DATE`로 다시 불러 "다음 회차 시작일"을 보여준다.
-                """
-	)
-	@PreAuthorize("hasAnyRole('MANAGER')")
-	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "조회 성공"),
-			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED status·sort에 없는 값을 지정함"),
-			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
-			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 매니저가 아님"),
-	})
-	@GetMapping("/classes/{classId}/active-projects")
-	public ResponseEntity<ProjectListResponse> findActiveProjectsByClass(
-			@Parameter(description = "반 ID") @PathVariable UUID classId,
-			@Parameter(description = "상태로 좁힌다", example = "RUNNING")
-			@RequestParam(required = false, defaultValue = "RUNNING") ProjectLifecycleStatus status,
-			@Parameter(description = "정렬 기준", example = "DUE_SOON")
-			@RequestParam(required = false, defaultValue = "DUE_SOON") ProjectListSort sort
-	) {
-		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-		ProjectService.ProjectList list = projectService.findProjectListByClass(
-				classId, orgId, new ProjectService.ProjectListCriteria(null, null, status, sort), null);
-		return ResponseEntity.ok(ProjectListResponse.from(list));
+		return projectService.findCurrentProject(cohortId, orgId)
+				.map(summary -> ResponseEntity.ok(ProjectResponse.from(summary)))
+				.orElseGet(() -> ResponseEntity.noContent().build());
 	}
 
 	@Operation(
@@ -427,9 +372,25 @@ public class ProjectController {
 					순간 **학생에게 알려준 마감과 실제 마감이 갈린다.** 마감 시각을 보여줘야 하는 자리에서는
 					`class-progress`의 `submissionDueAt`을 쓰는 것이 맞다.
 
-					**어느 쪽으로 정할지 알려주시면 그대로 맞추겠다** — ⓐ `endDate` 저장 시 그 날짜의
-					`23:59:59 KST`로 `submission_due_at`을 함께 갱신하거나, ⓑ 마감 시각을 별도 입력으로 받는다.
-					되돌릴 수 없는 학생 화면 값이라 임의로 정하지 않았다.
+					## 🔴 18차 R5로 정해졌다 — 마감 시각을 이 API가 받는다
+
+					**`submissionDueAt`(선택)** 을 함께 보내면 그 회차의 `submission_due_at`을 같이 바꾼다.
+					9차 Q2에서 열어 둔 질문을 프론트가 ⓑ(별도 필드)로 답해 그대로 구현했다.
+
+					| 보낸 것 | 결과 |
+					|---|---|
+					| `startDate`·`endDate`만 | 기간만 바뀐다. **마감은 그대로** |
+					| + `submissionDueAt` | 기간과 마감이 함께 바뀐다 |
+
+					**여전히 서버가 둘을 자동으로 연결하지 않는다.** 기간을 늘려도 마감은 움직이지
+					않는다 — 회차 기간은 운영 일정이고 제출 마감은 학생과의 약속이라 같이 움직여야 할
+					이유가 없고, 자동 파생을 넣으면 운영자가 기간만 손댔을 때 **이미 알린 마감이 조용히
+					바뀐다.**
+
+					그래서 화면이 마감을 표시할 때는 여전히 `endDate`에 `23:59`을 붙이지 말고
+					실제 마감 값을 써야 한다.
+
+					시각대는 UTC로 저장된다 — `23:59 KST`는 `T14:59:00Z`다.
 					"""
 	)
 	@ApiResponses({
@@ -445,12 +406,13 @@ public class ProjectController {
 	) {
 		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
 		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
-		Project project = projectService.updateSchedule(projectId, orgId, request.startDate(), request.endDate(), actorUserId);
+		Project project = projectService.updateSchedule(projectId, orgId,
+				request.startDate(), request.endDate(), request.submissionDueAt(), actorUserId);
 		return ResponseEntity.ok(ProjectResponse.from(projectService.summarize(project, orgId)));
 	}
 
 	@Operation(
-			summary = "요구사항 등록·수정 | ✅ 사용 가능",
+			summary = "프로젝트 요구사항 전체 교체 | ✅ 사용 가능",
 			description = """
 					요구사항 문구 목록을 전체 교체한다. 보낸 목록이 그대로 최종 상태가 된다 —
 					기존에 있었는데 이번 목록에 없는 문구는 자동 폐기(retire)되고, 새 문구는 추가된다.
@@ -697,7 +659,7 @@ public class ProjectController {
 	}
 
 	@Operation(
-			summary = "회차 목록 조회 | ✅ 사용 가능",
+			summary = "프로젝트 회차 목록 | ✅ 사용 가능",
 			description = """
 					⚠ 임시: 전용 회차(round) 엔티티가 아직 없어, 같은 기수의 미니프로젝트 목록을 회차로 취급한다.
 					각 항목이 곧 하나의 회차이며, roundId는 projectId와 같다.
@@ -728,7 +690,7 @@ public class ProjectController {
 	}
 
 	@Operation(
-			summary = "회차 일정 수정(제출 마감·응시 창) | ✅ 사용 가능",
+			summary = "프로젝트 회차 일정 수정 | ✅ 사용 가능",
 			description = """
 					⚠ 임시: roundId는 projectId와 동일하게 취급한다. 실제로는
 					`PATCH /projects/{projectId}`(일정 수정)와 완전히 동일한 동작이다.
@@ -756,7 +718,8 @@ public class ProjectController {
 	) {
 		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
 		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
-		Project project = projectService.updateSchedule(roundId, orgId, request.startDate(), request.endDate(), actorUserId);
+		Project project = projectService.updateSchedule(roundId, orgId,
+				request.startDate(), request.endDate(), request.submissionDueAt(), actorUserId);
 		return ResponseEntity.ok(ProjectResponse.from(projectService.summarize(project, orgId)));
 	}
 

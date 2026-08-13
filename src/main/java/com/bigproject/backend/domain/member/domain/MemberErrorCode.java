@@ -58,6 +58,10 @@ public enum MemberErrorCode implements ApiErrorCode {
 	 * 데이터가 없다고 오해하게 되므로 값을 돌려주는 대신 거절한다.
 	 */
 	ROSTER_FILTER_CONFLICT(HttpStatus.BAD_REQUEST, "반 필터와 미배정 필터는 함께 지정할 수 없습니다."),
+	/** 위험·우수 정렬은 어느 회차의 결과인지 지정해야 페이지 순서가 안정적이다. */
+	ROSTER_ASSESSMENT_ROUND_REQUIRED(HttpStatus.BAD_REQUEST, "위험·우수 정렬은 평가 회차를 지정해야 합니다."),
+	/** 통합 타임라인의 cursor가 이 응답에서 발급한 형식이 아니다. */
+	TIMELINE_CURSOR_INVALID(HttpStatus.BAD_REQUEST, "타임라인 커서가 올바르지 않습니다."),
 	/** 이 화면이 쓰지 않는 계정 상태로 필터를 걸었다(LOCKED 등). */
 	ACCOUNT_STATUS_FILTER_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "지원하지 않는 계정 상태 필터입니다."),
 	/** 그 기수·기관에 그 교육생이 없다. 다른 기수·다른 기관인 경우도 존재를 알리지 않고 여기로 묶는다. */

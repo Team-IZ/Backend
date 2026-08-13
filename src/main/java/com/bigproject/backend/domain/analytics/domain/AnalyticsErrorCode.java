@@ -66,7 +66,12 @@ public enum AnalyticsErrorCode implements ApiErrorCode {
 	/** 그 프로젝트에 그 번호의 회차가 없다. round_no는 프로젝트 안에서만 유일하다. */
 	PROJECT_ROUND_NOT_FOUND(HttpStatus.NOT_FOUND, "프로젝트 회차를 찾을 수 없습니다."),
 	/** 다른 기관의 프로젝트다. */
-	PROJECT_CROSS_ORGANIZATION(HttpStatus.FORBIDDEN, "다른 기관의 프로젝트는 조회할 수 없습니다.");
+	PROJECT_CROSS_ORGANIZATION(HttpStatus.FORBIDDEN, "다른 기관의 프로젝트는 조회할 수 없습니다."),
+
+	HEATMAP_SCOPE_INVALID(HttpStatus.BAD_REQUEST, "히트맵 계층에 필요한 반·팀 필터가 올바르지 않습니다."),
+	HEATMAP_REVIEW_TRAINEE_REQUIRED(HttpStatus.BAD_REQUEST, "다시 보기 비교는 개인 계층에서만 조회할 수 있습니다."),
+	CONCEPT_SCOPE_NOT_FOUND(HttpStatus.NOT_FOUND, "담당 범위에서 개념 소관을 계산할 수 없습니다.");
+
 
 	private final HttpStatus status;
 	private final String defaultMessage;
