@@ -121,6 +121,22 @@ public class JdbcCurriculumCatalogRepository implements CurriculumCatalogReposit
 	}
 
 	/**
+	 * 22차 R7 — 경로의 기수를 검증한다. 지운 기수({@code deleted_at})는 없는 것으로 본다.
+	 *
+	 * <p>{@code org_id}를 함께 거는 이유는 <b>남의 기관 기수의 존재 여부를 알려 주지 않기</b> 위해서다.
+	 * 있는 기수인데 403, 없는 기수면 404로 나뉘면 그 차이로 다른 기관의 기수 ID를 확인할 수 있다.
+	 */
+	@Override
+	public boolean cohortExists(UUID cohortId, UUID orgId) {
+		return Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+				SELECT EXISTS (
+					SELECT 1 FROM cohort
+					WHERE cohort_id = ? AND org_id = ? AND deleted_at IS NULL
+				)
+				""", Boolean.class, cohortId, orgId));
+	}
+
+	/**
 	 * 11차 R7. 목록과 같은 모집단(삭제되지 않은 이 기관의 교안 = 최신 버전 한 행)을 쓰되
 	 * 검색·상태 필터는 걸지 않는다. 한 번도 분석하지 않은 교안은 상태가 NULL이라 결과에서 빠진다.
 	 */

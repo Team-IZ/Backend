@@ -38,6 +38,17 @@ public interface ProjectDependencyRepository {
 	Map<UUID, String> findCohortNames(Collection<UUID> cohortIds);
 
 	/**
+	 * 이 기관에 <b>살아 있는 그 기수</b>가 있는지(22차 R7).
+	 *
+	 * <p>회차 목록이 없는 기수에도 200 · 빈 배열로 답하고 있었다. 「이 기수엔 회차가 없다」와
+	 * 「그런 기수가 없다」가 구분되지 않아, 남이 보낸 링크나 그 사이 지워진 기수를 열어도
+	 * 운영자에게는 <b>아직 아무것도 안 만든 기수</b>로 보였다.
+	 *
+	 * <p>{@code org_id}를 함께 거는 이유는 남의 기관 기수의 존재 여부를 알려 주지 않기 위해서다.
+	 */
+	boolean cohortExists(UUID cohortId, UUID orgId);
+
+	/**
 	 * 회차별 <b>응시를 시작한</b> 인원(11차 R3). 재분석 경고를 좁히는 기준값이다 —
 	 * 0이면 아직 아무도 응시하지 않아 다시 분석해도 발행된 리포트가 어긋나지 않는다.
 	 *

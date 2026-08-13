@@ -24,6 +24,17 @@ public interface CurriculumCatalogRepository {
 	/** 필터·정렬·페이지가 적용된 한 페이지. */
 	List<CurriculumCatalogRow> findPage(CurriculumCatalogCriteria criteria, int limit, long offset);
 
+	/**
+	 * 이 기관에 <b>살아 있는 그 기수</b>가 있는지(22차 R7).
+	 *
+	 * <p>{@code GET /cohorts/{cohortId}/curricula}는 교안이 기관 단위라 경로의 기수를 쓰지 않았고,
+	 * 그래서 <b>존재하지 않는 기수를 넣어도 다른 기수와 똑같은 목록 7건이 나갔다.</b> 지금은 기관이
+	 * 토큰에서 오므로 남의 기관 것이 새지는 않지만, 경로가 사실과 다른 말을 하고 있었다.
+	 *
+	 * <p>기수는 이 도메인의 엔티티가 아니라 존재 여부 하나만 읽는다.
+	 */
+	boolean cohortExists(UUID cohortId, UUID orgId);
+
 	/** 같은 필터를 적용한 전체 건수. */
 	long count(CurriculumCatalogCriteria criteria);
 

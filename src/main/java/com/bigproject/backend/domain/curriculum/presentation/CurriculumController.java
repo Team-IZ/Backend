@@ -208,13 +208,16 @@ public class CurriculumController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "교안 목록 조회 성공"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수·삭제된 기수 포함) — 22차 R7"),
     })
     @GetMapping("/cohorts/{cohortId}/curricula")
     public ResponseEntity<List<CurriculumVersionResponse>> findLinkableCurricula(
-            @Parameter(description = "경로상 기수 ID(현재 미검증)") @PathVariable UUID cohortId
+            @Parameter(description = "기수 ID. 목록을 좁히지는 않지만 **존재하지 않으면 404**다(22차 R7)")
+            @PathVariable UUID cohortId
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-        List<CurriculumVersionResponse> response = curriculumService.findLinkableCurriculaWithStatus(orgId).stream()
+        List<CurriculumVersionResponse> response = curriculumService
+                .findLinkableCurriculaForCohort(cohortId, orgId).stream()
                 .map(CurriculumVersionResponse::from)
                 .toList();
         return ResponseEntity.ok(response);

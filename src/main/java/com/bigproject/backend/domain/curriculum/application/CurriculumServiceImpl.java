@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.curriculum.application;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysis;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogRepository;
@@ -18,6 +19,7 @@ import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumSection
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumTeachesMappingRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumVersionRepository;
 import com.bigproject.backend.domain.projectexecution.application.ProjectService;
+import com.bigproject.backend.global.exception.ApiException;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -76,6 +78,21 @@ public class CurriculumServiceImpl implements CurriculumService {
      * (15차 R1에서 회차 목록이 같은 이유로 4.6초였다) 전량을 한 번에 읽고 자바에서 가른다.
      * 조회는 교안 수와 무관하게 <b>고정 3건</b>이다.
      */
+    /**
+     * 22차 R7 ② — 목록은 그대로 두고 <b>경로만 사실에 맞춘다.</b>
+     *
+     * <p>교안이 기관 단위라 결과를 기수로 좁히는 것은 사실이 아니다. 대신 없는 기수를 가리키는
+     * 경로를 200으로 답하지 않는다 — 「이 기수엔 교안이 없다」와 「그런 기수가 없다」가 구분되지
+     * 않으면 운영자가 지워진 기수 링크를 열고도 정상이라고 읽는다.
+     */
+    @Override
+    public List<LinkableCurriculum> findLinkableCurriculaForCohort(UUID cohortId, UUID orgId) {
+        if (!catalogRepository.cohortExists(cohortId, orgId)) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND);
+        }
+        return findLinkableCurriculaWithStatus(orgId);
+    }
+
     @Override
     public List<LinkableCurriculum> findLinkableCurriculaWithStatus(UUID orgId) {
         List<CurriculumVersion> versions = findLinkableCurricula(orgId);

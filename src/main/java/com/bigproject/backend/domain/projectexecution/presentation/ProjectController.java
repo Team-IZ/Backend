@@ -152,6 +152,7 @@ public class ProjectController {
 			@ApiResponse(responseCode = "200", description = "프로젝트 목록 조회 성공"),
 			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED status·sort에 없는 값을 지정함"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수·삭제된 기수 포함) — 22차 R7"),
 	})
 	@GetMapping("/cohorts/{cohortId}/projects")
 	public ResponseEntity<ProjectListResponse> findProjects(

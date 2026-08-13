@@ -30,6 +30,7 @@ import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectVeri
 import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumException;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectExecutionErrorCode;
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.global.exception.ApiException;
 
 import lombok.RequiredArgsConstructor;
@@ -594,7 +595,23 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public List<ProjectSummary> findProjectSummaries(UUID cohortId, UUID orgId) {
+        requireCohort(cohortId, orgId);
         return summarizeAll(findProjects(cohortId, orgId), orgId);
+    }
+
+    /**
+     * 22차 R7 — 「이 기수엔 없다」와 「그런 기수가 없다」를 가른다.
+     *
+     * <p>{@code ?cohort=}가 붙은 링크는 남이 보낸 것이거나 그 사이 지워진 기수일 수 있다.
+     * 둘 다 빈 화면이 되면 운영자는 <b>아직 아무것도 안 만든 기수</b>로 읽는다.
+     *
+     * <p>{@code GET /cohorts/{id}/projects/current}는 이미 없으면 204라 이 판정과 어긋나지 않는다 —
+     * 그쪽은 "지금 진행 중인 회차가 없다"가 정상 상태라 목록과 뜻이 다르다.
+     */
+    private void requireCohort(UUID cohortId, UUID orgId) {
+        if (!projectDependencyRepository.cohortExists(cohortId, orgId)) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND);
+        }
     }
 
     /**
@@ -760,6 +777,10 @@ public class ProjectServiceImpl implements ProjectService {
      */
     @Override
     public ProjectList findProjectList(UUID cohortId, UUID orgId, ProjectListCriteria criteria) {
+        // 22차 R7 — 없는 기수에 200 · 빈 목록으로 답하면 「아직 회차를 안 만든 기수」와 구분되지
+        // 않는다. 남이 보낸 링크나 그 사이 지워진 기수를 열어도 운영자에게는 정상으로 보였다.
+        requireCohort(cohortId, orgId);
+
         // 모집단 전체를 먼저 요약한다. readiness 개수(10차 Q1)가 걸러지지 않은 모집단 기준이라
         // 필터를 통과한 것만 요약해서는 만들 수 없다.
         List<ProjectSummary> population = summarizeAll(findProjects(cohortId, orgId), orgId);

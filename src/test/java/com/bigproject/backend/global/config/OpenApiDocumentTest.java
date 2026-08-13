@@ -610,6 +610,31 @@ class OpenApiDocumentTest {
 		}
 	}
 
+	/**
+	 * 22차 R7 — 없는 기수를 물어도 200이 나가고 있었다.
+	 *
+	 * <p>「이 기수엔 없다」와 「그런 기수가 없다」가 구분되지 않아, 남이 보낸 링크나 그 사이 지워진
+	 * 기수를 열어도 운영자에게는 <b>아직 아무것도 안 만든 기수</b>로 보였다. 교안은 더 나빴다 —
+	 * 기관 단위 목록이라 <b>없는 기수인데 다른 기수와 똑같은 7건</b>이 그대로 나갔다.
+	 */
+	@Test
+	void tellsAMissingCohortApartFromAnEmptyOne() throws Exception {
+		List<String> missing = new ArrayList<>();
+		for (String path : List.of("/api/v0/cohorts/{cohortId}/projects",
+				"/api/v0/cohorts/{cohortId}/curricula",
+				"/api/v0/cohorts/{cohortId}/classrooms")) {
+			JsonNode responses = spec().path("paths").path(path).path("get").path("responses");
+			if (!responses.path("404").path("content").path("application/json").path("examples")
+					.toString().contains("COHORT_NOT_FOUND")) {
+				missing.add(path);
+			}
+		}
+
+		assertThat(missing)
+				.as("없는 기수에 200을 주면 화면이 「빈 기수」로 읽는다")
+				.isEmpty();
+	}
+
 	private interface ResponseVisitor {
 		void visit(String operationId, String status, JsonNode response);
 	}

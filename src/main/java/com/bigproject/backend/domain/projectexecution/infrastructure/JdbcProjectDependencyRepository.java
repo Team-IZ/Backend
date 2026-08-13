@@ -80,6 +80,17 @@ public class JdbcProjectDependencyRepository implements ProjectDependencyReposit
 		return names;
 	}
 
+	/** 22차 R7 — 지운 기수는 없는 것으로 본다. org_id를 함께 걸어 남의 기관 기수는 존재도 알리지 않는다. */
+	@Override
+	public boolean cohortExists(UUID cohortId, UUID orgId) {
+		return Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+				SELECT EXISTS (
+					SELECT 1 FROM cohort
+					WHERE cohort_id = ? AND org_id = ? AND deleted_at IS NULL
+				)
+				""", Boolean.class, cohortId, orgId));
+	}
+
 	/**
 	 * {@code assessment_round_attendance}는 (회차 × 사람) 한 줄인 뷰다. 한 회차가 여러 반으로
 	 * 나뉘어도 사람 기준으로 세야 하므로 {@code DISTINCT user_id}로 센다.
