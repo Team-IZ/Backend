@@ -32,9 +32,15 @@ public record SessionResponse(
 				implementation = AssessmentSessionStatus.class)
 		String status,
 
-		@Schema(description = "지금 서 있는 문제 번호(1~3). 시작 전이면 null", nullable = true) Integer currentProblemNo,
+		@Schema(description = """
+				지금 서 있는 문제 번호. 시작 전이면 null. 생성된 문제만 1부터 세므로 항상
+				1~problemTotal 범위이며, 그대로 `GET .../problems/{problemNo}`에 넣으면 된다""",
+				nullable = true)
+		Integer currentProblemNo,
 
-		@Schema(description = "생성된 문제 수. 화면의 `문제 n/N`의 N이다. NOT_GENERATED 문제가 있으면 3보다 작다")
+		@Schema(description = """
+				생성된 문제 수. 화면의 `문제 n/N`의 N이다. 코드 근거를 못 찾아 문항이 만들어지지 않은
+				개념(NOT_GENERATED)이 있으면 3보다 작다 — 그 문제는 세션에 아예 나오지 않는다""")
 		int problemTotal,
 
 		@Schema(description = "세션 시작 시각. 경과 시간 표시의 기산점") Instant startedAt,
