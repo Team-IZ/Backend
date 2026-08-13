@@ -11,6 +11,7 @@ import com.bigproject.backend.domain.submission.presentation.dto.SubmissionRespo
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -63,8 +64,11 @@ public class SubmissionController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "GitHub 저장소 URL 제출·재제출 | ✅ 사용 가능",
+			summary = "GitHub 저장소 URL 제출·재제출 | ⚠️ 사용 불가",
 			description = """
+					> ⚠️ **사용 불가 (2026-08-13 기준)** — 2026-08-23 오전 3시 16분 경에 `nvidia provider error`으로
+					> 확인 후 사용가능 전환 예정.
+
 					**제출 → 분석 → 세션까지 끝까지 간다.** 접수 직후 트리거되는 코드 분석은 AI 원본 서버
 					(`ai.origin-base-url`)의 `POST /analyses`로 나가며 저장소 주소와 브랜치를 함께 싣는다 —
 					clone·분석의 주체는 AI 서버이지만 그쪽으로 주소를 넘기는 경로는 백엔드에 있다.
@@ -129,6 +133,9 @@ public class SubmissionController {
 					| `AI_SERVER_UNAVAILABLE` | 503 | AI 프록시를 깨우지 못했다. **재시도하면 된다** |
 
 					ZIP 업로드는 같은 리소스를 만들지만 `POST /submissions/zip`으로 분리돼 있다.""")
+	// 접수는 201이다. 선언하지 않으면 springdoc 이 기본값 200 으로 적어, 스펙과 서버가 서로 다른
+	// 상태 코드를 말하게 된다(23차 R4에서 오류 응답과 함께 드러났다).
+	@ApiResponse(responseCode = "201", description = "제출 접수됨")
 	@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<SubmissionResponse> submitGithubUrl(
 			@Valid @RequestBody CreateGithubSubmissionRequest request,
@@ -141,8 +148,12 @@ public class SubmissionController {
 	}
 
 	@Operation(
-			summary = "ZIP 업로드 제출·재제출 | ✅ 사용 가능",
+			summary = "ZIP 업로드 제출·재제출 | ⚠️ 사용 불가",
 			description = """
+					> ⚠️ **사용 불가 (2026-08-13 기준)** — 2026-08-23 오전 3시 16분 경에 `nvidia provider error`으로
+					> 확인 후 사용가능 전환 예정. 접수 직후 트리거되는 코드 분석이 GitHub URL 제출과 같은 경로를
+					> 타므로 함께 내린다.
+
 					GitHub URL 제출과 같은 리소스를 만드는 다른 표현이지만 **경로를 분리한다.** OpenAPI는
 					경로·메서드당 operation이 하나뿐이라, 한 경로에 `consumes`만 다른 핸들러를 둘 두면 springdoc이
 					둘을 한 operation으로 병합한다. 그러면 Swagger UI에서 `application/json`을 골라도 multipart
@@ -214,6 +225,7 @@ public class SubmissionController {
 					> 경로를 막아 두었으나, `POST /api/v0/analyses`에 `multipart/form-data`(`payload` +
 					> `file`) 경로가 생겨 근거가 사라졌다. S3 presigned URL이 아니라 **백엔드가 파일을 직접
 					> 실어 보내는** 방식이라, GitHub 제출과 달리 AI 서버에 저장소 접근 권한이 없어도 된다.""")
+	@ApiResponse(responseCode = "202", description = "업로드 접수됨. 분석은 비동기로 이어진다")
 	@PostMapping(path = "/zip", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	public ResponseEntity<SubmissionResponse> submitZip(
 			@RequestParam @NotNull UUID assessmentRoundId,

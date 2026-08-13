@@ -154,6 +154,7 @@ public class ProjectController {
 			@ApiResponse(responseCode = "200", description = "프로젝트 목록 조회 성공"),
 			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED status·sort에 없는 값을 지정함"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수·삭제된 기수 포함) — 22차 R7"),
 	})
 	@GetMapping("/cohorts/{cohortId}/projects")
 	public ResponseEntity<ProjectListResponse> findProjects(
@@ -312,6 +313,17 @@ public class ProjectController {
 					`projectId` · `name` · `sequenceNo` · `status` · `startDate` · `endDate` +
 					`curriculumCount` · `conceptCount` · `conceptCandidateCount`.
 
+					## 🆕 22차 R10 ⓐ — `totalRounds`
+
+					**이 기수의 전체 회차 수**이며 화면의 `3차 / 6회`에서 분모다. `sequenceNo`(분자)는
+					있는데 이 값이 없어서, 15차 R1로 만든 이 API를 대시보드가 한 번도 쓰지 못하고
+					목록(`GET /cohorts/{id}/projects`)을 계속 부르고 있었다.
+
+					세는 데 조회가 늘지 않는다 — 「이번 회차」를 고르려고 어차피 읽던 목록의 길이다.
+
+					> ⓑ(진행 수치를 함께 싣기)는 아직 반영하지 않았다. 계약이 커지는 일이라
+					> 프론트도 ⓐ만이어도 좋다고 했고, 지금은 `class-progress`를 한 번 더 부르면 된다.
+
 					## 🔴 회차가 없으면 `204 No Content`다
 
 					**`404`가 아니다.** 회차를 아직 만들지 않은 기수는 실패가 아니라 정상 상태이고,
@@ -332,11 +344,16 @@ public class ProjectController {
 					|---|---|
 					| 204 | 그 기수에 회차가 하나도 없다 (**정상**) |
 					| 401 | 액세스 토큰이 없거나 유효하지 않다 |
+					| 404 | **그런 기수가 없다**(22차 R7·R8). 204와 다르다 |
+
+					> 22차 이전에는 없는 기수도 204라 「이번 회차 없음」으로 그려졌다. 지금은
+					> `COHORT_NOT_FOUND`로 갈리므로 화면이 「기수를 다시 고르세요」를 말할 수 있다.
 					""")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "이번 회차 조회 성공"),
 			@ApiResponse(responseCode = "204", description = "그 기수에 회차가 하나도 없음. 정상 상태이며 본문이 없다"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수·삭제된 기수 포함) — 22차 R7·R8"),
 	})
 	// `/{projectId}`가 아니라 `/cohorts/{cohortId}/projects/current`라 경로 충돌이 없다 —
 	// 이 뿌리에는 UUID 경로 변수가 뒤에 오지 않는다.
@@ -360,6 +377,7 @@ public class ProjectController {
 					- name (필수): 프로젝트명. 같은 기수 안에서 중복되면 409
 					- category (필수): MINI_PROJECT / BIG_PROJECT
 					- startDate / endDate (필수): 프로젝트 기간
+					- submissionDueAt (선택): 제출 마감 **시각**. 생략하면 `endDate`의 23:59 KST로 파생한다
 
 					**응답 (201)**
 					- projectId: 생성된 프로젝트 ID
@@ -369,7 +387,21 @@ public class ProjectController {
 					- category: MINI_PROJECT / BIG_PROJECT
 					- status: 생성 직후 항상 PLANNED
 					- startDate / endDate: 프로젝트 기간
+					- submissionDueAt: 방금 정해진 제출 마감 시각(보낸 값 또는 파생값)
 					- curriculumCount / conceptCount / conceptCandidateCount: 갓 만든 프로젝트라 전부 0
+
+					## 🔴 22차 R5·R6 — 평가 회차를 **함께 만든다**
+
+					여태 이 API는 `project` 행만 만들고 `project_assessment_round`는 만들지 않았다.
+					회차가 있는 프로젝트는 전부 시드로 들어간 것이었고, **화면에서 만든 프로젝트에는
+					회차가 없었다.** 그래서 두 가지가 동시에 깨져 있었다.
+
+					- 현황 탭(`class-progress`)이 회차를 못 찾아 답하지 못했다(22차 R6)
+					- 제출 마감이 회차에 있는 컬럼이라 **저장할 자리가 없었다**(22차 R5 ①)
+
+					이제 프로젝트와 회차를 **한 트랜잭션**에서 만든다. 회차는 `round_no=1` ·
+					`status=PLANNED` · `trigger_type=MANUAL`로 열리며, 응시 창과 리포트 발행 하한은
+					비워 둔다 — 셋 다 코드 분석·응시가 끝나야 정해지는 값이라 이 시점에 넣을 사실이 없다.
 					"""
 	)
 	@ApiResponses({
@@ -386,7 +418,8 @@ public class ProjectController {
 		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
 		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
 		Project project = projectService.createProject(
-				orgId, cohortId, request.name(), request.category(), request.startDate(), request.endDate(), actorUserId);
+				orgId, cohortId, request.name(), request.category(), request.startDate(), request.endDate(),
+				request.submissionDueAt(), actorUserId);
 		return ResponseEntity.status(HttpStatus.CREATED)
 				.body(ProjectResponse.from(projectService.summarize(project, orgId)));
 	}
@@ -411,6 +444,23 @@ public class ProjectController {
 					  화면의 4값은 `status === 'PLANNED' ? readiness : status`로 만든다
 					- startDate / endDate: 프로젝트 기간. **endDate는 날짜만이며 시각 의미가 없다**(9차 Q2)
 					- curriculumCount / conceptCount / conceptCandidateCount: 목록 응답과 같은 세 숫자
+
+					**응답 (200) — 회차 시각 넷**(22차 R5·R9)
+
+					개요 타임라인이 **규칙 문장 대신 실제 시각**을 그리는 근거다. 여태 운영자 화면은
+					`응시 창: 코드 분석 완료 시점부터 24시간`처럼 규칙만 말했는데, 교육생은 자기 홈에서
+					그 시각을 정확히 보고 있었다 — 문의를 받는 사람이 정작 시각을 몰랐다.
+
+					| 필드 | 무엇 | 언제 null인가 |
+					|---|---|---|
+					| `submissionDueAt` | **실제 제출 마감.** `endDate`가 아니다 | 회차가 없는 프로젝트(22차 이전 생성) |
+					| `roundAssessmentOpenAt` | 회차 응시 창이 열리는 시각 | 회차가 열리기 전(코드 분석 전) |
+					| `roundAssessmentDueAt` | 회차 응시 창이 닫히는 시각 | 〃 |
+					| `reportPublishNotBeforeAt` | 리포트 발행 하한 | 응시가 닫히기 전 |
+
+					**개인별 시각은 여기 없다.** `assessmentOpenAt`·`assessmentCloseAt`은 사람마다 다른
+					값이라 교육생 홈(`CurrentRoundResponse`)과 명단에 있다. 운영자에게 필요한 것은
+					회차의 창이다.
 
 					**응답 (200) — 되읽기**
 
@@ -470,7 +520,11 @@ public class ProjectController {
 					| | 값 | 어디 |
 					|---|---|---|
 					| 이 API가 쓰는 것 | `project.end_date` (`date`) | 회차 기간 표시용 |
-					| 실제 마감 | `project_assessment_round.submission_due_at` (`timestamptz`) | `GET /projects/{id}/class-progress`의 `submissionDueAt` |
+					| 실제 마감 | `project_assessment_round.submission_due_at` (`timestamptz`) | **목록·상세의 `submissionDueAt`**(22차 R5) · `class-progress`의 `submissionDueAt` |
+
+					> 22차 R5로 **목록(`ProjectResponse`)과 상세(`ProjectDetailResponse`)가 이 값을 직접 싣는다.**
+					> 마감을 그리려고 `class-progress`를 부를 필요가 없어졌다 — 그쪽은 현황 탭의 조회라
+					> 개념이 확정되기 전이나 회차가 열리기 전에는 쓸 수 없었다.
 
 					**둘은 서버에서 연결돼 있지 않다.** 이 API로 `endDate`를 바꿔도 `submissionDueAt`은
 					움직이지 않는다. 두 값이 `2027-02-26` ↔ `2027-02-26T14:59:00Z`(= KST 23:59)로 맞아
@@ -926,6 +980,20 @@ public class ProjectController {
 					| `analysedTraineeCount` | long | 분석에 성공한 교육생 수. 매칭률의 분모 |
 					| `matchedTraineeCount` | long | 그 개념의 문제를 받은 교육생 수 |
 					| `unmatchedTeamCount` | long | 그 개념이 코드에서 발견되지 않아 전원이 문제를 받지 못한 팀 수 |
+
+					## 22차 R6 — `PLANNED` 회차도 200이다
+
+					**상태로 막지 않는다.** `PLANNED`·`RUNNING`·`CLOSED` 어느 쪽이든 회차가 있으면
+					200이며, 아직 제출이 없으면 `classes[]`가 비고 `summary`가 전부 0으로 나간다 —
+                    화면은 그것을 「아직 제출한 학생이 없습니다」로 그리면 된다.
+
+					답하지 못하던 것은 **회차가 없는 프로젝트**였다. 22차 이전에는 프로젝트를 만들어도
+					`project_assessment_round`를 만들지 않아, 화면에서 만든 회차에는 회차 행이 아예
+					없었다. 지금은 생성이 회차를 함께 만든다(`POST /cohorts/{cohortId}/projects` 참고).
+
+					그때 만들어져 회차가 없는 프로젝트는 **`PROJECT_ROUND_NOT_CREATED`(404)** 로 답한다.
+					`PROJECT_ROUND_NOT_FOUND`와 나눈 이유는 화면이 할 일이 다르기 때문이다 —
+					이쪽은 「회차 준비 중」이고, 그쪽은 없는 번호를 물은 것이라 드롭다운을 되돌려야 한다.
 					"""
 	)
 	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
@@ -934,7 +1002,7 @@ public class ProjectController {
 			@ApiResponse(responseCode = "400", description = "ROUND_NO_INVALID 회차 번호가 1 미만"),
 			@ApiResponse(responseCode = "401", description = "ANALYTICS_VIEWER_NOT_FOUND 토큰은 유효하지만 계정을 찾을 수 없음"),
 			@ApiResponse(responseCode = "403", description = "ANALYTICS_VIEWER_NOT_ACTIVE 활성 계정 아님 · ANALYTICS_ORGANIZATION_NOT_ACTIVE 소속 기관이 활성 아님 · ANALYTICS_ROLE_NOT_ALLOWED 오퍼레이터·매니저가 아님 · PROJECT_CROSS_ORGANIZATION 다른 기관의 프로젝트"),
-			@ApiResponse(responseCode = "404", description = "PROJECT_ROUND_NOT_FOUND 그 프로젝트에 그 번호의 회차가 없음")
+			@ApiResponse(responseCode = "404", description = "PROJECT_ROUND_NOT_FOUND 그 프로젝트에 그 번호의 회차가 없음 · PROJECT_ROUND_NOT_CREATED 회차가 아직 하나도 없음(22차 R6)")
 	})
 	@GetMapping(value = "/projects/{projectId}/class-progress", produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<ClassProgressResponse> findClassProgress(

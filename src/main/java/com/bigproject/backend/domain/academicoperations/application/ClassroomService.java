@@ -12,6 +12,7 @@ import com.bigproject.backend.domain.academicoperations.infrastructure.Classroom
 import com.bigproject.backend.domain.academicoperations.infrastructure.ManagerAssignmentRepository;
 import com.bigproject.backend.domain.academicoperations.domain.CohortMember;
 import com.bigproject.backend.domain.academicoperations.infrastructure.CohortMemberRepository;
+import com.bigproject.backend.domain.academicoperations.infrastructure.CohortRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +21,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -40,6 +42,7 @@ public class ClassroomService {
     private final ManagerAssignmentRepository managerAssignmentRepository;
     private final ManagerDirectoryRepository managerDirectoryRepository;
     private final ClassroomDependencyRepository classroomDependencyRepository;
+    private final CohortRepository cohortRepository;
 
     // 반 하나에 대한 응답 조립용 뷰: 담당 매니저(회원 ID·이름·이메일)와 활성 교육생 수를 함께 담음
     // 이름·이메일은 ManagerDirectoryRepository(읽기 전용 조회 포트)로 채운다. 반 카드가 `이도윤 · lee@…`를
@@ -91,8 +94,32 @@ public class ClassroomService {
         return toView(findClassroom(classId, orgId), orgId);
     }
 
-    public List<ClassroomView> findClassroomViews(UUID cohortId, UUID orgId) {
+    /**
+     * 반 목록. {@code scopedManagerId}를 주면 그 매니저가 <b>현재 담당하는 반만</b> 돌려준다.
+     *
+     * <p>화면의 `반 · 전체` 드롭다운을 채우는 값이라 <b>명단과 같은 모집단</b>이어야 한다 —
+     * 매니저 명단은 담당 반으로 좁혀져 있는데(교육생 명단 조회의 매니저 스코프) 드롭다운만
+     * 기수 전체 10개를 보여주면, 고를 수는 있는데 고르면 늘 비는 반이 생긴다.
+     *
+     * @param scopedManagerId 담당 반으로 좁힐 매니저. 오퍼레이터는 null이며 기수 전체를 본다
+     */
+    public List<ClassroomView> findClassroomViews(UUID cohortId, UUID orgId, UUID scopedManagerId) {
+        // 22차 R7 — 없는 기수도 200 · 반 0으로 답하고 있었다. 스펙에는 404를 적어 두고 실제로는
+        // 검사하지 않아, 「반을 아직 안 만든 기수」와 「그런 기수가 없다」가 구분되지 않았다.
+        if (!cohortRepository.existsByCohortIdAndOrgIdAndDeletedAtIsNull(cohortId, orgId)) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND);
+        }
         List<Classroom> classrooms = classroomRepository.findByCohortIdAndOrgIdAndDeletedAtIsNullOrderByNameAsc(cohortId, orgId);
+        if (scopedManagerId != null) {
+            Set<UUID> assignedClassIds = managerAssignmentRepository
+                    .findByManagerUserIdAndOrgIdAndUnassignedAtIsNull(scopedManagerId, orgId).stream()
+                    .filter(assignment -> ASSIGNMENT_STATUS_ACTIVE.equals(assignment.getStatus()))
+                    .map(ManagerAssignment::getClassId)
+                    .collect(Collectors.toSet());
+            classrooms = classrooms.stream()
+                    .filter(classroom -> assignedClassIds.contains(classroom.getClassId()))
+                    .toList();
+        }
         return toViews(classrooms, orgId);
     }
 

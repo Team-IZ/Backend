@@ -19,6 +19,14 @@ public interface CohortRepository extends JpaRepository<Cohort, UUID> {
     /** 기관 내 동일 이름의 살아있는 기수 존재 여부 (기수명 중복 검사용) */
     boolean existsByOrgIdAndNameAndDeletedAtIsNull(UUID orgId, String name);
 
+    /**
+     * 기수 존재 여부만 확인한다(22차 R7). 엔티티를 통째로 읽을 이유가 없는 검증용이다.
+     *
+     * <p>{@code orgId}를 함께 거는 것은 남의 기관 기수의 존재 여부를 알려 주지 않기 위해서다 —
+     * 있으면 403, 없으면 404로 갈리면 그 차이로 다른 기관의 기수 ID를 확인할 수 있다.
+     */
+    boolean existsByCohortIdAndOrgIdAndDeletedAtIsNull(UUID cohortId, UUID orgId);
+
     /**기수 목록 조회 — 상태/검색어는 null이면 조건 무시 */
     @Query("""
             SELECT c FROM Cohort c

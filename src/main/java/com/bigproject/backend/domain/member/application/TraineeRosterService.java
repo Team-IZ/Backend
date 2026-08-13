@@ -5,6 +5,8 @@ import com.bigproject.backend.domain.member.domain.AccountStatus;
 import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.member.domain.TraineeRosterRepository;
 import com.bigproject.backend.domain.member.domain.TraineeRosterSort;
+import com.bigproject.backend.domain.projectexecution.application.ProjectService;
+import com.bigproject.backend.domain.projectexecution.domain.Project;
 import com.bigproject.backend.global.exception.ApiException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -29,6 +31,8 @@ public class TraineeRosterService {
 	private final TraineeRosterRepository traineeRosterRepository;
 	private final com.bigproject.backend.domain.auth.domain.PasswordResetRepository accountRepository;
 	private final com.bigproject.backend.domain.auth.application.InvitationResendDispatcher resendDispatcher;
+	/** 「이번 회차」 판정을 빌려 온다. 규칙은 projectexecution이 갖는다(15차 R1). */
+	private final ProjectService projectService;
 
 	/**
 	 * 교육생 초대 재발송(11차 R2). 명단에서 고른 여러 명을 <b>한 번에</b> 받는다.
@@ -102,10 +106,15 @@ public class TraineeRosterService {
 		NO_INVITATION
 	}
 
+	/**
+	 * @param scopedManagerId 목록을 담당 반으로 좁힐 매니저. 오퍼레이터가 부르면 null이라 기수 전체를 본다.
+	 *                        <b>목록·총원·미배정 수가 모두 같은 모집단</b>이 되도록 세 곳에 함께 넘긴다.
+	 */
 	public RosterResult findRoster(
 			UUID cohortId,
 			UUID orgId,
 			UUID managerId,
+			UUID scopedManagerId,
 			UUID assessmentRoundId,
 			UUID classroomId,
 			boolean unassignedOnly,
@@ -119,28 +128,88 @@ public class TraineeRosterService {
 			throw new ApiException(MemberErrorCode.ROSTER_FILTER_CONFLICT);
 		}
 
+		TraineeRosterSort effectiveSort = sort == null ? TraineeRosterSort.NAME : sort;
+
+		// 회차를 생략하면 가장 최근 회차를 서버가 고른다. 화면이 첫 진입에 이미 `회차 · 미프 3차`를
+		// 고른 상태로 뜨는데, 그 값을 알려면 회차 목록을 먼저 받아야 해서 호출이 두 번이 된다.
+		List<TraineeRosterRepository.RoundOption> rounds = traineeRosterRepository.findRounds(cohortId, orgId);
+		UUID resolvedRoundId = resolveRound(assessmentRoundId, rounds, effectiveSort, cohortId, orgId);
+
 		TraineeRosterRepository.RosterCriteria criteria = new TraineeRosterRepository.RosterCriteria(
 				cohortId,
 				orgId,
 				managerId,
-				assessmentRoundId,
+				scopedManagerId,
+				resolvedRoundId,
 				classroomId,
 				unassignedOnly,
 				toRawStatus(accountStatus),
 				query,
-				sort == null ? TraineeRosterSort.NAME : sort
+				effectiveSort
 		);
 
 		Page<TraineeRosterRepository.RosterRow> page = traineeRosterRepository.findRoster(criteria, pageable);
-		int unassignedCount = traineeRosterRepository.countUnassigned(cohortId, orgId);
-		int cohortTotal = traineeRosterRepository.countCohortTotal(cohortId, orgId);
-		return new RosterResult(page, unassignedCount, cohortTotal);
+		int unassignedCount = traineeRosterRepository.countUnassigned(cohortId, orgId, scopedManagerId);
+		int cohortTotal = traineeRosterRepository.countCohortTotal(cohortId, orgId, scopedManagerId);
+		return new RosterResult(page, unassignedCount, cohortTotal, rounds, resolvedRoundId);
+	}
+
+	/**
+	 * 조회에 쓸 회차를 정한다. 요청이 회차를 지정했으면 그대로 두고, 생략했으면 「이번 회차」를 고른다.
+	 *
+	 * <p>기수에 회차가 하나도 없으면 null이다. 그때 위험·우수 정렬은 기준이 없어 성립하지 않으므로
+	 * 막는다 -- 회차를 생략했다는 이유가 아니라 <b>고를 회차 자체가 없다</b>는 이유다.
+	 */
+	private UUID resolveRound(
+			UUID requestedRoundId,
+			List<TraineeRosterRepository.RoundOption> rounds,
+			TraineeRosterSort sort,
+			UUID cohortId,
+			UUID orgId
+	) {
+		UUID resolved = requestedRoundId != null
+				? requestedRoundId
+				: defaultRound(rounds, cohortId, orgId);
+
+		if (resolved == null && (sort == TraineeRosterSort.RISK || sort == TraineeRosterSort.EXCELLENCE)) {
+			throw new ApiException(MemberErrorCode.ROSTER_ASSESSMENT_ROUND_REQUIRED);
+		}
+		return resolved;
+	}
+
+	/**
+	 * 요청이 회차를 생략했을 때의 기본 회차. <b>「이번 회차」 판정은 projectexecution이 갖는다</b>(15차 R1) --
+	 * RUNNING이 있으면 가장 늦게 시작한 것, 없으면 가장 이른 PLANNED, 그것도 없으면 마지막 프로젝트다.
+	 *
+	 * <p>규칙을 여기서 다시 쓰지 않고 {@code resolveCurrentProject}를 부르는 이유는, 명단 드롭다운과
+	 * {@code GET /cohorts/{cohortId}/projects/current}가 <b>같은 차수를 말해야</b> 하기 때문이다.
+	 * 종전에는 차수가 가장 큰 회차를 골라, 진행 중인 미프 2차를 두고 명단만 아직 열지 않은 3차를
+	 * 펴 놓는 일이 생겼다.
+	 *
+	 * @return 이번 회차 프로젝트의 회차. 그 프로젝트에 회차가 아직 없으면(PLANNED에서 흔하다)
+	 *         목록의 마지막 회차로 물러선다 -- 아무것도 못 고르면 지표 칸이 통째로 비기 때문이다.
+	 *         기수에 회차가 하나도 없으면 null이다.
+	 */
+	private UUID defaultRound(List<TraineeRosterRepository.RoundOption> rounds, UUID cohortId, UUID orgId) {
+		if (rounds.isEmpty()) {
+			return null;
+		}
+
+		UUID lastRoundId = rounds.get(rounds.size() - 1).assessmentRoundId();
+		return projectService.resolveCurrentProject(cohortId, orgId)
+				.map(Project::getProjectId)
+				// 한 프로젝트에 회차가 여럿이면 마지막 회차다. 미니프로젝트는 1건뿐이라 늘 그것이다.
+				.flatMap(currentProjectId -> rounds.stream()
+						.filter(round -> currentProjectId.equals(round.projectId()))
+						.reduce((earlier, later) -> later))
+				.map(TraineeRosterRepository.RoundOption::assessmentRoundId)
+				.orElse(lastRoundId);
 	}
 
 	public RosterResult findRoster(
 			UUID cohortId, UUID orgId, UUID classroomId, boolean unassignedOnly,
 			AccountStatus accountStatus, String query, TraineeRosterSort sort, Pageable pageable) {
-		return findRoster(cohortId, orgId, null, null, classroomId, unassignedOnly,
+		return findRoster(cohortId, orgId, null, null, null, classroomId, unassignedOnly,
 				accountStatus, query, sort, pageable);
 	}
 
@@ -200,10 +269,17 @@ public class TraineeRosterService {
 	}
 
 	/** 한 페이지와, 그 페이지의 필터와 무관한 기수 전체 기준 집계 둘. */
+	/**
+	 * @param rounds            회차 드롭다운 목록. 차수 오름차순이라 마지막이 가장 최근이다
+	 * @param assessmentRoundId <b>실제로 조회에 쓴</b> 회차. 요청이 생략했으면 서버가 고른 최근 회차이며,
+	 *                          기수에 회차가 하나도 없으면 null이다
+	 */
 	public record RosterResult(
 			Page<TraineeRosterRepository.RosterRow> page,
 			int unassignedCount,
-			int cohortTotal
+			int cohortTotal,
+			List<TraineeRosterRepository.RoundOption> rounds,
+			UUID assessmentRoundId
 	) {
 	}
 }

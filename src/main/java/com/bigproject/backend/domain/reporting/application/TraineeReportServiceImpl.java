@@ -43,6 +43,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class TraineeReportServiceImpl implements TraineeReportService {
 
+	/**
+	 * 재시험 기준선. <b>2단(설계 논리)이 합격선</b>이라 그 미만만 다시 본다.
+	 * 확정 채점 모델의 "불합격(2단 미만) 개념만 재시험"이 이 상수 하나로 표현된다.
+	 */
+	static final int RETRY_TARGET_BELOW_LEVEL = 2;
+
 	private final TraineeReportQueryRepository queryRepository;
 	private final ObjectMapper objectMapper;
 
@@ -59,7 +65,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 
 		for (RoundRow round : rounds) {
 			String roundId = round.assessmentRoundId().toString();
-			railItems.add(new RoundListItem(roundId, round.roundName(), isRetryPending(round)));
+			boolean hasRetryTarget = hasRetryTarget(round, conceptsByReport);
+			railItems.add(new RoundListItem(roundId, round.roundName(), isRetryPending(round, hasRetryTarget)));
 			reportsById.put(roundId, toRoundReport(round, conceptsByReport, unaskedByReport, answersByReport));
 		}
 
@@ -155,7 +162,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 
 		// 두 값 다 회차 단위다. 개념 카드마다 다시 계산하지 않고 한 번 정해 넘긴다.
 		boolean fullScope = DisclosureScope.FULL == scope(round.traineeDisclosureScope());
-		boolean retryPending = isRetryPending(round);
+		boolean hasRetryTarget = conceptRows.stream().anyMatch(TraineeReportServiceImpl::isRetryTarget);
+		boolean retryPending = isRetryPending(round, hasRetryTarget);
 
 		// 물은 개념과 묻지 못한 개념을 한 배열에 담는다. 화면이 개념 3개를 나란히 그리고, 빠진
 		// 자리에 "코드에 이 개념이 없어 묻지 못했습니다"를 띄우려면 같은 목록에 있어야 한다 —
@@ -188,7 +196,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				round.sampleCount(),
 				round.missingCount(),
 				concepts,
-				retryState(round),
+				retryState(round, hasRetryTarget),
 				iso(round.reviewDueAt()),
 				iso(round.reviewCompletedAt())
 		);
@@ -230,7 +238,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	private ConceptReportResponse toConcept(ConceptRow row, List<StageAnswerRow> answerRows,
 			boolean fullScope, boolean retryPending) {
 
-		boolean hideOwnAnswers = !fullScope || (row.reviewRequired() && retryPending);
+		boolean retryTarget = isRetryTarget(row);
+		boolean hideOwnAnswers = !fullScope || (retryTarget && retryPending);
 
 		List<QaEntryResponse> qa = (hideOwnAnswers || answerRows.isEmpty())
 				? null
@@ -246,24 +255,82 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				true,
 				row.reachLevel(),
 				row.resultExplanation(),
-				row.reviewRequired(),
+				retryTarget,
 				row.canViewExplanation() ? curriculumRef(row.curriculumLocationJson()) : null,
 				qa,
-				explain(row, fullScope, retryPending),
+				explain(row, fullScope, retryPending, retryTarget),
 				comparedReach(row.reviewBeforeAfterItemsJson())
 		);
 	}
 
-	/** 다시 보기 상태. REVIEW 응시 기록이 없으면 대상이 아니다. */
-	private static String retryState(RoundRow round) {
+	/**
+	 * 재시험 대상인가. <b>정책이 정한다 — 저장된 판정을 그대로 내보내지 않는다.</b>
+	 *
+	 * <p>확정 채점 모델의 규칙은 <b>"2단 미만만 재시험"</b> 하나다. 그런데
+	 * {@code report_evidence.decision_code}에는 그 규칙과 어긋나는 값이 남아 있다 — 2단을 통과한
+	 * 개념이 {@code REVIEW_REQUIRED}로 얼어 있는 리포트가 실제로 있었다(23차 R2). 발행 시점에 AI가
+	 * 준 {@code retest}를 그대로 믿었거나, 그 이전에 적재된 데이터다.
+	 *
+	 * <p>🔴 <b>그대로 두면 학생이 합격한 개념을 다시 본다.</b> 다시 보기는 회차당 한 번뿐이라,
+	 * 그 한 번을 이미 통과한 개념에 쓰면 <b>정작 막힌 개념을 볼 기회가 사라진다.</b> 저장된 값보다
+	 * 이 손해가 크므로 읽는 시점에 정책으로 덮는다 — 이미 발행된 리포트도 함께 맞는다.
+	 *
+	 * <p>쓰는 쪽({@code ReportEvidenceFactory})도 같은 규칙으로 확정하므로 앞으로 저장되는 값은
+	 * 여기서 뒤집히지 않는다. 두 곳에 같은 규칙이 있는 것은 중복이 아니라 <b>옛 데이터까지 덮기
+	 * 위한 것</b>이며, 규칙 자체는 {@link #RETRY_TARGET_BELOW_LEVEL} 하나에서 나온다.
+	 */
+	private static boolean isRetryTarget(ConceptRow row) {
+		return row.reachLevel() < RETRY_TARGET_BELOW_LEVEL;
+	}
+
+	/**
+	 * 이 회차에 다시 볼 개념이 하나라도 있는가. {@link #isRetryTarget}과 <b>같은 원천</b>이다.
+	 *
+	 * <p>개념 행이 없는 회차(미응시·발행 전)는 대상도 없다. 공개 대기(PENDING_VISIBILITY)는
+	 * 개념 행 자체는 있으므로 여기서 걸러지지 않는다 — {@code trainee_report_problem_view}가
+	 * 공개 여부를 행 유무가 아니라 {@code can_view_explanation} 컬럼으로 표현하기 때문이다.
+	 */
+	private static boolean hasRetryTarget(RoundRow round, Map<UUID, List<ConceptRow>> conceptsByReport) {
+		if (round.reportId() == null) {
+			return false;
+		}
+		return conceptsByReport.getOrDefault(round.reportId(), List.of()).stream()
+				.anyMatch(TraineeReportServiceImpl::isRetryTarget);
+	}
+
+	/**
+	 * 다시 보기 상태.
+	 *
+	 * <h2>🔴 대상이 0개면 {@code PENDING}을 만들지 않는다</h2>
+	 *
+	 * <p>종전에는 REVIEW 응시 행의 존재 여부만 봤다. 그런데 대상 판정({@link #isRetryTarget})은
+	 * 23차 R2에서 <b>2단 미만</b>으로 확정됐고, 그보다 느슨한 기준으로 만들어진 REVIEW 응시가
+	 * 데이터에 남아 있다 — 2단을 통과한 개념까지 재시험 대상으로 잡던 시절의 행이다.
+	 * 그래서 <b>다시 볼 문제가 0개인데 {@code PENDING}</b>인 회차가 생겼고, 화면은
+	 * "다시 볼 수 있는 문제가 0개 있어요" 배너와 빈 세션으로 들어가는 버튼을 그렸다(24차 R1).
+	 *
+	 * <p>판정 순서는 이렇다.
+	 * <ol>
+	 *   <li>REVIEW 응시가 없다 → {@code NONE}</li>
+	 *   <li>REVIEW 응시를 마쳤다 → {@code DONE}. <b>대상 수와 무관하다</b> —
+	 *       이미 일어난 사실의 기록이라 지금 대상이 0개여도 참이고, 이 값이 해설 잠금을 푼다</li>
+	 *   <li>미완료인데 대상이 0개다 → {@code NONE}. 지킬 수 없는 할 일은 만들지 않는다</li>
+	 *   <li>그 외 → {@code PENDING}</li>
+	 * </ol>
+	 */
+	private static String retryState(RoundRow round, boolean hasRetryTarget) {
 		if (round.reviewStatus() == null) {
 			return "NONE";
 		}
-		return round.reviewCompletedAt() != null ? "DONE" : "PENDING";
+		if (round.reviewCompletedAt() != null) {
+			return "DONE";
+		}
+		return hasRetryTarget ? "PENDING" : "NONE";
 	}
 
-	private static boolean isRetryPending(RoundRow round) {
-		return round.reviewStatus() != null && round.reviewCompletedAt() == null;
+	/** {@code rounds[].hasPendingRetry}. {@link #retryState}의 {@code PENDING}과 같은 판정이다. */
+	private static boolean isRetryPending(RoundRow round, boolean hasRetryTarget) {
+		return hasRetryTarget && round.reviewStatus() != null && round.reviewCompletedAt() == null;
 	}
 
 	/** 화면 `[내 답변] 펼침`의 슬롯 이름. 축을 앞에 붙여 어느 단계의 문답인지 보이게 한다. */
@@ -300,9 +367,15 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		}
 	}
 
-	/** 막힌 이유 해설. 다시 보기 대상이고 근거 문장이 있을 때만 붙는다. */
-	private static List<String> explain(ConceptRow row, boolean fullScope, boolean retryPending) {
-		if (!row.reviewRequired() || !row.canViewExplanation()) {
+	/**
+	 * 막힌 이유 해설. 다시 보기 대상이고 근거 문장이 있을 때만 붙는다.
+	 *
+	 * <p>대상 판정은 {@code isRetryTarget}이 넘겨준 값을 쓴다 — 저장된 {@code decision_code}를 다시
+	 * 읽으면 해설이 붙는 개념과 재시험 뱃지가 붙는 개념이 갈린다.
+	 */
+	private static List<String> explain(ConceptRow row, boolean fullScope, boolean retryPending,
+			boolean retryTarget) {
+		if (!retryTarget || !row.canViewExplanation()) {
 			return null;
 		}
 		// 공개 범위가 FULL이 아니면 해설을 내보내지 않는다. SUMMARY는 "무엇을 어디까지 했는지"까지고,

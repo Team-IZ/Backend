@@ -34,9 +34,22 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				       cm.joined_at, cm.left_at, cm.joined_at AS sort_at,
 				       u.name, u.email, u.status AS account_status,
 				       u.inactivated_reason_code, u.inactivated_reason, u.inactivated_at,
-				       u.inactivated_by, NULL::uuid AS pending_invitation_token_id
+				       u.inactivated_by, NULL::uuid AS pending_invitation_token_id,
+				       /*
+				        * 매니저 스코프용 반. 수락한 교육생의 반은 class_membership에서 오므로
+				        * 여기서는 비우고, 초대 대기 행만 target_class_id를 싣는다 --
+				        * 초대는 아직 cohort_member가 없어 class_membership으로 이어지지 않는다.
+				        */
+				       NULL::uuid AS invited_class_id
 				FROM cohort_member cm
-				JOIN app_user u ON u.user_id = cm.user_id AND u.deleted_at IS NULL
+				/*
+				 * 중도 이탈 처리는 app_user.deleted_at까지 함께 찍는다. 그래서 deleted_at만 보고 거르면
+				 * 이탈자가 명단에서 통째로 사라지고, 이탈 이전 회차의 결과까지 볼 수 없게 된다.
+				 * 이탈(cohort_member.status='LEFT')로 삭제된 계정만 되살리고, 그 밖의 사유로
+				 * 삭제된 계정은 그대로 제외한다.
+				 */
+				JOIN app_user u ON u.user_id = cm.user_id
+				 AND (u.deleted_at IS NULL OR cm.status = 'LEFT')
 
 				UNION ALL
 
@@ -51,7 +64,8 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				             AND invitation_cohort.org_id = ui.org_id
 				             AND invitation_cohort.status <> 'CLOSED'
 				             AND invitation_cohort.deleted_at IS NULL
-				       ) THEN ui.current_token_id END
+				       ) THEN ui.current_token_id END,
+				       ui.target_class_id
 				FROM user_invitation ui
 				JOIN app_user u
 				  ON u.normalized_email = ui.target_email_normalized
@@ -68,11 +82,39 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 			)
 			""";
 
+	/**
+	 * 이탈자는 반 배정도 함께 해제되므로 {@code unassigned_at IS NULL}만 보면 반이 사라지고,
+	 * 담당 반 스코프({@link #MANAGER_SCOPE_CONDITION})에서도 빠져 매니저가 이탈자를 볼 수 없다.
+	 * 이탈자에 한해 <b>해제된 마지막 배정</b>까지 후보로 둔다 — 재직 중인 교육생의 판정은 그대로다.
+	 */
 	private static final String ROSTER_FROM = """
 			FROM roster r
-			LEFT JOIN class_membership csm ON csm.cohort_member_id = r.cohort_member_id AND csm.unassigned_at IS NULL
+			LEFT JOIN LATERAL (
+			    SELECT x.class_id
+			    FROM class_membership x
+			    WHERE x.cohort_member_id = r.cohort_member_id
+			      AND (x.unassigned_at IS NULL OR r.left_at IS NOT NULL)
+			    ORDER BY x.unassigned_at DESC NULLS FIRST
+			    LIMIT 1
+			) csm ON TRUE
 			LEFT JOIN class c ON c.class_id = csm.class_id
 			LEFT JOIN app_user actor ON actor.user_id = r.inactivated_by
+			""";
+
+	/**
+	 * 매니저가 부를 때만 붙는 담당 반 조건이다. 오퍼레이터는 기수 전체를 보므로 붙이지 않는다.
+	 *
+	 * <p>수락한 교육생은 현재 반 배정(class_membership)으로, 아직 수락하지 않은 초대는
+	 * {@code user_invitation.target_class_id}로 판정한다 -- 둘 중 하나만 값이 있다.
+	 * 초대 대기자를 빼면 화면 상단의 `초대 대기 N`이 명단과 어긋난다.
+	 */
+	private static final String MANAGER_SCOPE_CONDITION = """
+			 AND EXISTS (
+			     SELECT 1 FROM manager_assignment ma
+			     WHERE ma.manager_user_id = ?
+			       AND ma.status = 'ACTIVE' AND ma.unassigned_at IS NULL
+			       AND ma.class_id = COALESCE(csm.class_id, r.invited_class_id)
+			 )
 			""";
 
 	/**
@@ -96,8 +138,12 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 			       r.pending_invitation_token_id,
 			       mv.assessment_round_id, mv.attempt_id, mv.row_result_status,
 			       mv.concept_result_items::text AS concept_result_items,
+			       mv.expected_concept_count,
 			       mv.low_stage_concept_count, mv.excellent_occurrence_count,
+			       mv.excellent_assessment_sequence_nos,
 			       mv.current_round_matched_risk_type_codes::text AS matched_risk_type_codes,
+			       mv.current_round_primary_status_code,
+			       mv.round_terminal_at,
 			       mv.row_aggregation_status
 			""" + ROSTER_FROM + ROSTER_MANAGER_METRICS_JOIN;
 
@@ -133,6 +179,11 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 			args.add(likeQuery);
 			args.add(likeQuery);
 		}
+		// 담당 반 조건은 맨 뒤에 붙인다. 앞의 필터들과 순서가 섞이면 바인딩이 어긋난다.
+		if (criteria.scopedManagerId() != null) {
+			where.append(MANAGER_SCOPE_CONDITION);
+			args.add(criteria.scopedManagerId());
+		}
 
 		Long total = jdbcTemplate.queryForObject(
 				ROSTER_CTE + " SELECT COUNT(*) " + ROSTER_FROM
@@ -154,8 +205,18 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 		return new PageImpl<>(content, pageable, total == null ? 0 : total);
 	}
 
+	/**
+	 * 반 배정이 없는 교육생 수이며 오퍼레이터 화면(OP-06)의 `미배정 N` 배지다.
+	 *
+	 * <p><b>매니저에게는 항상 0이다.</b> 매니저 명단은 담당 반으로 좁혀져 있어 반이 없는 교육생은
+	 * 애초에 목록에 들어오지 않는다 -- 배정되지 않은 사람은 어느 매니저의 담당도 아니다.
+	 * 매니저 화면(MG-05)에도 이 배지가 없다.
+	 */
 	@Override
-	public int countUnassigned(UUID cohortId, UUID orgId) {
+	public int countUnassigned(UUID cohortId, UUID orgId, UUID scopedManagerId) {
+		if (scopedManagerId != null) {
+			return 0;
+		}
 		String sql = ROSTER_CTE + """
 				SELECT COUNT(*) FROM roster r
 				WHERE r.cohort_id = ? AND r.org_id = ?
@@ -169,17 +230,57 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 	}
 
 	/**
-	 * {@link #countUnassigned}와 <b>같은 모집단</b>(그 기수의 cohort_member 전체)을 센다.
-	 * 두 값이 같은 분모 위에 있어야 화면의 '393명 중 미배정 12'가 성립한다.
+	 * 화면 상단의 총원이며 <b>목록과 같은 모집단</b>이어야 한다.
+	 * 오퍼레이터는 기수 전체, 매니저는 담당 반 전체다 -- 매니저 화면에 `담당 반 21명`이라 떠 있는데
+	 * 총원이 `393명`이면 두 숫자가 서로 다른 것을 세게 된다.
+	 *
+	 * <p>필터(검색·계정 상태 등)는 적용하지 않는다. `조건에 맞는 교육생이 없습니다`일 때도
+	 * 모집단 수를 보여줘야 하기 때문이다.
 	 */
 	@Override
-	public int countCohortTotal(UUID cohortId, UUID orgId) {
-		String sql = ROSTER_CTE + """
-				SELECT COUNT(*) FROM roster r
-				WHERE r.cohort_id = ? AND r.org_id = ?
-				""";
-		Integer count = jdbcTemplate.queryForObject(sql, Integer.class, cohortId, orgId);
+	public int countCohortTotal(UUID cohortId, UUID orgId, UUID scopedManagerId) {
+		StringBuilder sql = new StringBuilder(ROSTER_CTE + " SELECT COUNT(*) " + ROSTER_FROM
+				+ " WHERE r.cohort_id = ? AND r.org_id = ?");
+		List<Object> args = new ArrayList<>(List.of(cohortId, orgId));
+		if (scopedManagerId != null) {
+			sql.append(MANAGER_SCOPE_CONDITION);
+			args.add(scopedManagerId);
+		}
+		Integer count = jdbcTemplate.queryForObject(sql.toString(), Integer.class, args.toArray());
 		return count == null ? 0 : count;
+	}
+
+	/**
+	 * 회차 드롭다운 목록. <b>차수 오름차순</b>이라 마지막 원소가 가장 최근 회차이며, 화면이
+	 * `미프 1차 · 2차 · 3차`를 위에서 아래로 그리는 순서와 같다.
+	 *
+	 * <p>정렬·차수 표기는 {@code project.sequence_no}를 쓴다. {@code round_no}는 프로젝트 안의
+	 * 순번이라 미니프로젝트에서 전부 1이 되어 차수를 구분하지 못한다.
+	 *
+	 * <p><b>프로젝트 분류로 거르지 않는다.</b> 지표를 붙이는 {@code manager_trainee_roster_view}의
+	 * 회차 축(rd CTE)이 분류를 가리지 않으므로, 여기서만 미니프로젝트로 좁히면 드롭다운에 없는
+	 * 회차의 지표가 존재하게 된다 -- 고를 수 있는 회차와 지표가 있는 회차는 같아야 한다.
+	 */
+	@Override
+	public List<RoundOption> findRounds(UUID cohortId, UUID orgId) {
+		String sql = """
+				SELECT r.assessment_round_id, r.round_no,
+				       p.sequence_no AS cohort_round_no,
+				       r.round_name, p.project_id, p.name AS project_name
+				FROM project_assessment_round r
+				JOIN project p ON p.project_id = r.project_id AND p.deleted_at IS NULL
+				WHERE r.cohort_id = ? AND r.org_id = ? AND r.deleted_at IS NULL
+				ORDER BY p.sequence_no, r.round_no, r.assessment_round_id
+				""";
+		return jdbcTemplate.query(sql,
+				(ResultSet rs, int rowNum) -> new RoundOption(
+						rs.getObject("assessment_round_id", UUID.class),
+						rs.getInt("round_no"),
+						rs.getInt("cohort_round_no"),
+						rs.getString("round_name"),
+						rs.getObject("project_id", UUID.class),
+						rs.getString("project_name")),
+				cohortId, orgId);
 	}
 
 	@Override
@@ -275,9 +376,13 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				rs.getObject("attempt_id", UUID.class),
 				rs.getString("row_result_status"),
 				rs.getString("concept_result_items"),
+				integer(rs, "expected_concept_count"),
 				integer(rs, "low_stage_concept_count"),
 				integer(rs, "excellent_occurrence_count"),
+				intArray(rs, "excellent_assessment_sequence_nos"),
 				rs.getString("matched_risk_type_codes"),
+				rs.getString("current_round_primary_status_code"),
+				toOffsetDateTime(rs.getTimestamp("round_terminal_at")),
 				rs.getString("row_aggregation_status")
 		);
 	}
@@ -285,6 +390,23 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 	private Integer integer(ResultSet rs, String column) throws SQLException {
 		int value = rs.getInt(column);
 		return rs.wasNull() ? null : value;
+	}
+
+	/**
+	 * 매니저·회차 지표가 붙지 않은 행(조회 시 assessmentRoundId를 안 넘겼거나 오퍼레이터 조회)은
+	 * 배열 컬럼 자체가 SQL null이다. 화면이 매번 null 검사를 하지 않도록 빈 배열로 통일한다.
+	 */
+	private int[] intArray(ResultSet rs, String column) throws SQLException {
+		java.sql.Array array = rs.getArray(column);
+		if (array == null) {
+			return new int[0];
+		}
+		Integer[] boxed = (Integer[]) array.getArray();
+		int[] result = new int[boxed.length];
+		for (int i = 0; i < boxed.length; i++) {
+			result[i] = boxed[i];
+		}
+		return result;
 	}
 
 	private OffsetDateTime toOffsetDateTime(Timestamp timestamp) {

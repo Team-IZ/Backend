@@ -7,7 +7,9 @@ import com.bigproject.backend.domain.projectexecution.domain.ProjectListSort;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectReadiness;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectRequirement;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectCurriculum;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectDependencyRepository;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Collection;
@@ -66,8 +68,18 @@ public interface ProjectService {
             List<String> conceptNames) {
     }
 
+    /**
+     * 프로젝트 생성. <b>평가 회차 1건을 함께 만든다</b>(22차 R5·R6).
+     *
+     * <p>여태 회차를 만들지 않아, 화면에서 만든 프로젝트는 {@code project_assessment_round}가 없는
+     * 채로 남았다. 그 결과 현황 탭이 회차를 못 찾아 답하지 못했고(22차 R6), 제출 마감을 저장할
+     * 자리가 없어 생성에서 마감 시각을 받을 수도 없었다(22차 R5 ①).
+     *
+     * @param submissionDueAt 제출 마감 시각. {@code null}이면 {@code endDate}의 <b>23:59 KST</b>로
+     *                        파생한다 — 기존 데이터가 그 규칙으로 들어가 있어 화면이 이미 그렇게 읽는다
+     */
     Project createProject(UUID orgId, UUID cohortId, String name, ProjectCategory category,
-                          LocalDate startDate, LocalDate endDate, UUID actorUserId);
+                          LocalDate startDate, LocalDate endDate, Instant submissionDueAt, UUID actorUserId);
 
     List<Project> findProjects(UUID cohortId, UUID orgId);
 
@@ -82,6 +94,16 @@ public interface ProjectService {
      * 정상 상태이고, 404로 답하면 "기수가 없다"와 구분되지 않는다.
      */
     Optional<ProjectSummary> findCurrentProject(UUID cohortId, UUID orgId);
+
+    /**
+     * {@link #findCurrentProject}와 <b>같은 판정</b>을 하되 요약을 매기지 않고 프로젝트만 돌려준다.
+     *
+     * <p>요약({@code ProjectSummary})은 교안 연결·개념 세트·개념 수를 더 읽으므로, 프로젝트 식별자만
+     * 필요한 호출부에는 과하다. 교육생 명단이 기본 회차를 정할 때 이것을 쓴다 — 명단 드롭다운과
+     * {@code GET /cohorts/{cohortId}/projects/current}가 <b>같은 회차를 가리켜야</b> 하므로 규칙을
+     * 복제하지 않고 여기 하나만 둔다.
+     */
+    Optional<Project> resolveCurrentProject(UUID cohortId, UUID orgId);
 
     Project findProject(UUID projectId, UUID orgId);
 
@@ -228,7 +250,23 @@ public interface ProjectService {
             int conceptCount,
             int conceptCandidateCount,
             List<String> curriculumNames,
-            List<String> conceptNames) {
+            List<String> conceptNames,
+            /*
+             * 22차 R5·R9 — 그 프로젝트 회차의 시각 묶음. 회차를 아직 만들지 않은 프로젝트는 null이다.
+             *
+             * endDate(날짜)를 마감이라고 그리던 것을 끝내려면 목록·상세가 실제 마감을 읽어야 한다.
+             * 둘은 서버에서 연결돼 있지 않아 9기 5차가 12일 어긋난 채 표시되고 있었다.
+             */
+            ProjectDependencyRepository.RoundSchedule schedule,
+
+            /*
+             * 22차 R10 ⓐ — 이 기수의 전체 회차 수. 화면의 `3차 / 6회`에서 분모다.
+             *
+             * sequenceNo(분자)는 있는데 분모가 없어서, 대시보드가 15차 R1로 만든
+             * /projects/current를 한 번도 쓰지 못하고 목록을 계속 부르고 있었다.
+             * 요약을 만든 호출부가 자기가 본 모집단 크기를 그대로 넘긴다.
+             */
+            int totalRounds) {
 
         /**
          * 이름이 필요 없는 자리에서 쓴다 — 상세 조회는 교안·개념을 <b>객체로</b> 따로 싣고
@@ -236,7 +274,27 @@ public interface ProjectService {
          */
         public ProjectSummary(Project project, int curriculumCount, int conceptCount,
                 int conceptCandidateCount) {
-            this(project, curriculumCount, conceptCount, conceptCandidateCount, List.of(), List.of());
+            this(project, curriculumCount, conceptCount, conceptCandidateCount, List.of(), List.of(), null, 0);
+        }
+
+        /** 회차 시각을 아직 읽지 않은 자리에서 쓴다(정렬 테스트 등 표시와 무관한 호출부). */
+        public ProjectSummary(Project project, int curriculumCount, int conceptCount,
+                int conceptCandidateCount, List<String> curriculumNames, List<String> conceptNames) {
+            this(project, curriculumCount, conceptCount, conceptCandidateCount,
+                    curriculumNames, conceptNames, null, 0);
+        }
+
+        /** 회차 수를 세지 않는 자리(상세·생성 응답)에서 쓴다. */
+        public ProjectSummary(Project project, int curriculumCount, int conceptCount,
+                int conceptCandidateCount, List<String> curriculumNames, List<String> conceptNames,
+                ProjectDependencyRepository.RoundSchedule schedule) {
+            this(project, curriculumCount, conceptCount, conceptCandidateCount,
+                    curriculumNames, conceptNames, schedule, 0);
+        }
+
+        /** 제출 마감 시각. 회차가 없으면 {@code null} — 화면은 그때 「마감 미정」으로 그린다. */
+        public java.time.Instant submissionDueAt() {
+            return schedule == null ? null : schedule.submissionDueAt();
         }
 
         /**

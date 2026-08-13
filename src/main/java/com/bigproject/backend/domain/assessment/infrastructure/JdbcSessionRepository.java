@@ -44,12 +44,45 @@ public class JdbcSessionRepository {
 	/** 세션이 아직 살아 있는 상태. 이 셋 밖이면 끝난 세션이라 쓰기를 받지 않는다. */
 	private static final String LIVE_STATUSES = "('READY', 'IN_PROGRESS', 'PAUSED')";
 
+	/**
+	 * 교육생에게 내보내는 문제 번호. <b>{@code assessment_problem.problem_no}가 아니다</b> —
+	 * 이 세션에 단계가 깔린 문제만 골라 {@code 1..N}으로 다시 매긴 값이다.
+	 *
+	 * <h2>왜 원본 번호를 쓰지 않는가</h2>
+	 *
+	 * <p>근거를 못 찾은 개념은 {@code NOT_GENERATED} 슬롯으로 남고 그 번호에는 단계가 없다
+	 * ({@code JdbcAssessmentSessionPreparer.insertStages}가 {@code GENERATED}만 대상으로 한다).
+	 * 그래서 원본 번호는 <b>빈틈이 생긴다</b> — 1번이 NOT_GENERATED면 남는 번호는 2·3이고
+     * {@code problemTotal}은 2다. 그 상태로 내보내면 화면이 `문제 3 / 2`를 그리고, 마지막 문제 판정
+	 * ({@code problemNo == problemTotal})이 어긋나며, 무엇보다 <b>존재하지 않는 1번을 열려다
+	 * {@code PROBLEM_NOT_FOUND}로 막힌다.</b> 생성된 문제만 1부터 세면 그 세 가지가 함께 사라진다.
+	 *
+	 * <p>원본 번호는 DB에 그대로 남아 있고 리포트·매니저 지표는 그것을 읽는다 — 여기서 바꾸는 것은
+	 * <b>세션 API가 말하는 번호</b>뿐이다. 세 조회({@link #findStages} · {@link #findStage} ·
+	 * {@link #findProblems})가 반드시 같은 규칙을 써야 하므로 정의를 한 자리에 둔다.
+	 */
+	private static final String DISPLAY_PROBLEM_NO =
+			"DENSE_RANK() OVER (ORDER BY p.problem_no) AS problem_no";
+
+	/**
+	 * 문제별 20분 제한은 컬럼을 새로 두지 않는다. {@code problem_stage.question_presented_at}이
+	 * "이 축을 교육생에게 처음 보여준 시각"을 이미 뜻하므로, 지금 문제의 L1 축 그 값이 곧 그 문제가
+	 * 시작된 시각이다. 세션 레벨({@code policy_time_limit_at})과 달리 미리 계산해 두지 않고 매번 읽어
+	 * 판단한다 — 값 하나뿐이라 조인 비용이 무시할 만하다.
+	 */
 	private static final String HEAD_COLUMNS = """
 			SELECT s.session_id, s.org_id, s.attempt_id, a.user_id, a.assessment_round_id,
 			       a.attempt_type, s.status, s.current_problem_id, s.current_problem_stage_id,
-			       s.started_at, s.policy_time_limit_at, a.review_due_at, a.source_submission_id
+			       s.started_at, s.policy_time_limit_at, a.review_due_at, a.source_submission_id,
+			       cp.question_presented_at AS current_problem_started_at
 			  FROM assessment_session s
 			  JOIN measurement_attempt a ON a.attempt_id = s.attempt_id
+			  LEFT JOIN LATERAL (
+			      SELECT ps.question_presented_at
+			      FROM problem_stage ps
+			      WHERE ps.session_id = s.session_id AND ps.problem_id = s.current_problem_id
+			        AND ps.axis_code = 'L1'
+			  ) cp ON TRUE
 			""";
 
 	private final JdbcTemplate jdbc;
@@ -86,6 +119,10 @@ public class JdbcSessionRepository {
 	 *
 	 * <p>문제는 <b>이 세션에 단계가 깔린 것만</b> 고른다. {@code generation_status='NOT_GENERATED'}인
 	 * 문제에는 단계를 만들지 않으므로(정의서) 3개 미만일 수 있고, 화면의 "문제 n/3"은 이 개수를 써야 한다.
+	 *
+	 * <p>번호는 SQL에서 다시 매기지 않고 <b>단계에서 가져온다</b>({@link #DISPLAY_PROBLEM_NO}로 이미
+	 * 매겨져 있다). 여기서 창 함수를 한 번 더 쓰면 같은 규칙이 두 벌이 되고, 한쪽만 고쳐지는 순간
+	 * 같은 문제가 조회마다 다른 번호로 보인다.
 	 */
 	public List<SessionProblem> findProblems(UUID sessionId, UUID submissionId) {
 		Map<UUID, List<SessionStage>> stagesByProblem = new HashMap<>();
@@ -111,9 +148,11 @@ public class JdbcSessionRepository {
 			UUID problemId = rs.getObject("problem_id", UUID.class);
 			String snippetKey = rs.getString("source_snippet_key");
 			String code = codeBySnippetKey.getOrDefault(snippetKey, "");
+			List<SessionStage> stages = stagesByProblem.getOrDefault(problemId, List.of());
 			return new SessionProblem(
 					problemId,
-					rs.getInt("problem_no"),
+					// 원본 p.problem_no가 아니다 — 단계에 매겨진 표시 번호를 그대로 쓴다.
+					stages.isEmpty() ? 0 : stages.get(0).problemNo(),
 					rs.getString("title"),
 					rs.getString("problem_type"),
 					rs.getBigDecimal("priority"),
@@ -131,14 +170,24 @@ public class JdbcSessionRepository {
 					// "codeSnippet 전체의 sha256"이므로 같은 규칙으로 여기서 계산한다.
 					Sha256.hex(code),
 					referencesByProblem.getOrDefault(problemId, List.of()),
-					stagesByProblem.getOrDefault(problemId, List.of()));
-		}, sessionId);
+					stages);
+		}, sessionId).stream()
+				// 단계가 없는 문제는 애초에 이 목록에 들어올 수 없다(JOIN이 걸러 낸다). 그래도 방어적으로
+				// 비어 있으면 건너뛴다 — 번호를 단계에서 가져오므로 근거가 없는 행을 만들 수 없다.
+				.filter(problem -> !problem.stages().isEmpty())
+				.toList();
 	}
 
-	/** 세션의 단계 전부를 문제 순 · 축 순으로. 커서 복원과 transcript 재구성이 이것으로 된다. */
+	/**
+	 * 세션의 단계 전부를 문제 순 · 축 순으로. 커서 복원과 transcript 재구성이 이것으로 된다.
+	 *
+	 * <p>{@code problem_no}는 {@link #DISPLAY_PROBLEM_NO}다 — 원본 번호가 아니라 이 세션에 깔린
+	 * 문제만 1부터 센 값이다.
+	 */
 	public List<SessionStage> findStages(UUID sessionId) {
 		return jdbc.query("""
-				SELECT ps.problem_stage_id, ps.problem_id, p.problem_no, ps.axis_code,
+				SELECT ps.problem_stage_id, ps.problem_id, """ + DISPLAY_PROBLEM_NO + """
+				       , ps.axis_code,
 				       ps.question_sequence_no, ps.question_text, ps.first_hint_text, ps.second_hint_text,
 				       ps.status, ps.row_version,
 				       ps.question_answer_text, ps.question_score, ps.question_passed, ps.question_answered_at,
@@ -153,9 +202,24 @@ public class JdbcSessionRepository {
 				""", stageMapper(), sessionId);
 	}
 
+	/**
+	 * 커서가 가리키는 단계 하나.
+	 *
+	 * <p>여기서는 {@link #DISPLAY_PROBLEM_NO}의 창 함수를 쓸 수 없다 — 결과가 한 행이라 순위가 항상
+	 * 1이 된다. 같은 값을 <b>세션 전체를 세어</b> 구한다: 이 문제보다 앞선(같은 것 포함) 문제 번호가
+	 * 몇 개인가가 곧 표시 번호다. {@link #findStages}의 순위와 반드시 같은 값이어야 한다 —
+	 * {@code SessionGuard}가 이 번호로 다음 문제를 찾으므로 두 조회가 어긋나면 문제 하나를
+	 * 건너뛰거나 같은 문제를 다시 연다.
+	 */
 	public Optional<SessionStage> findStage(UUID problemStageId) {
 		List<SessionStage> found = jdbc.query("""
-				SELECT ps.problem_stage_id, ps.problem_id, p.problem_no, ps.axis_code,
+				SELECT ps.problem_stage_id, ps.problem_id,
+				       (SELECT count(DISTINCT p2.problem_no)
+				          FROM problem_stage ps2
+				          JOIN assessment_problem p2 ON p2.problem_id = ps2.problem_id
+				         WHERE ps2.session_id = ps.session_id
+				           AND p2.problem_no <= p.problem_no) AS problem_no,
+				       ps.axis_code,
 				       ps.question_sequence_no, ps.question_text, ps.first_hint_text, ps.second_hint_text,
 				       ps.status, ps.row_version,
 				       ps.question_answer_text, ps.question_score, ps.question_passed, ps.question_answered_at,
@@ -183,7 +247,7 @@ public class JdbcSessionRepository {
 	 * @return 실제로 시작된 경우 1
 	 */
 	public int start(UUID sessionId, int noticeVersion, Instant timeLimitAt) {
-		return jdbc.update("""
+		int updated = jdbc.update("""
 				UPDATE assessment_session s
 				   SET status = 'IN_PROGRESS',
 				       started_at = COALESCE(s.started_at, now()),
@@ -201,6 +265,25 @@ public class JdbcSessionRepository {
 				         LIMIT 1) AS first
 				 WHERE s.session_id = ? AND s.status = 'READY'
 				""", noticeVersion, timestamp(timeLimitAt), sessionId, sessionId);
+		stampCurrentProblemStarted(sessionId);
+		return updated;
+	}
+
+	/**
+	 * 지금 커서가 가리키는 축의 {@code question_presented_at}을 채운다. 이미 값이 있으면 건드리지 않는다
+	 * (COALESCE) — 문제별 20분 제한의 기준점이라 다시 부를 때마다 갱신되면 시계가 계속 늘어난다.
+	 *
+	 * <p>{@code start()}·{@code moveCursor()} 둘 다 끝에서 부른다. 실제로 커서가 바뀌었는지 따지지
+	 * 않고 매번 불러도 안전하다 — L1이 아닌 축이어도 상관없다(그 문제로 다시 들어왔을 때 이미 L1이
+	 * 찍혀 있으므로 이 호출은 아무것도 하지 않는다).
+	 */
+	private void stampCurrentProblemStarted(UUID sessionId) {
+		jdbc.update("""
+				UPDATE problem_stage ps
+				   SET question_presented_at = COALESCE(ps.question_presented_at, now())
+				  FROM assessment_session s
+				 WHERE s.session_id = ? AND ps.problem_stage_id = s.current_problem_stage_id
+				""", sessionId);
 	}
 
 	/** 커서를 옮기고 저장 시각을 남긴다. 답변 트랜잭션 끝에서 부른다. */
@@ -211,6 +294,31 @@ public class JdbcSessionRepository {
 				       last_saved_at = now(), updated_at = now(), row_version = row_version + 1
 				 WHERE session_id = ?
 				""", problemId, problemStageId, sessionId);
+		stampCurrentProblemStarted(sessionId);
+	}
+
+	/**
+	 * 문제별 제한 시간을 넘긴 현재 문제를 접는다. 힌트를 다 쓰고도 미달일 때({@code SessionTurnStore
+	 * .closeProblem})와 <b>같은 전이</b>다 — 남은 축은 NOT_REACHED로 닫고 다음 문제의 첫 축으로
+	 * 커서를 옮기거나, 마지막 문제였으면 세션을 끝낸다.
+	 *
+	 * <p>AI가 판정한 도달 축이 없다(타임아웃이라 답을 받지 않았다) — {@code endedAxisCode}는 null이며
+	 * DB CHECK({@code ck_assessment_session_ended_axis_code})가 이를 허용한다.
+	 */
+	public void expireCurrentProblem(UUID sessionId, UUID currentProblemId, int currentProblemNo, boolean isReview) {
+		markNotReached(sessionId, currentProblemId);
+
+		SessionStage nextStage = findStages(sessionId).stream()
+				.filter(stage -> !stage.problemId().equals(currentProblemId))
+				.filter(stage -> stage.problemNo() > currentProblemNo)
+				.findFirst()
+				.orElse(null);
+
+		if (nextStage == null) {
+			end(sessionId, isReview ? "ALL_REVIEW_TARGETS_TERMINAL" : "ALL_PROBLEMS_TERMINAL", null);
+			return;
+		}
+		moveCursor(sessionId, nextStage.problemId(), nextStage.problemStageId());
 	}
 
 	/**
@@ -414,7 +522,8 @@ public class JdbcSessionRepository {
 				instant(rs, "started_at"),
 				instant(rs, "policy_time_limit_at"),
 				instant(rs, "review_due_at"),
-				rs.getObject("source_submission_id", UUID.class));
+				rs.getObject("source_submission_id", UUID.class),
+				instant(rs, "current_problem_started_at"));
 	}
 
 	private static RowMapper<SessionStage> stageMapper() {

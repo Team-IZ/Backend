@@ -16,4 +16,12 @@ CurriculumMaterialRepository extends JpaRepository<CurriculumMaterial, UUID> {
     List<CurriculumMaterial> findAllByOrgIdAndDeletedAtIsNull(UUID orgId);
 
     boolean existsByMaterialIdAndOrgId(UUID materialId, UUID orgId);
+
+    /**
+     * 제목 중복 검사(22차 R2). <b>삭제 여부를 보지 않는다</b> —
+     * {@code uq_curriculum_material_org_id_normalized_title}가 부분 인덱스가 아니라 전역 UNIQUE라
+     * 논리 삭제된 교안도 제목을 계속 점유한다. 살아 있는 것만 세면 검사는 통과하고 INSERT가
+     * DB에서 터져 코드 없는 500이 난다({@code ProjectRepository}의 회차 이름과 같은 함정이다).
+     */
+    boolean existsByOrgIdAndNormalizedTitle(UUID orgId, String normalizedTitle);
 }
