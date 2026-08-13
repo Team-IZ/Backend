@@ -224,6 +224,20 @@ public class CurriculumServiceImpl implements CurriculumService {
 
         String normalizedTitle = title.trim().replaceAll("\\s+", " ").toLowerCase();
 
+        /*
+         * 22차 R2 — 제목 충돌을 여기서 끊는다.
+         *
+         * uq_curriculum_material_org_id_normalized_title이 부분 인덱스가 아니라 전역 UNIQUE라
+         * 논리 삭제된 교안도 제목을 계속 점유한다. 그래서 삭제 여부를 보지 않고 센다 —
+         * 살아 있는 것만 세면 검사는 통과하고 INSERT가 DB에서 터져 코드 없는 500이 난다.
+         *
+         * 파일 크기와 무관하게 나므로 "50KB짜리도 500"이던 증상의 한 축이었다. 같은 제목으로
+         * 다시 올리는 것은 등록이 아니라 새 버전이어야 하는데, 그 경로는 아직 없다.
+         */
+        if (materialRepository.existsByOrgIdAndNormalizedTitle(orgId, normalizedTitle)) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_TITLE_DUPLICATED);
+        }
+
         CurriculumMaterial material = CurriculumMaterial.create(orgId, title, normalizedTitle, topic, "PDF", actorUserId);
         materialRepository.save(material);
 
