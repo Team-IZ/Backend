@@ -41,7 +41,7 @@ public class ManagerSubmissionStatusController {
 
 	@Operation(
 			operationId = "findProjectSubmissionStatus",
-			summary = "프로젝트 회차 제출 현황 조회 (매니저) | ✅ 사용 가능",
+			summary = "[프로젝트 상세 - 제출현황 탭] 프로젝트 회차 제출 현황 조회 (매니저) | ✅ 사용 가능",
 			description = """
 					MG-08 프로젝트 상세 '제출 현황' 탭 한 화면을 **한 번에** 내려준다.
 
