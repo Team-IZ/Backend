@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.assessment.application;
 
 import com.bigproject.backend.domain.assessment.application.AnswerGradingContract.AnswerResult;
 import com.bigproject.backend.domain.assessment.application.AnswerGradingContract.Cursor;
+import com.bigproject.backend.domain.assessment.application.AnswerGradingContract.Progress;
 import com.bigproject.backend.domain.assessment.application.AnswerGradingContract.Question;
 import com.bigproject.backend.domain.assessment.application.AnswerGradingContract.TranscriptTurn;
 import com.bigproject.backend.domain.assessment.application.SessionTurnStore.GradingInput;
@@ -18,6 +19,7 @@ import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitRes
 import com.bigproject.backend.domain.assessment.presentation.dto.ProblemActivityResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -348,6 +350,22 @@ class SessionTurnStoreTest {
 	}
 
 	/**
+	 * 바로 위 두 테스트는 저장소가 목이라 <b>트랜잭션 속성을 검사하지 못한다.</b> 읽기만 하는 것처럼
+	 * 보인다고 {@code readOnly=true}를 붙이면, Hibernate가 커넥션에 {@code setReadOnly(true)}를 걸어
+	 * PostgreSQL이 상한 초과 마감 UPDATE를 {@code 25006}으로 거절한다 — 목 테스트는 전부 통과한 채
+	 * 운영에서만 500이 나고 세션이 열린 채 남는다. 그래서 애너테이션 자체를 고정한다.
+	 */
+	@Test
+	void 채점_직전_읽기는_읽기_전용_트랜잭션이_아니다() throws Exception {
+		Transactional transactional = SessionTurnStore.class
+				.getMethod("loadForGrading", UUID.class, UUID.class, String.class)
+				.getAnnotation(Transactional.class);
+
+		assertThat(transactional).isNotNull();
+		assertThat(transactional.readOnly()).isFalse();
+	}
+
+	/**
 	 * 질문은 축마다 다른 줄을 가리킨다(화면 목업: 질문 1 → {@code 5–8}, 질문 2 → {@code 39–41}).
 	 * 다음 질문 문구만 주고 구간을 빼면 화면은 이전 질문의 구간을 강조한 채 다음 질문을 묻는다.
 	 */
@@ -379,6 +397,49 @@ class SessionTurnStoreTest {
 
 		assertThat(response.next().highlight())
 				.isEqualTo(new ProblemActivityResponse.Highlight("graph.py", 1, 60));
+	}
+
+	/**
+	 * 다음 문제 번호는 <b>우리 문제 목록</b>에서 나온다. AI의 {@code progress.problemIndex}는 우리가 보낸
+	 * 목록 안의 순서일 뿐이라 화면이 그 값으로 문제를 열면 없는 번호를 부를 수 있다.
+	 *
+	 * <p>근거를 못 찾은 개념({@code NOT_GENERATED})이 있으면 원본 번호에 빈틈이 생기고, 세션 API는
+	 * 생성된 문제만 1부터 다시 센 번호를 쓴다. 여기서는 AI가 엉뚱한 인덱스를 줘도 우리 번호가 나가는지를
+	 * 본다 — 이 값이 틀리면 화면이 곧바로 {@code PROBLEM_NOT_FOUND}를 받는다.
+	 */
+	@Test
+	void 다음_문제_번호는_AI_인덱스가_아니라_우리_목록에서_나온다() {
+		when(repository.findStages(SESSION_ID)).thenReturn(List.of(stage(), nextProblemStage()));
+		GradingInput input = new GradingInput(head("IN_PROGRESS", "INITIAL", null),
+				List.of(problem(), secondProblem()), stage(), AnswerSlot.QUESTION);
+
+		AnswerSubmitResponse response = store.applyGrading(input,
+				new AnswerResult(SESSION_ID, "IN_PROGRESS", turn(5, true),
+						new Cursor(OTHER_PROBLEM_ID, "L1", 0, null),
+						new Question(OTHER_PROBLEM_ID, "L1", 1, "2번 문제 질문", null, 0),
+						// AI가 준 인덱스는 일부러 어긋나게 둔다.
+						new Progress(7, 2), null, null, List.of()),
+				"답변");
+
+		assertThat(response.nextProblemNo()).isEqualTo(2);
+	}
+
+	/**
+	 * AI가 우리 행과 대조되지 않는 {@code problemId}를 주면 번호를 만들어 내지 않는다 — 화면은
+	 * {@code GET /current}로 커서를 다시 읽는다. 추측한 번호를 보내면 다른 문제를 열게 된다.
+	 */
+	@Test
+	void 대조되지_않는_문제에는_다음_번호를_만들지_않는다() {
+		GradingInput input = new GradingInput(head("IN_PROGRESS", "INITIAL", null), List.of(problem()),
+				stage(), AnswerSlot.QUESTION);
+
+		AnswerSubmitResponse response = store.applyGrading(input,
+				new AnswerResult(SESSION_ID, "IN_PROGRESS", turn(5, true), cursorAt("L2"),
+						new Question(UUID.randomUUID(), "L1", 1, "모르는 문제", null, 0),
+						new Progress(0, 2), null, null, List.of()),
+				"답변");
+
+		assertThat(response.nextProblemNo()).isNull();
 	}
 
 	// ── 픽스처 ──
@@ -420,6 +481,16 @@ class SessionTurnStoreTest {
 				List.of(new SessionProblemReference("QUESTION_HIGHLIGHT", 1, "graph.py", 5, 8, "L1", null, "h1"),
 						new SessionProblemReference("QUESTION_HIGHLIGHT", 2, "graph.py", 39, 41, "L2", null, "h2")),
 				List.of(stage(), nextStage()));
+	}
+
+	/**
+	 * 두 번째 문제. <b>표시 번호가 2</b>다 — 원본 {@code problem_no}가 3이어도(1번이 NOT_GENERATED)
+	 * 세션 API는 생성된 문제만 1부터 세므로 목록에는 이 값이 담긴다.
+	 */
+	private static SessionProblem secondProblem() {
+		return new SessionProblem(OTHER_PROBLEM_ID, 2, "Loader 구성", "DESIGN_CHOICE", null, null, null,
+				"snippet-2", "python", "loader.py", 1, 40, "hash2", 1, "코드 전체", "content-hash-2",
+				List.of(), List.of(nextProblemStage()));
 	}
 
 	private static SessionHead head(String status, String attemptType, Instant timeLimitAt) {
