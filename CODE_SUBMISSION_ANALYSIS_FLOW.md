@@ -301,6 +301,19 @@ stateDiagram-v2
 DB 트리거 같은 다른 writer가 값을 지운 경우다. 현재 정상 접수 경로는 jobId를 포함한 최초 INSERT 한 번만
 수행하므로 `QUEUED + external_job_id IS NULL`을 만들지 않는다. 폴러는 이런 손상 행을 실패로 닫아 반복 조회를 멈춘다.
 
+**2026-08-13 실제 관측.** 운영 DB에서 이 조합이 반복해서 나왔고, 원인은 구버전 배포본이었다. 판별 근거는
+`pg_stat_statements`다 — `external_job_id`를 SET 절에 포함한 전체 merge UPDATE(구버전 매핑)와 그 컬럼이
+빠진 merge UPDATE(현행 `updatable = false` 매핑)가 **한 DB에 함께** 쌓여 있었다. 폴링 간격이 1분인데
+`findByStatusIn`이 136초에 4회 실행된 것(폴러 2개)과 `application_name = 'iz-backend-ec2'` 접속도 같은
+방향을 가리킨다. Supavisor를 거치면 `client_addr`이 풀러 주소로 가려지므로 접속 IP로는 판별할 수 없다.
+같은 DB를 보는 옛 배포본을 내리는 것이 근본 해결이고, `docs/migration/2026-08-13_protect_analysis_job_external_job_id.sql`의
+트리거는 어느 배포본이 다시 살아나도 원장이 깨지지 않게 하는 방어선이다.
+
+조회 API는 이 손상을 오류가 아니라 **실패 응답**으로 내려 준다. `GET /submissions/{id}/analysis`는
+`phase=FAILED`, `failureCode=EXTERNAL_JOB_ID_LOST`이고 TR-02 제출 현황도 같은 문구로 `ANALYSIS_FAILED`를
+보여 준다. 폴링이 초 단위로 도는 화면에 500을 돌려주면 오류 응답만 쌓이고 교육생에게는 아무것도 알려주지
+못하기 때문이다. 원장은 그대로 두고, 폴러가 다음 회차에 같은 행을 `MODEL_ERROR`로 닫는다.
+
 또한 폴링 FAILED 처리에서는 응시 종료 트랜잭션이 job의 `FAILED` 저장보다 먼저다. 두 번째 저장만 실패하면 응시는 실패했는데 job은 잠시 활성 상태로 남을 수 있으므로, 독립 트랜잭션 사이의 부분 성공을 모니터링해야 한다.
 
 ---
