@@ -144,8 +144,12 @@ public class SubmissionController {
 	}
 
 	@Operation(
-			summary = "ZIP 업로드 제출·재제출 | ✅ 사용 가능",
+			summary = "ZIP 업로드 제출·재제출 | ⚠️ 사용 불가",
 			description = """
+					> ⚠️ **사용 불가 (2026-08-13 기준)** — 2026-08-23 오전 3시 16분 경에 `nvidia provider error`으로
+					> 확인 후 사용가능 전환 예정. 접수 직후 트리거되는 코드 분석이 GitHub URL 제출과 같은 경로를
+					> 타므로 함께 내린다.
+
 					GitHub URL 제출과 같은 리소스를 만드는 다른 표현이지만 **경로를 분리한다.** OpenAPI는
 					경로·메서드당 operation이 하나뿐이라, 한 경로에 `consumes`만 다른 핸들러를 둘 두면 springdoc이
 					둘을 한 operation으로 병합한다. 그러면 Swagger UI에서 `application/json`을 골라도 multipart
