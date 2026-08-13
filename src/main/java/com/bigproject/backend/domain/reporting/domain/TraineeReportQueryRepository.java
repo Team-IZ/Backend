@@ -77,6 +77,9 @@ public interface TraineeReportQueryRepository {
 	 *                     "문항 없음과 생성 실패를 어떻게 가르나"에 답하는 값이다.
 	 * @param completionStatus  활성 스냅샷의 {@code FULL}·{@code PARTIAL}. 스냅샷이 없으면 null이다.
 	 *                          {@code ck_report_snapshot_completion_status}가 두 값만 허용한다.
+	 * @param submissionDueAt 제출 마감. <b>미제출 회차를 둘로 가르는 축</b>이다 — 마감 전이면
+	 *                        아직 낼 수 있고(`NOT_STARTED`), 지났으면 놓친 것이다(`NOT_ATTEMPTED`).
+	 *                        홈이 `SUBMISSION_REQUIRED`와 `SUBMISSION_MISSED`를 가르는 값과 같다.
 	 * @param reportPublishNotBeforeAt 발행 예정 시각. 화면 `PENDING_PUBLISH`의 `publishAfter`.
 	 * @param reviewStatus      다시 보기(REVIEW attempt) 상태. 없으면 null.
 	 */
@@ -96,6 +99,7 @@ public interface TraineeReportQueryRepository {
 			String validityReviewStatus,
 			String traineeReleaseStatus,
 			String traineeDisclosureScope,
+			Instant submissionDueAt,
 			Instant reportPublishNotBeforeAt,
 			Instant publishedAt,
 			boolean canViewReport,
