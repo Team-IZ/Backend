@@ -17,6 +17,12 @@ import java.util.UUID;
 public record TraineeHomeRound(
 		UUID assessmentRoundId,
 		Integer roundNo,
+		/**
+		 * 기수 안 운영 순서({@code project.sequence_no}). <b>회차 정렬의 유일한 축이다.</b>
+		 * {@code roundNo}는 프로젝트 안에서만 유일해 미니프로젝트에서는 전부 1이다 —
+		 * 자세한 이유는 {@code JdbcTraineeHomeRoundRepository.FIND_ROUNDS} 주석에 있다.
+		 */
+		Integer projectSequenceNo,
 		String roundName,
 		String roundStatus,
 		UUID projectId,
@@ -86,6 +92,20 @@ public record TraineeHomeRound(
 
 	public boolean isPast() {
 		return "CLOSED".equals(roundStatus) || "COMPLETED".equals(roundStatus);
+	}
+
+	/**
+	 * 제출 마감이 지났는가.
+	 *
+	 * <p>기준 시각은 View가 준 {@code as_of_at}(= DB의 {@code CURRENT_TIMESTAMP})을 넘겨받는다.
+	 * {@code Instant.now()}를 쓰지 않는 이유는 같은 응답 안의 {@code can_submit} ·
+	 * {@code representative_status}가 이미 그 시각으로 판정돼 있기 때문이다 — 서버 시계로 다시
+	 * 재면 "마감 전이라 예정 구획에 있는데 제출은 못 하는" 카드가 생길 수 있다.
+	 *
+	 * <p>마감 시각이 없는 회차({@code PLANNED}에서 가능)는 아직 안 지난 것으로 본다.
+	 */
+	public boolean isSubmissionClosedAt(Instant asOfAt) {
+		return submissionDueAt != null && asOfAt != null && submissionDueAt.isBefore(asOfAt);
 	}
 
 	/**
