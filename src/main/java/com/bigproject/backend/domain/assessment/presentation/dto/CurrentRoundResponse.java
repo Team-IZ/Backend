@@ -118,30 +118,41 @@ public record CurrentRoundResponse(
 
 		@Schema(nullable = true) Instant submissionDueAt,
 		@Schema(description = """
-				회차 공통 응시 창 시작. **일정 안내용이며 응시 가능 판정에 쓰지 않는다**(아래 참고).
-				OPEN 회차면 DB가 non-null을 보장한다""", nullable = true) Instant roundAssessmentOpenAt,
+				회차 공통 응시 창 시작(운영자가 정한 일정). OPEN 회차면 DB가 non-null을 보장한다.
+
+				**응시 가능 판정에 함께 쓰인다** — 개인 창과의 관계는 `assessmentCloseAt` 설명 참고.""",
+				nullable = true) Instant roundAssessmentOpenAt,
 		@Schema(description = """
-				회차 공통 응시 창 마감. **일정 안내용이며 응시 가능 판정에 쓰지 않는다**(아래 참고).
-				OPEN 회차면 DB가 non-null을 보장한다""", nullable = true) Instant roundAssessmentDueAt,
+				회차 공통 응시 창 마감(운영자가 정한 일정). OPEN 회차면 DB가 non-null을 보장한다.
+
+				**응시 가능 판정에 함께 쓰인다** — 개인 창과의 관계는 `assessmentCloseAt` 설명 참고.""",
+				nullable = true) Instant roundAssessmentDueAt,
 		@Schema(description = """
-				**개인 응시 창 시작 — 응시 가능 여부는 이 값과 `assessmentCloseAt`으로만 정해진다.**
-				분석이 끝나 세션이 열린 시각이며, 수행 생성 전이면 null이다""",
+				개인 응시 창 시작. 분석이 끝나 세션이 열린 시각이며, 수행 생성 전이면 null이다.""",
 				nullable = true) Instant assessmentOpenAt,
 		@Schema(description = """
-				**개인 응시 창 종료.** 세션이 열린 시각부터 24시간이며(`assessment.window-hours`),
+				개인 응시 창 종료. 세션이 열린 시각부터 24시간이며(`assessment.window-hours`),
 				수행 생성 전이면 null이다.
 
-				## 🔴 두 응시 창이 어긋나면 이 값이 이긴다
+				## 🔴 두 응시 창은 교집합이다 — 가장 좁은 것이 이긴다
 
-				응답에는 회차 창(`roundAssessmentOpenAt`·`roundAssessmentDueAt`)도 함께 실리지만
-                **그것은 운영 일정 안내용**이고, 응시를 열고 닫는 것은 개인 창 하나다.
+				응시 창이 두 개 온다. **둘 다 열려 있을 때만 응시할 수 있다.**
 
-                규칙은 이렇다 — **제출 마감 전에 코드를 내고, 분석이 끝나 세션이 열리면,
-                그 시점부터 24시간 안에 응시한다.** 그래서 마감 직전에 제출해 분석이 늦게 끝나면
-                개인 창이 회차 창 밖으로 나갈 수 있고, 그때도 24시간은 보장된다.
+				```
+				열림  = max(assessmentOpenAt,  roundAssessmentOpenAt)
+				닫힘  = min(assessmentCloseAt, roundAssessmentDueAt)
+				```
 
-                남은 시간 문구는 이 값 하나로 그리면 된다. `representativeStatus`도 같은 값으로
-                갈린다""",
+				| | 무엇 |
+				|---|---|
+				| 개인 창 | 분석이 끝나 세션이 열린 시각부터 24시간. 사람마다 다르다 |
+				| 회차 창 | 운영자가 정한 회차 일정. 기수 전체가 같다 |
+
+				⚠️ **어긋날 수 있다.** 마감 직전에 제출해 분석이 늦게 끝나면 개인 창이 회차 창보다
+				뒤에 닫히는데, 그때는 **회차 창이 먼저 닫히므로 24시간을 다 쓰지 못한다.**
+				반대로 회차 일정을 나중에 옮기면 개인 창이 먼저 닫힐 수 있다.
+
+				남은 시간 문구는 **두 값 중 이른 쪽**으로 그린다.""",
 				nullable = true) Instant assessmentCloseAt,
 		@Schema(nullable = true) Instant initialTerminalAt,
 		@Schema(example = "ROUND_BATCH", nullable = true, allowableValues = {"ROUND_BATCH"})

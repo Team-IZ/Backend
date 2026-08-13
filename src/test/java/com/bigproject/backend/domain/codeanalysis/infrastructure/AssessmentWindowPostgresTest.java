@@ -27,8 +27,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * 값이 비면 교육생 홈이 {@code ASSESSMENT_AVAILABLE}로 넘어가지 못하고 분석이 끝난 뒤에도
  * {@code ANALYZING}에 머문다 — 세션 API를 열어도 응시를 시작할 수 없는 상태다.
  *
- * <p>규칙은 2026-08-13 확정본이다. <b>회차 응시 창과 무관하게</b> 세션이 열린 시각부터 24시간이며,
- * {@code ck_measurement_attempt_assessment_close_at}이 두 값의 순서를 강제한다.
+ * <p>개인 창은 세션이 열린 시각부터 24시간이며 {@code ck_measurement_attempt_assessment_close_at}이
+ * 두 값의 순서를 강제한다. <b>응시 가능 여부는 이 창과 회차 창의 교집합</b>으로 정해지는데
+ * (2026-08-13 확정), 그 판정은 조회·세션 접근 쪽 몫이라 여기서는 개인 창이 채워지는 것까지만 본다.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AssessmentWindowPostgresTest {
