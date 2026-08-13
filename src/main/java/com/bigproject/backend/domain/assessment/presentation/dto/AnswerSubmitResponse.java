@@ -31,7 +31,11 @@ public record AnswerSubmitResponse(
 						"SESSION_ENDED"})
 		String outcome,
 
-		@Schema(description = "다음에 설 문제 번호. 세션이 끝났으면 null", nullable = true) Integer nextProblemNo,
+		@Schema(description = """
+				다음에 설 문제 번호(1~problemTotal). 세션이 끝났으면 null.
+				그대로 `GET .../problems/{problemNo}`에 넣으면 된다""",
+				nullable = true)
+		Integer nextProblemNo,
 
 		@Schema(description = "다음 질문. 세션이 끝났으면 null", nullable = true) NextQuestion next,
 
@@ -124,7 +128,7 @@ public record AnswerSubmitResponse(
 			outcome = "NEXT_TURN";
 		}
 
-		Integer nextProblemNo = result.progress() == null ? null : result.progress().problemIndex() + 1;
+		Integer nextProblemNo = nextProblemNoOf(result, problems);
 		NextQuestion next = result.current() == null ? null
 				: new NextQuestion(result.current().problemId(),
 						result.current().axisCode(),
@@ -133,6 +137,33 @@ public record AnswerSubmitResponse(
 						result.current().hintsUsed() == null ? 0 : result.current().hintsUsed(),
 						highlightOf(problems, result.current().problemId(), result.current().axisCode()));
 		return new AnswerSubmitResponse(outcome, nextProblemNo, next, hint);
+	}
+
+	/**
+	 * 다음에 설 문제 번호. <b>우리 문제 목록에서 찾는다</b> — AI의 {@code progress.problemIndex}를
+	 * 쓰지 않는다.
+	 *
+	 * <h2>왜 AI 인덱스를 쓰지 않는가</h2>
+	 *
+	 * <p>화면은 이 값을 그대로 {@code GET .../problems/{problemNo}}에 넣는다. 그런데 AI가 주는 것은
+	 * 우리가 보낸 목록 안의 <b>순서</b>이고, 그것이 우리 문제 번호와 같다는 보장이 없다 — 근거를 못 찾은
+	 * 개념({@code NOT_GENERATED})이 있으면 원본 번호에 빈틈이 생기기 때문이다. 지금은
+	 * {@code JdbcSessionRepository}가 생성된 문제만 1부터 다시 세어 두 값이 대체로 맞지만, "대체로
+	 * 맞는 두 출처"는 언젠가 갈라진다. 우리 목록에서 {@code problemId}로 찾으면 그 가능성이 없다.
+	 *
+	 * <p>{@code current}가 없거나(세션 종료) 그 {@code problemId}가 우리 행과 대조되지 않으면
+	 * {@code null}이다 — 화면은 그때 {@code GET /current}로 커서를 다시 읽는다. AI가 UUID 형태가 아닌
+	 * {@code problemId}를 준 분석에서만 일어나며, {@code highlight}가 {@code null}이 되는 조건과 같다.
+	 */
+	private static Integer nextProblemNoOf(AnswerResult result, List<SessionProblem> problems) {
+		if (result.current() == null || result.current().problemId() == null || problems == null) {
+			return null;
+		}
+		return problems.stream()
+				.filter(problem -> result.current().problemId().equals(problem.problemId()))
+				.map(SessionProblem::problemNo)
+				.findFirst()
+				.orElse(null);
 	}
 
 	/**
