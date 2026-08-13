@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.curriculum.application;
 
+import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysis;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogRepository;
@@ -18,6 +19,7 @@ import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumSection
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumTeachesMappingRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumVersionRepository;
 import com.bigproject.backend.domain.projectexecution.application.ProjectService;
+import com.bigproject.backend.global.exception.ApiException;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -76,6 +78,21 @@ public class CurriculumServiceImpl implements CurriculumService {
      * (15차 R1에서 회차 목록이 같은 이유로 4.6초였다) 전량을 한 번에 읽고 자바에서 가른다.
      * 조회는 교안 수와 무관하게 <b>고정 3건</b>이다.
      */
+    /**
+     * 22차 R7 ② — 목록은 그대로 두고 <b>경로만 사실에 맞춘다.</b>
+     *
+     * <p>교안이 기관 단위라 결과를 기수로 좁히는 것은 사실이 아니다. 대신 없는 기수를 가리키는
+     * 경로를 200으로 답하지 않는다 — 「이 기수엔 교안이 없다」와 「그런 기수가 없다」가 구분되지
+     * 않으면 운영자가 지워진 기수 링크를 열고도 정상이라고 읽는다.
+     */
+    @Override
+    public List<LinkableCurriculum> findLinkableCurriculaForCohort(UUID cohortId, UUID orgId) {
+        if (!catalogRepository.cohortExists(cohortId, orgId)) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND);
+        }
+        return findLinkableCurriculaWithStatus(orgId);
+    }
+
     @Override
     public List<LinkableCurriculum> findLinkableCurriculaWithStatus(UUID orgId) {
         List<CurriculumVersion> versions = findLinkableCurricula(orgId);
@@ -191,6 +208,11 @@ public class CurriculumServiceImpl implements CurriculumService {
 
     @Override
     public List<UUID> findComparableCohorts(UUID cohortId, UUID orgId) {
+        // 22차 R8 — 「비교 대상이 없다」와 「기준 기수가 없다」를 가른다. 둘 다 빈 배열이면
+        // 화면이 비교 드롭다운을 비워 두고 이유를 말하지 못한다.
+        if (!catalogRepository.cohortExists(cohortId, orgId)) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND);
+        }
         List<UUID> myCurriculumVersionIds = projectService.findLinkedCurriculumVersionIds(cohortId, orgId);
         if (myCurriculumVersionIds.isEmpty()) {
             return List.of();
@@ -206,6 +228,20 @@ public class CurriculumServiceImpl implements CurriculumService {
         }
 
         String normalizedTitle = title.trim().replaceAll("\\s+", " ").toLowerCase();
+
+        /*
+         * 22차 R2 — 제목 충돌을 여기서 끊는다.
+         *
+         * uq_curriculum_material_org_id_normalized_title이 부분 인덱스가 아니라 전역 UNIQUE라
+         * 논리 삭제된 교안도 제목을 계속 점유한다. 그래서 삭제 여부를 보지 않고 센다 —
+         * 살아 있는 것만 세면 검사는 통과하고 INSERT가 DB에서 터져 코드 없는 500이 난다.
+         *
+         * 파일 크기와 무관하게 나므로 "50KB짜리도 500"이던 증상의 한 축이었다. 같은 제목으로
+         * 다시 올리는 것은 등록이 아니라 새 버전이어야 하는데, 그 경로는 아직 없다.
+         */
+        if (materialRepository.existsByOrgIdAndNormalizedTitle(orgId, normalizedTitle)) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_TITLE_DUPLICATED);
+        }
 
         CurriculumMaterial material = CurriculumMaterial.create(orgId, title, normalizedTitle, topic, "PDF", actorUserId);
         materialRepository.save(material);

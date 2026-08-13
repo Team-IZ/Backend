@@ -221,6 +221,38 @@ class CohortCostAssemblyTest {
 		assertThat(res.summary().changePct()).isEqualByComparingTo("12.0");
 	}
 
+	/**
+	 * 22차 R11 — 개강 전 기수가 <b>다른 기수의 지난달 총액</b>을 물려받고 있었다.
+	 *
+	 * <p>{@code total}·{@code previousTotal}이 기관 전체 합계인데 {@code cohortId}로 물은 응답에
+	 * 실린다. 10기(9월 개강)를 8월에 물으면 지난달(8월)에 9기 총액이 그대로 와서, 화면이
+	 * <b>아직 시작도 안 한 기수가 -100% 급감했다</b>고 말했다. 그 기수는 8월에 쓸 수 있는
+	 * 세션 자체가 없다.
+	 */
+	@Test
+	void 개강_전_기수는_비교할_지난달이_없어_previousTotal이_null이다() {
+		when(organizationRepository.existsById(ORG_ID)).thenReturn(true);
+		when(currentUserResolver.resolveCurrentUser()).thenReturn(new AuthUser(
+				UUID.randomUUID(), ORG_ID, "sa@iz-get.com", "관리자", null, "ACTIVE",
+				true, null, Role.SUPER_ADMIN, "ACTIVE"));
+		// 다음 달 개강이라 기준 월이 개강월이고, 그 전달은 이 기수가 존재하지 않던 달이다.
+		YearMonth opensAt = NOW.plusMonths(1);
+		when(cohortCostRepository.findCohortPeriod(ORG_ID, COHORT_ID))
+				.thenReturn(new CohortCostRepository.CohortPeriod(
+						COHORT_ID, "10기", opensAt.atDay(1), opensAt.plusMonths(3).atEndOfMonth()));
+		when(organizationPolicyRepository.findByOrgIdAndStatus(ORG_ID, OrganizationPolicy.Status.ACTIVE))
+				.thenReturn(Optional.empty());
+		// 이번 달에 다른 기수가 쓴 기관 전체 비용. 종전에는 이 값이 previousTotal로 새 나갔다.
+		givenOrgMonthly(List.of(new CohortCostRepository.MonthlyAmount(NOW, won("0.415542"))));
+
+		CohortCostResponse res = call(CohortCostResponse.ClassCostSort.NAME);
+
+		assertThat(res.summary().month()).isEqualTo(opensAt.toString());
+		assertThat(res.summary().previousTotal()).isNull();
+		// 지난달이 null이면 비교가 없으므로 화면은 그 줄을 그리지 않는다.
+		assertThat(res.summary().changePct()).isEqualByComparingTo("0");
+	}
+
 	// ── 예산 ────────────────────────────────────────────────────
 
 	@Test

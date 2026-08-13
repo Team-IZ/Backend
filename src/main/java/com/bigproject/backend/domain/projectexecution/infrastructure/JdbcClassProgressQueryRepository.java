@@ -70,6 +70,16 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 		).stream().findFirst();
 	}
 
+	@Override
+	public boolean hasAnyRound(UUID projectId) {
+		return Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+				SELECT EXISTS (
+					SELECT 1 FROM project_assessment_round
+					WHERE project_id = ? AND deleted_at IS NULL
+				)
+				""", Boolean.class, projectId));
+	}
+
 	/**
 	 * 담당 매니저는 LATERAL로 먼저 배열로 접어 넣는다.
 	 * 한 반에 매니저가 여럿이면 그냥 조인할 때 반 행이 매니저 수만큼 불어나 인원 집계가 부풀려진다.

@@ -12,6 +12,7 @@ import com.bigproject.backend.domain.academicoperations.infrastructure.Classroom
 import com.bigproject.backend.domain.academicoperations.infrastructure.ManagerAssignmentRepository;
 import com.bigproject.backend.domain.academicoperations.domain.CohortMember;
 import com.bigproject.backend.domain.academicoperations.infrastructure.CohortMemberRepository;
+import com.bigproject.backend.domain.academicoperations.infrastructure.CohortRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +42,7 @@ public class ClassroomService {
     private final ManagerAssignmentRepository managerAssignmentRepository;
     private final ManagerDirectoryRepository managerDirectoryRepository;
     private final ClassroomDependencyRepository classroomDependencyRepository;
+    private final CohortRepository cohortRepository;
 
     // 반 하나에 대한 응답 조립용 뷰: 담당 매니저(회원 ID·이름·이메일)와 활성 교육생 수를 함께 담음
     // 이름·이메일은 ManagerDirectoryRepository(읽기 전용 조회 포트)로 채운다. 반 카드가 `이도윤 · lee@…`를
@@ -102,6 +104,11 @@ public class ClassroomService {
      * @param scopedManagerId 담당 반으로 좁힐 매니저. 오퍼레이터는 null이며 기수 전체를 본다
      */
     public List<ClassroomView> findClassroomViews(UUID cohortId, UUID orgId, UUID scopedManagerId) {
+        // 22차 R7 — 없는 기수도 200 · 반 0으로 답하고 있었다. 스펙에는 404를 적어 두고 실제로는
+        // 검사하지 않아, 「반을 아직 안 만든 기수」와 「그런 기수가 없다」가 구분되지 않았다.
+        if (!cohortRepository.existsByCohortIdAndOrgIdAndDeletedAtIsNull(cohortId, orgId)) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND);
+        }
         List<Classroom> classrooms = classroomRepository.findByCohortIdAndOrgIdAndDeletedAtIsNullOrderByNameAsc(cohortId, orgId);
         if (scopedManagerId != null) {
             Set<UUID> assignedClassIds = managerAssignmentRepository
