@@ -81,6 +81,9 @@ public class MySubmissionService {
 		if ("FETCH_FAILED".equals(row.submissionStatus()) || "INVALID".equals(row.submissionStatus())) {
 			return "ANALYSIS_FAILED";
 		}
+		if (hasLostExternalJobId(row)) {
+			return "ANALYSIS_FAILED";
+		}
 		if ("FAILED".equals(row.analysisJobStatus())) {
 			return "ANALYSIS_FAILED";
 		}
@@ -111,7 +114,16 @@ public class MySubmissionService {
 		if (row.submissionFailureReason() != null) {
 			return row.submissionFailureReason();
 		}
+		if (hasLostExternalJobId(row)) {
+			return "분석 서버의 작업 정보가 유실되어 분석을 계속할 수 없습니다. "
+					+ "코드를 다시 제출해 분석을 재시도해 주세요. 다시 제출할 수 없다면 담당 매니저에게 문의해 주세요.";
+		}
 		return messageOf(row.analysisFailureCode());
+	}
+
+	private boolean hasLostExternalJobId(MySubmissionRow row) {
+		return ("QUEUED".equals(row.analysisJobStatus()) || "RUNNING".equals(row.analysisJobStatus()))
+				&& row.analysisExternalJobId() == null;
 	}
 
 	/**
