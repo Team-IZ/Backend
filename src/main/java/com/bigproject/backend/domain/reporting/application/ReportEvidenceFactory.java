@@ -31,6 +31,9 @@ public class ReportEvidenceFactory {
 	/** 산출 정책 버전. {@code ck_report_evidence_policy_version}이 0 이하를 막는다. */
 	private static final int POLICY_VERSION = 1;
 
+	/** 재시험 기준선. 읽는 쪽과 같은 값을 써야 발행 전후가 갈리지 않는다. */
+	private static final int RETRY_TARGET_BELOW_LEVEL = TraineeReportServiceImpl.RETRY_TARGET_BELOW_LEVEL;
+
 	private final ObjectMapper objectMapper;
 
 	/**
@@ -51,7 +54,7 @@ public class ReportEvidenceFactory {
 				context.problemStageId(),
 				conceptSnapshot(context),
 				context.axisCode(),
-				decision(result, reachedLevel),
+				decision(reachedLevel),
 				summary(result, context, reachedLevel),
 				context.quoteExcerpt(),
 				context.displayOrder(),
@@ -125,16 +128,25 @@ public class ReportEvidenceFactory {
 	}
 
 	/**
-	 * 다시 보기 대상인가. AI {@code result.retest}가 1차 근거다 —
-	 * 스펙이 "L1과 L2를 둘 다 통과하지 못하면 재시험"으로 정의한 값이다.
+	 * 다시 보기 대상인가. <b>도달 단계 하나로 정한다 — 2단 미만이면 대상이다.</b>
 	 *
-	 * <p>응답이 없으면 같은 정의를 도달 단계로 흉내 낸다. 전부 {@code REVIEW_REQUIRED}로 두면
-	 * 화면이 개념 카드를 모두 경고색으로 칠해 우선순위가 사라진다.
+	 * <h2>🔴 AI의 {@code retest}를 그대로 쓰지 않는다</h2>
+	 *
+	 * <p>종전에는 {@code result.retest}가 있으면 그 값을 1차 근거로 삼았다. 그런데 실제로 <b>2단을
+	 * 통과한 개념에 {@code retest: true}가 실려 오는 리포트</b>가 있었다(23차 R2) — AI 판정이 확정
+	 * 채점 모델의 "불합격(2단 미만)만 재시험"과 어긋난 것이다.
+	 *
+	 * <p>재시험은 회차당 한 번뿐이다. 이미 통과한 개념이 그 한 번을 가져가면 <b>정작 막힌 개념을
+	 * 다시 볼 기회가 사라진다.</b> 합격선을 정하는 것은 채점 모델의 몫이지 매 응답의 몫이 아니므로,
+	 * 여기서 정책으로 확정한다.
+	 *
+	 * <p>같은 규칙이 읽는 쪽({@code TraineeReportServiceImpl.isRetryTarget})에도 있다. 이미 발행돼
+	 * 어긋난 값이 얼어 있는 리포트까지 덮기 위한 것이다.
 	 */
-	private ReportEvidenceDecision decision(JsonNode result, int reachedLevel) {
-		JsonNode retest = result == null ? null : result.path("retest");
-		boolean required = retest != null && retest.isBoolean() ? retest.asBoolean() : reachedLevel < 2;
-		return required ? ReportEvidenceDecision.REVIEW_REQUIRED : ReportEvidenceDecision.NOT_REQUIRED;
+	private ReportEvidenceDecision decision(int reachedLevel) {
+		return reachedLevel < RETRY_TARGET_BELOW_LEVEL
+				? ReportEvidenceDecision.REVIEW_REQUIRED
+				: ReportEvidenceDecision.NOT_REQUIRED;
 	}
 
 	/**

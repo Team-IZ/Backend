@@ -6,7 +6,9 @@ import com.bigproject.backend.domain.submission.domain.SubmissionErrorCode;
 import com.bigproject.backend.domain.submission.domain.SubmissionException;
 import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.LastCommit;
+import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.GithubSubmissionContent;
 import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.SubmissionContent;
+import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.ZipSubmissionContent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -153,18 +155,17 @@ public class MySubmissionService {
 			if (row.repoUrl() == null) {
 				return null;
 			}
-			return new SubmissionContent(
+			return new GithubSubmissionContent(
 					row.repoUrl(),
 					firstNonBlank(row.resolvedBranch(), row.requestedBranch(), row.defaultBranch()),
-					null, null,
 					commitOf(row.commitSha(), row.commitMessage(), row.commitCommittedAt()));
 		}
-		// ZIP. 아티팩트 행이 없으면(접수 도중 등) 카드에 채울 것이 없으므로 키 자체를 빼 준다.
+		// ZIP. 아티팩트 행이 없으면(접수 도중이거나 20차 이전의 옛 제출) 카드에 채울 것이 없으므로
+		// 키 자체를 빼 준다. ZipSubmissionContent 는 fileName·fileSize 가 필수라 반쪽으로 만들 수도 없다.
 		if (row.artifactFileName() == null) {
 			return null;
 		}
-		return new SubmissionContent(
-				null, null,
+		return new ZipSubmissionContent(
 				row.artifactFileName(),
 				row.artifactFileSize(),
 				commitOf(row.analysisCommitSha(), row.analysisCommitMessage(),
