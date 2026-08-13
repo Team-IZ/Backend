@@ -458,6 +458,40 @@ class OpenApiDocumentTest {
 	}
 
 	/**
+	 * 23차 R4 — 오류가 <b>설명문에만</b> 있으면 프론트 생성기가 에러 코드 상수를 만들지 못한다.
+	 *
+	 * <p>실제로 {@code AI_SERVER_UNAVAILABLE}(503)이 그랬다. 재시도 안내를 띄우려면 그 코드로 갈라야
+	 * 하는데 {@code responses}에 없어 다른 503과 구분되지 않았다. 스펙을 받은 시점에 119개 중 37개가
+	 * 같은 상태였다 — 오퍼레이션마다 애너테이션을 적어 막을 일이 아니라 여기서 한 번에 잡는다.
+	 */
+	@Test
+	void everyOperationDeclaresAtLeastOneErrorResponse() throws Exception {
+		List<String> missing = new ArrayList<>();
+		forEachOperation(spec(), (operationId, operation) -> {
+			boolean hasError = operation.path("responses").propertyNames().stream()
+					.anyMatch(status -> status.startsWith("4") || status.startsWith("5"));
+			if (!hasError) {
+				missing.add(operationId);
+			}
+		});
+
+		assertThat(missing)
+				.as("오류를 하나도 선언하지 않은 오퍼레이션은 화면이 실패를 갈라낼 근거를 주지 못한다")
+				.isEmpty();
+	}
+
+	/** 인증이 필요한 경로는 토큰이 없거나 역할이 다르면 컨트롤러에 닿지도 못한다. */
+	@Test
+	void securedOperationsDeclareTheAuthenticationFailures() throws Exception {
+		JsonNode responses = spec().path("paths").path("/api/v0/reports").path("get").path("responses");
+
+		assertThat(responses.has("401")).isTrue();
+		assertThat(responses.has("403")).isTrue();
+		assertThat(responses.path("401").path("content").path("application/json").path("examples")
+				.toString()).contains("UNAUTHENTICATED");
+	}
+
+	/**
 	 * 23차 R1 — 제출 내용은 <b>수단별로 배타적</b>이라 한 스키마에 담으면 다섯 필드가 전부 선택이 된다.
 	 * 그러면 "둘 다 없을 수도 있다"가 타입이 되어 서버가 한쪽을 빠뜨려도 화면이 컴파일된다.
 	 *

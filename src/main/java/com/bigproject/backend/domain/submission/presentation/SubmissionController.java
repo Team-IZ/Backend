@@ -11,6 +11,7 @@ import com.bigproject.backend.domain.submission.presentation.dto.SubmissionRespo
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -132,6 +133,9 @@ public class SubmissionController {
 					| `AI_SERVER_UNAVAILABLE` | 503 | AI 프록시를 깨우지 못했다. **재시도하면 된다** |
 
 					ZIP 업로드는 같은 리소스를 만들지만 `POST /submissions/zip`으로 분리돼 있다.""")
+	// 접수는 201이다. 선언하지 않으면 springdoc 이 기본값 200 으로 적어, 스펙과 서버가 서로 다른
+	// 상태 코드를 말하게 된다(23차 R4에서 오류 응답과 함께 드러났다).
+	@ApiResponse(responseCode = "201", description = "제출 접수됨")
 	@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<SubmissionResponse> submitGithubUrl(
 			@Valid @RequestBody CreateGithubSubmissionRequest request,
@@ -221,6 +225,7 @@ public class SubmissionController {
 					> 경로를 막아 두었으나, `POST /api/v0/analyses`에 `multipart/form-data`(`payload` +
 					> `file`) 경로가 생겨 근거가 사라졌다. S3 presigned URL이 아니라 **백엔드가 파일을 직접
 					> 실어 보내는** 방식이라, GitHub 제출과 달리 AI 서버에 저장소 접근 권한이 없어도 된다.""")
+	@ApiResponse(responseCode = "202", description = "업로드 접수됨. 분석은 비동기로 이어진다")
 	@PostMapping(path = "/zip", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	public ResponseEntity<SubmissionResponse> submitZip(
 			@RequestParam @NotNull UUID assessmentRoundId,

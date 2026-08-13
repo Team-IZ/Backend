@@ -27,6 +27,7 @@ import io.swagger.v3.oas.models.media.Content;
 import io.swagger.v3.oas.models.media.MediaType;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.responses.ApiResponse;
+import io.swagger.v3.oas.models.responses.ApiResponses;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.context.annotation.Bean;
@@ -106,6 +107,22 @@ public class SwaggerConfig {
 			"503", List.of("SERVICE_UNAVAILABLE")
 	);
 
+	/**
+	 * 설명에 적힌 오류 표의 한 행. {@code | `CODE` | 404 | 언제 |} 처럼 <b>코드와 상태가 나란히 있는
+	 * 표 행</b>만 잡는다 — 문장 속에서 코드 이름이 지나가는 것은 그 오퍼레이션의 오류가 아닐 수 있다.
+	 */
+	private static final Pattern ERROR_TABLE_ROW =
+			Pattern.compile("^\\|\\s*`?([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)`?\\s*\\|\\s*(\\d{3})\\s*\\|",
+					Pattern.MULTILINE);
+
+	/**
+	 * 토큰이 필요한 경로가 <b>언제나</b> 낼 수 있는 응답. 시큐리티 필터가 컨트롤러보다 먼저 답하므로
+	 * 어느 오퍼레이션의 오류 표에도 적혀 있지 않지만, 실제로는 가장 자주 나가는 실패다.
+	 */
+	private static final Map<String, String> SECURITY_FAILURES = new LinkedHashMap<>(Map.of(
+			"401", "UNAUTHENTICATED — 토큰이 없거나 만료됐다",
+			"403", "ACCESS_DENIED — 이 역할로는 부를 수 없다"));
+
 	/** {@code summary}에 붙은 준비 상태 마커 → 기계가 읽는 벤더 확장값. */
 	private static final Map<String, String> READINESS_BY_MARKER = Map.of(
 			"✅ 사용 가능", "available",
@@ -153,6 +170,7 @@ public class SwaggerConfig {
 				pathItem.readOperations().forEach(operation -> {
 					applyReadinessExtension(operation);
 					applySecurity(operation, publicPath);
+					ensureErrorResponses(operation, publicPath);
 					applyErrorSchema(operation, publicPath);
 				});
 			});
@@ -407,6 +425,69 @@ public class SwaggerConfig {
 		if (operation.getSecurity() == null || operation.getSecurity().isEmpty()) {
 			operation.setSecurity(List.of(new SecurityRequirement().addList(BEARER_AUTH)));
 		}
+	}
+
+	/**
+	 * <b>설명에만 적혀 있던 오류를 실제 응답 정의로 올린다.</b>
+	 *
+	 * <p>{@code @ApiResponse}를 적지 않은 오퍼레이션은 성공 하나만 선언된 채로 나간다. 사람이 읽는
+	 * 설명에는 오류 표가 있어도 <b>기계는 그것을 읽지 않으므로</b>, 프론트 생성기가 화면에서 쓸 에러
+	 * 코드 상수를 만들지 못한다. 실제로 그래서 재시도 안내를 붙일 근거가 없다는 요청이 왔다
+	 * (23차 R4 — {@code AI_SERVER_UNAVAILABLE}이 설명문에만 있었다).
+	 *
+	 * <p>두 가지를 채운다.
+	 * <ol>
+	 *   <li><b>설명의 오류 표</b> — {@code | `CODE` | 404 | 언제 |} 모양의 행만 읽는다. 표 밖에서
+	 *       코드 이름이 지나가는 문장은 대상이 아니다. 상태별로 묶어 응답 하나를 만든다</li>
+	 *   <li><b>인증·인가</b> — 토큰이 필요한 경로는 <b>언제나</b> 401·403을 낼 수 있다. 컨트롤러에
+	 *       닿기도 전에 시큐리티 필터가 답하는 것이라 어느 오퍼레이션에도 표로 적혀 있지 않다</li>
+	 * </ol>
+	 *
+	 * <p>이미 선언된 상태는 건드리지 않는다 — 손으로 적은 설명이 더 정확하다.
+	 */
+	private void ensureErrorResponses(Operation operation, boolean publicPath) {
+		ApiResponses responses = operation.getResponses();
+		if (responses == null) {
+			return;
+		}
+		errorTableCodes(operation.getDescription()).forEach((status, codes) -> {
+			if (responses.get(status) == null) {
+				responses.addApiResponse(status, new ApiResponse().description(String.join(" · ", codes)));
+			}
+		});
+		if (!publicPath) {
+			SECURITY_FAILURES.forEach((status, description) -> {
+				if (responses.get(status) == null) {
+					responses.addApiResponse(status, new ApiResponse().description(description));
+				}
+			});
+		}
+	}
+
+	/**
+	 * 설명에 적힌 오류 표를 상태별 코드 목록으로 바꾼다.
+	 *
+	 * <p>표 행만 읽는 이유는 본문이 코드 이름을 <b>설명하려고</b> 언급하는 일이 잦기 때문이다 —
+	 * "그 실패는 {@code REPO_NOT_FOUND}로 드러난다" 같은 문장까지 응답으로 만들면, 그 오퍼레이션이
+	 * 내지 않는 오류가 스펙에 생긴다.
+	 */
+	private Map<String, List<String>> errorTableCodes(String description) {
+		if (description == null || description.isBlank()) {
+			return Map.of();
+		}
+		Map<String, List<String>> byStatus = new LinkedHashMap<>();
+		Matcher matcher = ERROR_TABLE_ROW.matcher(description);
+		while (matcher.find()) {
+			String status = matcher.group(2);
+			if (!isError(status)) {
+				continue;
+			}
+			List<String> codes = byStatus.computeIfAbsent(status, key -> new ArrayList<>());
+			if (!codes.contains(matcher.group(1))) {
+				codes.add(matcher.group(1));
+			}
+		}
+		return byStatus;
 	}
 
 	private void applyErrorSchema(Operation operation, boolean publicPath) {
