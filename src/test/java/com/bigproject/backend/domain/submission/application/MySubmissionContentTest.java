@@ -3,7 +3,9 @@ package com.bigproject.backend.domain.submission.application;
 import com.bigproject.backend.domain.submission.domain.MySubmissionQueryRepository;
 import com.bigproject.backend.domain.submission.domain.MySubmissionQueryRepository.MySubmissionRow;
 import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse;
+import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.GithubSubmissionContent;
 import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.SubmissionContent;
+import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.ZipSubmissionContent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -42,15 +44,14 @@ class MySubmissionContentTest {
 	}
 
 	@Test
-	@DisplayName("ZIP 제출은 파일 이름·크기를 담고 저장소 필드는 비운다")
+	@DisplayName("ZIP 제출은 ZipSubmissionContent 로 나가고 파일 이름·크기를 담는다")
 	void zipSubmissionCarriesFileNameAndSize() {
 		SubmissionContent content = contentOf(zipRow("team3-miniproject.zip", 12_873_421L, "a3f9c21"));
 
-		assertThat(content).isNotNull();
-		assertThat(content.fileName()).isEqualTo("team3-miniproject.zip");
-		assertThat(content.fileSize()).isEqualTo(12_873_421L);
-		assertThat(content.repoUrl()).isNull();
-		assertThat(content.branch()).isNull();
+		assertThat(content).isInstanceOf(ZipSubmissionContent.class);
+		ZipSubmissionContent zip = (ZipSubmissionContent) content;
+		assertThat(zip.fileName()).isEqualTo("team3-miniproject.zip");
+		assertThat(zip.fileSize()).isEqualTo(12_873_421L);
 	}
 
 	/**
@@ -60,7 +61,7 @@ class MySubmissionContentTest {
 	@Test
 	@DisplayName("ZIP 제출도 분석이 끝나면 커밋 줄이 붙는다")
 	void zipSubmissionShowsTheCommitOnceAnalysisSucceeded() {
-		assertThat(contentOf(zipRow("a.zip", 1L, "a3f9c21")).lastCommit())
+		assertThat(((ZipSubmissionContent) contentOf(zipRow("a.zip", 1L, "a3f9c21"))).lastCommit())
 				.satisfies(commit -> {
 					assertThat(commit.sha()).isEqualTo("a3f9c21");
 					assertThat(commit.at()).isEqualTo(COMMITTED_AT);
@@ -70,18 +71,28 @@ class MySubmissionContentTest {
 	@Test
 	@DisplayName("분석 전 ZIP 제출은 커밋 키가 빠진다 — git log를 읽는 주체가 AI다")
 	void zipSubmissionHasNoCommitBeforeAnalysis() {
-		assertThat(contentOf(zipRow("a.zip", 1L, null)).lastCommit()).isNull();
+		assertThat(((ZipSubmissionContent) contentOf(zipRow("a.zip", 1L, null))).lastCommit()).isNull();
 	}
 
 	@Test
-	@DisplayName("GitHub 제출은 종전처럼 저장소·브랜치를 담고 파일 필드는 비운다")
+	@DisplayName("GitHub 제출은 GithubSubmissionContent 로 나가고 저장소·브랜치를 담는다")
 	void githubSubmissionStillCarriesRepositoryAndBranch() {
 		SubmissionContent content = contentOf(githubRow());
 
-		assertThat(content.repoUrl()).isEqualTo("https://github.com/team3/mini");
-		assertThat(content.branch()).isEqualTo("main");
-		assertThat(content.fileName()).isNull();
-		assertThat(content.fileSize()).isNull();
+		assertThat(content).isInstanceOf(GithubSubmissionContent.class);
+		GithubSubmissionContent github = (GithubSubmissionContent) content;
+		assertThat(github.repoUrl()).isEqualTo("https://github.com/team3/mini");
+		assertThat(github.branch()).isEqualTo("main");
+	}
+
+	/** 브랜치는 아직 확정되지 않을 수 있다. 키는 오고 값만 null 이다. */
+	@Test
+	@DisplayName("GitHub 제출의 브랜치는 확정 전이면 null 이다")
+	void githubSubmissionMayNotKnowTheBranchYet() {
+		MySubmissionRow row = row("GITHUB_URL", "https://github.com/team3/mini", null,
+				null, null, null, null, null);
+
+		assertThat(((GithubSubmissionContent) contentOf(row)).branch()).isNull();
 	}
 
 	/** 아티팩트 행이 아직 없는 접수 도중에는 빈 카드를 만들지 않는다. */
