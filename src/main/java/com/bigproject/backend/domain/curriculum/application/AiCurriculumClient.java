@@ -1,5 +1,9 @@
 package com.bigproject.backend.domain.curriculum.application;
 
+import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
+import com.bigproject.backend.domain.curriculum.domain.CurriculumException;
+import com.bigproject.backend.global.ai.AiClient;
+import com.bigproject.backend.global.ai.AiProxyWarmUp;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
@@ -17,23 +21,38 @@ import java.util.UUID;
 @Component
 public class AiCurriculumClient {
 
-    private final RestClient proxyClient;
+    /**
+     * base-url 에는 호스트만 있다. 프리픽스는 {@link AiClient#API_V0} 한 곳에서만 붙인다 —
+     * base-url 쪽에도 붙이면 {@code RestClient} 가 두 경로를 <b>이어붙여</b>
+     * {@code /api/v0/api/v0/curricula} 가 된다(치환이 아니다).
+     */
+    private static final String CURRICULA_PATH = AiClient.API_V0 + "/curricula";
+
+    private final AiProxyWarmUp proxyWarmUp;
     private final RestClient originClient;
     private final String internalKey;
 
+    /**
+     * PDF 업로드는 프록시가 아니라 원본({@code ai.origin-base-url})으로 직접 나간다.
+     *
+     * <p><b>왜 프록시로 보내지 않나.</b> 프록시는 wake/sleep Lambda이고, Lambda Function URL의
+     * 동기 호출 페이로드 상한이 6MB다. PDF 자체를 그 경로로 보내면 413이 난다(Team-IZ/AI PR#25
+     * 코멘트에서 10MB로 재현·확인. AWS 플랫폼 제약이라 프록시 코드로 우회할 수 없다).
+     *
+     * <p><b>왜 그런데도 프록시를 먼저 부르나.</b> 원본 도메인은 PAUSED 상태를 스스로 깨우지 못하고
+     * 즉시 404만 돌려준다(Team-IZ-AI HANDOFF). 깨우는 일은 {@link AiProxyWarmUp} 이 맡는다 —
+     * 코드 제출 경로와 같은 컴포넌트다. 두 벌로 두면 타임아웃 정책이 갈라진다.
+     */
     public AiCurriculumClient(
-            @Value("${ai.proxy-base-url:http://localhost:8000}") String proxyBaseUrl,
+            AiProxyWarmUp proxyWarmUp,
             @Value("${ai.origin-base-url:http://localhost:8000}") String originBaseUrl,
             @Value("${ai.curriculum.x-internal-key:}") String internalKey) {
-        SimpleClientHttpRequestFactory proxyFactory = new SimpleClientHttpRequestFactory();
-        proxyFactory.setConnectTimeout(Duration.ofSeconds(5));
-        proxyFactory.setReadTimeout(Duration.ofSeconds(150));
-        this.proxyClient = RestClient.builder().baseUrl(proxyBaseUrl).requestFactory(proxyFactory).build();
+        this.proxyWarmUp = proxyWarmUp;
 
         SimpleClientHttpRequestFactory originFactory = new SimpleClientHttpRequestFactory();
         originFactory.setConnectTimeout(Duration.ofSeconds(5));
         originFactory.setReadTimeout(Duration.ofSeconds(60));
-        this.originClient = RestClient.builder().baseUrl(originBaseUrl + "/api/v0").requestFactory(originFactory).build();
+        this.originClient = RestClient.builder().baseUrl(originBaseUrl).requestFactory(originFactory).build();
 
         this.internalKey = internalKey;
     }
@@ -78,8 +97,12 @@ public class AiCurriculumClient {
         }
     }
 
+    /** AI 원본 서버(FastAPI) POST /api/v0/curricula 호출. PDF를 다시 전송한다. */
     public CurriculumAccepted requestAnalysis(UUID versionId, String courseLabel, byte[] pdfBytes, String idempotencyKey) {
-        warmUp();
+        // 깨우지 못한 채 원본으로 보내면 404가 돌아온다 — "교안 형식이 잘못됐다"로 읽히는 실패다.
+        if (!proxyWarmUp.warmUp()) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_AI_UNAVAILABLE);
+        }
 
         String payloadJson = "{\"versionId\":\"" + versionId + "\",\"courseLabel\":\"" + courseLabel + "\"}";
 
@@ -93,7 +116,7 @@ public class AiCurriculumClient {
         });
 
         return originClient.post()
-                .uri("/curricula")
+                .uri(CURRICULA_PATH)
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .header("Idempotency-Key", idempotencyKey)
                 .header("X-Internal-Key", internalKey)
@@ -108,12 +131,5 @@ public class AiCurriculumClient {
                 .header("X-Internal-Key", internalKey)
                 .retrieve()
                 .body(AnalysisResult.class);
-    }
-
-    private void warmUp() {
-        proxyClient.get()
-                .uri("/api/health")
-                .retrieve()
-                .toBodilessEntity();
     }
 }
