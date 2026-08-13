@@ -117,10 +117,32 @@ public record CurrentRoundResponse(
 		@Schema(allowableValues = {"UNAVAILABLE", "PARTIAL", "AVAILABLE"}) String explanationStatus,
 
 		@Schema(nullable = true) Instant submissionDueAt,
-		@Schema(description = "OPEN 회차면 DB가 non-null을 보장한다", nullable = true) Instant roundAssessmentOpenAt,
-		@Schema(description = "OPEN 회차면 DB가 non-null을 보장한다", nullable = true) Instant roundAssessmentDueAt,
-		@Schema(description = "개인 응시 창 시작. 수행 생성 전이면 null", nullable = true) Instant assessmentOpenAt,
-		@Schema(description = "개인 응시 창 종료. 수행 생성 전이면 null", nullable = true) Instant assessmentCloseAt,
+		@Schema(description = """
+				회차 공통 응시 창 시작. **일정 안내용이며 응시 가능 판정에 쓰지 않는다**(아래 참고).
+				OPEN 회차면 DB가 non-null을 보장한다""", nullable = true) Instant roundAssessmentOpenAt,
+		@Schema(description = """
+				회차 공통 응시 창 마감. **일정 안내용이며 응시 가능 판정에 쓰지 않는다**(아래 참고).
+				OPEN 회차면 DB가 non-null을 보장한다""", nullable = true) Instant roundAssessmentDueAt,
+		@Schema(description = """
+				**개인 응시 창 시작 — 응시 가능 여부는 이 값과 `assessmentCloseAt`으로만 정해진다.**
+				분석이 끝나 세션이 열린 시각이며, 수행 생성 전이면 null이다""",
+				nullable = true) Instant assessmentOpenAt,
+		@Schema(description = """
+				**개인 응시 창 종료.** 세션이 열린 시각부터 24시간이며(`assessment.window-hours`),
+				수행 생성 전이면 null이다.
+
+				## 🔴 두 응시 창이 어긋나면 이 값이 이긴다
+
+				응답에는 회차 창(`roundAssessmentOpenAt`·`roundAssessmentDueAt`)도 함께 실리지만
+                **그것은 운영 일정 안내용**이고, 응시를 열고 닫는 것은 개인 창 하나다.
+
+                규칙은 이렇다 — **제출 마감 전에 코드를 내고, 분석이 끝나 세션이 열리면,
+                그 시점부터 24시간 안에 응시한다.** 그래서 마감 직전에 제출해 분석이 늦게 끝나면
+                개인 창이 회차 창 밖으로 나갈 수 있고, 그때도 24시간은 보장된다.
+
+                남은 시간 문구는 이 값 하나로 그리면 된다. `representativeStatus`도 같은 값으로
+                갈린다""",
+				nullable = true) Instant assessmentCloseAt,
 		@Schema(nullable = true) Instant initialTerminalAt,
 		@Schema(example = "ROUND_BATCH", nullable = true, allowableValues = {"ROUND_BATCH"})
 		String reportPublishMode,

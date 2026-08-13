@@ -7,6 +7,7 @@ import com.bigproject.backend.domain.codeanalysis.application.AnalysisResultPayl
 import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJob;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -69,6 +70,22 @@ public class JdbcAssessmentSessionPreparer {
 			 WHERE tm.team_id = ? AND tm.to_at IS NULL
 			""";
 
+	/**
+	 * 개인 응시 창의 길이(시간). <b>세션이 열린 순간부터 이만큼</b>이며 회차 응시 창과 무관하다.
+	 *
+	 * <h2>🔴 회차 응시 창을 판정에 쓰지 않는다 (2026-08-13 확정)</h2>
+	 *
+	 * <p>응답에는 회차 창({@code roundAssessmentOpenAt}·{@code roundAssessmentDueAt})도 함께 실리지만
+	 * <b>그것은 일정 안내용</b>이고, 응시 가능 여부는 이 개인 창 하나로 정한다. 규칙은
+	 * "제출 마감 전에 코드를 내고 분석이 끝나 세션이 열리면, 그 시점부터 24시간"이다.
+	 *
+	 * <p>정의서 주석은 개인 창을 {@code MAX(analysis_completed_at, 회차 open_at)}으로,
+	 * 마감을 회차 {@code assessment_due_at}으로 적고 있어 <b>이 규칙과 다르다.</b> 운영 판단이
+	 * 이쪽으로 확정됐으므로 코드를 기준으로 두고, 정의서 주석은 다음 개정 때 맞춘다.
+	 */
+	@Value("${assessment.window-hours:24}")
+	private int assessmentWindowHours;
+
 	private final JdbcTemplate jdbc;
 
 	/**
@@ -121,9 +138,11 @@ public class JdbcAssessmentSessionPreparer {
 		return jdbc.update("""
 				INSERT INTO measurement_attempt (org_id, cohort_id, assessment_round_id, project_id, user_id,
 				    source_submission_id, code_analysis_id, attempt_type, attempt_sequence_no,
-				    status, validity_review_status, analysis_completed_at)
+				    status, validity_review_status, analysis_completed_at,
+				    assessment_open_at, assessment_close_at)
 				SELECT ?, c.cohort_id, ?, pm.project_id, pm.user_id, ?, ?, 'INITIAL', 1,
-				       'SESSION_READY', 'NOT_REQUIRED', now()
+				       'SESSION_READY', 'NOT_REQUIRED', now(),
+				       now(), now() + make_interval(hours => ?)
 				  FROM team_membership tm
 				  JOIN project_membership pm ON pm.project_membership_id = tm.project_membership_id
 				   AND pm.status = 'ACTIVE'
@@ -132,7 +151,7 @@ public class JdbcAssessmentSessionPreparer {
 				ON CONFLICT (assessment_round_id, user_id) WHERE attempt_type = 'INITIAL' DO NOTHING
 				""",
 				job.getOrgId(), job.getAssessmentRoundId(), job.getSubmissionId(), analysisId,
-				job.getTeamId());
+				assessmentWindowHours, job.getTeamId());
 	}
 
 	/**
@@ -159,12 +178,15 @@ public class JdbcAssessmentSessionPreparer {
 				UPDATE measurement_attempt
 				   SET status = 'SESSION_READY', code_analysis_id = ?, source_submission_id = ?,
 				       analysis_completed_at = now(), updated_at = now(),
+				       assessment_open_at = now(),
+				       assessment_close_at = now() + make_interval(hours => ?),
 				       terminal_reason_code = NULL, terminal_at = NULL
 				 WHERE assessment_round_id = ? AND attempt_type = 'INITIAL'
 				   AND (status IN ('NOT_STARTED', 'SUBMITTED', 'ANALYZING')
 				        OR (status = 'FAILED' AND terminal_reason_code = 'ANALYSIS_FAILED'))
 				   AND user_id IN (""" + TEAM_MEMBERS + ")",
-				analysisId, job.getSubmissionId(), job.getAssessmentRoundId(), job.getTeamId());
+				analysisId, job.getSubmissionId(), assessmentWindowHours,
+				job.getAssessmentRoundId(), job.getTeamId());
 	}
 
 	/**
