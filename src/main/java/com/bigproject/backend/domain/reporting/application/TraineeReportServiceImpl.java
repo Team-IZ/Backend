@@ -43,6 +43,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class TraineeReportServiceImpl implements TraineeReportService {
 
+	/**
+	 * 재시험 기준선. <b>2단(설계 논리)이 합격선</b>이라 그 미만만 다시 본다.
+	 * 확정 채점 모델의 "불합격(2단 미만) 개념만 재시험"이 이 상수 하나로 표현된다.
+	 */
+	static final int RETRY_TARGET_BELOW_LEVEL = 2;
+
 	private final TraineeReportQueryRepository queryRepository;
 	private final ObjectMapper objectMapper;
 
@@ -230,7 +236,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	private ConceptReportResponse toConcept(ConceptRow row, List<StageAnswerRow> answerRows,
 			boolean fullScope, boolean retryPending) {
 
-		boolean hideOwnAnswers = !fullScope || (row.reviewRequired() && retryPending);
+		boolean retryTarget = isRetryTarget(row);
+		boolean hideOwnAnswers = !fullScope || (retryTarget && retryPending);
 
 		List<QaEntryResponse> qa = (hideOwnAnswers || answerRows.isEmpty())
 				? null
@@ -246,12 +253,32 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				true,
 				row.reachLevel(),
 				row.resultExplanation(),
-				row.reviewRequired(),
+				retryTarget,
 				row.canViewExplanation() ? curriculumRef(row.curriculumLocationJson()) : null,
 				qa,
-				explain(row, fullScope, retryPending),
+				explain(row, fullScope, retryPending, retryTarget),
 				comparedReach(row.reviewBeforeAfterItemsJson())
 		);
+	}
+
+	/**
+	 * 재시험 대상인가. <b>정책이 정한다 — 저장된 판정을 그대로 내보내지 않는다.</b>
+	 *
+	 * <p>확정 채점 모델의 규칙은 <b>"2단 미만만 재시험"</b> 하나다. 그런데
+	 * {@code report_evidence.decision_code}에는 그 규칙과 어긋나는 값이 남아 있다 — 2단을 통과한
+	 * 개념이 {@code REVIEW_REQUIRED}로 얼어 있는 리포트가 실제로 있었다(23차 R2). 발행 시점에 AI가
+	 * 준 {@code retest}를 그대로 믿었거나, 그 이전에 적재된 데이터다.
+	 *
+	 * <p>🔴 <b>그대로 두면 학생이 합격한 개념을 다시 본다.</b> 다시 보기는 회차당 한 번뿐이라,
+	 * 그 한 번을 이미 통과한 개념에 쓰면 <b>정작 막힌 개념을 볼 기회가 사라진다.</b> 저장된 값보다
+	 * 이 손해가 크므로 읽는 시점에 정책으로 덮는다 — 이미 발행된 리포트도 함께 맞는다.
+	 *
+	 * <p>쓰는 쪽({@code ReportEvidenceFactory})도 같은 규칙으로 확정하므로 앞으로 저장되는 값은
+	 * 여기서 뒤집히지 않는다. 두 곳에 같은 규칙이 있는 것은 중복이 아니라 <b>옛 데이터까지 덮기
+	 * 위한 것</b>이며, 규칙 자체는 {@link #RETRY_TARGET_BELOW_LEVEL} 하나에서 나온다.
+	 */
+	private static boolean isRetryTarget(ConceptRow row) {
+		return row.reachLevel() < RETRY_TARGET_BELOW_LEVEL;
 	}
 
 	/** 다시 보기 상태. REVIEW 응시 기록이 없으면 대상이 아니다. */
@@ -300,9 +327,15 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		}
 	}
 
-	/** 막힌 이유 해설. 다시 보기 대상이고 근거 문장이 있을 때만 붙는다. */
-	private static List<String> explain(ConceptRow row, boolean fullScope, boolean retryPending) {
-		if (!row.reviewRequired() || !row.canViewExplanation()) {
+	/**
+	 * 막힌 이유 해설. 다시 보기 대상이고 근거 문장이 있을 때만 붙는다.
+	 *
+	 * <p>대상 판정은 {@code isRetryTarget}이 넘겨준 값을 쓴다 — 저장된 {@code decision_code}를 다시
+	 * 읽으면 해설이 붙는 개념과 재시험 뱃지가 붙는 개념이 갈린다.
+	 */
+	private static List<String> explain(ConceptRow row, boolean fullScope, boolean retryPending,
+			boolean retryTarget) {
+		if (!retryTarget || !row.canViewExplanation()) {
 			return null;
 		}
 		// 공개 범위가 FULL이 아니면 해설을 내보내지 않는다. SUMMARY는 "무엇을 어디까지 했는지"까지고,

@@ -119,7 +119,8 @@ class TraineeReportDisclosureGatingTest {
 	 * @param scope         {@code trainee_disclosure_scope}
 	 * @param reviewStatus  다시 보기 응시 상태. null이면 다시 보기가 없다
 	 * @param reviewDone    다시 보기 종료 시각. null이면 진행 중이다
-	 * @param retryTarget   이 개념이 다시 보기 대상인가
+	 * @param retryTarget   이 개념이 다시 보기 대상인가. <b>도달 단계로 표현한다</b> —
+	 *                      대상 판정은 저장된 값이 아니라 "2단 미만" 정책에서 나온다(23차 R2)
 	 */
 	private void given(String scope, String reviewStatus, Instant reviewDone, boolean retryTarget) {
 		when(queryRepository.findRounds(USER)).thenReturn(List.of(new RoundRow(
@@ -132,10 +133,12 @@ class TraineeReportDisclosureGatingTest {
 				null, Instant.parse("2026-07-01T00:00:00Z"), true,
 				reviewStatus, null, reviewDone)));
 
+		// 대상이면 1단(불합격), 아니면 2단(합격선). reviewRequired 컬럼 값은 더 이상 쓰이지 않으므로
+		// 일부러 정책과 반대로 넣어 둔다 — 저장된 값이 되살아나면 여기서 깨진다.
 		when(queryRepository.findConcepts(USER)).thenReturn(List.of(new ConceptRow(
-				REPORT, PROBLEM, "트랜잭션 경계 설정", 1, 2,
+				REPORT, PROBLEM, "트랜잭션 경계 설정", 1, retryTarget ? 1 : 2,
 				"선택 이유까지는 설명했지만 대안은 제시하지 못했습니다.", EXCERPT,
-				null, retryTarget, null, true)));
+				null, !retryTarget, null, true)));
 
 		when(queryRepository.findStageAnswers(USER)).thenReturn(List.of(new StageAnswerRow(
 				REPORT, PROBLEM, "L2", 1, "QUESTION", "왜 이 구조를 선택했나요?", ANSWER)));
