@@ -20,12 +20,55 @@ import java.util.UUID;
  * <p>반 필터는 <b>SQL 문자열을 이어 붙여</b> 만든다. {@code (CAST(? AS uuid) IS NULL OR ...)} 한 벌로
  * 처리하면 파라미터가 두 배로 늘고, PostgreSQL이 null 파라미터의 타입을 정하지 못해 캐스팅을 붙여야만
  * 하는 자리가 생긴다. 조건이 하나뿐이라 분기하는 편이 읽기도 쉽다.
+ *
+ * <p>담당 반 제한은 조인이 아니라 {@code EXISTS}로 건다. {@code manager_assignment}는 배정·해제 이력이
+ * 쌓이는 표라 같은 (매니저, 반)에 행이 여럿일 수 있고, 조인하면 그만큼 팀 행이 복제돼 집계가 부풀려진다.
  */
 @Repository
 @RequiredArgsConstructor
 public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQueryRepository {
 
 	private final JdbcTemplate jdbcTemplate;
+
+	/**
+	 * 담당 반 제한. {@code classColumn}은 호출부가 고정한 컬럼 이름이며 외부 입력이 아니다.
+	 * 파라미터는 매니저 ID 하나이고, 호출부의 인자 순서가 이 조각의 위치와 맞아야 한다.
+	 */
+	private static String managedClassFilter(String classColumn) {
+		return """
+				\tAND EXISTS (
+						SELECT 1
+						FROM manager_assignment ma
+						WHERE ma.class_id = %s
+							AND ma.manager_user_id = ?
+							AND ma.status = 'ACTIVE'
+							AND ma.unassigned_at IS NULL
+					)
+				""".formatted(classColumn);
+	}
+
+	@Override
+	public boolean isClassManagedBy(UUID managerUserId, UUID classId, UUID cohortId) {
+		Boolean managed = jdbcTemplate.queryForObject(
+				"""
+				SELECT EXISTS (
+					SELECT 1
+					FROM manager_assignment ma
+					JOIN "class" c ON c.class_id = ma.class_id AND c.deleted_at IS NULL
+					WHERE ma.manager_user_id = ?
+						AND ma.class_id = ?
+						AND c.cohort_id = ?
+						AND ma.status = 'ACTIVE'
+						AND ma.unassigned_at IS NULL
+				)
+				""",
+				Boolean.class,
+				managerUserId,
+				classId,
+				cohortId
+		);
+		return Boolean.TRUE.equals(managed);
+	}
 
 	@Override
 	public Optional<RoundScope> findRound(UUID projectId, int roundNo) {
@@ -69,7 +112,8 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 	 * 새 제출의 상태로 오인되지 않게 {@code submission_id}로 묶는다.
 	 */
 	@Override
-	public List<TeamRow> findTeams(UUID projectId, UUID assessmentRoundId, UUID organizationId, UUID classId) {
+	public List<TeamRow> findTeams(
+			UUID projectId, UUID assessmentRoundId, UUID organizationId, UUID managerUserId, UUID classId) {
 		StringBuilder sql = new StringBuilder("""
 				SELECT
 					t.team_id,
@@ -110,11 +154,15 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 					AND t.deleted_at IS NULL
 				""");
 		List<Object> args = new ArrayList<>(List.of(assessmentRoundId, assessmentRoundId, projectId, organizationId));
+		sql.append(managedClassFilter("t.class_id"));
+		args.add(managerUserId);
 		if (classId != null) {
 			sql.append("\tAND t.class_id = ?\n");
 			args.add(classId);
 		}
-		sql.append("ORDER BY c.name, t.team_number, t.team_id");
+		// 팀 번호가 TEXT라 그냥 정렬하면 10팀부터 1, 10, 11, 2 순이 된다. 숫자 부분을 먼저 본다.
+		sql.append("ORDER BY c.name, NULLIF(REGEXP_REPLACE(t.team_number, '\\D', '', 'g'), '')::int "
+				+ "NULLS LAST, t.team_number, t.team_id");
 
 		return jdbcTemplate.query(
 				sql.toString(),
@@ -142,7 +190,8 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 	}
 
 	@Override
-	public List<MemberRow> findMembers(UUID assessmentRoundId, UUID organizationId, UUID classId) {
+	public List<MemberRow> findMembers(
+			UUID assessmentRoundId, UUID organizationId, UUID managerUserId, UUID classId) {
 		StringBuilder sql = new StringBuilder("""
 				SELECT
 					a.team_id,
@@ -161,6 +210,8 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 					AND a.org_id = ?
 				""");
 		List<Object> args = new ArrayList<>(List.of(assessmentRoundId, organizationId));
+		sql.append(managedClassFilter("a.class_id"));
+		args.add(managerUserId);
 		if (classId != null) {
 			sql.append("\tAND a.class_id = ?\n");
 			args.add(classId);
@@ -222,7 +273,7 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 	 */
 	@Override
 	public List<RequirementResultRow> findRequirementResults(
-			UUID assessmentRoundId, UUID organizationId, UUID classId) {
+			UUID assessmentRoundId, UUID organizationId, UUID managerUserId, UUID classId) {
 		StringBuilder sql = new StringBuilder("""
 				SELECT DISTINCT ON (pra.team_id, pra.requirement_id)
 					pra.team_id,
@@ -240,6 +291,8 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 					AND pra.org_id = ?
 				""");
 		List<Object> args = new ArrayList<>(List.of(assessmentRoundId, organizationId));
+		sql.append(managedClassFilter("t.class_id"));
+		args.add(managerUserId);
 		if (classId != null) {
 			sql.append("\tAND t.class_id = ?\n");
 			args.add(classId);
@@ -264,7 +317,8 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 	}
 
 	@Override
-	public long countUnassignedMembers(UUID projectId, UUID organizationId, UUID classId) {
+	public long countUnassignedMembers(
+			UUID projectId, UUID organizationId, UUID managerUserId, UUID classId) {
 		StringBuilder sql = new StringBuilder("""
 				SELECT COUNT(*)
 				FROM project_membership pm
@@ -280,6 +334,8 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 					)
 				""");
 		List<Object> args = new ArrayList<>(List.of(projectId, organizationId));
+		sql.append(managedClassFilter("pm.class_id"));
+		args.add(managerUserId);
 		if (classId != null) {
 			sql.append("\tAND pm.class_id = ?\n");
 			args.add(classId);

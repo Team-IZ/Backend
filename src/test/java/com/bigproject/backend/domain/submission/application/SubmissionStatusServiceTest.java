@@ -9,6 +9,8 @@ import com.bigproject.backend.domain.submission.domain.SubmissionStatusQueryRepo
 import com.bigproject.backend.domain.submission.domain.SubmissionStatusQueryRepository.RoundScope;
 import com.bigproject.backend.domain.submission.domain.SubmissionStatusQueryRepository.TeamRow;
 import com.bigproject.backend.domain.submission.presentation.dto.ProjectSubmissionStatusResponse;
+import com.bigproject.backend.global.exception.ApiException;
+import com.bigproject.backend.global.security.ManagerViewAccessErrorCode;
 import com.bigproject.backend.global.security.ManagerViewScopeGuard;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +26,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -42,6 +46,8 @@ class SubmissionStatusServiceTest {
 	private static final UUID CLASS_ID = UUID.randomUUID();
 	private static final UUID TEAM_ID = UUID.randomUUID();
 	private static final UUID OTHER_TEAM_ID = UUID.randomUUID();
+	private static final UUID MANAGER_ID = UUID.randomUUID();
+	private static final UUID UNMANAGED_CLASS_ID = UUID.randomUUID();
 
 	private SubmissionStatusQueryRepository repository;
 	private ManagerViewScopeGuard scopeGuard;
@@ -54,13 +60,14 @@ class SubmissionStatusServiceTest {
 		service = new SubmissionStatusService(repository, scopeGuard);
 
 		when(scopeGuard.requireCohort(any(), any()))
-				.thenReturn(new ManagerViewScopeGuard.ManagerActor(UUID.randomUUID(), ORG_ID));
+				.thenReturn(new ManagerViewScopeGuard.ManagerActor(MANAGER_ID, ORG_ID));
 		when(repository.findRound(PROJECT_ID, 1)).thenReturn(Optional.of(round("RUNNING")));
-		when(repository.findTeams(any(), any(), any(), any())).thenReturn(List.of());
-		when(repository.findMembers(any(), any(), any())).thenReturn(List.of());
+		when(repository.isClassManagedBy(any(), any(), any())).thenReturn(true);
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of());
+		when(repository.findMembers(any(), any(), any(), any())).thenReturn(List.of());
 		when(repository.findRequirements(any(), any())).thenReturn(List.of());
-		when(repository.findRequirementResults(any(), any(), any())).thenReturn(List.of());
-		when(repository.countUnassignedMembers(any(), any(), any())).thenReturn(0L);
+		when(repository.findRequirementResults(any(), any(), any(), any())).thenReturn(List.of());
+		when(repository.countUnassignedMembers(any(), any(), any(), any())).thenReturn(0L);
 	}
 
 	@Test
@@ -81,8 +88,8 @@ class SubmissionStatusServiceTest {
 		UUID missedUser = UUID.randomUUID();
 		UUID blockedUser = UUID.randomUUID();
 
-		when(repository.findTeams(any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
-		when(repository.findMembers(any(), any(), any())).thenReturn(List.of(
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
+		when(repository.findMembers(any(), any(), any(), any())).thenReturn(List.of(
 				member(doneUser, "가", "COMPLETED", "COMPLETED",
 						now.plus(1, ChronoUnit.DAYS), now.minus(2, ChronoUnit.HOURS)),
 				member(openUser, "나", "NOT_STARTED", "NOT_STARTED",
@@ -109,7 +116,7 @@ class SubmissionStatusServiceTest {
 	@Test
 	void countsSubmittedTeamsByTimestampNotByRecordExistence() {
 		// 접수 중(submittedAt이 아직 없는) 제출을 '냈다'로 세면 탭 머리의 6/8이 틀린다.
-		when(repository.findTeams(any(), any(), any(), any())).thenReturn(List.of(
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(
 				submittedTeam(),
 				new TeamRow(OTHER_TEAM_ID, CLASS_ID, "A반", "4", "4팀", "CONFIRMED",
 						null, null, null, null, null, null, null,
@@ -126,8 +133,8 @@ class SubmissionStatusServiceTest {
 
 	@Test
 	void keepsSubmissionClosedWhileMembersAreStillUnassigned() {
-		when(repository.findTeams(any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
-		when(repository.countUnassignedMembers(any(), any(), any())).thenReturn(3L);
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
+		when(repository.countUnassignedMembers(any(), any(), any(), any())).thenReturn(3L);
 
 		var response = service.findSubmissionStatus(EMAIL, PROJECT_ID, 1, null);
 
@@ -140,7 +147,7 @@ class SubmissionStatusServiceTest {
 	void marksAClosedProjectAsLockedAndStillOpen() {
 		// 끝난 회차도 제출 현황은 읽을 수 있어야 한다 -- 잠기는 것은 편성 액션이지 조회가 아니다.
 		when(repository.findRound(PROJECT_ID, 1)).thenReturn(Optional.of(round("CLOSED")));
-		when(repository.findTeams(any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
 
 		var response = service.findSubmissionStatus(EMAIL, PROJECT_ID, 1, null);
 
@@ -151,11 +158,11 @@ class SubmissionStatusServiceTest {
 
 	@Test
 	void ordersRequirementResultsBySequenceNo() {
-		when(repository.findTeams(any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
 		when(repository.findRequirements(any(), any())).thenReturn(List.of(
 				new RequirementRow(UUID.randomUUID(), "HITL", 1, "HITL 트리거", "설명"),
 				new RequirementRow(UUID.randomUUID(), "STATE", 2, "State 갱신", "설명")));
-		when(repository.findRequirementResults(any(), any(), any())).thenReturn(List.of(
+		when(repository.findRequirementResults(any(), any(), any(), any())).thenReturn(List.of(
 				new RequirementResultRow(TEAM_ID, UUID.randomUUID(), "STATE", "State 갱신", 2,
 						"FAIL", "update_state를 부르는 곳이 없음", true),
 				new RequirementResultRow(TEAM_ID, UUID.randomUUID(), "HITL", "HITL 트리거", 1,
@@ -172,13 +179,38 @@ class SubmissionStatusServiceTest {
 	@Test
 	void dropsMembersWhoAreNotOnAnyTeam() {
 		// 미배정 인원은 팀 그룹 아래에 그릴 자리가 없다. 팀이 null인 행을 그대로 두면 NPE로 터진다.
-		when(repository.findTeams(any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
-		when(repository.findMembers(any(), any(), any())).thenReturn(List.of(
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
+		when(repository.findMembers(any(), any(), any(), any())).thenReturn(List.of(
 				new MemberRow(null, UUID.randomUUID(), "미배정", null, null, "NOT_STARTED", null, null, null)));
 
 		var response = service.findSubmissionStatus(EMAIL, PROJECT_ID, 1, null);
 
 		assertThat(response.teams().get(0).members()).isEmpty();
+	}
+
+	@Test
+	void rejectsAClassTheManagerDoesNotOwn() {
+		// 기수 관문을 통과했다고 그 기수의 모든 반을 담당하는 것은 아니다. 빈 결과로 주면
+		// 화면이 "팀이 없는 회차"로 읽으므로 404로 끊는다.
+		when(repository.isClassManagedBy(MANAGER_ID, UNMANAGED_CLASS_ID, COHORT_ID)).thenReturn(false);
+
+		assertThatThrownBy(() -> service.findSubmissionStatus(EMAIL, PROJECT_ID, 1, UNMANAGED_CLASS_ID))
+				.isInstanceOf(ApiException.class)
+				.extracting(exception -> ((ApiException) exception).errorCode())
+				.isEqualTo(ManagerViewAccessErrorCode.MANAGER_SCOPE_NOT_FOUND);
+
+		verify(repository, never()).findTeams(any(), any(), any(), any(), any());
+	}
+
+	@Test
+	void narrowsEveryQueryToTheManagersOwnClasses() {
+		// 조회 자체를 담당 반으로 좁히지 않으면, 기수 관문만 통과한 매니저에게 남의 반 교육생 이름이 나간다.
+		service.findSubmissionStatus(EMAIL, PROJECT_ID, 1, null);
+
+		verify(repository).findTeams(PROJECT_ID, ROUND_ID, ORG_ID, MANAGER_ID, null);
+		verify(repository).findMembers(ROUND_ID, ORG_ID, MANAGER_ID, null);
+		verify(repository).findRequirementResults(ROUND_ID, ORG_ID, MANAGER_ID, null);
+		verify(repository).countUnassignedMembers(PROJECT_ID, ORG_ID, MANAGER_ID, null);
 	}
 
 	private RoundScope round(String lifecycleStatus) {

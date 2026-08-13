@@ -58,7 +58,14 @@ public class ManagerSubmissionStatusController {
 					|---|---|---|
 					| `projectId` (경로) | 필수 | 조회할 프로젝트 |
 					| `roundNo` | 선택 | 회차 번호(기본 1). 프로젝트 안에서만 유일하다 |
-					| `classId` | 선택 | 담당 반 하나로 좁힌다. 생략하면 그 프로젝트의 모든 반이다 |
+					| `classId` | 선택 | 담당 반 하나로 좁힌다. 생략하면 **담당 반 전체**다 |
+
+					🔴 **응답은 호출자가 담당하는 반으로 제한된다.** `classId`를 생략해도 프로젝트 전체가
+					아니라 담당 반만 온다. 담당하지 않는 반의 `classId`를 지정하면 빈 결과가 아니라
+					`404 MANAGER_SCOPE_NOT_FOUND`다 — 빈 결과로 주면 화면이 "팀이 없는 회차"로 읽는다.
+
+					따라서 `summary`·`teams[]`·`unassignedMemberCount`·`teamFormationStage`는 모두
+                    **그 매니저가 보는 범위의 값**이며, 같은 회차라도 매니저마다 다르다.
 
 					## 응답 (200)
 
@@ -106,7 +113,7 @@ public class ManagerSubmissionStatusController {
 			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED roundNo가 1 미만"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음 · MANAGER_VIEWER_NOT_FOUND 토큰은 유효하지만 계정을 찾을 수 없음"),
 			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 매니저 권한이 아님 · MANAGER_VIEWER_NOT_ACTIVE 활성 계정이 아님 · MANAGER_ROLE_REQUIRED 매니저가 아님"),
-			@ApiResponse(responseCode = "404", description = "PROJECT_ROUND_NOT_FOUND 그 프로젝트에 그 번호의 회차가 없음 · MANAGER_SCOPE_NOT_FOUND 담당 범위 밖의 기수")
+			@ApiResponse(responseCode = "404", description = "PROJECT_ROUND_NOT_FOUND 그 프로젝트에 그 번호의 회차가 없음 · MANAGER_SCOPE_NOT_FOUND 담당 범위 밖의 기수이거나 담당하지 않는 반을 classId로 지정함")
 	})
 	@GetMapping(value = "/projects/{projectId}/submissions", produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<ProjectSubmissionStatusResponse> findSubmissionStatus(
@@ -114,7 +121,7 @@ public class ManagerSubmissionStatusController {
 			@PathVariable UUID projectId,
 			@Parameter(description = "조회할 회차 번호이며 프로젝트 안에서만 유일합니다.", example = "1")
 			@RequestParam(defaultValue = "1") @Min(1) int roundNo,
-			@Parameter(description = "담당 반 하나로 좁힐 때만 지정합니다. 생략하면 그 프로젝트의 모든 반입니다.")
+			@Parameter(description = "담당 반 하나로 좁힐 때만 지정합니다. 생략하면 담당 반 전체입니다.")
 			@RequestParam(required = false) UUID classId,
 			@Parameter(hidden = true)
 			Authentication authentication

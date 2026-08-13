@@ -17,6 +17,10 @@ import java.util.UUID;
  *
  * <p>제출은 {@code team_id + assessment_round_id} 단위 원장이고 응시는 개인 단위라, 팀 행과 개인 행이
  * 애초에 다른 grain이다. 화면의 2계층 표가 그 사실을 그대로 드러낸 것이다.
+ *
+ * <p><b>모든 조회는 매니저가 담당하는 반으로 좁힌다.</b> 기수 스코프 검사만으로는 부족하다 — 그 검사는
+ * "이 기수에 담당 반이 하나라도 있는가"만 보므로, 통과한 뒤 프로젝트 전체를 읽으면 담당하지 않는 반의
+ * 팀과 교육생 이름까지 함께 나간다(MG-08 §7 "매니저는 담당 반뿐").
  */
 public interface SubmissionStatusQueryRepository {
 
@@ -26,14 +30,24 @@ public interface SubmissionStatusQueryRepository {
 	Optional<RoundScope> findRound(UUID projectId, int roundNo);
 
 	/**
+	 * 호출자가 그 반을 담당하는지. {@code classId}를 지정한 요청에서만 쓴다 — 담당 밖 반을 지정했을 때
+	 * 빈 결과가 아니라 404로 끊기 위해서다. 빈 결과로 두면 화면이 "팀이 없는 회차"로 잘못 읽는다.
+	 */
+	boolean isClassManagedBy(UUID managerUserId, UUID classId, UUID cohortId);
+
+	/**
 	 * 팀 행. 팀·회차별 <b>최신 제출</b>({@code is_current DESC, submitted_at DESC})과 그 제출에 매인
 	 * <b>최신 분석 시도</b>({@code execution_no DESC, started_at DESC})만 본다 — 재제출·재분석이 있어도
 	 * 화면에는 지금 유효한 한 벌만 보여야 하고, 이 선택 기준은 {@code assessment_round_attendance}가
 	 * {@code analysis_status}를 고르는 기준과 같다.
 	 *
-	 * @param classId 담당 반 중 하나로 좁힐 때만 지정한다. null이면 프로젝트의 모든 반이다.
+	 * <p>팀 번호는 TEXT라 사전순으로 정렬하면 10팀부터 {@code 1, 10, 11, 2}가 된다. 숫자 부분을 뽑아
+	 * 먼저 정렬한다.
+	 *
+	 * @param classId 담당 반 중 하나로 좁힐 때만 지정한다. null이면 <b>담당 반 전체</b>다(프로젝트 전체가 아니다).
 	 */
-	List<TeamRow> findTeams(UUID projectId, UUID assessmentRoundId, UUID organizationId, UUID classId);
+	List<TeamRow> findTeams(
+			UUID projectId, UUID assessmentRoundId, UUID organizationId, UUID managerUserId, UUID classId);
 
 	/**
 	 * 개인 행. 회차의 공식 결과인 {@code attempt_type='INITIAL'} 수행(primary_attempt) 기준이다 —
@@ -42,7 +56,8 @@ public interface SubmissionStatusQueryRepository {
 	 * <p>{@code teamId}가 null인 행은 아직 팀에 배정되지 않은 사람이다. 제출 현황 표는 팀 그룹 아래에만
 	 * 사람을 그리므로 서비스가 버린다(미배정이 남아 있으면 애초에 이 탭이 열리지 않는다).
 	 */
-	List<MemberRow> findMembers(UUID assessmentRoundId, UUID organizationId, UUID classId);
+	List<MemberRow> findMembers(
+			UUID assessmentRoundId, UUID organizationId, UUID managerUserId, UUID classId);
 
 	/**
 	 * 프로젝트가 정의한 요구사항 목록. 팀이 아니라 <b>프로젝트</b>에 달린 값이라 팀마다 반복해 싣지 않고
@@ -54,13 +69,16 @@ public interface SubmissionStatusQueryRepository {
 	 * 팀 × 요구사항 판정. 재분석하면 {@code assessment_version}이 올라가며 행이 쌓이므로
 	 * (team, requirement)별 최신 한 건만 고른다.
 	 */
-	List<RequirementResultRow> findRequirementResults(UUID assessmentRoundId, UUID organizationId, UUID classId);
+	List<RequirementResultRow> findRequirementResults(
+			UUID assessmentRoundId, UUID organizationId, UUID managerUserId, UUID classId);
 
 	/**
 	 * 팀에 배정되지 않은 활성 인원 수. 팀 편성 단계를 FORMING으로 가르는 유일한 근거이며,
 	 * 이 값이 0이 아니면 제출 자체가 열리지 않는다.
+	 *
+	 * <p>담당 반 기준이다 — 남의 반에 미배정 인원이 남아 있다고 이 매니저의 화면이 잠기면 안 된다.
 	 */
-	long countUnassignedMembers(UUID projectId, UUID organizationId, UUID classId);
+	long countUnassignedMembers(UUID projectId, UUID organizationId, UUID managerUserId, UUID classId);
 
 	/**
 	 * @param projectLifecycleStatus PLANNED · RUNNING · CLOSED. 종료된 회차는 화면이 편성 액션을 잠근다.

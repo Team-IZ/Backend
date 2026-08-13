@@ -14,6 +14,9 @@ import java.util.UUID;
 
 		요구사항 목록은 팀이 아니라 프로젝트에 달린 값이라 최상위에 한 번만 싣는다. 팀별 판정은
 		`teams[].requirementResults[]`이며 아직 분석되지 않은 팀은 빈 배열이다.
+
+		🔴 **범위는 호출한 매니저의 담당 반이다.** 프로젝트 전체가 아니므로 `summary`의 팀 수,
+		`unassignedMemberCount`, `teamFormationStage`가 같은 회차라도 매니저마다 다르다.
 		""")
 public record ProjectSubmissionStatusResponse(
 		UUID projectId,
