@@ -838,6 +838,20 @@ public class ProjectController {
 					| `analysedTraineeCount` | long | 분석에 성공한 교육생 수. 매칭률의 분모 |
 					| `matchedTraineeCount` | long | 그 개념의 문제를 받은 교육생 수 |
 					| `unmatchedTeamCount` | long | 그 개념이 코드에서 발견되지 않아 전원이 문제를 받지 못한 팀 수 |
+
+					## 22차 R6 — `PLANNED` 회차도 200이다
+
+					**상태로 막지 않는다.** `PLANNED`·`RUNNING`·`CLOSED` 어느 쪽이든 회차가 있으면
+					200이며, 아직 제출이 없으면 `classes[]`가 비고 `summary`가 전부 0으로 나간다 —
+                    화면은 그것을 「아직 제출한 학생이 없습니다」로 그리면 된다.
+
+					답하지 못하던 것은 **회차가 없는 프로젝트**였다. 22차 이전에는 프로젝트를 만들어도
+					`project_assessment_round`를 만들지 않아, 화면에서 만든 회차에는 회차 행이 아예
+					없었다. 지금은 생성이 회차를 함께 만든다(`POST /cohorts/{cohortId}/projects` 참고).
+
+					그때 만들어져 회차가 없는 프로젝트는 **`PROJECT_ROUND_NOT_CREATED`(404)** 로 답한다.
+					`PROJECT_ROUND_NOT_FOUND`와 나눈 이유는 화면이 할 일이 다르기 때문이다 —
+					이쪽은 「회차 준비 중」이고, 그쪽은 없는 번호를 물은 것이라 드롭다운을 되돌려야 한다.
 					"""
 	)
 	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
@@ -846,7 +860,7 @@ public class ProjectController {
 			@ApiResponse(responseCode = "400", description = "ROUND_NO_INVALID 회차 번호가 1 미만"),
 			@ApiResponse(responseCode = "401", description = "ANALYTICS_VIEWER_NOT_FOUND 토큰은 유효하지만 계정을 찾을 수 없음"),
 			@ApiResponse(responseCode = "403", description = "ANALYTICS_VIEWER_NOT_ACTIVE 활성 계정 아님 · ANALYTICS_ORGANIZATION_NOT_ACTIVE 소속 기관이 활성 아님 · ANALYTICS_ROLE_NOT_ALLOWED 오퍼레이터·매니저가 아님 · PROJECT_CROSS_ORGANIZATION 다른 기관의 프로젝트"),
-			@ApiResponse(responseCode = "404", description = "PROJECT_ROUND_NOT_FOUND 그 프로젝트에 그 번호의 회차가 없음")
+			@ApiResponse(responseCode = "404", description = "PROJECT_ROUND_NOT_FOUND 그 프로젝트에 그 번호의 회차가 없음 · PROJECT_ROUND_NOT_CREATED 회차가 아직 하나도 없음(22차 R6)")
 	})
 	@GetMapping(value = "/projects/{projectId}/class-progress", produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<ClassProgressResponse> findClassProgress(
