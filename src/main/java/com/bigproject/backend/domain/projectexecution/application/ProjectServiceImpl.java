@@ -14,6 +14,7 @@ import com.bigproject.backend.domain.projectexecution.domain.Project;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectCategory;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectCurriculum;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectDependencyRepository;
+import com.bigproject.backend.domain.projectexecution.domain.ProjectDependencyRepository.RoundSchedule;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectLifecycleStatus;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectListSort;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectReadiness;
@@ -39,6 +40,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -345,7 +347,8 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public Project createProject(UUID orgId, UUID cohortId, String name, ProjectCategory category,
-                                 LocalDate startDate, LocalDate endDate, UUID actorUserId) {
+                                 LocalDate startDate, LocalDate endDate, Instant submissionDueAt,
+                                 UUID actorUserId) {
         // 삭제된 회차도 이름·순번을 계속 점유한다 — 두 UNIQUE 제약이 부분 인덱스가 아니기 때문이다.
         // 살아 있는 것만 세면 검사는 통과하고 INSERT가 DB에서 터져 500이 난다(ProjectRepository 주석 참고).
         if (projectRepository.existsByCohortIdAndOrgIdAndName(cohortId, orgId, name)) {
@@ -358,7 +361,34 @@ public class ProjectServiceImpl implements ProjectService {
                 ? Project.createMiniProject(orgId, cohortId, name, nextSequenceNo, startDate, endDate, actorUserId)
                 : Project.createBigProject(orgId, cohortId, name, nextSequenceNo, startDate, endDate, actorUserId);
 
-        return projectRepository.save(project);
+        Project saved = projectRepository.save(project);
+
+        // 22차 R5·R6 — 회차를 함께 만든다. 여태 만들지 않아서 화면으로 만든 프로젝트는 회차가 없는
+        // 채로 남았고, 현황 탭이 회차를 못 찾았으며 제출 마감을 저장할 자리도 없었다.
+        // 같은 트랜잭션이라 회차 INSERT가 실패하면 프로젝트도 함께 롤백된다 — 회차 없는 프로젝트를
+        // 다시 만들지 않기 위해서다.
+        projectDependencyRepository.createAssessmentRound(
+                saved.getProjectId(), orgId, cohortId, name,
+                submissionDueAt != null ? submissionDueAt : deriveSubmissionDueAt(endDate),
+                actorUserId);
+
+        return saved;
+    }
+
+    /**
+     * 마감을 안 보냈을 때의 파생 규칙 — <b>종료일의 23:59 KST</b>.
+     *
+     * <p>기존 회차들이 그 규칙으로 들어가 있어 화면이 이미 그렇게 읽고 있다. 값을 만들어 넣지 않고
+     * 비워 둘 수는 없다 — {@code submission_due_at}이 DB에서 NOT NULL이다.
+     *
+     * <p>여기서 파생한 뒤에는 {@code endDate}와 <b>다시 연결되지 않는다.</b> 기간을 늘려도 마감은
+     * 움직이지 않으며, 함께 옮기려면 일정 수정에서 마감을 같이 보내야 한다(18차 R5의 판단 그대로).
+     * 학생에게 이미 알린 마감이 조용히 바뀌는 것을 막기 위해서다.
+     */
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+    static Instant deriveSubmissionDueAt(LocalDate endDate) {
+        return endDate.atTime(23, 59).atZone(KST).toInstant();
     }
 
     @Override
@@ -554,7 +584,10 @@ public class ProjectServiceImpl implements ProjectService {
 
         int candidateCount = countConceptCandidates(projectId, orgId);
         ProjectSummary summary = new ProjectSummary(
-                project, curricula.size(), concepts.size(), candidateCount);
+                project, curricula.size(), concepts.size(), candidateCount,
+                List.of(), List.of(),
+                // 22차 R5·R9 — 상세가 실제 마감과 회차 시각을 그리는 근거다.
+                projectDependencyRepository.findRoundSchedules(List.of(projectId)).get(projectId));
 
         return new ProjectDetail(summary, curricula, concepts, requirementTitles);
     }
@@ -613,6 +646,11 @@ public class ProjectServiceImpl implements ProjectService {
         Map<UUID, String> curriculumNameByVersion = curriculumNamesByVersion(linksByProject);
         Map<UUID, String> conceptNameByMapping = conceptNamesByMapping(conceptsBySet);
 
+        // ⑦ 회차 시각(22차 R5·R9). 목록·상세가 endDate를 마감이라고 그리던 것을 끝낸다.
+        //    프로젝트 수와 무관하게 조회 1건이라 위 규칙(고정 개수의 쿼리)을 깨지 않는다.
+        Map<UUID, RoundSchedule> scheduleByProject = projectDependencyRepository
+                .findRoundSchedules(projectIds);
+
         List<ProjectSummary> summaries = new ArrayList<>(projects.size());
         for (Project project : projects) {
             List<ProjectCurriculum> links = linksByProject.getOrDefault(project.getProjectId(), List.of());
@@ -640,7 +678,9 @@ public class ProjectServiceImpl implements ProjectService {
                     concepts.stream()
                             .map(concept -> conceptNameByMapping.get(concept.getSourceMappingId()))
                             .filter(Objects::nonNull)
-                            .toList()));
+                            .toList(),
+                    // 회차를 아직 만들지 않은 프로젝트는 키가 없다 — 22차 이전에 만들어진 것들이다.
+                    scheduleByProject.get(project.getProjectId())));
         }
         return summaries;
     }
@@ -905,7 +945,10 @@ public class ProjectServiceImpl implements ProjectService {
                 project,
                 Math.toIntExact(curriculumCount),
                 Math.toIntExact(conceptCount),
-                countConceptCandidates(projectId, orgId));
+                countConceptCandidates(projectId, orgId),
+                List.of(), List.of(),
+                // 생성·수정 응답도 목록과 같은 마감을 말해야 한다 — 방금 정한 값을 되읽는 자리다.
+                projectDependencyRepository.findRoundSchedules(List.of(projectId)).get(projectId));
     }
 
     private List<LinkedCurriculum> findLinkedCurricula(UUID projectId, UUID orgId) {

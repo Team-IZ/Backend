@@ -252,6 +252,7 @@ public class ProjectController {
 					- name (필수): 프로젝트명. 같은 기수 안에서 중복되면 409
 					- category (필수): MINI_PROJECT / BIG_PROJECT
 					- startDate / endDate (필수): 프로젝트 기간
+					- submissionDueAt (선택): 제출 마감 **시각**. 생략하면 `endDate`의 23:59 KST로 파생한다
 
 					**응답 (201)**
 					- projectId: 생성된 프로젝트 ID
@@ -261,7 +262,21 @@ public class ProjectController {
 					- category: MINI_PROJECT / BIG_PROJECT
 					- status: 생성 직후 항상 PLANNED
 					- startDate / endDate: 프로젝트 기간
+					- submissionDueAt: 방금 정해진 제출 마감 시각(보낸 값 또는 파생값)
 					- curriculumCount / conceptCount / conceptCandidateCount: 갓 만든 프로젝트라 전부 0
+
+					## 🔴 22차 R5·R6 — 평가 회차를 **함께 만든다**
+
+					여태 이 API는 `project` 행만 만들고 `project_assessment_round`는 만들지 않았다.
+					회차가 있는 프로젝트는 전부 시드로 들어간 것이었고, **화면에서 만든 프로젝트에는
+					회차가 없었다.** 그래서 두 가지가 동시에 깨져 있었다.
+
+					- 현황 탭(`class-progress`)이 회차를 못 찾아 답하지 못했다(22차 R6)
+					- 제출 마감이 회차에 있는 컬럼이라 **저장할 자리가 없었다**(22차 R5 ①)
+
+					이제 프로젝트와 회차를 **한 트랜잭션**에서 만든다. 회차는 `round_no=1` ·
+					`status=PLANNED` · `trigger_type=MANUAL`로 열리며, 응시 창과 리포트 발행 하한은
+					비워 둔다 — 셋 다 코드 분석·응시가 끝나야 정해지는 값이라 이 시점에 넣을 사실이 없다.
 					"""
 	)
 	@ApiResponses({
@@ -278,7 +293,8 @@ public class ProjectController {
 		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
 		UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
 		Project project = projectService.createProject(
-				orgId, cohortId, request.name(), request.category(), request.startDate(), request.endDate(), actorUserId);
+				orgId, cohortId, request.name(), request.category(), request.startDate(), request.endDate(),
+				request.submissionDueAt(), actorUserId);
 		return ResponseEntity.status(HttpStatus.CREATED)
 				.body(ProjectResponse.from(projectService.summarize(project, orgId)));
 	}
@@ -362,7 +378,11 @@ public class ProjectController {
 					| | 값 | 어디 |
 					|---|---|---|
 					| 이 API가 쓰는 것 | `project.end_date` (`date`) | 회차 기간 표시용 |
-					| 실제 마감 | `project_assessment_round.submission_due_at` (`timestamptz`) | `GET /projects/{id}/class-progress`의 `submissionDueAt` |
+					| 실제 마감 | `project_assessment_round.submission_due_at` (`timestamptz`) | **목록·상세의 `submissionDueAt`**(22차 R5) · `class-progress`의 `submissionDueAt` |
+
+					> 22차 R5로 **목록(`ProjectResponse`)과 상세(`ProjectDetailResponse`)가 이 값을 직접 싣는다.**
+					> 마감을 그리려고 `class-progress`를 부를 필요가 없어졌다 — 그쪽은 현황 탭의 조회라
+					> 개념이 확정되기 전이나 회차가 열리기 전에는 쓸 수 없었다.
 
 					**둘은 서버에서 연결돼 있지 않다.** 이 API로 `endDate`를 바꿔도 `submissionDueAt`은
 					움직이지 않는다. 두 값이 `2027-02-26` ↔ `2027-02-26T14:59:00Z`(= KST 23:59)로 맞아

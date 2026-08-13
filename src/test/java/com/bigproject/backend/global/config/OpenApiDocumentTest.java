@@ -582,6 +582,34 @@ class OpenApiDocumentTest {
 				.doesNotContain("\"null\"");
 	}
 
+	/**
+	 * 22차 R5 — 제출 마감 시각의 <b>입구와 출구</b>가 둘 다 반쪽이었다.
+	 *
+	 * <p>생성에는 받을 자리가 없었고(일정 수정에만 있었다), 목록·상세는 읽을 자리가 없었다.
+	 * 그래서 화면이 {@code endDate}를 마감이라고 계속 그렸고 9기 5차가 <b>12일 어긋난</b> 값을
+	 * 보여주고 있었다. 한 곳만 열면 다른 화면이 여전히 거짓말을 하므로 세 자리를 함께 본다.
+	 */
+	@Test
+	void letsTheSubmissionDeadlineBeSetOnCreateAndReadBackEverywhereItIsDrawn() throws Exception {
+		JsonNode schemas = spec().path("components").path("schemas");
+
+		// 입구 — 생성 모달이 시작·마감을 한 번에 정한다. 선택 필드라 required는 아니다.
+		assertThat(schemas.path("CreateProjectRequest").path("properties").propertyNames())
+				.contains("submissionDueAt");
+		assertThat(schemas.path("CreateProjectRequest").path("required").toString())
+				.doesNotContain("submissionDueAt");
+
+		// 출구 — 목록(기간 열·대시보드 이번 회차)과 상세(타임라인·일정 수정 초기값) 둘 다.
+		for (String schema : List.of("ProjectResponse", "ProjectDetailResponse")) {
+			assertThat(schemas.path(schema).path("properties").propertyNames())
+					.as("%s가 마감을 못 읽으면 화면이 endDate를 마감이라고 그린다", schema)
+					.contains("submissionDueAt");
+			// 22차 이전에 만들어져 회차 레코드가 없는 프로젝트는 null이다.
+			assertThat(schemas.path(schema).path("properties").path("submissionDueAt")
+					.path("type").toString()).contains("\"null\"");
+		}
+	}
+
 	private interface ResponseVisitor {
 		void visit(String operationId, String status, JsonNode response);
 	}

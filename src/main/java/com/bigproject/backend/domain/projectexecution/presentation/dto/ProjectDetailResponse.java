@@ -7,6 +7,7 @@ import com.bigproject.backend.domain.projectexecution.domain.ProjectLifecycleSta
 import com.bigproject.backend.domain.projectexecution.domain.ProjectReadiness;
 import io.swagger.v3.oas.annotations.media.Schema;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -34,6 +35,20 @@ public record ProjectDetailResponse(
         // 10차 R4 — 목록 항목과 같은 이유로 nullable=true를 뺐다(ProjectResponse.endDate 주석 참고).
         @Schema(description = "종료일. **날짜만이며 시각 의미가 없다** — 9차 Q2 참고. "
                 + "항상 값이 있다(생성·수정 모두 필수이며 DB도 NOT NULL이다)") LocalDate endDate,
+
+        /*
+         * 22차 R5 — 마감을 정하고 보여주는 자리가 회차 상세인데 그 화면이 읽는 이 응답에 값이 없었다.
+         * class-progress에도 있지만 그것은 현황 탭의 조회이고 PLANNED 회차에서는 답하지 못한다.
+         * 일정 수정 모달의 초기값이기도 해서, 없으면 고쳐도 다시 열었을 때 시각 입력이 비어 있었다.
+         */
+        @Schema(description = """
+                **실제 제출 마감 시각**이며 `endDate`와 다른 값이다. 개요 타임라인의 「제출 마감」과
+                **일정 수정 모달의 초기값**이 이 값이다.
+
+                `endDate`는 기간의 종료 날짜일 뿐 시각 의미가 없고 서버에서 이 값과 연결돼 있지 않다.
+                22차 이전에 만들어져 **회차 레코드가 없는 프로젝트는 `null`**이다.""",
+                example = "2026-08-21T14:59:00Z", nullable = true)
+        Instant submissionDueAt,
 
         @Schema(description = "연결된 교안 수 = curricula의 길이", example = "2") int curriculumCount,
         @Schema(description = "확정된 검증 개념 수 = concepts의 길이", example = "3") int conceptCount,
@@ -102,6 +117,7 @@ public record ProjectDetailResponse(
                 detail.summary().readiness(),
                 project.getStartDate(),
                 project.getEndDate(),
+                detail.summary().submissionDueAt(),
                 detail.summary().curriculumCount(),
                 detail.summary().conceptCount(),
                 detail.summary().conceptCandidateCount(),
