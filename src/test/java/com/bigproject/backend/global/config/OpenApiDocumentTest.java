@@ -457,6 +457,33 @@ class OpenApiDocumentTest {
 				.isEqualTo("[\"string\",\"null\"]");
 	}
 
+	/**
+	 * 23차 R1 — 제출 내용은 <b>수단별로 배타적</b>이라 한 스키마에 담으면 다섯 필드가 전부 선택이 된다.
+	 * 그러면 "둘 다 없을 수도 있다"가 타입이 되어 서버가 한쪽을 빠뜨려도 화면이 컴파일된다.
+	 *
+	 * <p>부모로 쓴 sealed 인터페이스가 빈 스키마로 남지 않는 것도 함께 본다 — 남으면 속성도
+	 * {@code required}도 없는 객체가 생겨, {@code required}를 채우려다 같은 위반을 하나 만들게 된다.
+	 */
+	@Test
+	void splitsSubmissionContentIntoTwoRequiredShapes() throws Exception {
+		JsonNode schemas = spec().path("components").path("schemas");
+
+		assertThat(schemas.path("GithubSubmissionContent").path("required").toString())
+				.contains("repoUrl", "branch");
+		assertThat(schemas.path("ZipSubmissionContent").path("required").toString())
+				.contains("fileName", "fileSize");
+		assertThat(schemas.path("MySubmissionResponse").path("properties").path("content")
+				.path("oneOf").toString())
+				.contains("GithubSubmissionContent", "ZipSubmissionContent");
+
+		assertThat(schemas.has("SubmissionContent"))
+				.as("빈 부모 스키마가 남으면 required 없는 객체가 하나 생긴다")
+				.isFalse();
+		assertThat(schemas.path("GithubSubmissionContent").has("allOf"))
+				.as("빈 부모를 걷어낸 뒤에는 allOf 껍데기를 유지할 이유가 없다")
+				.isFalse();
+	}
+
 	private interface ResponseVisitor {
 		void visit(String operationId, String status, JsonNode response);
 	}

@@ -36,10 +36,14 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @OpenAPIDefinition(
@@ -137,6 +141,7 @@ public class SwaggerConfig {
 	public OpenApiCustomizer izGetOpenApiCustomizer() {
 		return openApi -> {
 			registerErrorSchemas(openApi);
+			flattenEmptyParents(openApi);
 			applyNullability(openApi);
 			openApi.addSecurityItem(new SecurityRequirement().addList(BEARER_AUTH));
 
@@ -165,6 +170,121 @@ public class SwaggerConfig {
 		ModelConverters.getInstance()
 				.readAll(new AnnotatedType(ErrorResponse.class))
 				.forEach(openApi.getComponents()::addSchemas);
+	}
+
+	/**
+	 * <b>내용이 없는 부모 스키마를 {@code allOf}에서 걷어낸다.</b>
+	 *
+	 * <p>{@code oneOf}로 두 갈래를 나누려면 Java 쪽에 공통 상위 타입이 하나 필요하다
+	 * ({@code MySubmissionResponse.SubmissionContent}가 그렇다). 그런데 swagger-core는 그 상위 타입을
+	 * <b>부모 스키마로 등록하고</b> 자식마다 {@code allOf: [$ref(부모), {실제 속성}]}을 만든다. 상위 타입이
+	 * 값을 하나도 갖지 않는 마커라면 이 부모는 {@code {}} — 아무 말도 하지 않는 스키마다.
+	 *
+	 * <p>그 빈 스키마가 남으면 두 가지가 나빠진다. 생성기가 <b>쓸모없는 타입을 하나 더 만들고</b>,
+	 * 무엇보다 "속성도 {@code required}도 없는 객체"라 스펙 검사에서 <b>새 위반으로 잡힌다</b> —
+	 * {@code required}를 채우려고 타입을 나눴는데 그 과정에서 같은 위반을 하나 만드는 셈이다(23차 R1).
+	 *
+	 * <p>{@code @Schema(hidden = true)}로는 지워지지 않는다. 자식의 합성은 부모 애너테이션이 아니라
+	 * <b>타입 계층</b>에서 나오기 때문이다. 그래서 스펙 단계에서 정리한다 — 병합 대상은
+	 * <b>정말로 비어 있는</b>(속성·required·enum·타입·조합이 모두 없는) 부모뿐이라, 값을 가진 상속
+	 * 구조는 건드리지 않는다.
+	 */
+	private void flattenEmptyParents(OpenAPI openApi) {
+		if (openApi.getComponents() == null || openApi.getComponents().getSchemas() == null) {
+			return;
+		}
+		Map<String, Schema> schemas = openApi.getComponents().getSchemas();
+
+		Set<String> emptyParents = schemas.entrySet().stream()
+				.filter(entry -> isEmptySchema(entry.getValue()))
+				.map(Map.Entry::getKey)
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+		if (emptyParents.isEmpty()) {
+			return;
+		}
+
+		schemas.values().forEach(schema -> dropEmptyParents(schema, emptyParents));
+		// 참조가 모두 사라진 뒤에만 지운다. 다른 곳에서 아직 가리키고 있으면 깨진 $ref가 된다.
+		emptyParents.stream()
+				.filter(name -> !isReferenced(schemas, name))
+				.forEach(schemas::remove);
+	}
+
+	private boolean isEmptySchema(Schema<?> schema) {
+		return schema != null
+				&& schema.getProperties() == null
+				&& schema.getRequired() == null
+				&& schema.getEnum() == null
+				&& schema.getType() == null
+				&& schema.getTypes() == null
+				&& schema.getAllOf() == null
+				&& schema.getOneOf() == null
+				&& schema.getAnyOf() == null
+				&& schema.get$ref() == null
+				&& schema.getItems() == null
+				&& schema.getAdditionalProperties() == null;
+	}
+
+	/**
+	 * 빈 부모를 뺀 뒤 {@code allOf}에 하나만 남으면 그것을 자기 자신에 펼친다. 남은 하나가 곧 그 타입의
+	 * 실제 정의이므로, {@code allOf} 껍데기를 유지할 이유가 없다.
+	 */
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private void dropEmptyParents(Schema schema, Set<String> emptyParents) {
+		List<Schema> members = schema.getAllOf();
+		if (members == null) {
+			return;
+		}
+		List<Schema> kept = new ArrayList<>(members.stream()
+				.filter(member -> member.get$ref() == null
+						|| !emptyParents.contains(refName(member.get$ref())))
+				.toList());
+		if (kept.size() == members.size()) {
+			return;
+		}
+		if (kept.size() != 1) {
+			schema.setAllOf(kept.isEmpty() ? null : kept);
+			return;
+		}
+
+		Schema<?> only = kept.get(0);
+		schema.setAllOf(null);
+		if (only.get$ref() != null) {
+			schema.set$ref(only.get$ref());
+			return;
+		}
+		schema.setType(only.getType());
+		schema.setTypes(only.getTypes());
+		schema.setProperties(only.getProperties());
+		if (only.getRequired() != null) {
+			only.getRequired().forEach(schema::addRequiredItem);
+		}
+	}
+
+	private boolean isReferenced(Map<String, Schema> schemas, String name) {
+		String ref = Components.COMPONENTS_SCHEMAS_REF + name;
+		return schemas.values().stream().anyMatch(schema -> containsRef(schema, ref));
+	}
+
+	private boolean containsRef(Schema<?> schema, String ref) {
+		if (schema == null) {
+			return false;
+		}
+		if (ref.equals(schema.get$ref())) {
+			return true;
+		}
+		return Stream.of(schema.getAllOf(), schema.getOneOf(), schema.getAnyOf())
+				.filter(Objects::nonNull)
+				.flatMap(List::stream)
+				.anyMatch(member -> containsRef(member, ref))
+				|| (schema.getProperties() != null
+						&& schema.getProperties().values().stream()
+								.anyMatch(property -> containsRef((Schema<?>) property, ref)))
+				|| containsRef(schema.getItems(), ref);
+	}
+
+	private String refName(String ref) {
+		return ref.substring(ref.lastIndexOf('/') + 1);
 	}
 
 	/** {@code nullable: true}를 3.1 표기({@link NullableSchemas})로 옮긴다. */
