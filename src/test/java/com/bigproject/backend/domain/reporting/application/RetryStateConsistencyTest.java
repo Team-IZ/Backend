@@ -145,7 +145,7 @@ class RetryStateConsistencyTest {
 				REPORT, UUID.randomUUID(), "FULL", 3, 0,
 				UUID.randomUUID(), "COMPLETED", null, "NOT_REQUIRED",
 				"RELEASED", "SUMMARY",
-				null, PUBLISHED_AT, true,
+				null, null, PUBLISHED_AT, true,
 				review.status(),
 				review.status() == null ? null : REVIEW_DUE_AT,
 				review.completedAt())));

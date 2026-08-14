@@ -132,10 +132,18 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 			return statusOnly(id, reportId, label, "VOID_ATTEMPT");
 		}
 
-		// ② 미응시 — 응시 기록이 없거나 제출·출석이 없는 채로 끝났다.
+		// ② 응시 기록이 없다. 여기서 <b>둘로 가른다</b> — 마감 전이면 아직 낼 수 있고(NOT_STARTED),
+		//    마감이 지났으면 놓친 것이다(NOT_ATTEMPTED).
+		//
+		//    한 값으로 뭉치면 화면이 두 상황에 같은 문구를 쓰게 되는데, 그러면 **정말 놓친 학생에게서
+		//    경고가 사라진다**("사정이 있었다면 매니저에게 알려 주세요"). 반대로 중립 문구를 마감 전
+		//    학생에게 쓰면 아직 시간이 있는데 놓친 것처럼 읽힌다(26차 A1).
+		//
+		//    가르는 축은 제출 마감이다. 홈이 SUBMISSION_REQUIRED와 SUBMISSION_MISSED를 가를 때 쓰는
+		//    값과 같아야 **같은 회차를 두 화면이 같은 말로 설명한다** — 지금까지 어긋났던 지점이다.
 		String terminal = round.terminalReasonCode();
 		if (round.attemptId() == null || "NOT_SUBMITTED".equals(terminal) || "NOT_ATTENDED".equals(terminal)) {
-			return statusOnly(id, reportId, label, "NOT_ATTEMPTED");
+			return statusOnly(id, reportId, label, missedStatus(round));
 		}
 
 		// ③ 중단 — 세션을 시작했지만 끝내지 못했다.
@@ -296,6 +304,22 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		}
 		return conceptsByReport.getOrDefault(round.reportId(), List.of()).stream()
 				.anyMatch(TraineeReportServiceImpl::isRetryTarget);
+	}
+
+	/**
+	 * 응시 기록이 없는 회차의 상태. <b>제출 마감이 지났는가</b> 하나로 갈린다.
+	 *
+	 * <p>종료 사유가 남아 있으면({@code NOT_SUBMITTED}·{@code NOT_ATTENDED}) 그 회차는 이미 끝난
+	 * 것이므로 마감을 따지지 않는다 — 응시 행이 종료됐다는 것 자체가 기회가 닫혔다는 뜻이다.
+	 *
+	 * <p>마감 시각을 모르는 회차는 {@code NOT_ATTEMPTED}로 둔다. "아직 낼 수 있다"고 말하려면
+	 * 낼 수 있는 기한이 있어야 하는데, 그 값이 없으면 근거 없이 안심시키는 쪽이 된다.
+	 */
+	private static String missedStatus(RoundRow round) {
+		boolean roundOver = round.terminalReasonCode() != null;
+		boolean beforeDeadline = round.submissionDueAt() != null
+				&& round.submissionDueAt().isAfter(Instant.now());
+		return !roundOver && beforeDeadline ? "NOT_STARTED" : "NOT_ATTEMPTED";
 	}
 
 	/**

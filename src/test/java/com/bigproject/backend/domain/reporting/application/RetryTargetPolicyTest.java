@@ -97,7 +97,7 @@ class RetryTargetPolicyTest {
 				REPORT, UUID.randomUUID(), "FULL", 3, 0,
 				UUID.randomUUID(), "COMPLETED", null, "APPROVED",
 				"RELEASED", "FULL",
-				null, Instant.parse("2026-07-01T00:00:00Z"), true,
+				null, null, Instant.parse("2026-07-01T00:00:00Z"), true,
 				null, null, null)));
 		when(queryRepository.findConcepts(USER)).thenReturn(List.of(rows));
 	}
