@@ -44,10 +44,9 @@ flowchart TB
     subgraph DISPATCH["2. 분석 요청 — AnalysisBatchService"]
         D["current · ACCEPTED<br/>blocking job 없음 · 시도 상한 미만"] --> M{"ACTIVE 모델과<br/>teaches가 있는가?"}
         M -- "없음" --> STOP["job을 만들지 않고 중단<br/>스케줄러 활성 시 안전망 재시도"]
-        M -- "있음" --> J["analysis_job INSERT<br/>QUEUED"]
-        J --> POST["POST /api/v0/analyses"]
-        POST --> EXT["external_job_id 저장"]
-        EXT --> AN["measurement_attempt<br/>SUBMITTED → ANALYZING"]
+        M -- "있음" --> POST["POST /api/v0/analyses"]
+        POST --> J["jobId를 포함해 analysis_job INSERT<br/>QUEUED"]
+        J --> AN["measurement_attempt<br/>SUBMITTED → ANALYZING"]
     end
 
     AN --> POLL
@@ -92,21 +91,24 @@ flowchart TB
 
 ZIP 본체 저장은 DB 트랜잭션 자원이 아니다. 파일 저장 뒤 DB 작업이 롤백되면 참조되지 않는 저장 객체가 남을 수 있다.
 
-### 3.2 분석 요청: 로컬 job을 먼저 남기고 AI를 호출한다
+### 3.2 분석 요청: AI 작업 ID를 받은 뒤 로컬 job을 한 번만 저장한다
 
 커밋 후 비동기 리스너가 `AnalysisBatchService.dispatchSubmission()`을 호출한다.
 
 1. 현재 `ACCEPTED` 제출인지, 디스패치를 막는 job이 없는지, 총 시도 상한 미만인지 확인한다. 진행·성공 job과 비재시도 실패 job은 새 요청을 막는다.
 2. 사용할 ACTIVE AI 모델과 회차의 `teaches`를 먼저 확정한다.
 3. 두 값 중 하나라도 없으면 `analysis_job`도 만들지 않고 중단한다.
-4. `analysis_job`을 `QUEUED`로 먼저 저장한다.
-5. AI 서버에 `POST /api/v0/analyses`를 보낸다.
-6. 응답의 외부 작업 ID를 `analysis_job.external_job_id`에 저장한다.
-7. 시작 전 개인 응시를 `ANALYZING`으로 전이한다.
+4. AI 서버에 `POST /api/v0/analyses`를 보낸다.
+5. 응답의 외부 작업 ID를 넣은 `analysis_job`을 `QUEUED`로 한 번 INSERT한다.
+6. 시작 전 개인 응시를 `ANALYZING`으로 전이한다.
 
-job을 AI 호출보다 먼저 저장하는 이유는, AI가 요청을 받았는데 우리 DB에는 실행 기록이 없는 상황을 줄이기 위해서다.
+정상 접수 건을 AI 호출보다 먼저 저장하지 않는 이유는, `external_job_id=NULL`인 활성 행이 DB에 존재하는
+창을 없애기 위해서다. AI가 202를 반환한 직후 프로세스가 종료돼 INSERT하지 못하더라도 안전망은 같은
+`submissionId:executionNo` 멱등키로 다시 요청한다. AI가 기존 작업 ID를 다시 반환하면 그 ID를 포함해 원장을 복구한다.
+요청 자체가 실패한 경우에는 외부 ID 없는 `FAILED` 행만 저장해 실패 이력을 남긴다.
 
-이 구간 전체를 하나의 트랜잭션으로 묶지는 않는다. 외부 HTTP 호출 동안 DB 커넥션을 점유하지 않도록 각 DB 쓰기가 독립적으로 커밋된다. AI가 202를 반환해도 job 상태는 아직 `QUEUED`이며, 폴링에서 실제 `RUNNING` 응답을 받아야 `RUNNING`이 된다.
+이 구간 전체를 하나의 트랜잭션으로 묶지는 않는다. 외부 HTTP 호출 동안 DB 커넥션을 점유하지 않는다.
+AI가 202를 반환해도 job 상태는 아직 `QUEUED`이며, 폴링에서 실제 `RUNNING` 응답을 받아야 `RUNNING`이 된다.
 
 ### 3.3 폴링: HTTP와 DB 쓰기를 분리한다
 
@@ -289,10 +291,28 @@ stateDiagram-v2
 |---|---|---|
 | `POST /analyses` 단계에서 요청 실패 | job만 `FAILED`; 응시 종료 처리는 하지 않음 | 상한 소진 뒤에도 응시가 `SUBMITTED/ANALYZING`에 남을 수 있음 |
 | 폴링 FAILED에 `failureCode`가 없거나 알 수 없음 | 응시는 즉시 `ANALYSIS_FAILED`; job에는 재시도 가능한 `MODEL_ERROR` 저장 | job 재시도 정책과 응시 상태가 서로 어긋남 |
-| 폴링 404 또는 `QUEUED/RUNNING + external_job_id IS NULL` | 외부 ID 없는 활성 job으로 유지 | 폴링은 건너뛰고 디스패치는 활성 job 때문에 막혀 영구 정체 가능 |
+| AI 앱 `JOB_NOT_FOUND` | 최초 시각과 연속 횟수를 애플리케이션 메모리에 기록. 연속 3회 또는 최초 응답 후 10분 중 먼저 도달하면 `TEMPORARY_ERROR`로 닫아 새 `execution_no`로 재요청 | 정상 응답 또는 백엔드 재시작 시 관측 기록 초기화. DB 스키마 변경 없음 |
+| 프록시/라우터 404(HTML·빈 본문 등) | `JOB_NOT_FOUND` 횟수에 포함하지 않고 프록시 웜업 후 즉시 1회 재조회 | 재조회도 실패하면 다음 스케줄 주기에 다시 시도 |
 | 여러 앱 인스턴스가 같은 job을 동시 폴링 | 조회 락과 `@Version`이 없음 | 같은 결과를 동시에 적재하려다 충돌할 수 있음 |
 
-`QUEUED + external_job_id IS NULL`은 AI가 POST를 접수한 뒤 두 번째 DB 저장이 실패하거나, 그 사이 프로세스가 종료되어도 생길 수 있다. 운영에서는 이 조합을 정체 감지 조건으로 두고, 코드에서는 재디스패치 가능한 상태 전이 또는 별도 복구 쿼리를 마련해야 한다.
+`QUEUED/RUNNING + external_job_id IS NULL`은 이제 정상 경로에서 생기지 않는다. **404를 받아도 `external_job_id`를 지우지 않기 때문이다(2026-08-13).** 종전에는 지웠는데, 그러면 폴링은 그 job을 건너뛰고(외부 ID가 없어 조회할 대상이 없다) 디스패치는 활성 job이라 막아서 폴링도 재요청도 되지 않는 영구 정체가 됐다. 404를 "AI 재시작으로 유실됨"의 확정 신호로 읽은 것이 전제부터 틀렸다 — 모델 실행 오류나 지연으로도 404가 난다.
+
+여전히 이 조합이 보인다면 그건 이 변경 이전에 생긴 행이거나, 같은 DB를 보는 구버전 프로세스·수동 SQL·
+DB 트리거 같은 다른 writer가 값을 지운 경우다. 현재 정상 접수 경로는 jobId를 포함한 최초 INSERT 한 번만
+수행하므로 `QUEUED + external_job_id IS NULL`을 만들지 않는다. 폴러는 이런 손상 행을 실패로 닫아 반복 조회를 멈춘다.
+
+**2026-08-13 실제 관측.** 운영 DB에서 이 조합이 반복해서 나왔고, 원인은 구버전 배포본이었다. 판별 근거는
+`pg_stat_statements`다 — `external_job_id`를 SET 절에 포함한 전체 merge UPDATE(구버전 매핑)와 그 컬럼이
+빠진 merge UPDATE(현행 `updatable = false` 매핑)가 **한 DB에 함께** 쌓여 있었다. 폴링 간격이 1분인데
+`findByStatusIn`이 136초에 4회 실행된 것(폴러 2개)과 `application_name = 'iz-backend-ec2'` 접속도 같은
+방향을 가리킨다. Supavisor를 거치면 `client_addr`이 풀러 주소로 가려지므로 접속 IP로는 판별할 수 없다.
+같은 DB를 보는 옛 배포본을 내리는 것이 근본 해결이고, `docs/migration/2026-08-13_protect_analysis_job_external_job_id.sql`의
+트리거는 어느 배포본이 다시 살아나도 원장이 깨지지 않게 하는 방어선이다.
+
+조회 API는 이 손상을 오류가 아니라 **실패 응답**으로 내려 준다. `GET /submissions/{id}/analysis`는
+`phase=FAILED`, `failureCode=EXTERNAL_JOB_ID_LOST`이고 TR-02 제출 현황도 같은 문구로 `ANALYSIS_FAILED`를
+보여 준다. 폴링이 초 단위로 도는 화면에 500을 돌려주면 오류 응답만 쌓이고 교육생에게는 아무것도 알려주지
+못하기 때문이다. 원장은 그대로 두고, 폴러가 다음 회차에 같은 행을 `MODEL_ERROR`로 닫는다.
 
 또한 폴링 FAILED 처리에서는 응시 종료 트랜잭션이 job의 `FAILED` 저장보다 먼저다. 두 번째 저장만 실패하면 응시는 실패했는데 job은 잠시 활성 상태로 남을 수 있으므로, 독립 트랜잭션 사이의 부분 성공을 모니터링해야 한다.
 

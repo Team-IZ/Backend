@@ -11,6 +11,7 @@ import com.bigproject.backend.domain.submission.domain.SubmissionException;
 import com.bigproject.backend.global.ai.AiCallException;
 import com.bigproject.backend.global.ai.AiClient;
 import com.bigproject.backend.global.ai.AiClientConfig;
+import com.bigproject.backend.global.ai.AiProxyWarmUp;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -52,12 +53,15 @@ public class HttpAnalysisServerClient implements AnalysisServerClient {
 
 	private final AiClient aiClient;
 	private final SubmissionArtifactStorage artifactStorage;
+	private final AiProxyWarmUp proxyWarmUp;
 
 	public HttpAnalysisServerClient(
 			@Qualifier(AiClientConfig.AI_ORIGIN_CLIENT) AiClient aiClient,
-			SubmissionArtifactStorage artifactStorage) {
+			SubmissionArtifactStorage artifactStorage,
+			AiProxyWarmUp proxyWarmUp) {
 		this.aiClient = aiClient;
 		this.artifactStorage = artifactStorage;
+		this.proxyWarmUp = proxyWarmUp;
 	}
 
 	@Override
@@ -79,43 +83,69 @@ public class HttpAnalysisServerClient implements AnalysisServerClient {
 		}
 
 		if (accepted == null || accepted.jobId() == null || accepted.jobId().isBlank()) {
+			// 원문은 AiPayloadLoggingInterceptor 가 "AI 응답 ◀ ..." 로 남긴다. 필드 이름이 달라서
+			// (job_id 등) 못 읽은 것인지, AI가 정말 안 보낸 것인지는 그 줄을 봐야 갈린다.
 			throw new AnalysisServerException(AnalysisFailureCode.MODEL_ERROR,
-					"AI 서버가 202 응답에 jobId를 주지 않았다.");
+					"AI 서버가 202 응답에 jobId를 주지 않았다(읽어낸 값: jobId=null, status="
+							+ (accepted == null ? "<본문 없음>" : accepted.status())
+							+ "). 같은 traceId의 'AI 응답 ◀' 로그에서 원문을 확인한다: " + request.traceId());
 		}
-		return parseJobId(accepted.jobId());
+		UUID externalJobId = parseJobId(accepted.jobId());
+		log.info("분석 요청 접수: submissionId={}, externalJobId={}, aiStatus={}, traceId={}",
+				request.submissionId(), externalJobId, accepted.status(), request.traceId());
+		return externalJobId;
 	}
 
 	@Override
 	public Optional<AnalysisProgress> fetchProgress(UUID externalJobId) {
 		try {
-			AnalysisJobStatusResponse response = aiClient.get(
-					ANALYSES_PATH + "/" + externalJobId, AnalysisJobStatusResponse.class, null);
-			if (response == null || response.status() == null) {
-				throw new AnalysisServerException(AnalysisFailureCode.MODEL_ERROR,
-						"AI 서버가 상태 없는 폴링 응답을 주었다: externalJobId=" + externalJobId);
-			}
-			return Optional.of(toProgress(response));
+			return fetchProgressOnce(externalJobId);
 		} catch (AiCallException exception) {
-			// D3(2026-08-13): AI 앱이 스스로 "이 job을 모른다"고 명시한 404만 확정 신호로 다룬다
-			// (공통 봉투 {error:"JOB_NOT_FOUND"} — AiClient.translate()가 이미 이 값을 failureCode로
-			// 옮겨 준다).
-			//   WHY: 본문 없는 프록시/envoy 404(AI 컨테이너가 일시 정지·재시작 중일 때 앞단에서
-			//        나는 404)는 AI가 낸 신호가 아니라 "job이 사라졌다"고 확정할 근거가 없다.
-			//        여기서 성급히 Optional.empty()로 접으면 pollActiveJobs가 즉시
-			//        FAILED(TEMPORARY_ERROR)로 확정해버려, 실제로는 멀쩡한 job까지 재요청
-			//        낭비를 만든다.
-			//   COST: 모호한 404는 판단을 미루고 예외로 던진다 — pollActiveJobs의 job 단위
-			//        try/catch가 흡수해 이번 폴링만 건너뛰고 다음 폴링(PT1M)에 다시 시도한다.
-			//   EXIT: AI 쪽 404 봉투 계약이 바뀌면(예: 항상 JOB_NOT_FOUND를 명시) 이 조건을
-			//        단순히 status==404만 보는 것으로 되돌려도 된다.
-			boolean confirmedGone = exception.status() != null
-					&& exception.status().value() == HttpStatus.NOT_FOUND.value()
-					&& "JOB_NOT_FOUND".equals(exception.failureCode());
-			if (confirmedGone) {
+			// AI 앱이 스스로 "이 job을 모른다"고 명시한 404만 유실 신호로 다룬다(공통 봉투
+			// {error:"JOB_NOT_FOUND"} — AiClient.translate()가 이미 failureCode로 옮겨 준다).
+			//   WHY: 본문 없는 프록시·envoy 404(원본이 PAUSED이거나 라우팅 계층이 아직 준비되지
+			//        않았을 때 앞단에서 나는 404)는 AI가 낸 신호가 아니다. 이것까지 유실로 접으면
+			//        멀쩡한 job을 죽이고 LLM 호출을 다시 쓰게 된다.
+			//   COST: 판별이 AI 응답 봉투에 의존한다. 봉투 없이 404만 오면 아래 웜업 경로로 간다.
+			//   EXIT: AI가 모든 404에 JOB_NOT_FOUND를 싣게 되면 이 조건을 status==404만 보는
+			//        것으로 되돌려도 된다.
+			if (isJobNotFound(exception)) {
 				return Optional.empty();
+			}
+			// HTML·빈 본문 등 JOB_NOT_FOUND가 아닌 404는 AI job 유실의 증거가 아니다. 원본 App Runner가
+			// 잠들었거나 라우팅 계층이 준비되지 않았을 수 있으므로 프록시로 깨우고 한 번만 다시 확인한다.
+			if (isNotFound(exception) && proxyWarmUp.warmUp()) {
+				log.warn("프록시 계층 404로 판단해 웜업 후 분석 상태를 다시 조회한다: externalJobId={}", externalJobId);
+				try {
+					return fetchProgressOnce(externalJobId);
+				} catch (AiCallException retryException) {
+					if (isJobNotFound(retryException)) {
+						return Optional.empty();
+					}
+					throw new AnalysisServerException(toFailureCode(retryException),
+							retryException.getMessage(), retryException);
+				}
 			}
 			throw new AnalysisServerException(toFailureCode(exception), exception.getMessage(), exception);
 		}
+	}
+
+	private Optional<AnalysisProgress> fetchProgressOnce(UUID externalJobId) {
+		AnalysisJobStatusResponse response = aiClient.get(
+				ANALYSES_PATH + "/" + externalJobId, AnalysisJobStatusResponse.class, null);
+		if (response == null || response.status() == null) {
+			throw new AnalysisServerException(AnalysisFailureCode.MODEL_ERROR,
+					"AI 서버가 상태 없는 폴링 응답을 주었다: externalJobId=" + externalJobId);
+		}
+		return Optional.of(toProgress(response));
+	}
+
+	private static boolean isNotFound(AiCallException exception) {
+		return exception.status() != null && exception.status().value() == HttpStatus.NOT_FOUND.value();
+	}
+
+	private static boolean isJobNotFound(AiCallException exception) {
+		return isNotFound(exception) && "JOB_NOT_FOUND".equals(exception.failureCode());
 	}
 
 	/**

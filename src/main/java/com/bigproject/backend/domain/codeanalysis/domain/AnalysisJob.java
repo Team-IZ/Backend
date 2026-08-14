@@ -80,15 +80,16 @@ public class AnalysisJob {
 	/**
 	 * AI 서버가 202 응답으로 반환한 작업 ID.
 	 *
-	 * <p>D1(2026-08-13): {@code updatable = false}.
-	 *   WHY: 2026-08-13 사고 — 폴러 중복(소유자 필터 없는 findByStatusIn)이 겹치면서 남의 job에
-	 *        404를 받고 이 컬럼을 null로 되돌리는 버그가 실운영에서 재현됐다(PR #108). save()/
-	 *        merge()의 자동생성 UPDATE가 이 컬럼을 아예 못 건드리게 막으면, 앞으로 같은 클래스의
-	 *        실수가 또 나와도 실제로 컬럼을 지울 방법이 없다.
-	 *   COST: 정당한 최초 기록(AI 202 응답 직후)도 더 이상 save()로는 안 되므로, 그 한 곳만
-	 *        {@link com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepository
-	 *        #assignExternalJobId} 전용 쿼리로 옮겨야 한다.
-	 *   EXIT: 되돌리려면 이 애너테이션만 지우고 그 전용 쿼리 호출을 다시 save()로 되돌리면 된다.
+	 * <p>{@code updatable = false}(2026-08-13).
+	 *   WHY: 폴러 중복(소유자 필터 없는 {@code findByStatusIn})이 겹치면서 남의 job에 404를 받고
+	 *        이 컬럼을 null로 되돌리는 버그가 실운영에서 재현됐다(PR #108). save()/merge()의
+	 *        자동생성 UPDATE가 이 컬럼을 아예 못 건드리게 막으면, 같은 종류의 실수가 또 나와도
+	 *        실제로 컬럼을 지울 방법이 없다.
+	 *   COST: 없다. 정상 접수 건은 202 응답의 ID를 채운 뒤 <b>최초 INSERT 한 번</b>으로 저장하므로
+	 *        (INSERT는 이 애너테이션의 영향을 받지 않는다) 기록해야 할 UPDATE 자체가 없다. 폴링
+	 *        상태 전이는 엔티티 merge가 아니라 이 컬럼을 SET 절에 넣지 않는 전용 쿼리를 쓴다.
+	 *   EXIT: 되돌리려면 이 애너테이션만 지운다. 다만 그 순간 merge가 만드는 UPDATE에 이 컬럼이
+	 *        다시 섞이므로, 되돌릴 이유가 생겼다면 그것부터 의심한다.
 	 */
 	@Column(name = "external_job_id", updatable = false)
 	private UUID externalJobId;
@@ -130,11 +131,11 @@ public class AnalysisJob {
 	}
 
 	/**
-	 * 분석 요청을 접수 대기 상태로 만든다. AI 서버를 부르기 <b>전에</b> 저장한다.
+	 * 분석 요청을 접수 대기 상태로 만든다.
 	 *
-	 * <p>호출 후에 만들면 202를 받고도 행이 없는 순간이 생기고, 그 사이 프로세스가 죽으면 AI 쪽에는
-	 * 실행이 있는데 우리 원장에는 없는 상태가 된다. 먼저 QUEUED로 남겨 두면 최악이라도 고아 job이
-	 * 남을 뿐이고, 그건 폴링이 정리할 수 있다.
+	 * <p>정상 경로에서는 아직 영속화하지 않는다. AI가 202로 준 작업 ID를 {@link #acceptExternalJob}
+	 * 으로 먼저 붙이고, ID를 포함한 한 번의 INSERT로 저장한다. 요청 자체가 실패한 경우에만 외부 ID가
+	 * 없는 FAILED 행을 저장해 실패 이력을 남긴다.
 	 *
 	 * <p>{@code uq_analysis_job_active(batch_key, job_type) WHERE status IN ('QUEUED','RUNNING')}가
 	 * 같은 제출의 동시 실행을 DB에서 막는다.
@@ -157,8 +158,14 @@ public class AnalysisJob {
 		this.questionBudget = questionBudget == null ? null : questionBudget.shortValue();
 	}
 
-	/** AI 서버가 202로 준 작업 ID를 붙인다. uq_analysis_job_external_job_id 가 중복을 막는다. */
+	/** 202 응답의 작업 ID를 최초 INSERT 전에 한 번만 반영한다. */
 	public void acceptExternalJob(UUID externalJobId) {
+		if (externalJobId == null) {
+			throw new IllegalArgumentException("externalJobId는 null일 수 없다.");
+		}
+		if (this.externalJobId != null && !this.externalJobId.equals(externalJobId)) {
+			throw new IllegalStateException("externalJobId는 최초 기록 후 변경할 수 없다.");
+		}
 		this.externalJobId = externalJobId;
 	}
 

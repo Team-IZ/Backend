@@ -184,6 +184,38 @@ class SubmissionControllerTest {
 
 	@Test
 	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
+	void reportsFailureWhenTheActiveAnalysisHasNoExternalJobId() throws Exception {
+		UUID userId = UUID.randomUUID();
+		UUID submissionId = UUID.randomUUID();
+		UUID jobId = UUID.randomUUID();
+		when(currentUserResolver.resolveCurrentMemberId()).thenReturn(userId);
+		when(submissionService.getAnalysis(userId, submissionId))
+				.thenReturn(new SubmissionAnalysisResponse(
+						submissionId,
+						SubmissionAnalysisPhase.FAILED,
+						jobId,
+						1,
+						Instant.parse("2026-08-13T11:30:26Z"),
+						null,
+						SubmissionAnalysisResponse.EXTERNAL_JOB_ID_LOST,
+						SubmissionAnalysisResponse.EXTERNAL_JOB_ID_LOST_MESSAGE,
+						null
+				));
+
+		// 폴링이 초 단위로 도는 화면이라 500을 내려 주면 오류 응답만 쌓인다. 실패로 내려 준다.
+		mockMvc.perform(get("/api/v0/submissions/{submissionId}/analysis", submissionId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.phase").value(SubmissionAnalysisPhase.FAILED.name()))
+				.andExpect(jsonPath("$.failureCode").value("EXTERNAL_JOB_ID_LOST"))
+				.andExpect(jsonPath("$.failureReason").value(
+						"분석 서버의 작업 정보가 유실되어 분석을 계속할 수 없습니다. "
+								+ "코드를 다시 제출해 분석을 재시도해 주세요. "
+								+ "다시 제출할 수 없다면 담당 매니저에게 문의해 주세요."))
+				.andExpect(jsonPath("$.codeAnalysisId").doesNotExist());
+	}
+
+	@Test
+	@WithMockUser(username = "trainee@example.com", roles = "TRAINEE")
 	void returnsDomainErrorCodeWhenDeadlineHasPassed() throws Exception {
 		when(currentUserResolver.resolveCurrentMemberId()).thenReturn(UUID.randomUUID());
 		when(submissionService.submitGithubUrl(any(), any(), any()))
