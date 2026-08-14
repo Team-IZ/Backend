@@ -44,6 +44,20 @@ public interface InterviewListRepository {
 	List<InterviewCountRow> countByRound(UUID managerUserId, UUID orgId, UUID assessmentRoundId);
 
 	/**
+	 * 이 매니저의 담당 반. 화면 <b>반 필터 드롭다운</b>을 채운다.
+	 *
+	 * <p>상태·위험 유형과 달리 값 집합을 고정할 수 없다 — 매니저마다 담당이 다르다.
+	 *
+	 * <p>{@code items[]}의 {@code className}으로 유도하지 않는 이유: 반 필터를 A반으로 걸면
+	 * 결과에 A반만 남아 <b>드롭다운에서 나머지 반이 사라진다.</b> {@code counts}와 같은 이유로
+	 * 필터와 무관하게 내려야 한다.
+	 */
+	List<ClassOption> findManagedClasses(UUID managerUserId, UUID orgId);
+
+	record ClassOption(UUID classId, String className) {
+	}
+
+	/**
 	 * @param search   이름 부분 일치. 공백이면 무시한다
 	 * @param status   {@code PLANNED} / {@code DONE} / {@code EXCLUDED}. null이면 전체
 	 * @param riskType {@code INVALID} / {@code LOW_PERSISTENT} / {@code DECLINE} / {@code OBSERVE}.

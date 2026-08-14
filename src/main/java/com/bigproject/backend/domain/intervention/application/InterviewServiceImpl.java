@@ -69,7 +69,13 @@ public class InterviewServiceImpl implements InterviewService {
 				.map(InterviewServiceImpl::toRoundView)
 				.orElse(null);
 
-		return new InterviewListResult(items, items.size(), toCounts(countRows), toRiskCounts(countRows), round);
+		List<ClassOptionView> classes = interviewListRepository
+				.findManagedClasses(criteria.managerUserId(), criteria.orgId()).stream()
+				.map(option -> new ClassOptionView(option.classId(), option.className()))
+				.toList();
+
+		return new InterviewListResult(
+				items, items.size(), toCounts(countRows), toRiskCounts(countRows), classes, round);
 	}
 
 	@Override

@@ -206,6 +206,31 @@ public class JdbcInterviewListRepository implements InterviewListRepository {
 				managerUserId, orgId, assessmentRoundId);
 	}
 
+	/**
+	 * 담당 반. 회차와 무관하게 그 매니저에게 배정된 반 전부다.
+	 *
+	 * <p>{@code DISTINCT}가 필요한 이유: 같은 반에 배정 이력이 여럿이면
+	 * {@code manager_assignment}가 행을 곱한다.
+	 */
+	@Override
+	public List<ClassOption> findManagedClasses(UUID managerUserId, UUID orgId) {
+		return jdbcTemplate.query("""
+				SELECT DISTINCT c.class_id, c.name
+				FROM manager_assignment ma
+				JOIN class c
+				       ON c.class_id = ma.class_id
+				WHERE ma.manager_user_id = ?
+				  AND ma.org_id          = ?
+				  AND ma.status          = 'ACTIVE'
+				  AND ma.unassigned_at IS NULL
+				ORDER BY c.name
+				""",
+				(rs, rowNum) -> new ClassOption(
+						rs.getObject("class_id", UUID.class),
+						rs.getString("name")),
+				managerUserId, orgId);
+	}
+
 	private InterviewListRow mapRow(ResultSet rs, int rowNum) throws SQLException {
 		return new InterviewListRow(
 				rs.getObject("candidate_id", UUID.class),

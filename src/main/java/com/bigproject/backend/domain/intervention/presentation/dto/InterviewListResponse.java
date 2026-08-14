@@ -28,6 +28,15 @@ public record InterviewListResponse(
 				example = "{\"INVALID\": 1, \"LOW_PERSISTENT\": 3, \"DECLINE\": 5, \"OBSERVE\": 0}")
 		Map<String, Long> riskCounts,
 
+		@Schema(description = """
+				**반 필터 드롭다운** 재료. 이 매니저의 담당 반 전부입니다.
+
+				상태·위험 유형과 달리 값 집합을 고정할 수 없어 서버가 줍니다 — 매니저마다 담당이 다릅니다.
+				`counts`처럼 **필터와 무관한 전체 목록**입니다: `items[]`의 `className`으로 유도하면
+				반 필터를 걸었을 때 나머지 반이 드롭다운에서 사라집니다.
+				""")
+		List<ClassOptionResponse> classes,
+
 		@Schema(description = "조회한 회차의 표시용 메타. 담당 밖 회차 ID를 넣으면 null")
 		RoundResponse round) {
 
@@ -37,7 +46,18 @@ public record InterviewListResponse(
 				result.total(),
 				result.counts(),
 				result.riskCounts(),
+				result.classes().stream()
+						.map(option -> new ClassOptionResponse(option.classId(), option.className()))
+						.toList(),
 				result.round() == null ? null : RoundResponse.from(result.round()));
+	}
+
+	@Schema(description = "담당 반")
+	public record ClassOptionResponse(
+			UUID classId,
+
+			@Schema(description = "반 이름", example = "A반")
+			String className) {
 	}
 
 	@Schema(description = "회차 메타")

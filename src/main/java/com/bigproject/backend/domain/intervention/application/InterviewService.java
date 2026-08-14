@@ -59,7 +59,15 @@ public interface InterviewService {
 			int total,
 			Map<String, Long> counts,
 			Map<String, Long> riskCounts,
+			List<ClassOptionView> classes,
 			RoundView round) {
+	}
+
+	/**
+	 * 반 필터 드롭다운 재료. 상태·위험 유형과 달리 <b>매니저마다 다르므로</b> 서버가 준다.
+	 * {@code counts}처럼 필터와 무관한 전체 목록이다.
+	 */
+	record ClassOptionView(UUID classId, String className) {
 	}
 
 	/** 담당 기수의 회차 목록. 화면 드롭다운을 채운다. */
