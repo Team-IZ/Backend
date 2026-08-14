@@ -29,7 +29,23 @@ public enum InterventionErrorCode implements ApiErrorCode {
 	 * 일어나는 동작이라 별도 {@code POST}가 갖는다. 화면은 이 응답을 받으면
 	 * {@code [브리프 생성]} 버튼을 그린다.
 	 */
-	INTERVIEW_BRIEF_NOT_CREATED(HttpStatus.NOT_FOUND, "아직 생성되지 않은 브리프입니다.");
+	INTERVIEW_BRIEF_NOT_CREATED(HttpStatus.NOT_FOUND, "아직 생성되지 않은 브리프입니다."),
+
+	/**
+	 * 무효 응시인데 아직 사람이 판정하지 않았다. <b>무효 확인이 브리프보다 먼저다</b>
+	 * (정의서 §5) — 판정 전에는 {@code briefType}(STANDARD/INVALID_ATTEMPT)을 정할 수 없어
+	 * 여는 말과 질문이 통째로 어긋난다.
+	 */
+	VALIDITY_REVIEW_REQUIRED(HttpStatus.CONFLICT, "무효 확인을 먼저 처리해야 브리프를 만들 수 있습니다."),
+
+	/**
+	 * AI 생성 실패 중 <b>다시 불러도 같은</b> 경우. 계약 위반(INVALID_JSON)이나 멱등 충돌이다.
+	 * 화면은 재시도를 권하지 않는다.
+	 */
+	BRIEF_GENERATION_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "브리프를 생성하지 못했습니다."),
+
+	/** AI 생성 실패 중 <b>재시도 가치가 있는</b> 경우. 타임아웃·레이트리밋·프로바이더 오류다. */
+	BRIEF_GENERATION_FAILED_RETRYABLE(HttpStatus.SERVICE_UNAVAILABLE, "브리프 생성이 지연되고 있습니다. 다시 시도해 주세요.");
 
 	private final HttpStatus status;
 	private final String defaultMessage;

@@ -1,10 +1,15 @@
 package com.bigproject.backend.domain.intervention.application;
 
+import com.bigproject.backend.domain.intervention.application.dto.InterviewBriefAiResponse;
 import com.bigproject.backend.domain.intervention.domain.InterventionErrorCode;
 import com.bigproject.backend.domain.intervention.domain.InterviewBriefRepository;
 import com.bigproject.backend.domain.intervention.domain.InterviewBriefRepository.BriefHeader;
 import com.bigproject.backend.domain.intervention.domain.InterviewCaseLookupRepository;
 import com.bigproject.backend.domain.intervention.domain.InterviewCaseLookupRepository.CaseSummary;
+import com.bigproject.backend.domain.usagemetering.application.AiUsageAttribution;
+import com.bigproject.backend.domain.usagemetering.application.AiUsageRecorder;
+import com.bigproject.backend.domain.usagemetering.domain.AiUsage;
+import com.bigproject.backend.global.ai.AiCallException;
 import com.bigproject.backend.global.exception.ApiException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -19,6 +24,92 @@ public class InterviewBriefServiceImpl implements InterviewBriefService {
 
 	private final InterviewCaseLookupRepository caseLookupRepository;
 	private final InterviewBriefRepository briefRepository;
+	private final InterviewBriefWriter briefWriter;
+	private final AiInterviewBriefClient aiClient;
+	private final AiUsageRecorder aiUsageRecorder;
+
+	@Override
+	public BriefView createBrief(UUID managerUserId, UUID orgId, UUID caseId, String traceId) {
+		CaseSummary summary = caseLookupRepository.findCase(managerUserId, orgId, caseId)
+				.orElseThrow(() -> new ApiException(InterventionErrorCode.INTERVIEW_CASE_NOT_FOUND));
+
+		// 무효 확인이 브리프보다 먼저다(정의서 §5). 판정 전에는 briefType(STANDARD/
+		// INVALID_ATTEMPT)을 정할 수 없어 여는 말과 질문이 통째로 어긋난다.
+		if ("INVALID".equals(summary.riskType()) && !validityReviewSettled(managerUserId, orgId, caseId)) {
+			throw new ApiException(InterventionErrorCode.VALIDITY_REVIEW_REQUIRED);
+		}
+
+		// 이미 완성된 브리프가 있으면 AI를 부르지 않는다. 재생성은 IV-07이 갖는다.
+		if (summary.interviewId() != null) {
+			var existing = briefRepository.findHeader(managerUserId, orgId, summary.interviewId());
+			if (existing.isPresent() && existing.get().openingRemark() != null) {
+				return findBrief(managerUserId, orgId, caseId);
+			}
+		}
+
+		// TX1 — 행을 만들고 요청을 조립한다. 커밋된 뒤에 AI를 부른다.
+		InterviewBriefWriter.BriefDraft draft = briefWriter.prepare(summary, managerUserId);
+
+		InterviewBriefAiResponse response;
+		try {
+			response = aiClient.generate(draft.request(), draft.briefId(), draft.versionNo(), traceId);
+		} catch (AiCallException exception) {
+			/*
+			 * 실패해도 브리프 행을 지우지 않는다 — 태운 토큰을 원장에 남겨야 하고
+			 * last_request_id/fingerprint가 중복 호출 방지 장치라 행이 있어야 동작한다.
+			 * 화면은 이 상태(briefState=FAILED)에서 [다시 생성]을 그린다.
+			 *
+			 * ⚠️ AI가 503 봉투에 실어 보낸 aiUsage[]는 현재 AiClient가 파싱하지 않아
+			 * 여기까지 오지 않는다 — 실패분 토큰이 원장에서 누락된다(제안서 ⑬).
+			 */
+			throw new ApiException(exception.retryable()
+					? InterventionErrorCode.BRIEF_GENERATION_FAILED_RETRYABLE
+					: InterventionErrorCode.BRIEF_GENERATION_FAILED);
+		}
+
+		validateSourceIds(response, draft.sourceIds());
+
+		UUID requestId = UUID.randomUUID();
+		// TX2 — 결과 저장.
+		briefWriter.saveResult(draft.briefId(), response, requestId, fingerprint(draft), managerUserId);
+
+		// 원장은 자체 REQUIRES_NEW라 업무 트랜잭션과 독립이다. 실패해도 예외를 던지지 않는다.
+		aiUsageRecorder.record(response.aiUsage(), new AiUsageAttribution(
+				orgId, managerUserId, null, null, null, AiUsage.TriggerType.USER, null, null));
+
+		return findBrief(managerUserId, orgId, caseId);
+	}
+
+	/**
+	 * AI가 지어낸 근거 ID를 걸러낸다.
+	 *
+	 * <p>{@code interview_brief_item.interview_source_id}가 {@code UUID NOT NULL}이라
+	 * 없는 값을 넣으면 그 행이 통째로 저장 불가다. AI 엔진도 자체 검증하지만
+	 * <b>모델 출력을 무검증으로 믿지 않는 것</b>이 이 계약의 전제다(AI 스키마 §5.1).
+	 */
+	private static void validateSourceIds(InterviewBriefAiResponse response, java.util.Set<UUID> allowed) {
+		boolean invalid = response.items().stream()
+				.anyMatch(item -> item.interviewSourceId() == null
+						|| !allowed.contains(item.interviewSourceId()));
+		if (invalid) {
+			throw new ApiException(InterventionErrorCode.BRIEF_GENERATION_FAILED);
+		}
+	}
+
+	/**
+	 * 요청 지문. 같은 멱등키로 다른 본문이 오는 것을 백엔드도 잡는다 —
+	 * {@code last_request_id}와 {@code last_request_fingerprint}가 CHECK로 묶인 한 쌍인 이유다.
+	 */
+	private static String fingerprint(InterviewBriefWriter.BriefDraft draft) {
+		return Integer.toHexString(draft.request().hashCode());
+	}
+
+	/** 무효 확인이 끝났는가. {@code PENDING}이면 아직 사람이 판정하지 않았다. */
+	private boolean validityReviewSettled(UUID managerUserId, UUID orgId, UUID caseId) {
+		return caseLookupRepository.findValidityReviewStatus(managerUserId, orgId, caseId)
+				.map(status -> !"PENDING".equals(status))
+				.orElse(true);
+	}
 
 	@Override
 	@Transactional(readOnly = true)

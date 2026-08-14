@@ -21,6 +21,14 @@ public interface InterviewCaseLookupRepository {
 	Optional<CaseSummary> findCase(UUID managerUserId, UUID orgId, UUID caseId);
 
 	/**
+	 * 무효 확인 상태. {@code PENDING}이면 아직 사람이 판정하지 않았다.
+	 *
+	 * <p>브리프 생성 전에 확인해야 한다 — 판정 전에는 {@code briefType}을 정할 수 없다.
+	 * 수행이 없으면(회차에 응시 기록 자체가 없으면) 비어 있다.
+	 */
+	Optional<String> findValidityReviewStatus(UUID managerUserId, UUID orgId, UUID caseId);
+
+	/**
 	 * @param interviewId 아직 브리프를 만들지 않았으면 null이다
 	 * @param riskType    화면 4종. 목록과 같은 SQL 식이 계산한다
 	 */

@@ -63,4 +63,17 @@ public class JdbcInterviewCaseLookupRepository implements InterviewCaseLookupRep
 
 		return rows.stream().findFirst();
 	}
+
+	@Override
+	public Optional<String> findValidityReviewStatus(UUID managerUserId, UUID orgId, UUID caseId) {
+		List<String> rows = jdbcTemplate.queryForList("""
+				SELECT v.validity_review_status
+				FROM manager_interview_list_view v
+				WHERE v.manager_user_id = ?
+				  AND v.org_id          = ?
+				  AND v.candidate_id    = ?
+				""", String.class, managerUserId, orgId, caseId);
+
+		return rows.stream().filter(java.util.Objects::nonNull).findFirst();
+	}
 }

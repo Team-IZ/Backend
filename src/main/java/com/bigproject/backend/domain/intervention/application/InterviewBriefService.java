@@ -21,6 +21,18 @@ public interface InterviewBriefService {
 	BriefView findBrief(UUID managerUserId, UUID orgId, UUID caseId);
 
 	/**
+	 * 브리프를 만든다. <b>AI를 호출하므로 수 초~수십 초 걸린다.</b>
+	 *
+	 * <p>이미 완성된 브리프가 있으면 재생성하지 않고 그대로 돌려준다 — 재생성은
+	 * 별도 경로(IV-07)가 갖는다. 매니저가 열 때마다 여는 말이 달라지면 안 되고,
+	 * LLM 비용도 열람 횟수만큼 나가서는 안 된다.
+	 *
+	 * @throws com.bigproject.backend.global.exception.ApiException
+	 *         담당 밖이면 404, 무효 확인이 안 끝났으면 409, AI 생성 실패면 503
+	 */
+	BriefView createBrief(UUID managerUserId, UUID orgId, UUID caseId, String traceId);
+
+	/**
 	 * @param openingRemark ★ AI가 생성한 여는 말. 화면 ①칸에 그대로 표시한다
 	 * @param items         ★ AI가 생성한 질문 체크리스트. <b>고르는 UI가 없어 전부 그린다</b>
 	 * @param isVoid        무효 응시 브리프인가. true면 여는 말·질문이 통째로 다르다(정의서 §6-2)
