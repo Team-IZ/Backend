@@ -47,7 +47,7 @@ public record TraineeReportsResponse(
 	 *                키가 빠진다. {@code GET /reports/{reportId}} 단건 조회에 이 값을 쓴다 —
 	 *                {@code id}(회차 ID)로 부르면 404다.
 	 * @param status  {@code PUBLISHED} · {@code PENDING_PUBLISH} · {@code PENDING_VISIBILITY}
-	 *                · {@code NOT_ATTEMPTED} · {@code VOID_ATTEMPT} · {@code STOPPED}
+	 *                · {@code NOT_STARTED} · {@code NOT_ATTEMPTED} · {@code VOID_ATTEMPT} · {@code STOPPED}
 	 * @param publishAfter {@code PENDING_PUBLISH}에서만. 이 시각 이후에 발행된다.
 	 * @param disclosureScope 이 리포트의 공개 범위. 발행·공개 전이거나 리포트가 없으면 키가 빠진다.
 	 *                <b>화면이 {@code qa} 유무로 범위를 되짚지 않게</b> 하려고 값으로 내려준다 —
@@ -62,8 +62,25 @@ public record TraineeReportsResponse(
 			String id,
 			@JsonInclude(JsonInclude.Include.NON_NULL) String reportId,
 			String label,
-			@Schema(allowableValues = {"PUBLISHED", "PENDING_PUBLISH", "PENDING_VISIBILITY",
-					"NOT_ATTEMPTED", "VOID_ATTEMPT", "STOPPED"})
+			@Schema(description = """
+					회차 카드의 상태.
+
+					| 값 | 뜻 | 화면 |
+					|---|---|---|
+					| `PUBLISHED` | 리포트가 공개됐다 | 결과를 그린다 |
+					| `PENDING_PUBLISH` | 아직 발행 전이다 | `publishAfter` 이후에 나온다 |
+					| `PENDING_VISIBILITY` | 발행됐지만 공개 범위가 안 정해졌다 | 매니저가 공개해야 열린다 |
+					| `NOT_STARTED` | **제출 마감 전인데 아직 응시 기록이 없다** | 아직 시간이 있다 |
+					| `NOT_ATTEMPTED` | **마감이 지나도록 응시하지 않았다** | 놓쳤다 — 매니저 안내가 필요하다 |
+					| `VOID_ATTEMPT` | 무효 응시 검토 중이거나 무효로 확정됐다 | `확인 필요` |
+					| `STOPPED` | 세션을 시작했지만 끝내지 못했다 | 중단 |
+
+					🔴 **`NOT_STARTED`와 `NOT_ATTEMPTED`를 한 문구로 묶지 않는다.** 둘을 같은 말로 그리면
+					아직 시간이 있는 학생에게 놓쳤다고 말하거나, 정말 놓친 학생에게서 경고가 사라진다(26차 A1).
+					가르는 축은 **제출 마감**이며, 홈의 `SUBMISSION_REQUIRED` / `SUBMISSION_MISSED`와 같은 값으로
+					갈리므로 두 화면이 같은 회차를 같은 말로 설명한다.""",
+					allowableValues = {"PUBLISHED", "PENDING_PUBLISH", "PENDING_VISIBILITY",
+							"NOT_STARTED", "NOT_ATTEMPTED", "VOID_ATTEMPT", "STOPPED"})
 			String status,
 			@JsonInclude(JsonInclude.Include.NON_NULL)
 			@Schema(description = "PENDING_PUBLISH에서만. 그 외에는 키가 빠진다") String publishAfter,

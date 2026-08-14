@@ -7,6 +7,7 @@ import com.bigproject.backend.domain.codeanalysis.application.AnalysisResultPayl
 import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJob;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -69,6 +70,33 @@ public class JdbcAssessmentSessionPreparer {
 			 WHERE tm.team_id = ? AND tm.to_at IS NULL
 			""";
 
+	/**
+	 * 개인 응시 창의 길이(시간). <b>세션이 열린 순간부터</b> 이만큼이다.
+	 *
+	 * <h2>이 창이 응시 가능 여부를 혼자 정하지는 않는다</h2>
+	 *
+	 * <p>응시는 <b>개인 창과 회차 창의 교집합</b>에서만 가능하다(2026-08-13 확정).
+	 * 여기서 여는 것은 그중 개인 쪽이고, 회차 쪽은 운영자가 정한 일정({@code project_assessment_round}의
+	 * {@code assessment_open_at}·{@code assessment_due_at})이다.
+	 *
+	 * <pre>
+	 * 열림 = max(개인 open, 회차 open)   ·   닫힘 = min(개인 close, 회차 due)
+	 * </pre>
+	 *
+	 * <p>그래서 마감 직전에 제출해 분석이 늦게 끝나면 <b>24시간을 다 쓰지 못할 수 있다</b> —
+	 * 회차 창이 먼저 닫히기 때문이다. 그 판정은 이 클래스가 아니라 조회·세션 접근 쪽에서 한다.
+	 *
+	 * <p>🔴 <b>교집합 판정은 아직 두 곳에 없다.</b> 홈 뷰({@code trainee_home_round_view})는 개인 창만
+	 * 보고, 세션 접근 검사({@code SessionGuard})는 창을 아예 보지 않는다. 세션 API를 여는 작업에서
+	 * 둘을 함께 맞춘다 — 한쪽만 고치면 "서버는 막는데 화면은 응시 가능이라 말하는" 상태가 된다.
+	 *
+	 * <p>정의서 주석은 개인 창 시작을 {@code MAX(analysis_completed_at, 회차 open_at)}으로, 마감을
+	 * 회차 {@code assessment_due_at}으로 적고 있다. 값을 그렇게 <b>박아 두는</b> 대신 판정 시점에
+	 * 교집합을 계산하는 쪽으로 정했다 — 회차 일정이 나중에 바뀌어도 따라가야 하기 때문이다.
+	 */
+	@Value("${assessment.window-hours:24}")
+	private int assessmentWindowHours;
+
 	private final JdbcTemplate jdbc;
 
 	/**
@@ -121,9 +149,11 @@ public class JdbcAssessmentSessionPreparer {
 		return jdbc.update("""
 				INSERT INTO measurement_attempt (org_id, cohort_id, assessment_round_id, project_id, user_id,
 				    source_submission_id, code_analysis_id, attempt_type, attempt_sequence_no,
-				    status, validity_review_status, analysis_completed_at)
+				    status, validity_review_status, analysis_completed_at,
+				    assessment_open_at, assessment_close_at)
 				SELECT ?, c.cohort_id, ?, pm.project_id, pm.user_id, ?, ?, 'INITIAL', 1,
-				       'SESSION_READY', 'NOT_REQUIRED', now()
+				       'SESSION_READY', 'NOT_REQUIRED', now(),
+				       now(), now() + make_interval(hours => ?)
 				  FROM team_membership tm
 				  JOIN project_membership pm ON pm.project_membership_id = tm.project_membership_id
 				   AND pm.status = 'ACTIVE'
@@ -132,7 +162,7 @@ public class JdbcAssessmentSessionPreparer {
 				ON CONFLICT (assessment_round_id, user_id) WHERE attempt_type = 'INITIAL' DO NOTHING
 				""",
 				job.getOrgId(), job.getAssessmentRoundId(), job.getSubmissionId(), analysisId,
-				job.getTeamId());
+				assessmentWindowHours, job.getTeamId());
 	}
 
 	/**
@@ -159,12 +189,15 @@ public class JdbcAssessmentSessionPreparer {
 				UPDATE measurement_attempt
 				   SET status = 'SESSION_READY', code_analysis_id = ?, source_submission_id = ?,
 				       analysis_completed_at = now(), updated_at = now(),
+				       assessment_open_at = now(),
+				       assessment_close_at = now() + make_interval(hours => ?),
 				       terminal_reason_code = NULL, terminal_at = NULL
 				 WHERE assessment_round_id = ? AND attempt_type = 'INITIAL'
 				   AND (status IN ('NOT_STARTED', 'SUBMITTED', 'ANALYZING')
 				        OR (status = 'FAILED' AND terminal_reason_code = 'ANALYSIS_FAILED'))
 				   AND user_id IN (""" + TEAM_MEMBERS + ")",
-				analysisId, job.getSubmissionId(), job.getAssessmentRoundId(), job.getTeamId());
+				analysisId, job.getSubmissionId(), assessmentWindowHours,
+				job.getAssessmentRoundId(), job.getTeamId());
 	}
 
 	/**
