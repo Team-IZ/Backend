@@ -65,7 +65,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 
 		for (RoundRow round : rounds) {
 			String roundId = round.assessmentRoundId().toString();
-			railItems.add(new RoundListItem(roundId, round.roundName(), isRetryPending(round)));
+			boolean hasRetryTarget = hasRetryTarget(round, conceptsByReport);
+			railItems.add(new RoundListItem(roundId, round.roundName(), isRetryPending(round, hasRetryTarget)));
 			reportsById.put(roundId, toRoundReport(round, conceptsByReport, unaskedByReport, answersByReport));
 		}
 
@@ -131,10 +132,18 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 			return statusOnly(id, reportId, label, "VOID_ATTEMPT");
 		}
 
-		// ② 미응시 — 응시 기록이 없거나 제출·출석이 없는 채로 끝났다.
+		// ② 응시 기록이 없다. 여기서 <b>둘로 가른다</b> — 마감 전이면 아직 낼 수 있고(NOT_STARTED),
+		//    마감이 지났으면 놓친 것이다(NOT_ATTEMPTED).
+		//
+		//    한 값으로 뭉치면 화면이 두 상황에 같은 문구를 쓰게 되는데, 그러면 **정말 놓친 학생에게서
+		//    경고가 사라진다**("사정이 있었다면 매니저에게 알려 주세요"). 반대로 중립 문구를 마감 전
+		//    학생에게 쓰면 아직 시간이 있는데 놓친 것처럼 읽힌다(26차 A1).
+		//
+		//    가르는 축은 제출 마감이다. 홈이 SUBMISSION_REQUIRED와 SUBMISSION_MISSED를 가를 때 쓰는
+		//    값과 같아야 **같은 회차를 두 화면이 같은 말로 설명한다** — 지금까지 어긋났던 지점이다.
 		String terminal = round.terminalReasonCode();
 		if (round.attemptId() == null || "NOT_SUBMITTED".equals(terminal) || "NOT_ATTENDED".equals(terminal)) {
-			return statusOnly(id, reportId, label, "NOT_ATTEMPTED");
+			return statusOnly(id, reportId, label, missedStatus(round));
 		}
 
 		// ③ 중단 — 세션을 시작했지만 끝내지 못했다.
@@ -161,7 +170,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 
 		// 두 값 다 회차 단위다. 개념 카드마다 다시 계산하지 않고 한 번 정해 넘긴다.
 		boolean fullScope = DisclosureScope.FULL == scope(round.traineeDisclosureScope());
-		boolean retryPending = isRetryPending(round);
+		boolean hasRetryTarget = conceptRows.stream().anyMatch(TraineeReportServiceImpl::isRetryTarget);
+		boolean retryPending = isRetryPending(round, hasRetryTarget);
 
 		// 물은 개념과 묻지 못한 개념을 한 배열에 담는다. 화면이 개념 3개를 나란히 그리고, 빠진
 		// 자리에 "코드에 이 개념이 없어 묻지 못했습니다"를 띄우려면 같은 목록에 있어야 한다 —
@@ -194,7 +204,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				round.sampleCount(),
 				round.missingCount(),
 				concepts,
-				retryState(round),
+				retryState(round, hasRetryTarget),
 				iso(round.reviewDueAt()),
 				iso(round.reviewCompletedAt())
 		);
@@ -281,16 +291,70 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		return row.reachLevel() < RETRY_TARGET_BELOW_LEVEL;
 	}
 
-	/** 다시 보기 상태. REVIEW 응시 기록이 없으면 대상이 아니다. */
-	private static String retryState(RoundRow round) {
+	/**
+	 * 이 회차에 다시 볼 개념이 하나라도 있는가. {@link #isRetryTarget}과 <b>같은 원천</b>이다.
+	 *
+	 * <p>개념 행이 없는 회차(미응시·발행 전)는 대상도 없다. 공개 대기(PENDING_VISIBILITY)는
+	 * 개념 행 자체는 있으므로 여기서 걸러지지 않는다 — {@code trainee_report_problem_view}가
+	 * 공개 여부를 행 유무가 아니라 {@code can_view_explanation} 컬럼으로 표현하기 때문이다.
+	 */
+	private static boolean hasRetryTarget(RoundRow round, Map<UUID, List<ConceptRow>> conceptsByReport) {
+		if (round.reportId() == null) {
+			return false;
+		}
+		return conceptsByReport.getOrDefault(round.reportId(), List.of()).stream()
+				.anyMatch(TraineeReportServiceImpl::isRetryTarget);
+	}
+
+	/**
+	 * 응시 기록이 없는 회차의 상태. <b>제출 마감이 지났는가</b> 하나로 갈린다.
+	 *
+	 * <p>종료 사유가 남아 있으면({@code NOT_SUBMITTED}·{@code NOT_ATTENDED}) 그 회차는 이미 끝난
+	 * 것이므로 마감을 따지지 않는다 — 응시 행이 종료됐다는 것 자체가 기회가 닫혔다는 뜻이다.
+	 *
+	 * <p>마감 시각을 모르는 회차는 {@code NOT_ATTEMPTED}로 둔다. "아직 낼 수 있다"고 말하려면
+	 * 낼 수 있는 기한이 있어야 하는데, 그 값이 없으면 근거 없이 안심시키는 쪽이 된다.
+	 */
+	private static String missedStatus(RoundRow round) {
+		boolean roundOver = round.terminalReasonCode() != null;
+		boolean beforeDeadline = round.submissionDueAt() != null
+				&& round.submissionDueAt().isAfter(Instant.now());
+		return !roundOver && beforeDeadline ? "NOT_STARTED" : "NOT_ATTEMPTED";
+	}
+
+	/**
+	 * 다시 보기 상태.
+	 *
+	 * <h2>🔴 대상이 0개면 {@code PENDING}을 만들지 않는다</h2>
+	 *
+	 * <p>종전에는 REVIEW 응시 행의 존재 여부만 봤다. 그런데 대상 판정({@link #isRetryTarget})은
+	 * 23차 R2에서 <b>2단 미만</b>으로 확정됐고, 그보다 느슨한 기준으로 만들어진 REVIEW 응시가
+	 * 데이터에 남아 있다 — 2단을 통과한 개념까지 재시험 대상으로 잡던 시절의 행이다.
+	 * 그래서 <b>다시 볼 문제가 0개인데 {@code PENDING}</b>인 회차가 생겼고, 화면은
+	 * "다시 볼 수 있는 문제가 0개 있어요" 배너와 빈 세션으로 들어가는 버튼을 그렸다(24차 R1).
+	 *
+	 * <p>판정 순서는 이렇다.
+	 * <ol>
+	 *   <li>REVIEW 응시가 없다 → {@code NONE}</li>
+	 *   <li>REVIEW 응시를 마쳤다 → {@code DONE}. <b>대상 수와 무관하다</b> —
+	 *       이미 일어난 사실의 기록이라 지금 대상이 0개여도 참이고, 이 값이 해설 잠금을 푼다</li>
+	 *   <li>미완료인데 대상이 0개다 → {@code NONE}. 지킬 수 없는 할 일은 만들지 않는다</li>
+	 *   <li>그 외 → {@code PENDING}</li>
+	 * </ol>
+	 */
+	private static String retryState(RoundRow round, boolean hasRetryTarget) {
 		if (round.reviewStatus() == null) {
 			return "NONE";
 		}
-		return round.reviewCompletedAt() != null ? "DONE" : "PENDING";
+		if (round.reviewCompletedAt() != null) {
+			return "DONE";
+		}
+		return hasRetryTarget ? "PENDING" : "NONE";
 	}
 
-	private static boolean isRetryPending(RoundRow round) {
-		return round.reviewStatus() != null && round.reviewCompletedAt() == null;
+	/** {@code rounds[].hasPendingRetry}. {@link #retryState}의 {@code PENDING}과 같은 판정이다. */
+	private static boolean isRetryPending(RoundRow round, boolean hasRetryTarget) {
+		return hasRetryTarget && round.reviewStatus() != null && round.reviewCompletedAt() == null;
 	}
 
 	/** 화면 `[내 답변] 펼침`의 슬롯 이름. 축을 앞에 붙여 어느 단계의 문답인지 보이게 한다. */

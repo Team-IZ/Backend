@@ -10,13 +10,20 @@ import java.util.UUID;
 /**
  * 예정 구획 카드. 회차명·제출일자·이해도 확인 시작·종료일자만 보여주므로
  * current(35필드)와 필드 집합을 공유하지 않는다.
+ *
+ * <p>예정 구획에는 {@code PLANNED} 회차와, <b>current로 뽑히지 않았고 제출 마감이 아직 남은
+ * {@code OPEN} 회차</b>가 함께 담긴다. 자세한 이유는
+ * {@code AssessmentRoundQueryService} 클래스 주석을 볼 것.
  */
 @Schema(description = "예정 회차. 7필드로 고정한다.")
 public record UpcomingRoundResponse(
 		UUID assessmentRoundId,
 		Integer roundNo,
 		@Schema(example = "미프 4차") String roundName,
-		@Schema(description = "항상 PLANNED", example = "PLANNED",
+		@Schema(description = """
+				`PLANNED` 또는 `OPEN`. **OPEN이면 제출 마감이 아직 남은 회차다** — \
+				같은 시점에 OPEN 회차가 둘 이상일 때 current가 아닌 쪽이 여기로 온다.""",
+				example = "PLANNED",
 				implementation = AssessmentRoundStatus.class) String roundStatus,
 		Instant submissionDueAt,
 		@Schema(description = """

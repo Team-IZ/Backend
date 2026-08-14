@@ -130,7 +130,7 @@ class TraineeReportDisclosureGatingTest {
 				3, 0,
 				UUID.randomUUID(), "COMPLETED", null, "APPROVED",
 				"RELEASED", scope,
-				null, Instant.parse("2026-07-01T00:00:00Z"), true,
+				null, null, Instant.parse("2026-07-01T00:00:00Z"), true,
 				reviewStatus, null, reviewDone)));
 
 		// 대상이면 1단(불합격), 아니면 2단(합격선). reviewRequired 컬럼 값은 더 이상 쓰이지 않으므로
