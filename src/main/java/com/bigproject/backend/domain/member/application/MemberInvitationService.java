@@ -15,6 +15,8 @@ import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRespon
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -29,6 +31,7 @@ import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class MemberInvitationService {
 	private static final String ACTIVE = "ACTIVE";
 	private static final Pattern EMAIL_PATTERN = Pattern.compile(
@@ -40,6 +43,7 @@ public class MemberInvitationService {
 	private final AuthUserRepository authUserRepository;
 	private final MemberInvitationRepository invitationRepository;
 	private final TransactionalInvitationDispatcher invitationDispatcher;
+	private final AsyncTraineeInvitationMailer asyncMailer;
 
 	/**
 	 * 오퍼레이터 또는 매니저를 초대한다.
@@ -200,19 +204,17 @@ public class MemberInvitationService {
 	public RegisterTraineesResponse inviteTraineesFromCsv(
 			UUID cohortId,
 			List<TraineeCsvRow> rows,
-			String actorEmail,
-			String requestId
+			String actorEmail
 	) {
-		return inviteTrainees(cohortId, rows, actorEmail, requestId);
+		return inviteTrainees(cohortId, rows, actorEmail);
 	}
 
 	public RegisterTraineesResponse inviteTrainees(
 			UUID cohortId,
 			RegisterTraineesRequest request,
-			String actorEmail,
-			String requestId
+			String actorEmail
 	) {
-		return inviteTrainees(cohortId, toRows(request), actorEmail, requestId);
+		return inviteTrainees(cohortId, toRows(request), actorEmail);
 	}
 
 	/** 직접 입력 본문을 행 목록으로. 순번은 1부터이며 CSV와 달리 헤더가 없다. */
@@ -225,11 +227,19 @@ public class MemberInvitationService {
 		return rows;
 	}
 
+	/**
+	 * <b>배치 식별자는 서버가 만든다.</b> 예전에는 {@code X-Request-Id} 헤더를 받아 그대로 썼는데,
+	 * 이 값이 개선 D에서 폴링의 잡 ID가 되면서 클라이언트가 정할 값이 아니게 됐다 —
+	 * 같은 값으로 두 번 등록하면 두 등록의 진행률이 하나로 합쳐지고, {@code /}가 들어가면 폴링 경로가
+	 * 조각나 404가 된다. 서버가 UUID를 만들어 응답에 담으면 두 함정이 다 사라진다.
+	 *
+	 * <p>추적을 잃지는 않는다 — 이 값은 그대로 {@code one_time_token.issued_request_id}와
+	 * {@code user_invitation.batch_request_id}에 남고, 화면은 응답의 {@code batchRequestId}로 되짚는다.
+	 */
 	private RegisterTraineesResponse inviteTrainees(
 			UUID cohortId,
 			List<TraineeCsvRow> rows,
-			String actorEmail,
-			String requestId
+			String actorEmail
 	) {
 		AuthUser actor = activeActor(actorEmail);
 		if (actor.role() != Role.OPERATOR) {
@@ -241,13 +251,22 @@ public class MemberInvitationService {
 			throw new ApiException(MemberErrorCode.INVITE_CROSS_ORGANIZATION, "다른 기관의 기수에는 교육생을 초대할 수 없습니다.");
 		}
 
-		int registeredCount = 0;
-		int invitationSentCount = 0;
 		List<RegisterTraineesResponse.Failure> failures = new ArrayList<>();
 		Set<String> duplicateEmails = findDuplicateNormalizedEmails(rows);
-		String baseRequestId = requestId(requestId);
+		Set<String> existingEmails = findExistingTraineeEmails(context.organizationId(), rows);
+		String baseRequestId = UUID.randomUUID().toString();
 		validateTraineeNames(rows);
 
+		/*
+		 * 1단계 — 자리를 전량 확보한다. 메일은 여기서 보내지 않는다.
+		 *
+		 * 예전에는 행마다 "자리 확보 → SMTP 발송 → 결과 기록"을 다 끝내고 다음 행으로 넘어갔다.
+		 * SMTP 연결 고정비(연결·핸드셰이크·AUTH)가 건당 1초를 넘어 900명이면 그것만 약 28분이었고,
+		 * 게이트웨이 응답 한도를 넘겨 화면에는 502가 뜨는데 뒤에서는 등록이 계속되는 상태가 됐다.
+		 * 발송을 2단계로 미루면 그 고정비를 연결당 한 번만 낸다.
+		 */
+		Map<Integer, TraineeCsvRow> rowsByNumber = new HashMap<>();
+		List<InvitationPersistenceService.TraineeSlotRequest> slotRequests = new ArrayList<>();
 		for (TraineeCsvRow row : rows) {
 			String name = row.name() == null ? "" : row.name().trim();
 			String email = row.email() == null ? "" : row.email().trim();
@@ -255,51 +274,103 @@ public class MemberInvitationService {
 			// 행별 판정은 미리보기(previewTrainees)와 같은 메서드를 쓴다 —
 			// 규칙이 두 벌이면 "미리보기는 통과했는데 등록이 실패"하는 상태가 생긴다(9차 Q3-③).
 			TraineeInvitationFailureStatus rejection =
-					rejectionFor(email, duplicateEmails, context.organizationId());
+					rejectionFor(email, duplicateEmails, existingEmails);
 			if (rejection != null) {
 				failures.add(failure(row, email, rejection));
 				continue;
 			}
+			rowsByNumber.put(row.row(), row);
+			slotRequests.add(new InvitationPersistenceService.TraineeSlotRequest(row.row(), name, email));
+		}
 
-			String normalizedEmail = EmailNormalizer.normalize(email);
-			RegisterTraineesRequest.Trainee trainee = new RegisterTraineesRequest.Trainee(
-					name,
-					email
-			);
-			try {
-				invitationDispatcher.inviteTrainee(
-						context,
-						trainee,
-						actor,
-						baseRequestId + ":" + row.row()
-				);
-				registeredCount++;
-			} catch (InvitationConflictException | DataIntegrityViolationException exception) {
+		// 확보할 행이 하나도 없으면(전부 사전 판정에서 걸림) 확보·발송 단계를 건너뛴다.
+		// 폴링할 대상도 없으므로 batchRequestId를 돌려주지 않는다 — 조회해 봐야 404다.
+		if (slotRequests.isEmpty()) {
+			return new RegisterTraineesResponse(rows.size(), 0, 0, null, List.copyOf(failures));
+		}
+
+		List<ReservedTrainee> reserved = new ArrayList<>();
+		for (InvitationPersistenceService.TraineeSlot slot : invitationDispatcher.reserveTrainees(
+				context, slotRequests, actor, baseRequestId)) {
+			TraineeCsvRow row = rowsByNumber.get(slot.request().row());
+			if (slot.isConflict()) {
+				/*
+				 * 사전 판정을 통과했는데 확보 단계에서 걸린 행이다. 두 호출 사이에 다른 운영자가 같은
+				 * 주소를 등록했거나, 교육생이 아닌 계정(다른 역할·다른 기관)이 그 이메일을 쓰고 있다.
+				 * 어느 쪽인지 확인해 앞의 것만 행별 실패로 돌려주고, 뒤는 명단 문제가 아니라 예외로 올린다.
+				 */
 				if (invitationRepository.existsOrganizationTraineeByNormalizedEmail(
 						context.organizationId(),
-						normalizedEmail
+						EmailNormalizer.normalize(slot.request().email())
 				)) {
 					failures.add(failure(
 							row,
-							email,
+							slot.request().email(),
 							TraineeInvitationFailureStatus.EXISTING_ORGANIZATION_TRAINEE_EMAIL
 					));
 					continue;
 				}
-				throw exception;
-			} catch (InvitationDeliveryException exception) {
-				throw new ApiException(MemberErrorCode.INVITE_MAIL_FAILED, exception.getMessage(), exception);
+				throw new InvitationConflictException("이미 등록되었거나 초대된 이메일입니다.");
 			}
-
-			invitationSentCount++;
+			reserved.add(new ReservedTrainee(slot.invitation(), slot.request().name()));
 		}
 
+		/*
+		 * 2단계 — 발송은 요청 스레드 밖으로 넘긴다.
+		 *
+		 * 발송까지 여기서 끝내면 900명이 약 3분이라 게이트웨이의 "응답 첫 바이트까지" 상한을 넘어
+		 * 화면에는 502가 뜨는데 뒤에서는 등록이 계속되는 상태가 된다. 자리는 이미 커밋됐으므로
+		 * 여기서 응답을 끊어도 잃는 것이 없고, 진행률은 화면이 batchRequestId로 폴링해 따라온다.
+		 *
+		 * 발송 실패는 예외가 아니다. "등록은 됐지만 메일은 안 나간 행"은 원장에 DELIVERY_FAILED로 남아
+		 * 폴링 응답의 mailFailedCount로 드러나고, 명단 화면의 [초대 재발송]이 켜진다.
+		 */
+		try {
+			asyncMailer.sendTraineeInvitations(
+					baseRequestId,
+					reserved.stream()
+							.map(item -> new InvitationMailSender.TraineeInvitationMail(item.invitation(), item.name()))
+							.toList()
+			);
+		} catch (TaskRejectedException exception) {
+			/*
+			 * 발송 큐가 찼다. 등록 자체는 실패시키지 않는다 — 자리와 초대 원장은 이미 커밋됐고,
+			 * 그 행들은 PENDING으로 남아 안전망 스케줄러가 토큰을 새로 발급해 이어받는다.
+			 * 응답의 invitationSentCount가 0인 것도 정상 경로와 다르지 않다.
+			 */
+			log.warn("교육생 초대 메일 발송을 큐에 넣지 못했다. 안전망이 이어받는다: batchRequestId={}, count={}",
+					baseRequestId, reserved.size(), exception);
+		}
+
+		/*
+		 * invitationSentCount는 이 시점에 항상 0이다 — 아직 한 통도 나가지 않았다.
+		 * 실제로 나간 수는 폴링 응답에서 답한다. 필드를 지우지 않은 것은 미리보기·기존 화면이
+		 * 같은 스키마를 그리기 때문이다.
+		 */
 		return new RegisterTraineesResponse(
 				rows.size(),
-				registeredCount,
-				invitationSentCount,
+				reserved.size(),
+				0,
+				baseRequestId,
 				List.copyOf(failures)
 		);
+	}
+
+	/**
+	 * 일괄 등록 한 건의 진행률(개선 D의 폴링). 잡 레코드가 따로 없고 {@code batch_request_id}가 같은
+	 * 초대 원장 행들이 곧 잡이라, 어느 인스턴스가 받아도 같은 집계를 답한다.
+	 *
+	 * <p>범위는 <b>기수·기관</b>으로 좁힌다. 남의 배치 식별자를 찍어 넣어도 남의 진행률이 보이면 안 된다.
+	 */
+	public TraineeRegistrationProgress findRegistrationProgress(
+			UUID cohortId, UUID organizationId, String batchRequestId) {
+		return invitationRepository.findBatchProgress(batchRequestId, organizationId, cohortId)
+				.map(TraineeRegistrationProgress::from)
+				.orElseThrow(() -> new ApiException(MemberErrorCode.REGISTRATION_BATCH_NOT_FOUND));
+	}
+
+	/** 자리 확보까지 끝난 행. 이름은 메일 본문 인사말에 쓰이며 {@link PendingInvitation}에는 없다. */
+	private record ReservedTrainee(PendingInvitation invitation, String name) {
 	}
 
 	/**
@@ -337,21 +408,24 @@ public class MemberInvitationService {
 		validateTraineeNames(rows);
 
 		Set<String> duplicateEmails = findDuplicateNormalizedEmails(rows);
+		Set<String> existingEmails = findExistingTraineeEmails(context.organizationId(), rows);
 		List<RegisterTraineesResponse.Failure> failures = new ArrayList<>();
 		for (TraineeCsvRow row : rows) {
 			String email = row.email() == null ? "" : row.email().trim();
 			TraineeInvitationFailureStatus rejection =
-					rejectionFor(email, duplicateEmails, context.organizationId());
+					rejectionFor(email, duplicateEmails, existingEmails);
 			if (rejection != null) {
 				failures.add(failure(row, email, rejection));
 			}
 		}
 
-		// 아무것도 만들지 않았으므로 registeredCount는 "등록될 수 있는 수", invitationSentCount는 항상 0이다.
+		// 아무것도 만들지 않았으므로 registeredCount는 "등록될 수 있는 수", invitationSentCount는 항상 0이며
+		// 폴링할 잡도 없어 batchRequestId는 null이다.
 		return new RegisterTraineesResponse(
 				rows.size(),
 				rows.size() - failures.size(),
 				0,
+				null,
 				List.copyOf(failures)
 		);
 	}
@@ -359,9 +433,14 @@ public class MemberInvitationService {
 	/**
 	 * 행 하나가 걸리는 사유. 통과하면 {@code null}이다.
 	 * 등록과 미리보기가 <b>이 한 메서드</b>를 공유하므로 두 응답이 서로 다른 말을 할 수 없다.
+	 *
+	 * <p>기존 이메일 집합을 <b>인자로 받는다.</b> 예전에는 행마다
+	 * {@code existsOrganizationTraineeByNormalizedEmail}을 불러 900명 명단이 900 왕복이 됐다.
+	 * 판정에 필요한 것은 "이 중 어느 것이 이미 있는가"이므로 {@link #findExistingTraineeEmails}가
+	 * 한 번에 조회해 넘긴다.
 	 */
 	private TraineeInvitationFailureStatus rejectionFor(
-			String email, Set<String> duplicateEmails, UUID organizationId) {
+			String email, Set<String> duplicateEmails, Set<String> existingEmails) {
 		if (!isValidEmail(email)) {
 			return TraineeInvitationFailureStatus.INVALID_EMAIL_FORMAT;
 		}
@@ -369,10 +448,26 @@ public class MemberInvitationService {
 		if (duplicateEmails.contains(normalizedEmail)) {
 			return TraineeInvitationFailureStatus.DUPLICATE_EMAIL_IN_REQUEST;
 		}
-		if (invitationRepository.existsOrganizationTraineeByNormalizedEmail(organizationId, normalizedEmail)) {
+		if (existingEmails.contains(normalizedEmail)) {
 			return TraineeInvitationFailureStatus.EXISTING_ORGANIZATION_TRAINEE_EMAIL;
 		}
 		return null;
+	}
+
+	/**
+	 * 명단 전량 중 그 기관에 이미 있는 교육생 이메일을 <b>왕복 한 번으로</b> 모아 온다.
+	 *
+	 * <p>형식이 틀린 주소는 물어볼 필요가 없어 미리 걸러낸다 — 어차피 형식 오류로 먼저 판정된다.
+	 */
+	private Set<String> findExistingTraineeEmails(UUID organizationId, List<TraineeCsvRow> rows) {
+		Set<String> candidates = new HashSet<>();
+		for (TraineeCsvRow row : rows) {
+			String email = row.email() == null ? "" : row.email().trim();
+			if (isValidEmail(email)) {
+				candidates.add(EmailNormalizer.normalize(email));
+			}
+		}
+		return invitationRepository.findExistingOrganizationTraineeEmails(organizationId, candidates);
 	}
 
 	private Set<String> findDuplicateNormalizedEmails(List<TraineeCsvRow> rows) {

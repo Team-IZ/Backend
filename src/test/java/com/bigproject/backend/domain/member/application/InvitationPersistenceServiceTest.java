@@ -11,6 +11,7 @@ import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesReq
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.ObjectMapper;
 
@@ -24,6 +25,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -37,7 +39,7 @@ class InvitationPersistenceServiceTest {
 				repository,
 				mock(OneTimeTokenGenerator.class),
 				new OneTimeTokenHasher(),
-				new BCryptPasswordEncoder(),
+				new PendingPasswordHash(new BCryptPasswordEncoder()),
 				new ObjectMapper()
 		);
 		AuthUser actor = new AuthUser(
@@ -67,7 +69,7 @@ class InvitationPersistenceServiceTest {
 				repository,
 				tokenGenerator,
 				new OneTimeTokenHasher(),
-				new BCryptPasswordEncoder(),
+				new PendingPasswordHash(new BCryptPasswordEncoder()),
 				new ObjectMapper()
 		);
 		ReflectionTestUtils.setField(service, "invitationExpiration", Duration.ofHours(24));
@@ -115,7 +117,7 @@ class InvitationPersistenceServiceTest {
 				repository,
 				tokenGenerator,
 				new OneTimeTokenHasher(),
-				new BCryptPasswordEncoder(),
+				new PendingPasswordHash(new BCryptPasswordEncoder()),
 				new ObjectMapper()
 		);
 		ReflectionTestUtils.setField(service, "invitationExpiration", Duration.ofHours(24));
@@ -160,7 +162,7 @@ class InvitationPersistenceServiceTest {
 				repository,
 				tokenGenerator,
 				new OneTimeTokenHasher(),
-				new BCryptPasswordEncoder(),
+				new PendingPasswordHash(new BCryptPasswordEncoder()),
 				new ObjectMapper()
 		);
 		ReflectionTestUtils.setField(service, "invitationExpiration", Duration.ofHours(24));
@@ -183,7 +185,8 @@ class InvitationPersistenceServiceTest {
 				new InvitationContext(organizationId, "AIVLE", cohortId, "7기"),
 				new RegisterTraineesRequest.Trainee("교육생", "trainee@example.com"),
 				actor,
-				"request-2"
+				"request-2",
+				null
 		);
 
 		ArgumentCaptor<InvitationToken> tokenCaptor = ArgumentCaptor.forClass(InvitationToken.class);
@@ -191,5 +194,57 @@ class InvitationPersistenceServiceTest {
 		assertThat(tokenCaptor.getValue().payload())
 				.contains("\"name\":\"교육생\"")
 				.doesNotContain("classroomId");
+	}
+
+	/**
+	 * placeholder 해시는 <b>인원수와 무관하게 한 번만</b> 계산돼야 한다.
+	 *
+	 * <p>BCrypt는 의도적으로 느려(strength 10 실측 73.5ms/회) 초대 건마다 부르면 CSV 대량 등록에서
+	 * 그 비용이 인원수만큼 곱해진다 — 900명이면 순수 CPU만 66초다. 이 해시는 평문이 즉시 버려지는
+	 * 랜덤 UUID라 검증에 쓰이지 않으므로 초대마다 달라야 할 이유가 없다.
+	 *
+	 * <p>이 테스트가 없으면 {@link PendingPasswordHash}를 다시 건당 호출로 되돌려도 아무도 모른다 —
+	 * 기능은 그대로 동작하고 느려지기만 하기 때문이다.
+	 */
+	@Test
+	void reusesOnePlaceholderHashForEveryInvitation() {
+		MemberInvitationRepository repository = mock(MemberInvitationRepository.class);
+		when(repository.createPendingUser(any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(UUID.randomUUID());
+		OneTimeTokenGenerator tokenGenerator = mock(OneTimeTokenGenerator.class);
+		when(tokenGenerator.generate()).thenReturn("raw-token");
+		PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+		when(passwordEncoder.encode(any())).thenReturn("$2a$10$placeholder");
+		InvitationPersistenceService service = new InvitationPersistenceService(
+				repository,
+				tokenGenerator,
+				new OneTimeTokenHasher(),
+				new PendingPasswordHash(passwordEncoder),
+				new ObjectMapper()
+		);
+		ReflectionTestUtils.setField(service, "invitationExpiration", Duration.ofHours(24));
+		UUID organizationId = UUID.randomUUID();
+		UUID cohortId = UUID.randomUUID();
+		InvitationContext context = new InvitationContext(organizationId, "AIVLE", cohortId, "7기");
+		AuthUser actor = new AuthUser(
+				UUID.randomUUID(), organizationId, "operator@example.com", "Operator", "hash",
+				"ACTIVE", true, null, Role.OPERATOR, "ACTIVE"
+		);
+
+		for (int index = 0; index < 5; index++) {
+			service.createTraineeInvitation(
+					context,
+					new RegisterTraineesRequest.Trainee("교육생" + index, "trainee" + index + "@example.com"),
+					actor,
+					"request-bulk",
+					"request-bulk"
+			);
+		}
+
+		// 5명을 초대했지만 BCrypt는 PendingPasswordHash 생성 시점의 1회뿐이다.
+		verify(passwordEncoder, times(1)).encode(any());
+		verify(repository, times(5)).createPendingUser(
+				any(), any(), any(), any(), any(), eq("$2a$10$placeholder"), any()
+		);
 	}
 }

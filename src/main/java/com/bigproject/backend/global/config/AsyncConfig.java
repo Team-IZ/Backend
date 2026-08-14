@@ -34,4 +34,26 @@ public class AsyncConfig {
 		executor.initialize();
 		return executor;
 	}
+
+	/**
+	 * CSV 교육생 대량 등록의 초대 메일 발송 풀.
+	 *
+	 * <p><b>풀을 좁게 잡는다.</b> 잡 하나가 SMTP 연결을 붙들고 수백 통을 보내는 작업이라, 넓히면
+	 * 제공자의 동시 연결 상한에 먼저 걸린다. 상한을 확인하기 전까지는 잡 하나가 순서대로 도는 편이
+	 * 안전하다 — 병렬화는 {@code INVITATION_MAIL_HOST}의 동시 연결 상한을 확인한 뒤 별도로 판단한다.
+	 *
+	 * <p>큐가 차면 {@code TaskRejectedException}이 <b>요청 스레드로</b> 올라온다. 호출부는 그것을
+	 * 잡아 등록 자체는 성공으로 응답한다 — 자리는 이미 커밋됐고, 발송되지 않은 행은 원장에 PENDING으로
+	 * 남아 안전망 스케줄러가 이어받기 때문이다.
+	 */
+	@Bean(name = "traineeInvitationMailExecutor")
+	public Executor traineeInvitationMailExecutor() {
+		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+		executor.setCorePoolSize(1);
+		executor.setMaxPoolSize(2);
+		executor.setQueueCapacity(50);
+		executor.setThreadNamePrefix("trainee-invite-mail-");
+		executor.initialize();
+		return executor;
+	}
 }
