@@ -42,7 +42,7 @@ public class InterviewController {
 	private final InterviewService interviewService;
 	private final CurrentUserResolver currentUserResolver;
 
-	@Operation(operationId = "findInterviews", summary = "면담 목록 조회", description = """
+	@Operation(operationId = "findInterviews", summary = "면담 목록 조회 | ✅ 사용 가능", description = """
 			위험 판정이 켜진 교육생의 **작업 큐**입니다. 매니저가 고르는 목록이 아니라
 			이해도 확인 결과가 만든 목록이라, 회차 결과가 나오기 전에는 **비어 있는 것이 정상**입니다.
 

@@ -43,7 +43,7 @@ public class InterviewBriefController {
 	private final InterviewBriefService interviewBriefService;
 	private final CurrentUserResolver currentUserResolver;
 
-	@Operation(operationId = "findInterviewBrief", summary = "면담 브리프 조회", description = """
+	@Operation(operationId = "findInterviewBrief", summary = "면담 브리프 조회 | ✅ 사용 가능", description = """
 			저장된 브리프를 읽습니다. **AI를 부르지 않아 즉시 반환됩니다.**
 
 			### 생성은 이 경로가 하지 않습니다
