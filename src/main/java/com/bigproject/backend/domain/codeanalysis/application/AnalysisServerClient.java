@@ -31,9 +31,8 @@ public interface AnalysisServerClient {
 	/**
 	 * 진행 상태를 조회한다.
 	 *
-	 * <p>결과가 비어 있으면 AI 서버가 그 작업을 모른다는 뜻이다(404). 스펙에 "job storage is
-	 * in-memory; process restart causes 404"라고 명시돼 있어 <b>정상 동작 중에도 일어난다.</b>
-	 * 호출부는 이를 오류가 아니라 재요청 신호로 다뤄야 한다.
+	 * <p>결과가 비어 있으면 AI <b>애플리케이션</b>이 {@code JOB_NOT_FOUND}를 명시적으로 반환한
+	 * 것이다. HTML·빈 본문 등 프록시 계층 404는 여기에 포함하지 않고 연동 예외로 던진다.
 	 */
 	Optional<AnalysisProgress> fetchProgress(UUID externalJobId);
 

@@ -10,8 +10,20 @@ public record RegisterTraineesResponse(
 		int requestedCount,
 		@Schema(description = "PENDING 계정·기수 소속·초대 원장·토큰 등록에 성공한 교육생 수", example = "2")
 		int registeredCount,
-		@Schema(description = "초대 메일 발송과 초대 상태 SENT 전환이 완료된 교육생 수. 계정 활성화 수가 아닙니다.", example = "2")
+		@Schema(
+				description = "초대 메일 발송과 초대 상태 SENT 전환이 완료된 교육생 수. 계정 활성화 수가 아닙니다. "
+						+ "등록 응답(202)에서는 발송이 아직 시작되지 않아 항상 0이며, 실제 발송 수는 진행률 조회로 확인합니다.",
+				example = "0"
+		)
 		int invitationSentCount,
+		@Schema(
+				description = "이 일괄 등록의 진행률 조회 식별자입니다. "
+						+ "`GET /cohorts/{cohortId}/trainees/registrations/{batchRequestId}`에 그대로 넣습니다. "
+						+ "등록된 행이 하나도 없거나 사전 검증(미리보기) 응답이면 폴링할 대상이 없어 null입니다.",
+				example = "trainee-batch-001",
+				nullable = true
+		)
+		String batchRequestId,
 		@Schema(description = "수정 또는 재처리가 필요한 입력 행별 실패 목록")
 		List<Failure> failures
 ) {

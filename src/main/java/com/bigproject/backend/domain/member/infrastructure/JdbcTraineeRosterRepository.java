@@ -35,6 +35,8 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				       u.name, u.email, u.status AS account_status,
 				       u.inactivated_reason_code, u.inactivated_reason, u.inactivated_at,
 				       u.inactivated_by, NULL::uuid AS pending_invitation_token_id,
+				       -- 수락해서 기수에 들어온 행이다. 진행 중인 초대가 없으니 실패할 초대도 없다.
+				       FALSE AS invitation_delivery_failed,
 				       /*
 				        * 매니저 스코프용 반. 수락한 교육생의 반은 class_membership에서 오므로
 				        * 여기서는 비우고, 초대 대기 행만 target_class_id를 싣는다 --
@@ -65,6 +67,15 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				             AND invitation_cohort.status <> 'CLOSED'
 				             AND invitation_cohort.deleted_at IS NULL
 				       ) THEN ui.current_token_id END,
+				       /*
+				        * 메일이 나가지 못한 초대인가. 토큰과 별개로 판정한다 -- 토큰은 기수가 닫히면
+				        * 비워져 [재발송]을 잠그는 값이고, 이쪽은 원장에 남은 사실 자체다.
+				        * 화면은 "수락 대기"와 "재발송 필요"를 이 값으로 가른다. 없으면 둘이 같아 보인다.
+				        *
+				        * 이메일당 미완료 초대는 uq_user_invitation_incomplete가 한 건으로 막으므로
+				        * 오퍼레이터 목록처럼 "가장 최근 것"을 고르는 서브쿼리가 필요 없다.
+				        */
+				       ui.status = 'DELIVERY_FAILED',
 				       ui.target_class_id
 				FROM user_invitation ui
 				JOIN app_user u
@@ -135,7 +146,7 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 			       r.joined_at, r.left_at,
 			       r.inactivated_reason_code, r.inactivated_reason, r.inactivated_at,
 			       r.inactivated_by AS inactivated_by_id, actor.name AS inactivated_by_name,
-			       r.pending_invitation_token_id,
+			       r.pending_invitation_token_id, r.invitation_delivery_failed,
 			       mv.assessment_round_id, mv.attempt_id, mv.row_result_status,
 			       mv.concept_result_items::text AS concept_result_items,
 			       mv.expected_concept_count,
@@ -372,6 +383,7 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				rs.getObject("inactivated_by_id", UUID.class),
 				rs.getString("inactivated_by_name"),
 				rs.getObject("pending_invitation_token_id", UUID.class),
+				rs.getBoolean("invitation_delivery_failed"),
 				rs.getObject("assessment_round_id", UUID.class),
 				rs.getObject("attempt_id", UUID.class),
 				rs.getString("row_result_status"),

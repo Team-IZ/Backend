@@ -11,7 +11,6 @@ import com.bigproject.backend.domain.member.presentation.dto.InviteManagerReques
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,10 +18,13 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -40,7 +42,7 @@ public class InvitationPersistenceService {
 	private final MemberInvitationRepository invitationRepository;
 	private final OneTimeTokenGenerator tokenGenerator;
 	private final OneTimeTokenHasher tokenHasher;
-	private final PasswordEncoder passwordEncoder;
+	private final PendingPasswordHash pendingPasswordHash;
 	private final ObjectMapper objectMapper;
 
 	@Value("${invitation.expiration:PT24H}")
@@ -73,7 +75,8 @@ public class InvitationPersistenceService {
 				Role.SUPER_ADMIN,
 				null,
 				actor.userId(),
-				now
+				now,
+				null
 		);
 		return createToken(
 				context,
@@ -121,7 +124,8 @@ public class InvitationPersistenceService {
 				invitedRole,
 				request.cohortId(),
 				actor.userId(),
-				now
+				now,
+				null
 		);
 		PendingInvitation invitation = createToken(
 				context,
@@ -144,12 +148,18 @@ public class InvitationPersistenceService {
 		return invitation;
 	}
 
+	/**
+	 * @param batchRequestId 일괄 등록의 폴백으로 불릴 때의 잡 ID. 이 값이 있어야 그 행이 폴링 집계와
+	 *                       안전망의 시야에 들어온다 — 배치가 깨져 이 경로로 내려온 행만 잡에서
+	 *                       빠지면 진행률이 영영 100%가 되지 않는다
+	 */
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public PendingInvitation createTraineeInvitation(
 			InvitationContext context,
 			RegisterTraineesRequest.Trainee trainee,
 			AuthUser actor,
-			String requestId
+			String requestId,
+			String batchRequestId
 	) {
 		String email = trainee.email().trim();
 		String normalizedEmail = EmailNormalizer.normalize(email);
@@ -164,7 +174,8 @@ public class InvitationPersistenceService {
 				Role.TRAINEE,
 				context.cohortId(),
 				actor.userId(),
-				now
+				now,
+				batchRequestId
 		);
 		PendingInvitation invitation = createToken(
 				context,
@@ -184,6 +195,217 @@ public class InvitationPersistenceService {
 		 * 남기고, 교육생이 링크를 수락하는 트랜잭션에서 ACTIVE 소속을 만든다.
 		 */
 		return invitation;
+	}
+
+	/**
+	 * 교육생 자리를 <b>청크 단위로</b> 확보한다(대량 등록 전용).
+	 *
+	 * <p>{@link #createTraineeInvitation}을 행마다 부르면 행당 8왕복(SELECT 3 + INSERT 3 + UPDATE 1 + 커밋)이라
+	 * 900명이 약 7,200왕복이 된다. Supavisor를 거치는 원격 DB에서는 그 지연이 그대로 응답 시간이 되어
+	 * 게이트웨이 한도를 넘겼다. 여기서는 판정 3종을 벌크 조회로, 적재 3종을 배치 INSERT로 묶어
+	 * 청크당 8왕복 안에서 끝낸다.
+	 *
+	 * <p><b>청크 하나가 한 트랜잭션이다.</b> 단건 경로가 REQUIRES_NEW인 이유는 "메일 발송이 실패하면
+	 * 계정 자리까지 롤백된다"였는데, 지금은 발송이 자리 확보와 분리되어 뒤에 따로 일어나므로
+	 * (개선 A) 그 이유가 이 경로에는 해당되지 않는다.
+	 *
+	 * <p><b>충돌은 예외가 아니라 결과로 돌려준다.</b> 진행 중 초대가 있거나 이미 계정이 있는 행은
+	 * {@code invitation}이 {@code null}인 결과가 된다 — 900건 중 한 건 때문에 배치를 던지면
+	 * 호출부가 행별로 판정할 수 없다.
+	 *
+	 * <p>다만 <b>사전 판정과 INSERT 사이의 경합</b>은 여전히 예외로 올라온다. 다른 운영자가 그 틈에 같은
+	 * 주소를 등록하면 UNIQUE 위반이 나고 청크 전체가 롤백된다. 그 폴백(청크를 행 단위로 다시 처리)은
+	 * 호출부인 {@code TransactionalInvitationDispatcher.reserveTrainees}가 담당한다.
+	 */
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public List<TraineeSlot> createTraineeInvitationChunk(
+			InvitationContext context,
+			List<TraineeSlotRequest> chunk,
+			AuthUser actor,
+			String baseRequestId
+	) {
+		Instant now = Instant.now();
+		Set<String> normalizedEmails = new LinkedHashSet<>();
+		for (TraineeSlotRequest request : chunk) {
+			normalizedEmails.add(EmailNormalizer.normalize(request.email().trim()));
+		}
+
+		// 판정 3종을 각각 왕복 1회로. 단건 경로의 resolveInvitationSlot과 같은 조건을 쓴다.
+		Set<String> incompleteInvitations = invitationRepository.findEmailsWithIncompleteInvitation(normalizedEmails);
+		Map<String, UUID> reusableSlots = invitationRepository.findReusableInvitedUsers(normalizedEmails);
+		Set<String> existingUsers = invitationRepository.findExistingUserEmails(normalizedEmails);
+
+		List<MemberInvitationRepository.NewPendingUser> newUsers = new ArrayList<>();
+		List<MemberInvitationRepository.NewInvitation> newInvitations = new ArrayList<>();
+		List<InvitationToken> tokens = new ArrayList<>();
+		Map<String, UUID> newTokenByEmail = new LinkedHashMap<>();
+		List<TraineeSlot> slots = new ArrayList<>(chunk.size());
+		String placeholderHash = pendingPasswordHash.value();
+
+		for (TraineeSlotRequest request : chunk) {
+			String email = request.email().trim();
+			String name = request.name().trim();
+			String normalizedEmail = EmailNormalizer.normalize(email);
+
+			if (incompleteInvitations.contains(normalizedEmail)) {
+				slots.add(TraineeSlot.conflict(request));
+				continue;
+			}
+
+			UUID memberId;
+			if (reusableSlots.containsKey(normalizedEmail)) {
+				memberId = reusableSlots.get(normalizedEmail);
+				/*
+				 * 취소된 자리를 되살리는 경로는 단건 UPDATE로 둔다. 재초대는 대량 등록에서 드물어
+				 * 배치로 묶어 얻는 이득이 코드 복잡도를 넘지 않는다.
+				 */
+				invitationRepository.reactivateInvitedUser(
+						memberId, context.organizationId(), email, normalizedEmail,
+						name, Role.TRAINEE, placeholderHash, now
+				);
+			} else if (existingUsers.contains(normalizedEmail)) {
+				slots.add(TraineeSlot.conflict(request));
+				continue;
+			} else {
+				memberId = UUID.randomUUID();
+				newUsers.add(new MemberInvitationRepository.NewPendingUser(
+						memberId, context.organizationId(), email, normalizedEmail,
+						name, Role.TRAINEE, placeholderHash, now
+				));
+			}
+
+			UUID invitationId = UUID.randomUUID();
+			newInvitations.add(new MemberInvitationRepository.NewInvitation(
+					invitationId, context.organizationId(), email, normalizedEmail,
+					Role.TRAINEE, context.cohortId(), actor.userId(), now, baseRequestId
+			));
+
+			String rawToken = tokenGenerator.generate();
+			InvitationToken token = new InvitationToken(
+					UUID.randomUUID(),
+					context.organizationId(),
+					memberId,
+					invitationId,
+					email,
+					normalizedEmail,
+					InvitationPurpose.INVITE_TRAINEE,
+					tokenHasher.hash(rawToken),
+					json(traineePayload(new RegisterTraineesRequest.Trainee(name, email))),
+					now,
+					now.plus(invitationExpiration),
+					actor.userId(),
+					// 단건 경로와 같은 형식이다. 토큰별 추적 식별자이며 행 번호까지 남긴다.
+					baseRequestId + ":" + request.row()
+			);
+			tokens.add(token);
+			newTokenByEmail.put(normalizedEmail, token.tokenId());
+			slots.add(TraineeSlot.reserved(request, new PendingInvitation(
+					memberId, invitationId, token.tokenId(), email, rawToken,
+					Role.TRAINEE, now, token.expiresAt(), context
+			)));
+		}
+
+		invitationRepository.createPendingUsers(newUsers);
+		invitationRepository.createInvitations(newInvitations);
+		invitationRepository.saveTokens(tokens);
+		invitationRepository.invalidatePreviousTokensForEmails(
+				context.organizationId(), InvitationPurpose.INVITE_TRAINEE, newTokenByEmail, now
+		);
+		return slots;
+	}
+
+	/**
+	 * 안전망이 이어받은 교육생 초대의 <b>토큰을 새로 발급한다.</b>
+	 *
+	 * <p>이어받은 쪽은 원래 토큰의 <b>원문을 모른다</b> — {@code one_time_token.token_hash}는 SHA-256이라
+	 * 저장된 값에서 초대 링크를 되살릴 수 없다. 그래서 재발송과 같은 방식으로 새 토큰을 발급하고,
+	 * 원래 토큰은 함께 REPLACED로 내린다. 재발송 뒤에도 옛 링크가 살아 있으면 유효한 가입 링크가 둘이 된다.
+	 *
+	 * <p>초대 원장은 건드리지 않는다 — 새로 만들면 재발송인지 새 초대인지 구분되지 않는다.
+	 * 원장의 상태 전환({@code PENDING → SENT / DELIVERY_FAILED})은 발송 결과를 보고 호출부가 기록한다.
+	 *
+	 * <p><b>기관 하나 분량만 받는다.</b> 이전 토큰 무효화가 기관 단위 질의라 섞어서 부를 수 없다.
+	 */
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public List<InvitationMailSender.TraineeInvitationMail> recreateTraineeInvitationTokens(
+			UUID organizationId,
+			List<MemberInvitationRepository.StalledInvitation> invitations
+	) {
+		Instant now = Instant.now();
+		List<InvitationToken> tokens = new ArrayList<>(invitations.size());
+		Map<String, UUID> newTokenByEmail = new LinkedHashMap<>();
+		List<InvitationMailSender.TraineeInvitationMail> mails = new ArrayList<>(invitations.size());
+
+		for (MemberInvitationRepository.StalledInvitation invitation : invitations) {
+			String name = traineeName(invitation);
+			String rawToken = tokenGenerator.generate();
+			InvitationToken token = new InvitationToken(
+					UUID.randomUUID(),
+					organizationId,
+					invitation.userId(),
+					invitation.invitationId(),
+					invitation.email(),
+					invitation.normalizedEmail(),
+					InvitationPurpose.INVITE_TRAINEE,
+					tokenHasher.hash(rawToken),
+					json(traineePayload(new RegisterTraineesRequest.Trainee(name, invitation.email()))),
+					now,
+					now.plus(invitationExpiration),
+					invitation.invitedBy(),
+					// 최초 발급분과 구분되게 남긴다. 어느 배치를 안전망이 이어받았는지 로그 없이도 짚을 수 있다.
+					invitation.batchRequestId() + ":outbox"
+			);
+			tokens.add(token);
+			newTokenByEmail.put(invitation.normalizedEmail(), token.tokenId());
+			mails.add(new InvitationMailSender.TraineeInvitationMail(
+					new PendingInvitation(
+							invitation.userId(),
+							invitation.invitationId(),
+							token.tokenId(),
+							invitation.email(),
+							rawToken,
+							Role.TRAINEE,
+							now,
+							token.expiresAt(),
+							invitation.context()
+					),
+					name
+			));
+		}
+
+		invitationRepository.saveTokens(tokens);
+		invitationRepository.invalidatePreviousTokensForEmails(
+				organizationId, InvitationPurpose.INVITE_TRAINEE, newTokenByEmail, now
+		);
+		return mails;
+	}
+
+	/**
+	 * 인사말에 쓸 이름. 자리를 확보할 때 반드시 채우므로 비어 있을 수 없지만, 여기서 NPE가 나면
+	 * <b>그 주기 전체가 멈춰</b> 나머지 초대까지 발송되지 않는다. 한 건의 인사말이 어색해지는 쪽이 낫다.
+	 */
+	private static String traineeName(MemberInvitationRepository.StalledInvitation invitation) {
+		String name = invitation.name();
+		return name == null || name.isBlank() ? invitation.email() : name;
+	}
+
+	/** 자리를 확보할 행 하나. */
+	public record TraineeSlotRequest(int row, String name, String email) {
+	}
+
+	/** 자리 확보 결과. {@code invitation}이 {@code null}이면 이미 등록·초대된 이메일이라 건너뛴 행이다. */
+	public record TraineeSlot(TraineeSlotRequest request, PendingInvitation invitation) {
+		static TraineeSlot conflict(TraineeSlotRequest request) {
+			return new TraineeSlot(request, null);
+		}
+
+		static TraineeSlot reserved(TraineeSlotRequest request, PendingInvitation invitation) {
+			return new TraineeSlot(request, invitation);
+		}
+
+		public boolean isConflict() {
+			return invitation == null;
+		}
 	}
 
 	private PendingInvitation createToken(
@@ -283,6 +505,30 @@ public class InvitationPersistenceService {
 		);
 	}
 
+	/**
+	 * 발송 성공을 <b>배치로</b> 기록한다(대량 등록 전용).
+	 *
+	 * <p>{@link #markInvitationSent}를 행마다 부르면 900건이 1,800왕복(UPDATE + 커밋)이 된다.
+	 * 한 트랜잭션의 배치 UPDATE로 묶으면 왕복이 청크 수만큼으로 줄어든다.
+	 *
+	 * <p>여기서 예외가 나면 전량이 롤백돼 원장이 PENDING으로 남는다. 메일은 이미 나갔으므로
+	 * 그 상태는 "발송했는데 기록을 못 한" 것이며, 화면에는 재발송 가능으로 보인다 —
+	 * 중복 발송이 되더라도 초대가 유실되는 것보다 낫다.
+	 */
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public void markInvitationsSent(List<PendingInvitation> invitations) {
+		if (invitations.isEmpty()) {
+			return;
+		}
+		List<MemberInvitationRepository.SentInvitation> targets = new ArrayList<>(invitations.size());
+		for (PendingInvitation invitation : invitations) {
+			targets.add(new MemberInvitationRepository.SentInvitation(
+					invitation.invitationId(), invitation.tokenId()
+			));
+		}
+		invitationRepository.markInvitationsSent(targets, Instant.now());
+	}
+
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public void markInvitationSent(PendingInvitation invitation) {
 		invitationRepository.markInvitationSent(
@@ -364,7 +610,7 @@ public class InvitationPersistenceService {
 		if (reusable.isPresent()) {
 			UUID userId = reusable.get();
 			invitationRepository.reactivateInvitedUser(
-					userId, organizationId, email, normalizedEmail, name, role, pendingPasswordHash(), now
+					userId, organizationId, email, normalizedEmail, name, role, pendingPasswordHash.value(), now
 			);
 			return userId;
 		}
@@ -373,11 +619,7 @@ public class InvitationPersistenceService {
 			throw new InvitationConflictException("이미 등록되었거나 초대된 이메일입니다.");
 		}
 		return invitationRepository.createPendingUser(
-				organizationId, email, normalizedEmail, name, role, pendingPasswordHash(), now
+				organizationId, email, normalizedEmail, name, role, pendingPasswordHash.value(), now
 		);
-	}
-
-	private String pendingPasswordHash() {
-		return passwordEncoder.encode(UUID.randomUUID().toString());
 	}
 }

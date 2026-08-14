@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.BufferingClientHttpRequestFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
@@ -60,9 +61,10 @@ public class AiClientConfig {
 			@Value("${ai.proxy-base-url:http://localhost:8000}") String baseUrl,
 			@Value("${ai.internal-key:}") String internalKey,
 			@Value("${ai.connect-timeout:PT5S}") Duration connectTimeout,
-			@Value("${ai.read-timeout:PT150S}") Duration readTimeout
+			@Value("${ai.read-timeout:PT150S}") Duration readTimeout,
+			@Value("${ai.log-payloads:true}") boolean logPayloads
 	) {
-		return build(baseUrl, internalKey, connectTimeout, readTimeout);
+		return build(baseUrl, internalKey, connectTimeout, readTimeout, logPayloads);
 	}
 
 	@Bean(AI_ORIGIN_REST_CLIENT)
@@ -70,9 +72,10 @@ public class AiClientConfig {
 			@Value("${ai.origin-base-url:http://localhost:8000}") String baseUrl,
 			@Value("${ai.internal-key:}") String internalKey,
 			@Value("${ai.connect-timeout:PT5S}") Duration connectTimeout,
-			@Value("${ai.read-timeout:PT150S}") Duration readTimeout
+			@Value("${ai.read-timeout:PT150S}") Duration readTimeout,
+			@Value("${ai.log-payloads:true}") boolean logPayloads
 	) {
-		return build(baseUrl, internalKey, connectTimeout, readTimeout);
+		return build(baseUrl, internalKey, connectTimeout, readTimeout, logPayloads);
 	}
 
 	@Bean(AI_PROXY_CLIENT)
@@ -85,15 +88,25 @@ public class AiClientConfig {
 		return new AiClient(restClient);
 	}
 
+	/**
+	 * @param logPayloads AI와 주고받은 원문을 로그로 남길지({@link AiPayloadLoggingInterceptor}).
+	 *                    켜면 응답 본문을 메모리에 버퍼링한다 — 인터셉터가 본문을 읽고 나서도
+	 *                    메시지 컨버터가 다시 읽어야 하기 때문이다. 분석 결과처럼 큰 응답이
+	 *                    부담되면 {@code ai.log-payloads=false}로 끈다.
+	 */
 	private static RestClient build(String baseUrl, String internalKey,
-			Duration connectTimeout, Duration readTimeout) {
+			Duration connectTimeout, Duration readTimeout, boolean logPayloads) {
 		SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
 		factory.setConnectTimeout(connectTimeout);
 		factory.setReadTimeout(readTimeout);
 
 		RestClient.Builder builder = RestClient.builder()
 				.baseUrl(baseUrl)
-				.requestFactory(factory);
+				.requestFactory(logPayloads ? new BufferingClientHttpRequestFactory(factory) : factory);
+
+		if (logPayloads) {
+			builder = builder.requestInterceptor(new AiPayloadLoggingInterceptor());
+		}
 
 		// 키가 비면 헤더 자체를 붙이지 않는다. AI 쪽 require_internal_key가 "키 미설정 = 로컬 개발"로
 		// 검증을 건너뛰므로, 빈 문자열을 보내면 오히려 운영 설정 누락이 로컬처럼 조용히 통과한다.

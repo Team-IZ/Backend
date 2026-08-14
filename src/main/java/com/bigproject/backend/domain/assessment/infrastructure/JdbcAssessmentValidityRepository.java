@@ -71,7 +71,9 @@ public class JdbcAssessmentValidityRepository implements AssessmentValidityRepos
 				FROM measurement_attempt ma
 				JOIN project_membership pm ON pm.project_id = ma.project_id AND pm.user_id = ma.user_id
 				LEFT JOIN LATERAL (
-				  SELECT x.team_id, x.team_membership_id FROM team_membership x
+				  -- team_membership 의 PK 는 membership_id 다. team_membership_id 로 적으면
+				  -- "column x.team_membership_id does not exist" 로 이 INSERT 전체가 실패한다.
+				  SELECT x.team_id, x.membership_id AS team_membership_id FROM team_membership x
 				  WHERE x.project_membership_id = pm.project_membership_id
 				  ORDER BY x.from_at DESC LIMIT 1
 				) tm ON TRUE

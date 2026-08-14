@@ -159,6 +159,22 @@ public record TraineeRosterResponse(
 					""", nullable = true)
 			UUID pendingInvitationTokenId,
 
+			@Schema(description = """
+					가장 최근 초대의 메일 발송이 실패했는지(`user_invitation.status = DELIVERY_FAILED`).
+					`true`면 **`초대 메일이 나가지 않았습니다`** 안내와 [초대 재발송]을 노출합니다.
+
+					⚠️ **`pendingInvitationTokenId`만으로는 판정할 수 없습니다.** 그 값은
+					`PENDING`·`SENT`·`DELIVERY_FAILED`·`EXPIRED`에 모두 채워지므로,
+					"메일은 갔고 아직 가입 안 함"과 "메일이 아예 안 나감"이 구분되지 않습니다.
+
+					`status`(`INVITED`)와도 구분해서 씁니다 — 둘 다 아직 가입 전이지만 화면이 할 말이
+					다릅니다. `false` + `INVITED`는 `수락 대기`, `true`는 `재발송 필요`입니다.
+					재발송에 성공하면 원장이 `SENT`로 돌아가 `false`가 됩니다.
+
+					오퍼레이터 목록의 같은 이름 필드와 뜻이 같습니다.
+					""", example = "false")
+			boolean invitationDeliveryFailed,
+
 			/*
 			 * 아래 회차 지표는 manager_trainee_roster_view를 LEFT JOIN해서 붙인다. 조인이 붙지 않는 행
 			 * (초대 대기라 응시 이력이 없다 · 오퍼레이터 조회라 매니저 스코프가 없다 · 그 회차에 아직
@@ -252,6 +268,7 @@ public record TraineeRosterResponse(
 					row.inactivatedByName(),
 					row.inactivatedAt(),
 					row.pendingInvitationTokenId(),
+					row.invitationDeliveryFailed(),
 					row.assessmentRoundId(),
 					row.attemptId(),
 					row.roundResultStatus(),

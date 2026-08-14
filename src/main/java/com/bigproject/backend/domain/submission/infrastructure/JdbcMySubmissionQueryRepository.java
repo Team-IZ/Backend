@@ -63,6 +63,7 @@ public class JdbcMySubmissionQueryRepository implements MySubmissionQueryReposit
 			       art.file_size_bytes            AS artifact_file_size,
 
 			       job.status                     AS analysis_job_status,
+			       job.external_job_id             AS analysis_external_job_id,
 			       job.failure_code               AS analysis_failure_code,
 			       job.completed_at               AS analyzed_at,
 
@@ -93,7 +94,7 @@ public class JdbcMySubmissionQueryRepository implements MySubmissionQueryReposit
 			  LEFT JOIN submission_artifact art
 			    ON art.submission_id = s.submission_id
 			  LEFT JOIN LATERAL (
-			       SELECT j.status, j.failure_code, j.completed_at
+			       SELECT j.status, j.external_job_id, j.failure_code, j.completed_at
 			         FROM analysis_job j
 			        WHERE j.submission_id = s.submission_id
 			        ORDER BY j.execution_no DESC, j.started_at DESC, j.job_id DESC
@@ -152,6 +153,7 @@ public class JdbcMySubmissionQueryRepository implements MySubmissionQueryReposit
 			longOrNull(rs, "artifact_file_size"),
 
 			rs.getString("analysis_job_status"),
+			rs.getObject("analysis_external_job_id", UUID.class),
 			rs.getString("analysis_failure_code"),
 			instant(rs, "analyzed_at"),
 			rs.getString("analysis_commit_sha"),
