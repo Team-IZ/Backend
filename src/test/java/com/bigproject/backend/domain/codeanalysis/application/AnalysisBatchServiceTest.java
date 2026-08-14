@@ -11,14 +11,17 @@ import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepo
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository.AnalysisModel;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAiUsageRecorder;
+import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisJobDiagnostics;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisRequestContextRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAssessmentSessionPreparer;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.JdbcAnalysisResultRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -26,6 +29,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -42,12 +46,16 @@ class AnalysisBatchServiceTest {
 	private static final String PROVIDER_MODEL_CODE = "nemotron-3-ultra-550b-a55b";
 	private static final UUID MODEL_ID = UUID.randomUUID();
 	private static final int MAX_ATTEMPTS = 3;
+	private static final Duration UNKNOWN_JOB_GRACE = Duration.ofMinutes(10);
+	private static final int UNKNOWN_JOB_MAX_CONSECUTIVE = 3;
+	private static final Duration STUCK_JOB_TIMEOUT = Duration.ofMinutes(30);
 
 	private AnalysisDispatchRepository dispatchRepository;
 	private AnalysisJobRepository jobRepository;
 	private AnalysisModelRepository modelRepository;
 	private JdbcAnalysisResultRepository resultRepository;
 	private JdbcAiUsageRecorder usageRecorder;
+	private JdbcAnalysisJobDiagnostics analysisJobDiagnostics;
 	private JdbcAssessmentSessionPreparer sessionPreparer;
 	private AnalysisServerClient client;
 	private JdbcAnalysisRequestContextRepository requestContextRepository;
@@ -63,6 +71,7 @@ class AnalysisBatchServiceTest {
 		modelRepository = mock(AnalysisModelRepository.class);
 		resultRepository = mock(JdbcAnalysisResultRepository.class);
 		usageRecorder = mock(JdbcAiUsageRecorder.class);
+		analysisJobDiagnostics = mock(JdbcAnalysisJobDiagnostics.class);
 		sessionPreparer = mock(JdbcAssessmentSessionPreparer.class);
 		client = mock(AnalysisServerClient.class);
 		requestContextRepository = mock(JdbcAnalysisRequestContextRepository.class);
@@ -72,12 +81,17 @@ class AnalysisBatchServiceTest {
 		when(requestContextRepository.findRequirements(any())).thenReturn(List.of());
 		when(requestContextRepository.findFocusItems(any())).thenReturn(List.of());
 		when(requestContextRepository.findTeaches(any(), any())).thenReturn(List.of(DEFAULT_TEACH));
+		when(jobRepository.transitionActiveJob(any(), any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(1);
+		when(jobRepository.transitionActiveJobWithoutExternalId(any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(1);
 		// 트랜잭션 경계 자체는 여기서 검증할 수 없다(실제 DB가 있어야 한다). mock 이면
 		// TransactionTemplate 이 콜백을 그대로 실행하므로, 이 테스트가 보려는 상태 전이 로직은
 		// 경계와 무관하게 그대로 확인된다.
 		service = new AnalysisBatchService(dispatchRepository, jobRepository, modelRepository,
-				resultRepository, usageRecorder, sessionPreparer, client, requestContextRepository,
-				mock(PlatformTransactionManager.class), MODEL_CODE, MAX_ATTEMPTS);
+				resultRepository, usageRecorder, analysisJobDiagnostics, sessionPreparer, client, requestContextRepository,
+				mock(PlatformTransactionManager.class), MODEL_CODE, MAX_ATTEMPTS, UNKNOWN_JOB_GRACE,
+				UNKNOWN_JOB_MAX_CONSECUTIVE, STUCK_JOB_TIMEOUT);
 	}
 
 	/** 카탈로그에 설정된 모델이 있는 정상 상태. */
@@ -90,26 +104,135 @@ class AnalysisBatchServiceTest {
 	}
 
 	private AnalysisJob jobWithExternalId() {
+		return jobWithExternalId(1);
+	}
+
+	/** executionNo를 지정해 "이 시도가 마지막 허용 시도인가"에 의존하는 테스트를 지원한다. */
+	private AnalysisJob jobWithExternalId(int executionNo) {
 		AnalysisJob job = AnalysisJob.queued(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-				UUID.randomUUID(), "batch-key", "CODE_ANALYSIS", 1, "trace-1");
+				UUID.randomUUID(), "batch-key", "CODE_ANALYSIS", executionNo, "trace-1");
 		job.acceptExternalJob(UUID.randomUUID());
 		return job;
 	}
 
 	@Test
-	void clearsTheExternalJobIdWhenTheServerNoLongerKnowsIt() {
+	void keepsTheExternalJobIdWhileTheServerStillMightRemember() {
 		AnalysisJob job = jobWithExternalId();
+		UUID externalJobId = job.getExternalJobId();
 		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
-		// AI 스펙: "job storage is in-memory; process restart causes 404" — 정상 동작 중에도 난다.
+		// Optional.empty는 임의 404가 아니라 AI 앱이 명시한 JOB_NOT_FOUND다.
 		when(client.fetchProgress(any())).thenReturn(Optional.empty());
 
 		int updated = service.pollActiveJobs();
 
-		assertThat(updated).isEqualTo(1);
-		// 실패로 기록하지 않는다. 분석이 실패한 게 아니라 요청이 유실된 것이라 다시 보내야 한다.
+		// 유예 안에서는 아무것도 바꾸지 않는다. external_job_id 를 지우면 폴링은 그 job 을 건너뛰고
+		// 디스패치는 활성 job 이라 막아서 영구 정체가 된다.
+		assertThat(updated).isZero();
+		assertThat(job.getExternalJobId()).isEqualTo(externalJobId);
 		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.QUEUED);
-		assertThat(job.getExternalJobId()).isNull();
 		assertThat(job.getFailureCode()).isNull();
+	}
+
+	@Test
+	void closesTheJobForRetryAfterConsecutiveJobNotFoundResponses() {
+		AnalysisJob job = jobWithExternalId();
+		UUID externalJobId = job.getExternalJobId();
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any())).thenReturn(Optional.empty());
+
+		assertThat(service.pollActiveJobs()).isZero();
+		assertThat(service.pollActiveJobs()).isZero();
+		int updated = service.pollActiveJobs();
+
+		assertThat(updated).isEqualTo(1);
+		// TEMPORARY_ERROR 는 blocking 이 아니라서 안전망이 새 execution_no 로 다시 요청한다.
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.FAILED);
+		assertThat(job.getFailureCode()).isEqualTo(AnalysisFailureCode.TEMPORARY_ERROR);
+		// 닫을 때도 지우지 않는다. AI 로그와 대조할 유일한 열쇠다.
+		assertThat(job.getExternalJobId()).isEqualTo(externalJobId);
+	}
+
+	@Test
+	void resetsConsecutiveJobNotFoundCountWhenPollingRecovers() {
+		AnalysisJob job = jobWithExternalId();
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any()))
+				.thenReturn(Optional.empty())
+				.thenReturn(Optional.of(new AnalysisProgress(
+						AnalysisJobStatus.QUEUED, null, null, null, null, null, null)))
+				.thenReturn(Optional.empty())
+				.thenReturn(Optional.empty());
+
+		assertThat(service.pollActiveJobs()).isZero();
+		assertThat(service.pollActiveJobs()).isZero();
+		assertThat(service.pollActiveJobs()).isZero();
+		assertThat(service.pollActiveJobs()).isZero();
+
+		// 정상 응답 뒤의 두 번은 새 연속 구간이므로 상한 3회에 도달하지 않았다.
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.QUEUED);
+		assertThat(job.getFailureCode()).isNull();
+	}
+
+	@Test
+	void closesAnActiveJobThatOutlivedTheStuckTimeoutWhateverTheServerSays() {
+		AnalysisJob job = jobWithExternalId();
+		// created_at은 DB 기본값이라 애플리케이션이 채우지 않는다. 상한을 넘긴 오래된 행을 흉내 낸다.
+		ReflectionTestUtils.setField(job, "createdAt", Instant.now().minus(STUCK_JOB_TIMEOUT).minusSeconds(60));
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+
+		int updated = service.pollActiveJobs();
+
+		// AI를 부르기 전에 닫는다 — fetchProgress가 계속 예외를 던지는 상황이 바로 이 상한이
+		// 필요한 경우이므로, 응답에 의존하면 영원히 닫히지 않는다.
+		verify(client, never()).fetchProgress(any());
+		assertThat(updated).isEqualTo(1);
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.FAILED);
+		// ANALYSIS_TIMEOUT은 재시도 가능 4종이라 BLOCKING_JOB_EXISTS에서 빠진다 — 안전망이 다시 건다.
+		assertThat(job.getFailureCode()).isEqualTo(AnalysisFailureCode.ANALYSIS_TIMEOUT);
+		assertThat(job.getExternalJobId()).isNotNull();
+	}
+
+	@Test
+	void keepsPollingAnActiveJobThatIsStillWithinTheStuckTimeout() {
+		AnalysisJob job = jobWithExternalId();
+		ReflectionTestUtils.setField(job, "createdAt", Instant.now().minusSeconds(60));
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any())).thenReturn(Optional.of(new AnalysisProgress(
+				AnalysisJobStatus.QUEUED, null, null, null, null, null, null)));
+
+		int updated = service.pollActiveJobs();
+
+		assertThat(updated).isZero();
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.QUEUED);
+	}
+
+	@Test
+	void marksTheAttemptAnalysisFailedWhenTheLostJobIsTheLastAllowedAttempt() {
+		AnalysisJob job = jobWithExternalId(MAX_ATTEMPTS);
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any())).thenReturn(Optional.empty());
+
+		// 연속 상한(3회)에 도달해야 닫는다.
+		service.pollActiveJobs();
+		service.pollActiveJobs();
+		service.pollActiveJobs();
+
+		// 마지막 시도라 재시도로 회복되지 않는다 — ANALYZING에 갇힌 응시를 여기서 닫아야 한다.
+		verify(sessionPreparer).markAttemptsAnalysisFailed(job.getAssessmentRoundId(), job.getTeamId());
+	}
+
+	@Test
+	void doesNotCloseTheAttemptWhenTheLostJobStillHasRetriesRemaining() {
+		AnalysisJob job = jobWithExternalId(1);
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any())).thenReturn(Optional.empty());
+
+		service.pollActiveJobs();
+		service.pollActiveJobs();
+		service.pollActiveJobs();
+
+		// 재시도가 안전망(retryPendingSubmissions)으로 자동으로 다시 걸린다. 아직 응시를 닫으면 안 된다.
+		verify(sessionPreparer, never()).markAttemptsAnalysisFailed(any(), any());
 	}
 
 	@Test
@@ -202,7 +325,8 @@ class AnalysisBatchServiceTest {
 		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.SUCCEEDED);
 		// analysis_id 가 비어 있는 SUCCEEDED job 이 곧 "적재가 깨졌다"는 신호다.
 		assertThat(job.getAnalysisId()).isNull();
-		verify(jobRepository).save(job);
+		verify(jobRepository).transitionActiveJob(any(), any(), any(), any(), any(), any(), any(), any());
+		verify(jobRepository, never()).save(job);
 	}
 
 	/** 적재가 이미 끝난 job 을 다시 적재하지 않는다 — problemId 가 PK 라 재적재는 충돌한다. */
@@ -227,13 +351,53 @@ class AnalysisBatchServiceTest {
 	}
 
 	@Test
-	void skipsJobsThatWereNeverAccepted() {
+	void closesJobsThatCannotBePolledBecauseTheExternalIdIsMissing() {
 		AnalysisJob notSent = AnalysisJob.queued(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
 				UUID.randomUUID(), "batch-key", "CODE_ANALYSIS", 1, "trace-1");
 		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(notSent));
 
-		// external_job_id 가 없으면 물어볼 대상이 없다. 다음 dispatch 가 다시 보낸다.
-		assertThat(service.pollActiveJobs()).isZero();
+		assertThat(service.pollActiveJobs()).isEqualTo(1);
+		assertThat(notSent.getStatus()).isEqualTo(AnalysisJobStatus.FAILED);
+		assertThat(notSent.getFailureCode()).isEqualTo(AnalysisFailureCode.MODEL_ERROR);
+		verify(client, never()).fetchProgress(any());
+		verify(analysisJobDiagnostics).logExternalIdLoss(notSent.getJobId());
+		verify(jobRepository).transitionActiveJobWithoutExternalId(
+				any(), any(), any(), any(), any(), any(), any());
+		verify(jobRepository, never()).save(notSent);
+	}
+
+	@Test
+	void doesNotInsertAnActiveJobBeforeThePostResponseProvidesTheExternalId() {
+		DispatchTarget target = target();
+		catalogHasTheConfiguredModel();
+		AnalysisJob[] savedJob = new AnalysisJob[1];
+		UUID externalJobId = UUID.randomUUID();
+		when(dispatchRepository.findDispatchTarget(target.getSubmissionId(), MAX_ATTEMPTS))
+				.thenReturn(Optional.of(target));
+		when(jobRepository.save(any())).thenAnswer(invocation -> {
+			savedJob[0] = invocation.getArgument(0);
+			return savedJob[0];
+		});
+		when(client.requestAnalysis(any())).thenAnswer(invocation -> {
+			// 202 응답 전에는 analysis_job 행 자체가 없다. 따라서 폴러가 외부 ID 없는 활성 행을
+			// 읽고 실패로 닫는 경쟁 구간도 없다.
+			verify(jobRepository, never()).save(any());
+			when(jobRepository.findByStatusIn(any())).thenReturn(List.of());
+			assertThat(service.pollActiveJobs()).isZero();
+			return externalJobId;
+		});
+
+		service.dispatchSubmission(target.getSubmissionId());
+
+		assertThat(savedJob[0].getStatus()).isEqualTo(AnalysisJobStatus.QUEUED);
+		assertThat(savedJob[0].getFailureCode()).isNull();
+		assertThat(savedJob[0].getExternalJobId()).isEqualTo(externalJobId);
+		var storageOrder = inOrder(jobRepository, analysisJobDiagnostics, sessionPreparer);
+		storageOrder.verify(jobRepository).save(savedJob[0]);
+		storageOrder.verify(analysisJobDiagnostics).findSnapshot(savedJob[0].getJobId());
+		storageOrder.verify(sessionPreparer).markAttemptsAnalyzing(
+				target.getAssessmentRoundId(), target.getTeamId());
+		storageOrder.verify(analysisJobDiagnostics).findSnapshot(savedJob[0].getJobId());
 	}
 
 	private DispatchTarget target() {
@@ -257,7 +421,8 @@ class AnalysisBatchServiceTest {
 		catalogHasTheConfiguredModel();
 		when(dispatchRepository.findDispatchTarget(target.getSubmissionId(), MAX_ATTEMPTS)).thenReturn(Optional.of(target));
 		when(jobRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-		when(client.requestAnalysis(any())).thenReturn(UUID.randomUUID());
+		UUID externalJobId = UUID.randomUUID();
+		when(client.requestAnalysis(any())).thenReturn(externalJobId);
 
 		service.dispatchSubmission(target.getSubmissionId());
 
@@ -276,8 +441,10 @@ class AnalysisBatchServiceTest {
 		assertThat(sent.commitEmail()).isNull();
 		assertThat(sent.focusItems()).isNull();
 
+		// 저장은 한 번뿐이고 그 시점에 이미 external_job_id가 들어 있다 — 활성인데 NULL인 행이
+		// 존재하는 창 자체가 없다는 뜻이다(2026-08-13).
 		ArgumentCaptor<AnalysisJob> jobCaptor = ArgumentCaptor.forClass(AnalysisJob.class);
-		verify(jobRepository, org.mockito.Mockito.atLeastOnce()).save(jobCaptor.capture());
+		verify(jobRepository).save(jobCaptor.capture());
 		assertThat(jobCaptor.getValue().getExternalJobId()).isNotNull();
 	}
 

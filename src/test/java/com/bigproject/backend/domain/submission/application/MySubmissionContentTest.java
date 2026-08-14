@@ -95,6 +95,23 @@ class MySubmissionContentTest {
 		assertThat(((GithubSubmissionContent) contentOf(row)).branch()).isNull();
 	}
 
+	@Test
+	@DisplayName("활성 분석 job의 외부 작업 ID가 유실되면 ANALYSIS_FAILED로 응답한다")
+	void activeAnalysisWithoutExternalJobIdIsReportedAsFailed() {
+		MySubmissionRow row = row("GITHUB_URL", "https://github.com/team3/mini", "main",
+				null, null, null, null, null, "QUEUED", null, null);
+		when(queryRepository.findMySubmission(any(), any())).thenReturn(Optional.of(row));
+
+		MySubmissionResponse response = service.getMySubmission(PROJECT, USER);
+
+		assertThat(response.status()).isEqualTo("ANALYSIS_FAILED");
+		assertThat(response.failureReason()).isEqualTo(
+				"분석 서버의 작업 정보가 유실되어 분석을 계속할 수 없습니다. "
+						+ "코드를 다시 제출해 분석을 재시도해 주세요. "
+						+ "다시 제출할 수 없다면 담당 매니저에게 문의해 주세요.");
+		assertThat(response.failureCode()).isNull();
+	}
+
 	/** 아티팩트 행이 아직 없는 접수 도중에는 빈 카드를 만들지 않는다. */
 	@Test
 	@DisplayName("ZIP인데 아티팩트가 없으면 content 키 자체가 빠진다")
@@ -122,13 +139,22 @@ class MySubmissionContentTest {
 	private MySubmissionRow row(String method, String repoUrl, String resolvedBranch,
 			String commitSha, String commitMessage, String fileName, Long fileSize,
 			String analysisCommitSha) {
+		return row(method, repoUrl, resolvedBranch, commitSha, commitMessage, fileName, fileSize,
+				analysisCommitSha, "SUCCEEDED", UUID.randomUUID(), null);
+	}
+
+	private MySubmissionRow row(String method, String repoUrl, String resolvedBranch,
+			String commitSha, String commitMessage, String fileName, Long fileSize,
+			String analysisCommitSha, String analysisJobStatus, UUID analysisExternalJobId,
+			String analysisFailureCode) {
 		return new MySubmissionRow(
 				ROUND, "미프 1차", "OPEN", Instant.parse("2026-02-20T00:00:00Z"),
 				SUBMISSION, method, "ACCEPTED", Instant.parse("2026-02-19T00:00:00Z"), null,
 				repoUrl, null, resolvedBranch, null,
 				commitSha, commitMessage, commitSha == null ? null : COMMITTED_AT,
 				fileName, fileSize,
-				"SUCCEEDED", null, Instant.parse("2026-02-19T01:00:00Z"),
+				analysisJobStatus, analysisExternalJobId, analysisFailureCode,
+				Instant.parse("2026-02-19T01:00:00Z"),
 				analysisCommitSha, analysisCommitSha == null ? null : "feat: 결제 롤백 처리",
 				analysisCommitSha == null ? null : COMMITTED_AT,
 				false, Instant.parse("2026-02-21T00:00:00Z"));

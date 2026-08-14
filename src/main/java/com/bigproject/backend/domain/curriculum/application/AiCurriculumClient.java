@@ -6,7 +6,6 @@ import com.bigproject.backend.global.ai.AiClient;
 import com.bigproject.backend.global.ai.AiProxyWarmUp;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -14,7 +13,9 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
+import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 
 @Component
@@ -59,9 +60,35 @@ public class AiCurriculumClient {
     public record CurriculumAccepted(String jobId, String status) {
     }
 
-    /** AI 원본 서버(FastAPI) POST /api/v0/curricula 호출. PDF를 다시 전송한다. */
+    public record TeachesResult(String canonicalName, String normalizedName,
+                                String canonicalDescription, BigDecimal confidence,
+                                Integer descriptionPageStart, Integer descriptionPageEnd,
+                                String kind, String evidence, List<String> siblingNames) {
+        public String description() {
+            return canonicalDescription;
+        }
+    }
+
+    public record SectionResult(int moduleNo, String title, int pageStart, int pageEnd,
+                                List<String> keywords, BigDecimal confidence,
+                                List<TeachesResult> teaches) {
+    }
+
+    public record CurriculumResultPayload(String versionId, Integer analysisVersion,
+                                          String heuristicVersion, String promptVersion,
+                                          String extractionStatus, String qualityStatus,
+                                          Boolean fallbackUsed, List<SectionResult> sections) {
+    }
+
+    public record AnalysisResult(String jobId, String versionId, String status,
+                                 String failureReason, String startedAt, String completedAt,
+                                 CurriculumResultPayload result) {
+        public List<SectionResult> sections() {
+            return result != null ? result.sections() : null;
+        }
+    }
+
     public CurriculumAccepted requestAnalysis(UUID versionId, String courseLabel, byte[] pdfBytes, String idempotencyKey) {
-        // 깨우지 못한 채 원본으로 보내면 404가 돌아온다 — "교안 형식이 잘못됐다"로 읽히는 실패다.
         if (!proxyWarmUp.warmUp()) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_AI_UNAVAILABLE);
         }
@@ -85,5 +112,13 @@ public class AiCurriculumClient {
                 .body(body)
                 .retrieve()
                 .body(CurriculumAccepted.class);
+    }
+
+    public AnalysisResult checkStatus(String jobId) {
+        return originClient.get()
+                .uri(CURRICULA_PATH + "/{jobId}", jobId)
+                .header("X-Internal-Key", internalKey)
+                .retrieve()
+                .body(AnalysisResult.class);
     }
 }

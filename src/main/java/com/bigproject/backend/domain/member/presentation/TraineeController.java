@@ -12,6 +12,7 @@ import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesReq
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import com.bigproject.backend.domain.member.presentation.dto.ResendTraineeInvitationsRequest;
 import com.bigproject.backend.domain.member.presentation.dto.ResendTraineeInvitationsResponse;
+import com.bigproject.backend.domain.member.presentation.dto.TraineeRegistrationProgressResponse;
 import com.bigproject.backend.domain.member.presentation.dto.TraineeRosterResponse;
 import com.bigproject.backend.domain.member.presentation.dto.UpdateTraineeStatusRequest;
 import com.bigproject.backend.global.exception.ApiException;
@@ -164,24 +165,40 @@ public class TraineeController {
 			operationId = "registerTraineesFromCsv",
 			summary = "CSV 교육생 명단 등록 및 초대 | ✅ 사용 가능",
 			description = """
-					오퍼레이터가 CSV 파일을 올려 기수 교육생을 한 번에 등록하고 초대 메일을 보낸다.
+					오퍼레이터가 CSV 파일을 올려 기수 교육생을 한 번에 등록하고 초대 메일 발송을 예약한다.
 
 					**요청** (multipart/form-data)
 					- cohortId (경로): 교육생을 등록할 기수 ID
 					- file (필수): UTF-8 CSV. **첫 행은 `이름,이메일` 헤더**이며 최대 1MB·1,000행
-					- X-Request-Id (헤더, 선택): 일괄 등록 추적용 식별자. 생략하면 서버가 만든다
 
-					**응답 (201)**
+					## 🔴 등록은 202이고 메일은 그 뒤에 나간다
+
+					**응답이 돌아온 시점에 메일은 한 통도 나가지 않았다.** 계정·초대 원장까지만 만들고 응답하며,
+					발송은 서버가 이어서 진행한다. 900명 기준 발송에만 3분 안팎이 걸려 응답 안에서 끝낼 수 없기 때문이다
+					(예전에는 그 때문에 화면에 502가 뜨는데 뒤에서는 등록이 계속되는 상태가 됐다).
+
+					그래서 `invitationSentCount`는 **이 응답에서 항상 0**이다. 실제로 나간 수는
+					`GET /cohorts/{cohortId}/trainees/registrations/{batchRequestId}`를 2~3초 간격으로 폴링해 확인한다.
+
+					**응답 (202)**
 					- requestedCount: 받은 전체 행 수
 					- registeredCount: 계정·명단·초대 원장 생성에 성공한 수
-					- invitationSentCount: 초대 메일 발송까지 끝난 수
+					- invitationSentCount: **항상 0** — 위 설명 참고
+					- batchRequestId: **서버가 만드는** 진행률 폴링 식별자. **등록된 행이 0건이면 null**이며 그때는 폴링할 것이 없다
 					- failures[]: 실패한 행만 담긴 목록
 					  - row: **헤더를 포함한 실제 CSV 행 번호**(첫 데이터 행이 2)
 					  - email: 그 행에 적힌 이메일
 					  - status: 1=이메일 형식 오류, 2=요청 안에서 중복, 3=기관에 이미 있는 교육생 이메일
 
-					**행별 부분 성공을 허용한다.** 한 행이 실패해도 나머지는 등록되므로, 화면은 201을 성공으로 처리하되
-					`failures`가 비어 있는지 반드시 확인해야 한다 — 실패가 있어도 상태코드는 201이다.
+					**행별 부분 성공을 허용한다.** 한 행이 실패해도 나머지는 등록되므로, 화면은 202를 성공으로 처리하되
+					`failures`가 비어 있는지 반드시 확인해야 한다 — 실패가 있어도 상태코드는 202다.
+
+					⚠️ **메일 발송 실패는 `failures`에 들어가지 않는다.** `failures`는 **등록 자체가 되지 않은 행**
+					(형식 오류·중복·기존 이메일)만 담으며, 이 응답 시점에는 아직 발송이 시작되지도 않았다.
+					발송 실패는 폴링 응답의 `mailFailedCount`로 드러난다.
+
+					발송되지 않은 초대는 원장에 `DELIVERY_FAILED`로 남아 명단 조회 응답의
+					`pendingInvitationTokenId`가 채워지므로, 화면은 그 행의 **[초대 재발송]** 버튼으로 복구시키면 된다.
 
 					**메일이 나갔다고 계정이 활성화된 것은 아니다.** 교육생은 PENDING 상태로 만들어지고,
 					본인이 초대 링크에서 `POST /auth/trainee-activation`을 마쳐야 활성 계정이 된다.
@@ -189,7 +206,7 @@ public class TraineeController {
 	)
 	@PreAuthorize("hasRole('OPERATOR')")
 	@ApiResponses({
-			@ApiResponse(responseCode = "201", description = "CSV 행별 등록·초대 처리 완료; 성공·실패 건수와 실패 행을 응답"),
+			@ApiResponse(responseCode = "202", description = "등록 완료·발송 예약됨; 성공·실패 건수와 폴링용 batchRequestId를 응답"),
 			@ApiResponse(responseCode = "400", description = "CSV_FORMAT_INVALID CSV 파일·헤더·인코딩·열 구성 오류. 어느 행이 왜 틀렸는지는 message에 있다"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰 없음 · INVITER_NOT_FOUND 인증 사용자를 찾을 수 없음"),
 			@ApiResponse(responseCode = "403", description = "INVITE_ROLE_NOT_ALLOWED 오퍼레이터만 교육생을 초대할 수 있음 · INVITER_NOT_ACTIVE 활성 계정이 아님 · INVITE_CROSS_ORGANIZATION 다른 기관의 기수"),
@@ -201,16 +218,13 @@ public class TraineeController {
 			@PathVariable UUID cohortId,
 			@Parameter(description = "첫 행이 '이름,이메일'인 UTF-8 CSV 파일")
 			@RequestPart("file") MultipartFile file,
-			@Parameter(description = "일괄 등록 요청 추적용 식별자이며 생략 시 서버가 생성합니다.", example = "trainee-batch-001")
-			@RequestHeader(value = REQUEST_ID_HEADER, required = false) String requestId,
 			@Parameter(hidden = true)
 			Authentication authentication
 	) {
-		return ResponseEntity.status(HttpStatus.CREATED).body(memberInvitationService.inviteTraineesFromCsv(
+		return ResponseEntity.status(HttpStatus.ACCEPTED).body(memberInvitationService.inviteTraineesFromCsv(
 				cohortId,
 				traineeCsvParser.parse(file),
-				authentication.getName(),
-				requestId
+				authentication.getName()
 		));
 	}
 
@@ -226,14 +240,23 @@ public class TraineeController {
 					- trainees (필수, 1건 이상): 등록할 교육생 목록
 					  - name (필수, 최대 200자)
 					  - email (필수): 형식·요청 내 중복·기존 계정을 행별로 검증한다
-					- X-Request-Id (헤더, 선택): 일괄 등록 추적용 식별자
 
-					**응답 (201)**
-					- requestedCount / registeredCount / invitationSentCount
+					## 🔴 CSV 등록과 똑같이 202이고 메일은 그 뒤에 나간다
+
+					건수가 적어도 **경로를 갈라 두지 않는다** — 화면이 응답 두 벌을 처리하는 분기를 갖게 되고,
+					같은 등록인데 입력 방식에 따라 계약이 달라진다. `invitationSentCount`는 여기서도 **항상 0**이며
+					실제 발송 수는 `batchRequestId`로 폴링해 확인한다.
+
+					**응답 (202)**
+					- requestedCount / registeredCount / invitationSentCount(항상 0)
+					- batchRequestId: **서버가 만드는** 진행률 폴링 식별자. 등록된 행이 0건이면 null
 					- failures[]: row는 **1부터 시작하는 배열 순번**(CSV와 달리 헤더가 없다),
 					  email, status(1=형식 오류, 2=요청 내 중복, 3=기관에 이미 있는 교육생 이메일)
 
-					**행별 부분 성공을 허용한다.** 실패가 있어도 상태코드는 201이므로 `failures`를 확인해야 한다.
+					**행별 부분 성공을 허용한다.** 실패가 있어도 상태코드는 202이므로 `failures`를 확인해야 한다.
+
+					⚠️ **메일 발송 실패는 `failures`에 들어가지 않는다.** CSV 등록과 같은 규칙이다 —
+					발송 실패 수는 폴링 응답의 `mailFailedCount`이며, 그 행들은 명단의 **[초대 재발송]** 으로 복구한다.
 
 					**이름이 비어 있으면 행 단위 실패가 아니라 요청 전체가 400이다.** 이메일 오류는 failures로
 					돌려주지만 이름 누락은 입력 화면에서 먼저 걸러야 할 값으로 보기 때문이다.
@@ -243,7 +266,7 @@ public class TraineeController {
 	)
 	@PreAuthorize("hasRole('OPERATOR')")
 	@ApiResponses({
-			@ApiResponse(responseCode = "201", description = "직접 입력 행별 등록·초대 처리 완료; 성공·실패 건수와 실패 행을 응답"),
+			@ApiResponse(responseCode = "202", description = "등록 완료·발송 예약됨; 성공·실패 건수와 폴링용 batchRequestId를 응답"),
 			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 교육생 목록이 비었음 · TRAINEE_NAME_INVALID 이름이 비었거나 200자 초과 · EMAIL_FORMAT_INVALID 이메일 형식 오류"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰 없음 · INVITER_NOT_FOUND 인증 사용자를 찾을 수 없음"),
 			@ApiResponse(responseCode = "403", description = "INVITE_ROLE_NOT_ALLOWED 오퍼레이터만 교육생을 초대할 수 있음 · INVITER_NOT_ACTIVE 활성 계정이 아님 · INVITE_CROSS_ORGANIZATION 다른 기관의 기수"),
@@ -254,16 +277,76 @@ public class TraineeController {
 			@Parameter(description = "교육생을 등록할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
 			@PathVariable UUID cohortId,
 			@Valid @RequestBody RegisterTraineesRequest request,
-			@Parameter(description = "일괄 등록 요청 추적용 식별자이며 생략 시 서버가 생성합니다.", example = "trainee-direct-001")
-			@RequestHeader(value = REQUEST_ID_HEADER, required = false) String requestId,
 			@Parameter(hidden = true)
 			Authentication authentication
 	) {
-		return ResponseEntity.status(HttpStatus.CREATED).body(memberInvitationService.inviteTrainees(
+		return ResponseEntity.status(HttpStatus.ACCEPTED).body(memberInvitationService.inviteTrainees(
 				cohortId,
 				request,
-				authentication.getName(),
-				requestId
+				authentication.getName()
+		));
+	}
+
+	@Operation(
+			operationId = "findTraineeRegistrationProgress",
+			summary = "교육생 일괄 등록 진행률 조회 | ✅ 사용 가능",
+			description = """
+					등록(`POST …/trainees` · `POST …/trainees/invitations`)이 202로 돌려준 `batchRequestId`의
+					**초대 메일 발송 진행률**을 답한다. 2~3초 간격으로 폴링하다가 `status`가 `RUNNING`이 아니면 멈춘다.
+
+					## 요청
+
+					| 파라미터 | 필수 | 타입 | 설명 |
+					|---|---|---|---|
+					| `cohortId` | 필수 | UUID | 경로. 등록을 실행한 기수 |
+					| `batchRequestId` | 필수 | string | 경로. 등록 응답의 `batchRequestId` |
+
+					## 응답 (200)
+
+					| 필드 | 설명 |
+					|---|---|
+					| `batchRequestId` | 조회에 쓴 식별자 |
+					| `registeredCount` | 이 등록으로 만들어진 초대 수. 등록 응답의 같은 이름 값과 일치한다 |
+					| `invitationSentCount` | **실제로 메일이 나간 수.** 이미 가입까지 마친 교육생도 포함한다 |
+					| `mailFailedCount` | 메일이 나가지 못한 수. 명단의 **[초대 재발송]** 으로 복구한다 |
+					| `mailPendingCount` | 아직 발송을 기다리는 수 |
+					| `status` | `RUNNING`(발송 중) · `PARTIAL`(발송 끝, 실패 있음) · `SUCCEEDED`(전부 발송) |
+
+					`registeredCount = invitationSentCount + mailFailedCount + mailPendingCount`가 성립한다
+					(초대가 취소·만료되면 그만큼 어긋날 수 있다).
+
+					💡 **잡을 따로 저장하지 않는다.** 초대 원장을 그 자리에서 집계해 답하므로, 인스턴스가 여러 대여도
+					어느 쪽이 폴링을 받든 같은 답이 나온다. 진행률이 사라지거나 행 상태와 어긋날 여지가 없다.
+
+					⚠️ **등록 응답의 `batchRequestId`가 `null`이면 폴링하지 않는다.** 명단이 전부 사전 판정에 걸려
+					초대가 하나도 만들어지지 않은 경우이며, 조회하면 404다.
+
+					💡 **이 값은 서버가 만든다.** 화면은 등록 응답에서 받은 값을 그대로 넣기만 하면 되고,
+					만들어 넣을 수 없다 — 잡 식별자를 클라이언트가 정하면 같은 값으로 두 번 등록했을 때
+					두 등록의 진행률이 하나로 합쳐진다.
+					"""
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "진행률 조회 성공"),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 만료됨"),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터 권한이 아님"),
+			@ApiResponse(responseCode = "404", description = "REGISTRATION_BATCH_NOT_FOUND 그 기수·기관에 그 식별자로 만들어진 초대가 없음"),
+			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 기관을 확인할 수 없음")
+	})
+	@PreAuthorize("hasRole('OPERATOR')")
+	@GetMapping("/registrations/{batchRequestId}")
+	public ResponseEntity<TraineeRegistrationProgressResponse> findTraineeRegistrationProgress(
+			@Parameter(description = "등록을 실행한 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
+			@PathVariable UUID cohortId,
+			@Parameter(description = "등록 응답의 batchRequestId", example = "trainee-batch-001")
+			@PathVariable String batchRequestId,
+			@Parameter(hidden = true)
+			Authentication authentication
+	) {
+		UUID organizationId = extractOrganizationId(authentication);
+		return ResponseEntity.ok(TraineeRegistrationProgressResponse.of(
+				batchRequestId,
+				memberInvitationService.findRegistrationProgress(cohortId, organizationId, batchRequestId)
 		));
 	}
 
@@ -392,6 +475,7 @@ public class TraineeController {
 					| `inactivatedByName` | string? | 비활성화한 사용자 이름. 화면 표시용 |
 					| `inactivatedAt` | date-time? | 비활성화 시각. 활성이면 `null` |
 					| `pendingInvitationTokenId` | UUID? | 아직 수락·취소되지 않은 초대 토큰(11차 R2). `null`이 아닐 때만 재발송 버튼(`POST /cohorts/{cohortId}/trainees/invitations/resend`)을 켠다. 이미 활성화됐거나 초대가 취소됐으면 `null` |
+					| `invitationDeliveryFailed` | boolean | 그 초대의 **메일이 나가지 못했는지**. `true`면 `초대 메일이 나가지 않았습니다` 안내를 띄운다 |
 
 					#### 여기부터는 회차 지표다 — **매니저에게만** 채워지고 오퍼레이터는 전부 `null`이다
 

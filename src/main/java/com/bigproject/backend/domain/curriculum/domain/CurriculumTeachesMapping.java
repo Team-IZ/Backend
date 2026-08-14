@@ -5,6 +5,10 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import java.util.List;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -47,6 +51,10 @@ public class CurriculumTeachesMapping {
     @Column(name = "page_end", nullable = false, updatable = false)
     private Integer pageEnd;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "source_pages", nullable = false, columnDefinition = "jsonb")
+    private List<Integer> sourcePages;
+
     @Column(name = "sequence_no", nullable = false, updatable = false)
     private Integer sequenceNo;
 
@@ -60,8 +68,8 @@ public class CurriculumTeachesMapping {
     @Builder
     private CurriculumTeachesMapping(UUID orgId, UUID teachesId, UUID versionId, UUID sectionId,
                                      UUID sourceAnalysisId, String extractedName, String sourceDescription,
-                                     Integer pageStart, Integer pageEnd, Integer sequenceNo,
-                                     BigDecimal confidence, MappingStatus mappingStatus) {
+                                     Integer pageStart, Integer pageEnd, List<Integer> sourcePages,
+                                     Integer sequenceNo, BigDecimal confidence, MappingStatus mappingStatus) {
         this.orgId = orgId;
         this.teachesId = teachesId;
         this.versionId = versionId;
@@ -71,6 +79,7 @@ public class CurriculumTeachesMapping {
         this.sourceDescription = sourceDescription;
         this.pageStart = pageStart;
         this.pageEnd = pageEnd;
+        this.sourcePages = sourcePages;
         this.sequenceNo = sequenceNo;
         this.confidence = confidence;
         this.mappingStatus = mappingStatus;
@@ -79,16 +88,25 @@ public class CurriculumTeachesMapping {
     public static CurriculumTeachesMapping create(UUID orgId, UUID teachesId, UUID versionId, UUID sectionId,
                                                   UUID sourceAnalysisId, String extractedName,
                                                   String sourceDescription, int pageStart, int pageEnd,
-                                                  int sequenceNo, BigDecimal confidence,
+                                                  List<Integer> sourcePages, int sequenceNo, BigDecimal confidence,
                                                   MappingStatus mappingStatus) {
         if (mappingStatus == MappingStatus.ACTIVE && (sectionId == null || extractedName == null || extractedName.isBlank())) {
             throw new IllegalArgumentException("ACTIVE 매핑은 section_id와 extracted_name이 필수입니다.");
         }
         return CurriculumTeachesMapping.builder()
-                .orgId(orgId).teachesId(teachesId).versionId(versionId).sectionId(sectionId)
-                .sourceAnalysisId(sourceAnalysisId).extractedName(extractedName)
-                .sourceDescription(sourceDescription).pageStart(pageStart).pageEnd(pageEnd)
-                .sequenceNo(sequenceNo).confidence(confidence).mappingStatus(mappingStatus)
+                .orgId(orgId)
+                .teachesId(teachesId)
+                .versionId(versionId)
+                .sectionId(sectionId)
+                .sourceAnalysisId(sourceAnalysisId)
+                .extractedName(extractedName)
+                .sourceDescription(sourceDescription)
+                .pageStart(pageStart)
+                .pageEnd(pageEnd)
+                .sourcePages(sourcePages)
+                .sequenceNo(sequenceNo)
+                .confidence(confidence)
+                .mappingStatus(mappingStatus)
                 .build();
     }
 

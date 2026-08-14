@@ -13,19 +13,23 @@ import com.bigproject.backend.domain.curriculum.domain.CurriculumTeachesMapping;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumVersion;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumVersionStatus;
 import com.bigproject.backend.domain.curriculum.domain.MappingStatus;
+import com.bigproject.backend.domain.curriculum.domain.Teaches;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumAnalysisRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumMaterialRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumSectionRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumTeachesMappingRepository;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumVersionRepository;
+import com.bigproject.backend.domain.curriculum.infrastructure.TeachesRepository;
 import com.bigproject.backend.domain.projectexecution.application.ProjectService;
 import com.bigproject.backend.global.exception.ApiException;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.scheduling.annotation.Scheduled;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -38,6 +42,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -46,14 +51,20 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class CurriculumServiceImpl implements CurriculumService {
 
+    // ✅ 원본 방식 복구: 별도 설정 파일 없이 여기서 직접 S3Client 생성
     private static final S3Client S3_CLIENT = S3Client.builder()
             .region(Region.AP_SOUTHEAST_2)
             .build();
+
+    private static final int POLL_MAX_ATTEMPTS = 100;
+    private static final long POLL_INTERVAL_MS = 3000L;
+    private static final java.time.Duration MAX_WAIT_DURATION = java.time.Duration.ofMinutes(25);
 
     private final CurriculumVersionRepository curriculumVersionRepository;
     private final CurriculumTeachesMappingRepository mappingRepository;
@@ -65,26 +76,17 @@ public class CurriculumServiceImpl implements CurriculumService {
     private final AiCurriculumClient aiCurriculumClient;
     private final CurriculumCatalogRepository catalogRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final TeachesRepository teachesRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private CurriculumServiceImpl self;
 
     @Override
     public List<CurriculumVersion> findLinkableCurricula(UUID orgId) {
         return curriculumVersionRepository.findAllActiveByOrgId(orgId, CurriculumVersionStatus.ACTIVE);
     }
 
-    /**
-     * 18차 R2 — 교안 목록에 분석 상태와 항목 수를 얹는다.
-     *
-     * <p>버전마다 최신 분석을 따로 읽으면 목록 하나에 조회가 교안 수만큼 붙으므로
-     * (15차 R1에서 회차 목록이 같은 이유로 4.6초였다) 전량을 한 번에 읽고 자바에서 가른다.
-     * 조회는 교안 수와 무관하게 <b>고정 3건</b>이다.
-     */
-    /**
-     * 22차 R7 ② — 목록은 그대로 두고 <b>경로만 사실에 맞춘다.</b>
-     *
-     * <p>교안이 기관 단위라 결과를 기수로 좁히는 것은 사실이 아니다. 대신 없는 기수를 가리키는
-     * 경로를 200으로 답하지 않는다 — 「이 기수엔 교안이 없다」와 「그런 기수가 없다」가 구분되지
-     * 않으면 운영자가 지워진 기수 링크를 열고도 정상이라고 읽는다.
-     */
     @Override
     public List<LinkableCurriculum> findLinkableCurriculaForCohort(UUID cohortId, UUID orgId) {
         if (!catalogRepository.cohortExists(cohortId, orgId)) {
@@ -101,15 +103,12 @@ public class CurriculumServiceImpl implements CurriculumService {
         }
         List<UUID> versionIds = versions.stream().map(CurriculumVersion::getVersionId).toList();
 
-        // 최신순으로 전량을 받아 버전별 첫 건만 취한다 — merge의 (first, second) -> first가 그 규칙이다.
         Map<UUID, CurriculumAnalysisStatus> statusByVersion = new HashMap<>();
         for (CurriculumAnalysis analysis : analysisRepository
                 .findAllByVersionIdInOrderByRequestedAtDesc(versionIds)) {
             statusByVersion.putIfAbsent(analysis.getVersionId(), analysis.getStatus());
         }
 
-        // 항목 수는 19차 R2에서 만든 일괄 집계를 그대로 쓴다. 후보 수와 같은 것을 세므로
-        // 두 값이 갈릴 일이 없다 — 회차 생성 모달이 보는 수와 개념 후보 조회가 주는 수가 같아야 한다.
         Map<UUID, Long> teachesByVersion = new HashMap<>();
         for (Object[] row : mappingRepository.countActiveCandidatesByVersionIds(
                 versionIds, orgId, MappingStatus.ACTIVE)) {
@@ -136,14 +135,6 @@ public class CurriculumServiceImpl implements CurriculumService {
         return toSectionItemViews(mappings, orgId);
     }
 
-    /**
-     * 교안의 섹션 전부 + 각 섹션의 가르친 항목.
-     *
-     * <p>11차 R1 — 예전에는 섹션마다 매핑을 따로 읽고, <b>항목마다</b> "쓰인 회차"를 물었다.
-     * 그 조회가 내부에서 다시 개념·세트·프로젝트·기수의 회차 전량을 한 건씩 읽어서,
-     * 항목 34개짜리 교안 하나에 쿼리가 수백 건 나가고 응답이 10초에 육박했다.
-     * 지금은 <b>섹션 수·항목 수와 무관하게</b> 고정된 수의 조회로 끝난다.
-     */
     @Override
     public List<SectionView> findSections(UUID versionId, UUID orgId) {
         CurriculumAnalysis latestSuccess = analysisRepository
@@ -162,7 +153,6 @@ public class CurriculumServiceImpl implements CurriculumService {
                 .collect(Collectors.groupingBy(CurriculumTeachesMapping::getSectionId,
                         LinkedHashMap::new, Collectors.toList()));
 
-        // 항목 전부의 "쓰인 회차"를 한 번에 받는다.
         Map<UUID, List<String>> roundLabelsByTeachesId = projectService.findRoundLabelsByTeaches(
                 mappingsBySectionId.values().stream()
                         .flatMap(List::stream)
@@ -183,17 +173,6 @@ public class CurriculumServiceImpl implements CurriculumService {
                 .toList();
     }
 
-    /**
-     * 13차 R1 — 받는 값이 <b>교안 ID</b>이며 그 교안의 <b>모든 버전</b>을 쓰는 회차를 모은다.
-     *
-     * <p>예전에는 이 자리를 교안 버전 ID로 읽었다. 경로가 {@code /curricula/{materialId}/projects}이고
-     * 목록 응답도 {@code materialId}를 주므로 화면은 교안 ID를 넣었는데, 두 ID는 값이 겹치지 않아
-     * <b>늘 빈 배열</b>이 됐다. 같은 화면의 {@code usedProjectCount}는 교안 기준으로 세고 있어
-     * "목록은 24개 회차가 쓴다는데 상세는 0건"이 됐다.
-     *
-     * <p>모든 버전을 모으는 것은 {@code usedProjectCount}와 <b>같은 기준</b>이기 때문이다.
-     * 최신 버전만 보면 지난 버전으로 연결된 회차가 빠져 두 숫자가 다시 갈린다.
-     */
     @Override
     public List<ProjectService.CurriculumUsingProject> findUsedProjects(UUID materialId, UUID orgId) {
         List<UUID> versionIds = curriculumVersionRepository
@@ -208,8 +187,6 @@ public class CurriculumServiceImpl implements CurriculumService {
 
     @Override
     public List<UUID> findComparableCohorts(UUID cohortId, UUID orgId) {
-        // 22차 R8 — 「비교 대상이 없다」와 「기준 기수가 없다」를 가른다. 둘 다 빈 배열이면
-        // 화면이 비교 드롭다운을 비워 두고 이유를 말하지 못한다.
         if (!catalogRepository.cohortExists(cohortId, orgId)) {
             throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND);
         }
@@ -229,16 +206,6 @@ public class CurriculumServiceImpl implements CurriculumService {
 
         String normalizedTitle = title.trim().replaceAll("\\s+", " ").toLowerCase();
 
-        /*
-         * 22차 R2 — 제목 충돌을 여기서 끊는다.
-         *
-         * uq_curriculum_material_org_id_normalized_title이 부분 인덱스가 아니라 전역 UNIQUE라
-         * 논리 삭제된 교안도 제목을 계속 점유한다. 그래서 삭제 여부를 보지 않고 센다 —
-         * 살아 있는 것만 세면 검사는 통과하고 INSERT가 DB에서 터져 코드 없는 500이 난다.
-         *
-         * 파일 크기와 무관하게 나므로 "50KB짜리도 500"이던 증상의 한 축이었다. 같은 제목으로
-         * 다시 올리는 것은 등록이 아니라 새 버전이어야 하는데, 그 경로는 아직 없다.
-         */
         if (materialRepository.existsByOrgIdAndNormalizedTitle(orgId, normalizedTitle)) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_TITLE_DUPLICATED);
         }
@@ -271,18 +238,14 @@ public class CurriculumServiceImpl implements CurriculumService {
 
         int nextAnalysisVersion = (int) analysisRepository.countByVersionId(version.getVersionId()) + 1;
 
-        // AI 서버 호출용 사람이 읽는 idempotency 문자열 (헤더 값으로만 사용)
         String idempotencyKeyString = version.getVersionId() + ":" + nextAnalysisVersion;
 
         AiCurriculumClient.CurriculumAccepted accepted =
-                aiCurriculumClient.requestAnalysis(version.getVersionId(), "AI", pdfBytes, idempotencyKeyString);
+                aiCurriculumClient.requestAnalysis(version.getVersionId(), "Spring", pdfBytes, idempotencyKeyString);
 
-        // DB curriculum_analysis.idempotency_key는 UUID 타입 — 같은 문자열이면 항상 같은 UUID가 나오게 결정론적으로 변환
         UUID idempotencyKeyUuid = UUID.nameUUIDFromBytes(idempotencyKeyString.getBytes(StandardCharsets.UTF_8));
-        // curriculum_analysis.request_fingerprint는 64자리 소문자 hex(CHECK 제약) — SHA-256으로 생성
         String requestFingerprint = sha256Hex(idempotencyKeyString);
 
-        // TODO: 임시 우회 — ai_model 테이블에 실제 존재하는 아무 모델 하나를 가져와 FK 위반을 피한다.
         UUID placeholderModelId = jdbcTemplate.queryForObject(
                 "SELECT model_id FROM ai_model LIMIT 1", UUID.class);
 
@@ -290,18 +253,160 @@ public class CurriculumServiceImpl implements CurriculumService {
                 version.getVersionId(), placeholderModelId, nextAnalysisVersion,
                 idempotencyKeyUuid, requestFingerprint, actorUserId);
         analysis.updateExternalJobId(accepted.jobId());
-
         analysisRepository.save(analysis);
     }
 
-    // ── 9차 R8: 기관 전체 교안 목록 · 단건 상세 ────────────────────────────────
+    @Scheduled(fixedDelay = 600000)
+    public void pollPendingCurriculumAnalyses() {
+        List<CurriculumAnalysis> pendingList = analysisRepository
+                .findAllByStatusIn(List.of(CurriculumAnalysisStatus.PENDING, CurriculumAnalysisStatus.RUNNING));
+
+        log.info("### DEBUG 스케줄러 실행됨, 대기 중인 분석 건수={}", pendingList.size());
+
+        for (CurriculumAnalysis analysis : pendingList) {
+            log.info("### DEBUG 처리 시도: analysisId={}, status={}", analysis.getAnalysisId(), analysis.getStatus());
+            try {
+                self.reconcileOne(analysis);
+            } catch (Exception e) {
+                log.warn("교안 분석 스케줄러 폴링 중 오류: analysisId={}", analysis.getAnalysisId(), e);
+            }
+        }
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void reconcileOne(CurriculumAnalysis analysis) {
+        UUID jobId = analysis.getExternalJobId();
+        if (jobId == null) {
+            return;
+        }
+
+        if (analysis.getRequestedAt() != null
+                && analysis.getRequestedAt().isBefore(OffsetDateTime.now().minus(MAX_WAIT_DURATION))) {
+            markAnalysisFailed(analysis, "MODEL_TIMEOUT",
+                    "최대 대기 시간(" + MAX_WAIT_DURATION.toMinutes() + "분)을 초과했습니다. jobId=" + jobId);
+            return;
+        }
+
+        AiCurriculumClient.AnalysisResult result;
+        try {
+            result = aiCurriculumClient.checkStatus(jobId.toString());
+        } catch (Exception e) {
+            log.warn("AI 분석 상태 조회 실패 (jobId={})", jobId, e);
+            return;
+        }
+
+        if (result == null) {
+            log.warn("### DEBUG result가 null입니다. jobId={}", jobId);
+            return;
+        }
+
+        log.info("### DEBUG result 수신: status={}, sections size={}",
+                result.status(), result.sections() != null ? result.sections().size() : -1);
+
+        String status = result.status();
+
+        if ("FAILED".equalsIgnoreCase(status)) {
+            markAnalysisFailed(analysis, "PROVIDER_ERROR", "AI 서버가 분석 실패를 반환했습니다. jobId=" + jobId);
+            return;
+        }
+
+        if (result.sections() == null || result.sections().isEmpty()) {
+            if ("SUCCEEDED".equalsIgnoreCase(status)) {
+                markAnalysisFailed(analysis, "INVALID_AI_RESPONSE", "AI 분석이 SUCCEEDED이나 섹션이 비어 있습니다. jobId=" + jobId);
+            }
+            return;
+        }
+
+        CurriculumVersion version = curriculumVersionRepository.findById(analysis.getVersionId())
+                .orElse(null);
+        if (version == null) {
+            log.warn("교안 분석 결과 저장 실패: version을 찾을 수 없음 (analysisId={}, versionId={})",
+                    analysis.getAnalysisId(), analysis.getVersionId());
+            return;
+        }
+
+        CurriculumMaterial material = materialRepository.findById(version.getMaterialId())
+                .orElse(null);
+        if (material == null) {
+            log.warn("교안 분석 결과 저장 실패: material을 찾을 수 없음 (analysisId={}, versionId={})",
+                    analysis.getAnalysisId(), analysis.getVersionId());
+            return;
+        }
+
+        persistAnalysisResult(analysis, version, material.getOrgId(), result);
+    }
+
+    private void persistAnalysisResult(CurriculumAnalysis analysis, CurriculumVersion version,
+                                       UUID orgId, AiCurriculumClient.AnalysisResult result) {
+        analysis.start();
+
+        int sectionSeq = 1;
+        // ✅ DB 중복 에러 해결: mappingSeq를 밖으로 꺼내서 순번이 누적되게 처리
+        int mappingSeq = 1;
+
+        for (AiCurriculumClient.SectionResult sec : result.sections()) {
+            CurriculumSection savedSection = sectionRepository.save(
+                    CurriculumSection.builder()
+                            .versionId(version.getVersionId())
+                            .sourceAnalysisId(analysis.getAnalysisId())
+                            .sequenceNo(sectionSeq++)
+                            .title(sec.title())
+                            .pageStart(sec.pageStart())
+                            .pageEnd(sec.pageEnd())
+                            .keywords(sec.keywords())
+                            .confidence(sec.confidence())
+                            .build());
+
+            for (AiCurriculumClient.TeachesResult t : sec.teaches()) {
+                Teaches teaches = teachesRepository
+                        .findByOrgIdAndNormalizedName(orgId, t.normalizedName())
+                        .orElseGet(() -> teachesRepository.save(
+                                Teaches.builder()
+                                        .orgId(orgId)
+                                        .canonicalName(t.canonicalName())
+                                        .normalizedName(t.normalizedName())
+                                        .canonicalDescription(
+                                                t.description() != null ? t.description() : t.canonicalName())
+                                        .build()));
+
+                mappingRepository.save(
+                        CurriculumTeachesMapping.builder()
+                                .orgId(orgId)
+                                .teachesId(teaches.getTeachesId())
+                                .versionId(version.getVersionId())
+                                .sectionId(savedSection.getSectionId())
+                                .sourceAnalysisId(analysis.getAnalysisId())
+                                .extractedName(t.canonicalName())
+                                .sourceDescription(t.description())
+                                .pageStart(sec.pageStart())
+                                .pageEnd(sec.pageEnd())
+                                .sourcePages(List.of(sec.pageStart()))
+                                .sequenceNo(mappingSeq++) // 순번이 꼬이지 않음
+                                .confidence(t.confidence())
+                                .mappingStatus(MappingStatus.ACTIVE)
+                                .build());
+            }
+        }
+
+        analysis.succeed();
+        analysisRepository.save(analysis);
+    }
+
+    private void markAnalysisFailed(CurriculumAnalysis analysis, String failureCode, String failureReason) {
+        log.warn("교안 분석 실패 처리: analysisId={}, code={}, reason={}",
+                analysis.getAnalysisId(), failureCode, failureReason);
+
+        if (analysis.getStartedAt() == null) {
+            analysis.start();
+        }
+        analysis.fail(failureCode, "CONCEPT_EXTRACTION", failureReason, true, "RETRY_SAME_FILE");
+        analysisRepository.save(analysis);
+    }
 
     @Override
     public CurriculumCatalogPage findCatalog(UUID orgId, String query, CurriculumAnalysisStatus status,
                                              boolean notAnalyzedOnly,
                                              CurriculumCatalogSort sort, int page, int size) {
-        // 둘은 서로를 배제한다 — `분석 전`은 상태가 없는 교안이라 어떤 상태로도 좁혀지지 않는다(13차 R2).
-        // 빈 목록을 조용히 주면 화면이 "그런 교안이 없다"로 읽으므로 입력 오류로 끊는다.
         if (status != null && notAnalyzedOnly) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILTER_CONFLICT);
         }
@@ -314,23 +419,17 @@ public class CurriculumServiceImpl implements CurriculumService {
         List<CurriculumCatalogRepository.CurriculumCatalogRow> content =
                 catalogRepository.findPage(criteria, size, (long) page * size);
 
-        // 상태별 개수는 필터와 무관한 기관 전체 모집단이다(11차 R7). 헤더의
-        // `12개 · 분석 완료 9 · 실패 1`이 이 값이며, 걸러진 목록으로는 만들 수 없다.
         Map<CurriculumAnalysisStatus, Long> statusCounts =
                 new LinkedHashMap<>(catalogRepository.countByAnalysisStatus(orgId));
         for (CurriculumAnalysisStatus value : CurriculumAnalysisStatus.values()) {
             statusCounts.putIfAbsent(value, 0L);
         }
 
-        // 한 번도 분석하지 않은 교안은 상태가 없어 어느 키에도 안 들어간다. 전체에서 빼서 따로 센다 —
-        // `분석 완료 + 실패`가 전체와 안 맞는 이유를 화면이 알 수 있어야 한다.
         long analyzed = statusCounts.values().stream().mapToLong(Long::longValue).sum();
         long notAnalyzedCount = Math.max(0, catalogRepository.count(
                 new CurriculumCatalogRepository.CurriculumCatalogCriteria(
                         orgId, null, null, false, criteria.sort())) - analyzed);
 
-        // 0건일 때 totalPages를 1로 만들지 않는다 — 빈 목록에 페이지가 하나 있다고 하면
-        // 화면의 페이저가 존재하지 않는 페이지를 그린다.
         int totalPages = (int) ((totalElements + size - 1) / size);
         return new CurriculumCatalogPage(
                 content, page, size, totalElements, totalPages, statusCounts, notAnalyzedCount);
@@ -352,35 +451,32 @@ public class CurriculumServiceImpl implements CurriculumService {
         }
     }
 
-    // TODO: 임시 우회 — S3 자격증명 문제로 실제 파일 대신 더미 바이트를 반환한다.
-    // 나중에 AWS 키 받으면 아래 주석 처리된 원래 로직으로 되돌려야 한다.
+    // ✅ S3 다운로드 로직 추가: S3_CLIENT 상수를 사용하도록 매칭
     private byte[] readFileBytes(String fileUri) {
-        return "dummy pdf content for testing".getBytes();
-    }
-
-    /*
-    private byte[] readFileBytesOriginal(String fileUri) {
         URI uri = URI.create(fileUri);
         try {
             if ("s3".equals(uri.getScheme())) {
                 String bucket = uri.getHost();
-                String key = uri.getPath().startsWith("/") ? uri.getPath().substring(1) : uri.getPath();
-                GetObjectRequest request = GetObjectRequest.builder()
+                String key = uri.getPath();
+                if (key != null && key.startsWith("/")) {
+                    key = key.substring(1);
+                }
+
+                GetObjectRequest getObjectRequest = GetObjectRequest.builder()
                         .bucket(bucket)
                         .key(key)
                         .build();
-                return S3_CLIENT.getObject(request, ResponseTransformer.toBytes()).asByteArray();
+
+                return S3_CLIENT.getObject(getObjectRequest, ResponseTransformer.toBytes()).asByteArray();
             }
+
             return Files.readAllBytes(Paths.get(uri));
-        } catch (IOException e) {
-            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILE_UNREADABLE);
         } catch (Exception e) {
+            log.error("파일 읽기 실패: {}", fileUri, e);
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILE_UNREADABLE);
         }
     }
-    */
 
-    /** 섹션 하나짜리 경로. 여기서도 회차 라벨은 한 번에 받는다(11차 R1). */
     private List<SectionItemView> toSectionItemViews(List<CurriculumTeachesMapping> mappings, UUID orgId) {
         if (mappings.isEmpty()) {
             return List.of();

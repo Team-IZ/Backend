@@ -124,20 +124,23 @@ class MemberQueryControllerTest {
 		);
 		List<TraineeCsvRow> rows = List.of(new TraineeCsvRow(2, "교육생", "trainee@example.com"));
 		when(traineeCsvParser.parse(any())).thenReturn(rows);
-		when(memberInvitationService.inviteTraineesFromCsv(cohortId, rows, "lead@example.com", null))
-				.thenReturn(new RegisterTraineesResponse(1, 1, 1, List.of()));
+		when(memberInvitationService.inviteTraineesFromCsv(cohortId, rows, "lead@example.com"))
+				.thenReturn(new RegisterTraineesResponse(1, 1, 0, "csv-1", List.of()));
 
 		mockMvc.perform(multipart("/api/v0/cohorts/{cohortId}/trainees", cohortId)
 						.file(file)
 						.with(csrf()))
-				.andExpect(status().isCreated());
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.batchRequestId").value("csv-1"))
+				// 응답 시점에는 아직 한 통도 나가지 않았다. 실제 발송 수는 폴링이 답한다.
+				.andExpect(jsonPath("$.invitationSentCount").value(0));
 
 		mockMvc.perform(multipart("/api/v0/members/cohorts/{cohortId}/trainees", cohortId)
 						.file(file)
 						.with(csrf()))
 				.andExpect(status().isNotFound());
 
-		verify(memberInvitationService).inviteTraineesFromCsv(cohortId, rows, "lead@example.com", null);
+		verify(memberInvitationService).inviteTraineesFromCsv(cohortId, rows, "lead@example.com");
 	}
 
 	@Test
@@ -148,8 +151,8 @@ class MemberQueryControllerTest {
 				new RegisterTraineesRequest.Trainee("교육생1", "trainee1@example.com"),
 				new RegisterTraineesRequest.Trainee("교육생2", "trainee2@example.com")
 		));
-		when(memberInvitationService.inviteTrainees(cohortId, request, "lead@example.com", "direct-1"))
-				.thenReturn(new RegisterTraineesResponse(2, 2, 2, List.of()));
+		when(memberInvitationService.inviteTrainees(cohortId, request, "lead@example.com"))
+				.thenReturn(new RegisterTraineesResponse(2, 2, 0, "direct-1", List.of()));
 
 		mockMvc.perform(post("/api/v0/cohorts/{cohortId}/trainees/invitations", cohortId)
 						.contentType(MediaType.APPLICATION_JSON)
@@ -163,9 +166,11 @@ class MemberQueryControllerTest {
 								}
 								""")
 						.with(csrf()))
-				.andExpect(status().isCreated());
+				.andExpect(status().isAccepted())
+				.andExpect(jsonPath("$.batchRequestId").value("direct-1"));
 
-		verify(memberInvitationService).inviteTrainees(cohortId, request, "lead@example.com", "direct-1");
+		// 헤더를 보내도 무시한다 — 잡 식별자는 서버만 만든다.
+		verify(memberInvitationService).inviteTrainees(cohortId, request, "lead@example.com");
 	}
 
 	@Test
@@ -175,11 +180,12 @@ class MemberQueryControllerTest {
 		RegisterTraineesRequest request = new RegisterTraineesRequest(List.of(
 				new RegisterTraineesRequest.Trainee("홍길동", "fdsafsdafsafsaffa")
 		));
-		when(memberInvitationService.inviteTrainees(cohortId, request, "lead@example.com", null))
+		when(memberInvitationService.inviteTrainees(cohortId, request, "lead@example.com"))
 				.thenReturn(new RegisterTraineesResponse(
 						1,
 						0,
 						0,
+						null,
 						List.of(new RegisterTraineesResponse.Failure(
 								1,
 								"fdsafsdafsafsaffa",
@@ -197,15 +203,17 @@ class MemberQueryControllerTest {
 								}
 								""")
 						.with(csrf()))
-				.andExpect(status().isCreated())
+				.andExpect(status().isAccepted())
 				.andExpect(jsonPath("$.requestedCount").value(1))
+				// 등록된 행이 없으면 폴링할 잡도 없다.
+				.andExpect(jsonPath("$.batchRequestId").doesNotExist())
 				.andExpect(jsonPath("$.registeredCount").value(0))
 				.andExpect(jsonPath("$.invitationSentCount").value(0))
 				.andExpect(jsonPath("$.failures[0].row").value(1))
 				.andExpect(jsonPath("$.failures[0].email").value("fdsafsdafsafsaffa"))
 				.andExpect(jsonPath("$.failures[0].status").value(1));
 
-		verify(memberInvitationService).inviteTrainees(cohortId, request, "lead@example.com", null);
+		verify(memberInvitationService).inviteTrainees(cohortId, request, "lead@example.com");
 	}
 
 	@Test
