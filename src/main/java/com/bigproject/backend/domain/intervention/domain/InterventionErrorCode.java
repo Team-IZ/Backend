@@ -55,13 +55,6 @@ public enum InterventionErrorCode implements ApiErrorCode {
 	BRIEF_HAS_NO_SELECTED_ITEM(HttpStatus.CONFLICT, "질문이 없는 브리프는 확정할 수 없습니다."),
 
 	/**
-	 * 종결된 면담의 브리프는 읽기 전용이다. 지난 면담에서 실제로 무엇을 물었는지가
-	 * 다음 회차 브리프의 {@code askedQuestions}로 이어지므로 사후에 바꾸면 그 기록이
-	 * 사실과 달라진다. 원인·기록은 여전히 고칠 수 있다.
-	 */
-	BRIEF_NOT_EDITABLE(HttpStatus.CONFLICT, "종결된 면담의 브리프는 다시 만들 수 없습니다."),
-
-	/**
 	 * 인증 정보에 기관 ID가 없다. 토큰 발급 쪽 문제라 사용자가 할 수 있는 일이 없다 —
 	 * 다른 도메인({@code AcademicOperationsErrorCode})과 같은 코드명을 쓴다.
 	 */

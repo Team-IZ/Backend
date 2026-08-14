@@ -46,19 +46,6 @@ public interface InterviewBriefService {
 			List<String> causes, String why, String nextAction);
 
 	/**
-	 * 브리프를 다시 만든다. <b>LLM 비용이 또 나가고 되돌릴 수 없다</b> —
-	 * 화면이 확인 다이얼로그를 띄운 뒤 부른다.
-	 *
-	 * <p>기존 브리프는 {@code SUPERSEDED}로 밀려나고 {@code version_no}가 올라간다.
-	 * 버전이 바뀌므로 멱등키도 자동으로 달라져 {@code ai_usage.idempotency_key}
-	 * 전역 UNIQUE 충돌을 피한다.
-	 *
-	 * <p>⚠️ <b>생성 실패 후 재시도와 다르다.</b> 재시도는 같은 버전에 대한 것이라
-	 * {@code POST}(생성)를 같은 멱등키로 다시 부르면 AI가 캐시된 결과를 준다.
-	 */
-	BriefView regenerateBrief(UUID managerUserId, UUID orgId, UUID caseId, String traceId);
-
-	/**
 	 * @param openingRemark ★ AI가 생성한 여는 말. 화면 ①칸에 그대로 표시한다
 	 * @param items         ★ AI가 생성한 질문 체크리스트. <b>고르는 UI가 없어 전부 그린다</b>
 	 * @param isVoid        무효 응시 브리프인가. true면 여는 말·질문이 통째로 다르다(정의서 §6-2)

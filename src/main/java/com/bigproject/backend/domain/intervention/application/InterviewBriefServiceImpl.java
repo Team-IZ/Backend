@@ -107,7 +107,8 @@ public class InterviewBriefServiceImpl implements InterviewBriefService {
 			throw new ApiException(InterventionErrorCode.VALIDITY_REVIEW_REQUIRED);
 		}
 
-		// 이미 완성된 브리프가 있으면 AI를 부르지 않는다. 재생성은 IV-07이 갖는다.
+		// 이미 완성된 브리프가 있으면 AI를 부르지 않고 그대로 돌려준다 — 매니저가 열 때마다
+		// 여는 말이 달라지면 안 되고 LLM 비용도 열람 횟수만큼 나가서는 안 된다.
 		if (summary.interviewId() != null) {
 			var existing = briefRepository.findHeader(managerUserId, orgId, summary.interviewId());
 			if (existing.isPresent() && existing.get().openingRemark() != null) {
@@ -120,29 +121,8 @@ public class InterviewBriefServiceImpl implements InterviewBriefService {
 				managerUserId, orgId, caseId, traceId);
 	}
 
-	@Override
-	public BriefView regenerateBrief(UUID managerUserId, UUID orgId, UUID caseId, String traceId) {
-		CaseSummary summary = caseLookupRepository.findCase(managerUserId, orgId, caseId)
-				.orElseThrow(() -> new ApiException(InterventionErrorCode.INTERVIEW_CASE_NOT_FOUND));
-
-		if (summary.interviewId() == null) {
-			throw new ApiException(InterventionErrorCode.INTERVIEW_BRIEF_NOT_CREATED);
-		}
-		/*
-		 * 종결된 면담의 브리프는 읽기 전용이다 — "브리프 버전은 종결 시점 그대로 고정됩니다"
-		 * (테이블 COMMENT). 지난 면담에서 실제로 무엇을 물었는지가 다음 회차 브리프의
-		 * askedQuestions로 이어지므로 사후에 바꾸면 그 기록이 사실과 달라진다.
-		 */
-		if (completionRepository.isCompleted(summary.interviewId())) {
-			throw new ApiException(InterventionErrorCode.BRIEF_NOT_EDITABLE);
-		}
-
-		return runGeneration(briefWriter.prepareRegeneration(summary, managerUserId),
-				managerUserId, orgId, caseId, traceId);
-	}
-
 	/**
-	 * AI 호출 → 검증 → 저장 → 원장. 생성과 재생성이 공유한다.
+	 * AI 호출 → 검증 → 저장 → 원장.
 	 *
 	 * <p>이 구간은 <b>트랜잭션 밖</b>이다. TX1은 이미 커밋됐고 TX2는 {@code saveResult}가 연다.
 	 */

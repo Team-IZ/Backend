@@ -84,7 +84,7 @@ public class InterviewBriefController {
 		return ResponseEntity.ok(InterviewBriefResponse.from(view));
 	}
 
-	@Operation(operationId = "createInterviewBrief", summary = "면담 브리프 생성 (AI)", description = """
+	@Operation(operationId = "createInterviewBrief", summary = "면담 브리프 생성 (AI) | ✅ 사용 가능", description = """
 			**AI를 호출해 여는 말과 질문 체크리스트를 만듭니다. 수 초~수십 초 걸립니다.**
 
 			화면은 이 응답을 기다리는 동안 로딩 상태를 유지해야 합니다 — AI가 동기 계약이라
@@ -92,9 +92,14 @@ public class InterviewBriefController {
 
 			### 브리프당 한 번만 만듭니다
 
-			이미 완성된 브리프가 있으면 **재생성하지 않고 그대로 돌려줍니다.**
+			이미 완성된 브리프가 있으면 **다시 만들지 않고 그대로 돌려줍니다.**
 			매니저가 열 때마다 여는 말이 달라지면 안 되고, LLM 비용도 열람 횟수만큼 나가서는
-			안 됩니다. 의도적인 재생성은 별도 경로(`/regenerate`)입니다.
+			안 됩니다.
+
+			### 실패한 브리프는 이 경로로 재시도합니다
+
+			생성이 끊겨 내용 없이 남은 DRAFT가 있으면 **그 행을 재사용**해 채웁니다
+			(목록의 `briefState`가 `FAILED`인 상태). 붙어 있던 근거는 지우고 다시 만듭니다.
 
 			### 무효 확인이 먼저입니다
 
@@ -176,49 +181,6 @@ public class InterviewBriefController {
 				currentUserResolver.resolveCurrentMemberId(),
 				ActorContext.organizationId(authentication), caseId,
 				request.causes(), request.why(), request.nextAction());
-
-		return ResponseEntity.ok(InterviewBriefResponse.from(view));
-	}
-
-	@Operation(operationId = "regenerateInterviewBrief", summary = "면담 브리프 재생성 (AI)", description = """
-			여는 말과 질문을 **다시 만듭니다. LLM 비용이 또 나가고 되돌릴 수 없습니다** —
-			화면은 확인 다이얼로그를 띄운 뒤 호출해야 합니다.
-
-			기존 브리프는 `SUPERSEDED`로 밀려나고 `version_no`가 올라갑니다.
-			버전이 바뀌므로 멱등키(`{briefId}:{versionNo}`)도 자동으로 달라져
-			`ai_usage.idempotency_key` 전역 UNIQUE 충돌을 피합니다.
-
-			### 생성 실패 후 재시도와 다릅니다
-
-            | | 멱등키 | 동작 |
-            |---|---|---|
-            | **재시도** — `POST .../brief` 다시 | **같은 키** | AI가 캐시된 결과를 준다 |
-            | **재생성** — 이 경로 | **새 키** | LLM을 다시 태운다 |
-
-			### 종결된 면담은 재생성할 수 없습니다
-
-			**409**입니다. 지난 면담에서 실제로 무엇을 물었는지가 다음 회차 브리프의
-			`askedQuestions`로 이어지므로 사후에 바꾸면 그 기록이 사실과 달라집니다.
-			원인·기록은 `PUT`으로 여전히 고칠 수 있습니다.
-			""")
-	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "재생성 완료"),
-			@ApiResponse(responseCode = "404", description = """
-					INTERVIEW_CASE_NOT_FOUND 담당 범위에서 찾을 수 없음
-					· INTERVIEW_BRIEF_NOT_CREATED 아직 만든 적 없는 브리프"""),
-			@ApiResponse(responseCode = "409", description = "BRIEF_NOT_EDITABLE 종결된 면담"),
-			@ApiResponse(responseCode = "503", description = "BRIEF_GENERATION_FAILED(_RETRYABLE) 생성 실패")
-	})
-	@PostMapping("/regenerate")
-	public ResponseEntity<InterviewBriefResponse> regenerateBrief(
-			@Parameter(description = "면담 케이스 ID", required = true)
-			@PathVariable UUID caseId,
-			@RequestHeader(value = "X-Trace-Id", required = false) String traceId,
-			Authentication authentication
-	) {
-		InterviewBriefService.BriefView view = interviewBriefService.regenerateBrief(
-				currentUserResolver.resolveCurrentMemberId(),
-				ActorContext.organizationId(authentication), caseId, traceId);
 
 		return ResponseEntity.ok(InterviewBriefResponse.from(view));
 	}
