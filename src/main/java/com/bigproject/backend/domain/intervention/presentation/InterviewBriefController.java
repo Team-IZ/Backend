@@ -2,6 +2,7 @@ package com.bigproject.backend.domain.intervention.presentation;
 
 import com.bigproject.backend.domain.intervention.application.InterviewBriefService;
 import com.bigproject.backend.domain.intervention.presentation.dto.InterviewBriefResponse;
+import com.bigproject.backend.domain.intervention.presentation.dto.SaveInterviewBriefRequest;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -17,6 +18,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -122,6 +125,57 @@ public class InterviewBriefController {
 		InterviewBriefService.BriefView view = interviewBriefService.createBrief(
 				currentUserResolver.resolveCurrentMemberId(),
 				extractOrganizationId(authentication), caseId, traceId);
+
+		return ResponseEntity.ok(InterviewBriefResponse.from(view));
+	}
+
+	@Operation(operationId = "saveInterviewBrief", summary = "브리프 저장하고 면담 종결", description = """
+			**저장은 항상 종결입니다**(정의서 §5). 별도의 "면담 시작" 단계가 없습니다 —
+			면담하는 30분 동안 매니저는 화면을 안 보기 때문입니다.
+
+			### 한 트랜잭션에서 여섯 가지를 합니다
+
+			| | |
+			|---|---|
+			| ① | 원인 분류 **전체 교체**(기존 삭제 후 재삽입) |
+			| ② | 매니저 기록 **덧붙이기**(기존 행은 고치지 않음) |
+			| ③ | 브리프 확정 — 질문을 전부 `is_selected=TRUE`로 |
+			| ④ | 잠금 재검증 — 선택 항목 1건 이상 |
+			| ⑤ | 면담 `PENDING → COMPLETED` **직행** |
+			| ⑥ | 상태 이력 1행 |
+
+			`started_at`은 브리프를 연 시각을 알 수 없어 `completed_at`과 같은 값으로 기록합니다.
+
+			### 종결 후 다시 저장하면 브리프는 그대로입니다
+
+			수정 대상은 **원인과 매니저 기록뿐**이고 여는 말·질문은 종결 시점 그대로 고정됩니다.
+			이 경우 ③~⑥을 건너뜁니다.
+
+			### 빈 값도 저장됩니다
+
+			원인 0건, 상세 사유 없음, 추후 계획 없음 모두 허용합니다 — 면담이 항상 원인을
+			찾아내지는 않습니다.
+			""")
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "저장·종결 완료. 갱신된 브리프를 반환"),
+			@ApiResponse(responseCode = "404", description = """
+					INTERVIEW_CASE_NOT_FOUND 담당 범위에서 찾을 수 없음
+					· INTERVIEW_BRIEF_NOT_CREATED 브리프가 없거나 생성 실패 상태"""),
+			@ApiResponse(responseCode = "409", description = """
+					BRIEF_HAS_NO_SELECTED_ITEM 질문이 없는 브리프
+					· INTERVIEW_ROW_VERSION_CONFLICT 그 사이 상태가 바뀜""")
+	})
+	@PutMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<InterviewBriefResponse> saveBrief(
+			@Parameter(description = "면담 케이스 ID", required = true)
+			@PathVariable UUID caseId,
+			@RequestBody SaveInterviewBriefRequest request,
+			Authentication authentication
+	) {
+		InterviewBriefService.BriefView view = interviewBriefService.saveAndComplete(
+				currentUserResolver.resolveCurrentMemberId(),
+				extractOrganizationId(authentication), caseId,
+				request.causes(), request.why(), request.nextAction());
 
 		return ResponseEntity.ok(InterviewBriefResponse.from(view));
 	}

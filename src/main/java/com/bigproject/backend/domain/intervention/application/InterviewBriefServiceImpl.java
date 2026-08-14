@@ -25,8 +25,74 @@ public class InterviewBriefServiceImpl implements InterviewBriefService {
 	private final InterviewCaseLookupRepository caseLookupRepository;
 	private final InterviewBriefRepository briefRepository;
 	private final InterviewBriefWriter briefWriter;
+	private final com.bigproject.backend.domain.intervention.domain.InterviewCompletionRepository completionRepository;
 	private final AiInterviewBriefClient aiClient;
 	private final AiUsageRecorder aiUsageRecorder;
+
+	/**
+	 * 저장하고 종결. <b>2026-08-14 DDL 개정으로 확정된 6단계</b>를 한 트랜잭션으로 돌린다.
+	 *
+	 * <p>순서가 중요하다 — 브리프 확정이 면담 종결보다 <b>먼저</b>다.
+	 * "PENDING 면담에서만 초기화·저장·확정을 허용하고 IN_PROGRESS·COMPLETED에서는 읽기
+	 * 전용입니다. 단 PENDING→COMPLETED 직행 종결 트랜잭션 안에서는 상태 전이 직전에 마지막
+	 * 확정을 허용합니다."(테이블 COMMENT)
+	 */
+	@Override
+	@Transactional
+	public BriefView saveAndComplete(UUID managerUserId, UUID orgId, UUID caseId,
+			List<String> causes, String why, String nextAction) {
+		CaseSummary summary = caseLookupRepository.findCase(managerUserId, orgId, caseId)
+				.orElseThrow(() -> new ApiException(InterventionErrorCode.INTERVIEW_CASE_NOT_FOUND));
+
+		if (summary.interviewId() == null) {
+			throw new ApiException(InterventionErrorCode.INTERVIEW_BRIEF_NOT_CREATED);
+		}
+
+		UUID interviewId = summary.interviewId();
+		UUID requestId = UUID.randomUUID();
+
+		// ① 원인 — 선택 집합 전체를 대체한다(APPEND-ONLY가 아니다).
+		completionRepository.replaceCauses(interviewId, causes, managerUserId);
+
+		// ② 매니저 기록 — 덧붙인다. 재저장해도 기존 행을 고치지 않고 최신 행이 현재 값이 된다.
+		completionRepository.appendActivity(interviewId, why, nextAction, managerUserId);
+
+		/*
+		 * 이미 종결된 면담을 다시 저장하는 경우 여기서 끝난다.
+		 * 브리프는 종결 시점 그대로 고정이고, 수정 대상은 위 둘뿐이다(테이블 COMMENT).
+		 */
+		if (completionRepository.isCompleted(interviewId)) {
+			return findBrief(managerUserId, orgId, caseId);
+		}
+
+		BriefHeader header = briefRepository.findHeader(managerUserId, orgId, interviewId)
+				.orElseThrow(() -> new ApiException(InterventionErrorCode.INTERVIEW_BRIEF_NOT_CREATED));
+		if (header.briefId() == null || header.openingRemark() == null) {
+			// 생성되지 않았거나 실패한 브리프로는 종결할 수 없다 — 확정할 내용이 없다.
+			throw new ApiException(InterventionErrorCode.INTERVIEW_BRIEF_NOT_CREATED);
+		}
+
+		// ③ 브리프 확정 — 항목을 전부 is_selected=TRUE로 올린다.
+		if ("DRAFT".equals(header.briefStatus())) {
+			completionRepository.confirmBrief(header.briefId(), managerUserId);
+			completionRepository.insertConfirmHistory(header.briefId(), managerUserId, requestId);
+		}
+
+		// ④ 잠금 재검증 — CONFIRMED 브리프의 선택 항목이 1건 이상이어야 한다.
+		if (completionRepository.countSelectedItems(header.briefId()) == 0) {
+			throw new ApiException(InterventionErrorCode.BRIEF_HAS_NO_SELECTED_ITEM);
+		}
+
+		// ⑤ 면담 종결 — PENDING에서 COMPLETED로 직행한다.
+		if (completionRepository.completeInterview(interviewId, managerUserId) == 0) {
+			throw new ApiException(InterventionErrorCode.INTERVIEW_ROW_VERSION_CONFLICT);
+		}
+
+		// ⑥ 상태 이력 — PENDING→COMPLETED 1행. 없던 IN_PROGRESS 전이를 지어내지 않는다.
+		completionRepository.insertStatusHistory(interviewId, managerUserId, requestId);
+
+		return findBrief(managerUserId, orgId, caseId);
+	}
 
 	@Override
 	public BriefView createBrief(UUID managerUserId, UUID orgId, UUID caseId, String traceId) {

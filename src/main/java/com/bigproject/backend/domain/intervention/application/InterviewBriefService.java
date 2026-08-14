@@ -33,6 +33,19 @@ public interface InterviewBriefService {
 	BriefView createBrief(UUID managerUserId, UUID orgId, UUID caseId, String traceId);
 
 	/**
+	 * 브리프를 저장하고 면담을 종결한다. <b>저장은 항상 종결이다</b>(정의서 §5).
+	 *
+	 * <p>종결 후 다시 저장하면 <b>브리프는 그대로 두고</b> 면담 기록만 갱신한다 —
+	 * "브리프 버전은 종결 시점 그대로 고정됩니다"(테이블 COMMENT).
+	 *
+	 * @param causes     원인 분류 7종 중 고른 것. 0건도 허용한다
+	 * @param why        상세 사유. 비어도 저장된다
+	 * @param nextAction 추후 계획. <b>비어도 저장된다</b> — 화면이 한 번만 확인하고 넘긴다
+	 */
+	BriefView saveAndComplete(UUID managerUserId, UUID orgId, UUID caseId,
+			List<String> causes, String why, String nextAction);
+
+	/**
 	 * @param openingRemark ★ AI가 생성한 여는 말. 화면 ①칸에 그대로 표시한다
 	 * @param items         ★ AI가 생성한 질문 체크리스트. <b>고르는 UI가 없어 전부 그린다</b>
 	 * @param isVoid        무효 응시 브리프인가. true면 여는 말·질문이 통째로 다르다(정의서 §6-2)

@@ -45,7 +45,14 @@ public enum InterventionErrorCode implements ApiErrorCode {
 	BRIEF_GENERATION_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "브리프를 생성하지 못했습니다."),
 
 	/** AI 생성 실패 중 <b>재시도 가치가 있는</b> 경우. 타임아웃·레이트리밋·프로바이더 오류다. */
-	BRIEF_GENERATION_FAILED_RETRYABLE(HttpStatus.SERVICE_UNAVAILABLE, "브리프 생성이 지연되고 있습니다. 다시 시도해 주세요.");
+	BRIEF_GENERATION_FAILED_RETRYABLE(HttpStatus.SERVICE_UNAVAILABLE, "브리프 생성이 지연되고 있습니다. 다시 시도해 주세요."),
+
+	/**
+	 * 확정하려는데 선택된 질문이 없다. 테이블 COMMENT가
+	 * "CONFIRMED 전환 시 선택 항목 1건 이상"을 요구한다 — 질문 0개짜리 브리프로 면담을
+	 * 종결하면 나중에 "무엇을 물었는지"가 남지 않는다.
+	 */
+	BRIEF_HAS_NO_SELECTED_ITEM(HttpStatus.CONFLICT, "질문이 없는 브리프는 확정할 수 없습니다.");
 
 	private final HttpStatus status;
 	private final String defaultMessage;
