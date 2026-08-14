@@ -77,8 +77,20 @@ public class AnalysisJob {
 	@Column(name = "trace_id", nullable = false, columnDefinition = "text")
 	private String traceId;
 
-	/** AI 서버가 202 응답으로 반환한 작업 ID. */
-	@Column(name = "external_job_id")
+	/**
+	 * AI 서버가 202 응답으로 반환한 작업 ID.
+	 *
+	 * <p>D1(2026-08-13): {@code updatable = false}.
+	 *   WHY: 2026-08-13 사고 — 폴러 중복(소유자 필터 없는 findByStatusIn)이 겹치면서 남의 job에
+	 *        404를 받고 이 컬럼을 null로 되돌리는 버그가 실운영에서 재현됐다(PR #108). save()/
+	 *        merge()의 자동생성 UPDATE가 이 컬럼을 아예 못 건드리게 막으면, 앞으로 같은 클래스의
+	 *        실수가 또 나와도 실제로 컬럼을 지울 방법이 없다.
+	 *   COST: 정당한 최초 기록(AI 202 응답 직후)도 더 이상 save()로는 안 되므로, 그 한 곳만
+	 *        {@link com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisJobRepository
+	 *        #assignExternalJobId} 전용 쿼리로 옮겨야 한다.
+	 *   EXIT: 되돌리려면 이 애너테이션만 지우고 그 전용 쿼리 호출을 다시 save()로 되돌리면 된다.
+	 */
+	@Column(name = "external_job_id", updatable = false)
 	private UUID externalJobId;
 
 	/** 15종. 분석 실행 5종 + 저장소 접근 5종(S-03) + ZIP 검증 5종(S-15). */
