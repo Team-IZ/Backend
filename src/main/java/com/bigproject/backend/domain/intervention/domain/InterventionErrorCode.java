@@ -59,7 +59,13 @@ public enum InterventionErrorCode implements ApiErrorCode {
 	 * 다음 회차 브리프의 {@code askedQuestions}로 이어지므로 사후에 바꾸면 그 기록이
 	 * 사실과 달라진다. 원인·기록은 여전히 고칠 수 있다.
 	 */
-	BRIEF_NOT_EDITABLE(HttpStatus.CONFLICT, "종결된 면담의 브리프는 다시 만들 수 없습니다.");
+	BRIEF_NOT_EDITABLE(HttpStatus.CONFLICT, "종결된 면담의 브리프는 다시 만들 수 없습니다."),
+
+	/**
+	 * 인증 정보에 기관 ID가 없다. 토큰 발급 쪽 문제라 사용자가 할 수 있는 일이 없다 —
+	 * 다른 도메인({@code AcademicOperationsErrorCode})과 같은 코드명을 쓴다.
+	 */
+	ORGANIZATION_CONTEXT_MISSING(HttpStatus.INTERNAL_SERVER_ERROR, "인증 정보에서 기관을 확인할 수 없습니다.");
 
 	private final HttpStatus status;
 	private final String defaultMessage;

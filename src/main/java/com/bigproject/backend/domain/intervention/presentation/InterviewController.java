@@ -101,7 +101,7 @@ public class InterviewController {
 		InterviewService.InterviewListResult result = interviewService.findCases(
 				new InterviewService.InterviewListCriteria(
 						currentUserResolver.resolveCurrentMemberId(),
-						extractOrganizationId(authentication),
+						ActorContext.organizationId(authentication),
 						assessmentRoundId,
 						search,
 						status,
@@ -132,7 +132,7 @@ public class InterviewController {
 	@GetMapping("/rounds")
 	public ResponseEntity<List<InterviewRoundOptionResponse>> findRoundOptions(Authentication authentication) {
 		List<InterviewRoundOptionResponse> options = interviewService
-				.findRoundOptions(currentUserResolver.resolveCurrentMemberId(), extractOrganizationId(authentication))
+				.findRoundOptions(currentUserResolver.resolveCurrentMemberId(), ActorContext.organizationId(authentication))
 				.stream()
 				.map(InterviewRoundOptionResponse::from)
 				.toList();
@@ -171,7 +171,7 @@ public class InterviewController {
 			Authentication authentication
 	) {
 		interviewService.exclude(
-				currentUserResolver.resolveCurrentMemberId(), extractOrganizationId(authentication), caseId);
+				currentUserResolver.resolveCurrentMemberId(), ActorContext.organizationId(authentication), caseId);
 		return ResponseEntity.noContent().build();
 	}
 
@@ -206,19 +206,8 @@ public class InterviewController {
 			Authentication authentication
 	) {
 		interviewService.reinclude(
-				currentUserResolver.resolveCurrentMemberId(), extractOrganizationId(authentication), caseId);
+				currentUserResolver.resolveCurrentMemberId(), ActorContext.organizationId(authentication), caseId);
 		return ResponseEntity.noContent().build();
 	}
 
-	/**
-	 * 인증 정보에 심어 둔 기관 ID. {@code ClassroomController}와 같은 방식이다 —
-	 * 토큰에서 꺼내야 다른 기관 회차 ID를 넣어 호출해도 행이 안 나온다.
-	 */
-	private UUID extractOrganizationId(Authentication authentication) {
-		Object details = authentication.getDetails();
-		if (!(details instanceof UUID organizationId)) {
-			throw new IllegalStateException("인증 정보에서 organizationId를 확인할 수 없습니다.");
-		}
-		return organizationId;
-	}
 }

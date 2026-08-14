@@ -79,7 +79,7 @@ public class InterviewBriefController {
 			Authentication authentication
 	) {
 		InterviewBriefService.BriefView view = interviewBriefService.findBrief(
-				currentUserResolver.resolveCurrentMemberId(), extractOrganizationId(authentication), caseId);
+				currentUserResolver.resolveCurrentMemberId(), ActorContext.organizationId(authentication), caseId);
 
 		return ResponseEntity.ok(InterviewBriefResponse.from(view));
 	}
@@ -124,7 +124,7 @@ public class InterviewBriefController {
 	) {
 		InterviewBriefService.BriefView view = interviewBriefService.createBrief(
 				currentUserResolver.resolveCurrentMemberId(),
-				extractOrganizationId(authentication), caseId, traceId);
+				ActorContext.organizationId(authentication), caseId, traceId);
 
 		return ResponseEntity.ok(InterviewBriefResponse.from(view));
 	}
@@ -174,7 +174,7 @@ public class InterviewBriefController {
 	) {
 		InterviewBriefService.BriefView view = interviewBriefService.saveAndComplete(
 				currentUserResolver.resolveCurrentMemberId(),
-				extractOrganizationId(authentication), caseId,
+				ActorContext.organizationId(authentication), caseId,
 				request.causes(), request.why(), request.nextAction());
 
 		return ResponseEntity.ok(InterviewBriefResponse.from(view));
@@ -218,16 +218,8 @@ public class InterviewBriefController {
 	) {
 		InterviewBriefService.BriefView view = interviewBriefService.regenerateBrief(
 				currentUserResolver.resolveCurrentMemberId(),
-				extractOrganizationId(authentication), caseId, traceId);
+				ActorContext.organizationId(authentication), caseId, traceId);
 
 		return ResponseEntity.ok(InterviewBriefResponse.from(view));
-	}
-
-	private UUID extractOrganizationId(Authentication authentication) {
-		Object details = authentication.getDetails();
-		if (!(details instanceof UUID organizationId)) {
-			throw new IllegalStateException("인증 정보에서 organizationId를 확인할 수 없습니다.");
-		}
-		return organizationId;
 	}
 }
