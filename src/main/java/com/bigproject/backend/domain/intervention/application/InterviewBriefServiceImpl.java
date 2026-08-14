@@ -248,10 +248,20 @@ public class InterviewBriefServiceImpl implements InterviewBriefService {
 						.map(prior -> new PriorInterviewView(prior.completedAt(), prior.nextAction()))
 						.orElse(null),
 				savedRecord(summary.interviewId()),
-				// ⚠️ 아래 둘은 DB 회신 대기분이다(제안서 B-2·B-3). 화면이 해당 블록을 그리지
-				// 않도록 빈 값으로 둔다 — 지어낸 값을 넣으면 매니저가 그것을 근거로 면담한다.
+				// ⚠️ concepts는 아직 DB 회신 대기다(제안서 B-3 — GROUP_UNDERPERFORMANCE 지표가
+				// 회차 스냅샷에도 생성되는지 RPT 확인 중). 지어낸 값을 넣으면 매니저가 그것을
+				// 근거로 면담하므로 빈 배열로 둔다.
 				List.of(),
-				null);
+				// 무효 응시 브리프에서만 "시스템이 본 것"을 보여준다(정의서 §6-2).
+				// 일반 브리프에 띄우면 면담이 추궁이 된다 — 이 화면이 하려는 일은
+				// "다음 한 주를 어디에 쓸지"를 정하는 것이다.
+				"INVALID_ATTEMPT".equals(header.briefType())
+						? briefRepository.findVoidEvidence(caseId)
+								.map(evidence -> new VoidEvidenceView(
+										evidence.unanswered(), evidence.totalQuestions(),
+										evidence.copied(), evidence.durationMin()))
+								.orElse(null)
+						: null);
 	}
 
 	/**

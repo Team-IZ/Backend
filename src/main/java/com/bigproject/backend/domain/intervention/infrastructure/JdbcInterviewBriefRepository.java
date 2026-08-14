@@ -141,6 +141,76 @@ public class JdbcInterviewBriefRepository implements InterviewBriefRepository {
 		return rows.stream().findFirst();
 	}
 
+	/**
+	 * 무효 응시 근거 3종을 한 번에 센다.
+	 *
+	 * <h2>문제 단위로 센다</h2>
+	 *
+	 * <p>화면 문구가 "3문항 중 2문항 무응답"이고 한 회차 문제는 최대 3개다
+	 * ({@code ck_assessment_problem_problem_no}). 단계 단위로 세면 문제 하나가 L1~L4로
+	 * 쪼개져 "12단계 중 8단계"처럼 매니저가 읽을 수 없는 숫자가 된다.
+	 *
+	 * <h2>복사 판정 — 정규화 후 완전 일치</h2>
+	 *
+	 * <p>공백·개행을 지우고 소문자로 맞춘 뒤 비교한다. 유사도를 쓰지 않는 이유는 화면이
+	 * <b>"판단은 하지 않습니다"</b>라고 밝히기 때문이다 — 애매한 유사도로 "복사했다"고
+	 * 표시하면 관찰이 아니라 판정이 되고, 그 판정으로 매니저가 무효를 확정하게 된다.
+	 *
+	 * <p>무응답과 섞이지 않는다. {@code ck_problem_stage_status_2}가
+	 * {@code NOT_ANSWERED}일 때 {@code question_answer_text}를 NULL로 강제하므로
+	 * <b>답을 썼는데 질문과 같은 경우</b>만 걸린다.
+	 */
+	@Override
+	public Optional<VoidEvidence> findVoidEvidence(UUID candidateId) {
+		List<VoidEvidence> rows = jdbcTemplate.query("""
+				WITH attempt AS (
+				    SELECT ma.attempt_id
+				    FROM interview_candidate ic
+				    JOIN LATERAL (
+				        SELECT x.attempt_id
+				        FROM measurement_attempt x
+				        WHERE x.assessment_round_id = ic.assessment_round_id
+				          AND x.user_id             = ic.user_id
+				          AND x.attempt_type        = 'INITIAL'
+				        ORDER BY x.attempt_sequence_no DESC
+				        LIMIT 1
+				    ) ma ON TRUE
+				    WHERE ic.candidate_id = ?
+				),
+				per_problem AS (
+				    SELECT ps.problem_id,
+				           BOOL_AND(ps.status = 'NOT_ANSWERED') AS all_unanswered,
+				           BOOL_OR(ps.question_answer_text IS NOT NULL
+				                   AND REGEXP_REPLACE(LOWER(ps.question_answer_text), '\\s+', '', 'g')
+				                     = REGEXP_REPLACE(LOWER(ps.question_text),        '\\s+', '', 'g')) AS copied
+				    FROM attempt a
+				    JOIN assessment_session s ON s.attempt_id = a.attempt_id
+				    JOIN problem_stage ps     ON ps.session_id = s.session_id
+				    GROUP BY ps.problem_id
+				),
+				duration AS (
+				    SELECT COALESCE(
+				               EXTRACT(EPOCH FROM (s.ended_at - s.started_at)) / 60, 0) AS minutes
+				    FROM attempt a
+				    JOIN assessment_session s ON s.attempt_id = a.attempt_id
+				)
+				SELECT COUNT(*)::int                                        AS total_questions,
+				       COUNT(*) FILTER (WHERE all_unanswered)::int          AS unanswered,
+				       COALESCE(BOOL_OR(copied), FALSE)                     AS copied,
+				       COALESCE((SELECT ROUND(minutes)::int FROM duration), 0) AS duration_min
+				FROM per_problem
+				""",
+				(rs, rowNum) -> new VoidEvidence(
+						rs.getInt("unanswered"),
+						rs.getInt("total_questions"),
+						rs.getBoolean("copied"),
+						rs.getInt("duration_min")),
+				candidateId);
+
+		// 문제가 하나도 없으면(미응시로 세션 자체가 안 열린 경우) 보여줄 관찰이 없다.
+		return rows.stream().filter(row -> row.totalQuestions() > 0).findFirst();
+	}
+
 	private BriefHeader mapHeader(ResultSet rs, int rowNum) throws SQLException {
 		return new BriefHeader(
 				rs.getObject("brief_id", UUID.class),

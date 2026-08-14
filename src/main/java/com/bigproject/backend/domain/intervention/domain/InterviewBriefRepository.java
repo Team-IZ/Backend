@@ -89,4 +89,24 @@ public interface InterviewBriefRepository {
 
 	record PriorInterview(Instant completedAt, String nextAction) {
 	}
+
+	/**
+	 * 무효 응시 브리프의 "시스템이 본 것".
+	 *
+	 * <p>화면이 <b>"시스템이 본 것 · 판단은 하지 않습니다"</b>로 감싸 보여준다 — 관찰이지
+	 * 판정이 아니다. 무효로 처리할지는 사람이 정한다(9-4).
+	 *
+	 * <p>저장하지 않고 조회 시점에 계산한다(제안서 B-2 회신). {@code question_text}·
+	 * {@code question_answer_text}가 사후 변경되지 않으므로 매번 계산해도 결과가 같다.
+	 */
+	Optional<VoidEvidence> findVoidEvidence(UUID candidateId);
+
+	/**
+	 * @param unanswered     <b>문제 단위</b> 무응답 수. 그 문제의 단계가 전부 답 없이 끝난 경우다
+	 * @param totalQuestions 그 회차 문제 수(최대 3)
+	 * @param copied         답변이 질문 문장과 같은 단계가 하나라도 있는가
+	 * @param durationMin    세션 시작~종료 분
+	 */
+	record VoidEvidence(int unanswered, int totalQuestions, boolean copied, int durationMin) {
+	}
 }

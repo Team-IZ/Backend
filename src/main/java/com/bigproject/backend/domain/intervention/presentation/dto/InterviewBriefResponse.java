@@ -61,7 +61,14 @@ public record InterviewBriefResponse(
 		@Schema(description = "⚠️ **미구현** — 교안 위치·반 문제 판정이 DB 회신 대기입니다. 현재 빈 배열")
 		List<ConceptResponse> concepts,
 
-		@Schema(description = "⚠️ **미구현** — \"질문 문장 그대로 복사\" 판정 규칙이 DB 회신 대기입니다. 현재 null")
+		@Schema(description = """
+				"시스템이 본 것" — **무효 응시 브리프에서만** 채워집니다(그 외에는 null).
+
+				일반 브리프에 띄우지 않는 이유는 면담이 **추궁**이 되기 때문입니다 —
+				이 화면이 하려는 일은 "다음 한 주를 어디에 쓸지"를 정하는 것입니다(정의서 §6-2).
+
+				⚠️ **관찰이지 판정이 아닙니다.** 화면도 "판단은 하지 않습니다"로 감싸 보여줍니다.
+				""")
 		VoidEvidenceResponse voidEvidence) {
 
 	public static InterviewBriefResponse from(BriefView view) {
@@ -139,7 +146,19 @@ public record InterviewBriefResponse(
 	public record ConceptResponse(String name, String curriculumRef, String groupIssueClassLabel) {
 	}
 
-	@Schema(description = "무효 응시 근거 — 미구현")
-	public record VoidEvidenceResponse(int unanswered, int totalQuestions, boolean copied, int durationMin) {
+	@Schema(description = "무효 응시 근거. 화면 문구: `3문항 중 2문항 무응답 · 나머지 1문항은 질문 문장을 그대로 복사 · 총 응답 시간 4분`")
+	public record VoidEvidenceResponse(
+
+			@Schema(description = "**문제 단위** 무응답 수. 그 문제의 단계가 전부 답 없이 끝난 경우", example = "2")
+			int unanswered,
+
+			@Schema(description = "그 회차 문제 수(최대 3)", example = "3")
+			int totalQuestions,
+
+			@Schema(description = "답변이 질문 문장과 같은 단계가 있는가. **정규화 후 완전 일치**로 판정한다", example = "true")
+			boolean copied,
+
+			@Schema(description = "세션 시작~종료 분", example = "4")
+			int durationMin) {
 	}
 }
