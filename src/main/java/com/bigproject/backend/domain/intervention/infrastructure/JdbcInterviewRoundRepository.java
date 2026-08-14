@@ -59,6 +59,8 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 						label(rs.getString("project_name"), rs.getString("round_name")),
 						rs.getString("status")),
 				managerUserId, orgId);
+		// 정렬은 SQL의 p.sequence_no, r.round_no가 한다 — round_no는 프로젝트 안에서만
+		// 유일하므로 sequence_no가 앞에 와야 기수 전체에서 순서가 맞는다.
 	}
 
 	/**
@@ -77,6 +79,7 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 		List<RoundMeta> rows = jdbcTemplate.query("""
 				SELECT r.assessment_round_id,
 				       r.round_no,
+				       p.sequence_no,
 				       p.name AS project_name,
 				       r.round_name,
 				       rpt.published_at
@@ -107,24 +110,36 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 	}
 
 	private RoundMeta mapMeta(ResultSet rs, int rowNum) throws SQLException {
-		int roundNo = rs.getInt("round_no");
 		Timestamp publishedAt = rs.getTimestamp("published_at");
 		return new RoundMeta(
 				rs.getObject("assessment_round_id", UUID.class),
-				roundNo,
+				rs.getInt("round_no"),
 				label(rs.getString("project_name"), rs.getString("round_name")),
-				roundNo == 1,
+				// 🔴 round_no로 판정하면 안 된다 — 미니프로젝트는 활성 회차가 1건뿐이라
+				// round_no가 항상 1이고, 그러면 모든 회차가 "1차"가 되어 화면에
+				// "1차는 위험 유형이 붙지 않습니다" 배너가 영영 뜬다.
+				// 화면의 1차·2차는 기수 안의 프로젝트 순서다.
+				rs.getInt("sequence_no") == 1,
 				publishedAt == null ? null : publishedAt.toInstant());
 	}
 
 	/**
-	 * 드롭다운 문구. {@code round_no}는 프로젝트 안에서만 유일하므로 프로젝트명을 앞에 붙인다 —
-	 * 안 붙이면 서로 다른 프로젝트의 1차가 목록에 똑같이 두 번 보인다.
+	 * 드롭다운 문구.
+	 *
+	 * <p>{@code round_name}이 이미 프로젝트명을 포함하는 경우가 있어(실측: 프로젝트
+	 * "미니프로젝트 2차" + 회차 "미니프로젝트 2차 이해도 확인") 그대로 붙이면
+	 * "미니프로젝트 2차 미니프로젝트 2차 이해도 확인"이 된다. 포함돼 있으면 회차명만 쓴다.
+	 *
+	 * <p>포함돼 있지 않을 때만 프로젝트명을 앞에 붙이는 이유는 {@code round_no}가
+	 * 프로젝트 안에서만 유일해서다 — 안 붙이면 서로 다른 프로젝트의 회차가 구분되지 않는다.
 	 */
 	private static String label(String projectName, String roundName) {
 		if (roundName == null || roundName.isBlank()) {
 			return projectName;
 		}
-		return projectName == null || projectName.isBlank() ? roundName : projectName + " " + roundName;
+		if (projectName == null || projectName.isBlank() || roundName.contains(projectName)) {
+			return roundName;
+		}
+		return projectName + " " + roundName;
 	}
 }
