@@ -60,9 +60,27 @@ public class InterviewBriefWriter {
 		// 통째로 다른 브리프가 나온다(정의서 §6-2).
 		String briefType = "INVALID".equals(summary.riskType()) ? "INVALID_ATTEMPT" : "STANDARD";
 
-		int versionNo = writeRepository.nextVersionNo(interviewId);
-		UUID briefId = writeRepository.insertBriefDraft(
-				interviewId, summary.candidateId(), briefType, versionNo, firstInterview, managerUserId);
+		/*
+		 * 생성이 끊겨 내용 없이 남은 DRAFT가 있으면 그것을 재사용한다.
+		 *
+		 * uq_interview_brief_current_draft가 면담당 DRAFT를 1건으로 강제하므로 새로 만들 수 없다.
+		 * AI 호출이 실패해도 행을 남기는 설계라(태운 토큰을 원장에 남기고 중복 호출 방지 장치가
+		 * 그 행을 쓴다) 재시도 경로가 반드시 이 행을 만나게 된다.
+		 *
+		 * 붙어 있던 근거는 지운다 — 안 지우면 시도마다 쌓여 AI가 버려진 시도의 근거 id를 받는다.
+		 */
+		var reusable = writeRepository.findReusableDraft(interviewId);
+		UUID briefId;
+		int versionNo;
+		if (reusable.isPresent()) {
+			briefId = reusable.get().briefId();
+			versionNo = reusable.get().versionNo();
+			writeRepository.clearDraftArtifacts(briefId, interviewId);
+		} else {
+			versionNo = writeRepository.nextVersionNo(interviewId);
+			briefId = writeRepository.insertBriefDraft(
+					interviewId, summary.candidateId(), briefType, versionNo, firstInterview, managerUserId);
+		}
 
 		Set<UUID> sourceIds = new HashSet<>();
 		InterviewBriefAiRequest request = assemble(

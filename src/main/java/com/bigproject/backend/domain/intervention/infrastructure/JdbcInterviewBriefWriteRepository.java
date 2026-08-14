@@ -7,6 +7,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
@@ -81,6 +82,39 @@ public class JdbcInterviewBriefWriteRepository implements InterviewBriefWriteRep
 				""", UUID.class,
 				interviewId, briefType, versionNo, firstInterview,
 				BRIEF_GENERATION_POLICY_VERSION, actorUserId, candidateId);
+	}
+
+	@Override
+	public Optional<ExistingDraft> findReusableDraft(UUID interviewId) {
+		List<ExistingDraft> rows = jdbcTemplate.query("""
+				SELECT brief_id, version_no
+				FROM interview_brief
+				WHERE interview_id        = ?
+				  AND status              = 'DRAFT'
+				  AND opening_remark_text IS NULL
+				ORDER BY version_no DESC
+				LIMIT 1
+				""",
+				(rs, rowNum) -> new ExistingDraft(
+						rs.getObject("brief_id", UUID.class), rs.getInt("version_no")),
+				interviewId);
+
+		return rows.stream().findFirst();
+	}
+
+	/**
+	 * 재시도 전 청소.
+	 *
+	 * <p>항목은 보통 없다(TX2까지 못 갔으므로). 근거는 TX1에서 만들어져 남아 있으므로
+	 * 지워야 한다 — 안 지우면 시도마다 쌓여 AI가 <b>버려진 시도의 근거 id</b>를 받게 된다.
+	 *
+	 * <p>순서가 중요하다. {@code interview_brief_item.interview_source_id}가 FK라
+	 * 항목을 먼저 지워야 근거를 지울 수 있다.
+	 */
+	@Override
+	public void clearDraftArtifacts(UUID briefId, UUID interviewId) {
+		jdbcTemplate.update("DELETE FROM interview_brief_item WHERE brief_id = ?", briefId);
+		jdbcTemplate.update("DELETE FROM interview_source WHERE interview_id = ?", interviewId);
 	}
 
 	@Override

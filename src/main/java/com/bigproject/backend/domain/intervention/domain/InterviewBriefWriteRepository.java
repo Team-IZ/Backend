@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.intervention.domain;
 import com.bigproject.backend.domain.intervention.application.dto.InterviewBriefAiResponse;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /** 브리프 생성·저장 쓰기. */
@@ -31,6 +32,29 @@ public interface InterviewBriefWriteRepository {
 
 	/** 이 면담의 다음 브리프 버전 번호. 첫 생성이면 1이다. */
 	int nextVersionNo(UUID interviewId);
+
+	/**
+	 * 생성이 끊겨 <b>내용 없이 남은 DRAFT</b>를 찾는다.
+	 *
+	 * <p>{@code uq_interview_brief_current_draft}가 면담당 DRAFT를 1건으로 강제하므로
+	 * 재시도할 때 새로 만들 수 없다 — 그 행을 <b>그대로 재사용</b>해야 한다.
+	 *
+	 * <p>내용이 있는 DRAFT는 제외한다. 그건 정상 생성돼 매니저가 아직 저장하지 않은
+	 * 브리프라, 재시도 대상이 아니라 그대로 보여줄 대상이다.
+	 */
+	Optional<ExistingDraft> findReusableDraft(UUID interviewId);
+
+	/** 재사용할 실패 DRAFT. 붙어 있던 근거·항목을 정리해야 하므로 id를 함께 준다. */
+	record ExistingDraft(UUID briefId, int versionNo) {
+	}
+
+	/**
+	 * 재시도 전 청소. 앞선 시도가 만들다 만 근거와 항목을 지운다.
+	 *
+	 * <p>지우지 않으면 {@code interview_source}가 시도할 때마다 쌓여, AI가 어느 근거를
+	 * 골라도 <b>이미 버려진 시도의 id</b>일 수 있다.
+	 */
+	void clearDraftArtifacts(UUID briefId, UUID interviewId);
 
 	/**
 	 * 생성 결과 저장.
