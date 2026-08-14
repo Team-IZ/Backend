@@ -296,6 +296,26 @@ invitation:
     from: ${INVITATION_MAIL_FROM:}
     starttls-enabled: ${INVITATION_MAIL_STARTTLS_ENABLED:true}
     time-zone: ${INVITATION_MAIL_TIME_ZONE:Asia/Seoul}
+    # 연결 하나로 보낼 최대 건수이자, 보내고 곧바로 원장에 기록하는 단위다.
+    # 제공자마다 세션당 발송 상한이 있어(Gmail 계열은 통상 100건 안팎) 통째로 보내지 않고 끊는다.
+    # 크게 잡으면 왕복이 줄지만 그만큼 진행률 폴링이 늦게 움직인다.
+    batch-size: ${INVITATION_MAIL_BATCH_SIZE:100}
+    outbox:
+      # 🔴 발송이 멈춘 초대를 이어받는 안전망. 기본은 꺼 둔다 —
+      # 켜면 컨텍스트가 뜨는 것만으로 실제 초대 메일이 나갈 수 있어 로컬·테스트에서 위험하다.
+      #
+      # 운영에서는 켜야 한다. 꺼 두면 배포·크래시로 발송이 끊긴 초대가 PENDING에 남아
+      # 아무도 이어받지 않고, 명단 화면의 [초대 재발송]으로만 복구된다.
+      enabled: ${INVITATION_MAIL_OUTBOX_ENABLED:false}
+      # 이 시간이 지나도 PENDING인 클레임을 "멈춘 것"으로 본다.
+      # 정상 발송이 끝나는 시간(900명 기준 약 3분)보다 넉넉해야 한다 — 짧으면 아직 보내는 중인
+      # 초대를 다른 인스턴스가 집어 교육생이 메일을 두 통 받는다.
+      stall-threshold: ${INVITATION_MAIL_OUTBOX_STALL_THRESHOLD:PT10M}
+      claim-limit: ${INVITATION_MAIL_OUTBOX_CLAIM_LIMIT:200}
+      delay: ${INVITATION_MAIL_OUTBOX_DELAY:PT2M}
+      initial-delay: ${INVITATION_MAIL_OUTBOX_INITIAL_DELAY:PT1M}
+  # 자리 확보를 몇 건씩 한 트랜잭션으로 묶을지. 이 값이 곧 "경합이 나면 행 단위로 되돌릴 범위"다.
+  reservation-chunk-size: ${INVITATION_RESERVATION_CHUNK_SIZE:100}
 
 password-reset:
   base-url: ${PASSWORD_RESET_BASE_URL:http://localhost:5173}
