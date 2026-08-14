@@ -96,9 +96,22 @@ public class HttpAnalysisServerClient implements AnalysisServerClient {
 			}
 			return Optional.of(toProgress(response));
 		} catch (AiCallException exception) {
-			// 404는 오류가 아니다. AI가 job을 메모리에만 두어 재시작하면 사라진다고 스펙에 명시돼
-			// 있고(GET /analyses/{job_id} 설명), 호출부는 이를 재요청 신호로 다룬다.
-			if (exception.status() != null && exception.status().value() == HttpStatus.NOT_FOUND.value()) {
+			// D3(2026-08-13): AI 앱이 스스로 "이 job을 모른다"고 명시한 404만 확정 신호로 다룬다
+			// (공통 봉투 {error:"JOB_NOT_FOUND"} — AiClient.translate()가 이미 이 값을 failureCode로
+			// 옮겨 준다).
+			//   WHY: 본문 없는 프록시/envoy 404(AI 컨테이너가 일시 정지·재시작 중일 때 앞단에서
+			//        나는 404)는 AI가 낸 신호가 아니라 "job이 사라졌다"고 확정할 근거가 없다.
+			//        여기서 성급히 Optional.empty()로 접으면 pollActiveJobs가 즉시
+			//        FAILED(TEMPORARY_ERROR)로 확정해버려, 실제로는 멀쩡한 job까지 재요청
+			//        낭비를 만든다.
+			//   COST: 모호한 404는 판단을 미루고 예외로 던진다 — pollActiveJobs의 job 단위
+			//        try/catch가 흡수해 이번 폴링만 건너뛰고 다음 폴링(PT1M)에 다시 시도한다.
+			//   EXIT: AI 쪽 404 봉투 계약이 바뀌면(예: 항상 JOB_NOT_FOUND를 명시) 이 조건을
+			//        단순히 status==404만 보는 것으로 되돌려도 된다.
+			boolean confirmedGone = exception.status() != null
+					&& exception.status().value() == HttpStatus.NOT_FOUND.value()
+					&& "JOB_NOT_FOUND".equals(exception.failureCode());
+			if (confirmedGone) {
 				return Optional.empty();
 			}
 			throw new AnalysisServerException(toFailureCode(exception), exception.getMessage(), exception);
