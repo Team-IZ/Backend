@@ -475,6 +475,7 @@ public class TraineeController {
 					| `inactivatedByName` | string? | 비활성화한 사용자 이름. 화면 표시용 |
 					| `inactivatedAt` | date-time? | 비활성화 시각. 활성이면 `null` |
 					| `pendingInvitationTokenId` | UUID? | 아직 수락·취소되지 않은 초대 토큰(11차 R2). `null`이 아닐 때만 재발송 버튼(`POST /cohorts/{cohortId}/trainees/invitations/resend`)을 켠다. 이미 활성화됐거나 초대가 취소됐으면 `null` |
+					| `invitationDeliveryFailed` | boolean | 그 초대의 **메일이 나가지 못했는지**. `true`면 `초대 메일이 나가지 않았습니다` 안내를 띄운다 |
 
 					#### 여기부터는 회차 지표다 — **매니저에게만** 채워지고 오퍼레이터는 전부 `null`이다
 
