@@ -154,6 +154,18 @@ public interface TraineeRosterRepository {
 			 * 이미 활성화됐거나 초대가 취소된 계정이라 재발송할 것이 없다.
 			 */
 			UUID pendingInvitationTokenId,
+
+			/**
+			 * 그 초대의 메일이 나가지 못했는지({@code user_invitation.status = 'DELIVERY_FAILED'}).
+			 *
+			 * <p>{@link #pendingInvitationTokenId}만으로는 알 수 없다 — 그 값은 PENDING·SENT·
+			 * DELIVERY_FAILED·EXPIRED에 모두 채워져, "메일은 갔고 아직 가입 안 함"과 "메일이 아예
+			 * 안 나감"이 화면에서 같아 보인다. 오퍼레이터 목록의
+			 * {@code invitationDeliveryFailed}와 같은 뜻이다.
+			 *
+			 * <p>재발송에 성공하면 원장이 SENT로 돌아가므로 이 값도 함께 false가 된다.
+			 */
+			boolean invitationDeliveryFailed,
 			UUID assessmentRoundId,
 			UUID attemptId,
 			String roundResultStatus,
@@ -192,9 +204,11 @@ public interface TraineeRosterRepository {
 				UUID classroomId, String className, OffsetDateTime joinedAt, OffsetDateTime leftAt,
 				String inactivatedReasonCode, String inactivatedReason, OffsetDateTime inactivatedAt,
 				UUID inactivatedById, String inactivatedByName, UUID pendingInvitationTokenId) {
+			// 회차 지표가 없는 행을 만드는 축약형이다. 발송 실패는 초대 원장에서만 나오는 값이라
+			// 여기서는 false로 둔다 — 이 생성자로 만드는 행은 초대 문맥을 갖지 않는다.
 			this(traineeId, name, email, rawAccountStatus, classroomId, className, joinedAt, leftAt,
 					inactivatedReasonCode, inactivatedReason, inactivatedAt, inactivatedById,
-					inactivatedByName, pendingInvitationTokenId,
+					inactivatedByName, pendingInvitationTokenId, false,
 					null, null, null, null, null, null, null, new int[0], null, null, null, null);
 		}
 	}

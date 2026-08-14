@@ -11,11 +11,16 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -68,6 +73,21 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 					AND o.deleted_at IS NULL
 			)
 			""";
+	/**
+	 * 위 EXISTS의 <b>일괄 판정</b>판. 조건은 한 글자도 다르지 않아야 한다 —
+	 * 두 판정이 갈리면 미리보기와 등록이 서로 다른 답을 하게 된다.
+	 */
+	private static final String FIND_EXISTING_ORGANIZATION_TRAINEES = """
+			SELECT u.normalized_email
+			FROM app_user u
+			JOIN "role" r ON r.role_id = u.role_id
+			JOIN organization o ON o.org_id = u.org_id
+			WHERE u.normalized_email = ANY(?)
+				AND u.org_id = ?
+				AND r.code = 'TRAINEE'
+				AND u.deleted_at IS NULL
+				AND o.deleted_at IS NULL
+			""";
 	private static final String INSERT_PENDING_USER = """
 			INSERT INTO app_user (
 				user_id, org_id, role_id, email, normalized_email, name, password_hash,
@@ -86,12 +106,21 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				issued_by, issued_request_id, used_request_id, created_at
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), ?, ?, NULL, NULL, NULL, NULL, ?, ?, NULL, ?)
 			""";
+	/**
+	 * batch_request_id·mail_claimed_at은 <b>일괄 등록에서만</b> 채운다.
+	 *
+	 * <p>앞은 폴링의 잡 ID이고, 뒤는 "누가 발송을 집었는가"다. 자리를 확보한 인스턴스가 곧바로 발송을
+	 * 이어받으므로 적재 시점에 이미 클레임한 것으로 본다 — 비워 두면 안전망 스케줄러가 발송 중인 초대를
+	 * 다시 집어 교육생에게 메일이 두 통 간다. 단건 초대는 둘 다 NULL이고, 안전망 조회가
+	 * batch_request_id IS NOT NULL만 보므로 단건 경로는 그 조회에 걸리지 않는다.
+	 */
 	private static final String INSERT_INVITATION = """
 			INSERT INTO user_invitation (
 				invitation_id, org_id, target_email, target_email_normalized,
 				target_role_code, target_cohort_id, status,
-				invited_by, invited_at, resend_count, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?)
+				invited_by, invited_at, resend_count, created_at, updated_at,
+				batch_request_id, mail_claimed_at
+			) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 0, ?, ?, ?, ?)
 			""";
 	/**
 	 * 재사용 가능한 계정 자리 조회. is_email_verified = FALSE 가 "한 번도 활성화된 적 없음"을 뜻한다
@@ -273,6 +302,352 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 	}
 
 	@Override
+	public Set<String> findExistingOrganizationTraineeEmails(
+			UUID organizationId,
+			Collection<String> normalizedEmails
+	) {
+		if (normalizedEmails.isEmpty()) {
+			return Set.of();
+		}
+		String[] emails = normalizedEmails.toArray(new String[0]);
+		/*
+		 * PreparedStatementSetter로 직접 배열을 만든다. jdbcTemplate.query(sql, args...)에 String[]을
+		 * 그대로 넘기면 "파라미터 하나가 배열"이 아니라 "가변인자 여러 개"로 풀려 파라미터 수가 어긋난다.
+		 */
+		List<String> found = jdbcTemplate.query(
+				FIND_EXISTING_ORGANIZATION_TRAINEES,
+				(PreparedStatement ps) -> {
+					ps.setArray(1, ps.getConnection().createArrayOf("varchar", emails));
+					ps.setObject(2, organizationId);
+				},
+				(ResultSet rs, int rowNum) -> rs.getString("normalized_email")
+		);
+		return Set.copyOf(found);
+	}
+
+	// ---------------------------------------------------------------------
+	// 일괄 등록용 벌크 연산. 단건 SQL과 조건이 한 글자도 달라서는 안 된다 —
+	// 갈리면 "단건으로는 통과하는데 일괄로는 막히는" 행이 생긴다.
+	// ---------------------------------------------------------------------
+
+	private static final String FIND_EMAILS_WITH_INCOMPLETE_INVITATION = """
+			SELECT DISTINCT target_email_normalized
+			FROM user_invitation
+			WHERE target_email_normalized = ANY(?)
+				AND status IN ('PENDING', 'SENT', 'DELIVERY_FAILED', 'EXPIRED')
+			""";
+	private static final String FIND_REUSABLE_INVITED_USERS = """
+			SELECT normalized_email, user_id
+			FROM app_user
+			WHERE normalized_email = ANY(?)
+				AND deleted_at IS NULL
+				AND status = 'INACTIVE'
+				AND is_email_verified = FALSE
+				AND last_login_at IS NULL
+			""";
+	private static final String FIND_EXISTING_USER_EMAILS = """
+			SELECT normalized_email
+			FROM app_user
+			WHERE normalized_email = ANY(?)
+			""";
+	/**
+	 * 단건 INVALIDATE_PREVIOUS_TOKENS의 일괄판.
+	 *
+	 * <p>(이메일, 새 토큰) 쌍을 배열 두 개로 받아 unnest로 펼쳐 조인한다. 단순히
+	 * {@code target_email_normalized = ANY(?)}로 묶으면 {@code replaced_by_token_id}에 넣을 값을
+	 * 행마다 고를 수 없어 그 컬럼이 비게 되는데, 단건 경로는 채우고 있어 배치만 다르게 남으면 안 된다.
+	 */
+	private static final String INVALIDATE_PREVIOUS_TOKENS_FOR_EMAILS = """
+			UPDATE one_time_token t
+			SET invalidated_at = ?,
+				invalidated_reason = 'REPLACED',
+				replaced_by_token_id = r.new_token_id
+			FROM (SELECT unnest(?::varchar[]) AS email, unnest(?::uuid[]) AS new_token_id) r
+			WHERE t.org_id IS NOT DISTINCT FROM ?
+				AND t.target_email_normalized = r.email
+				AND t.purpose = ?
+				AND t.token_id <> r.new_token_id
+				AND t.used_at IS NULL
+				AND t.invalidated_at IS NULL
+			""";
+
+	/**
+	 * 잡 진행률. 잡 레코드가 따로 없고 batch_request_id가 같은 행들이 곧 잡이라 집계 한 방이면 끝난다.
+	 *
+	 * <p>ACCEPTED를 발송 완료로 함께 센다 — 이미 수락한 교육생은 메일을 받았다는 뜻이다. 그렇게 하지 않으면
+	 * 발송이 끝났는데도 교육생이 빨리 가입한 만큼 invitationSentCount가 되레 줄어 보인다.
+	 */
+	private static final String FIND_BATCH_PROGRESS = """
+			SELECT count(*)                                            AS registered_count,
+			       count(*) FILTER (WHERE status IN ('SENT', 'ACCEPTED')) AS invitation_sent_count,
+			       count(*) FILTER (WHERE status = 'DELIVERY_FAILED')  AS mail_failed_count,
+			       count(*) FILTER (WHERE status = 'PENDING')          AS mail_pending_count
+			FROM user_invitation
+			WHERE batch_request_id = ?
+				AND org_id = ?
+				AND target_cohort_id = ?
+			""";
+	/**
+	 * 발송이 멈춘 초대의 클레임. 배포본이 셋이라 {@code FOR UPDATE SKIP LOCKED}가 필수다 —
+	 * 없이 켜면 세 인스턴스가 같은 초대를 집어 교육생에게 메일이 3통 간다.
+	 *
+	 * <p>클레임과 발송을 분리한다. 발송(수 초)을 트랜잭션 안에서 하면 그동안 행을 잠그게 되므로,
+	 * 이 UPDATE 하나로 클레임만 찍고(단일 구문이라 그 자체가 원자적이다) 커밋한 뒤 메일을 보낸다.
+	 */
+	private static final String CLAIM_STALLED_TRAINEE_INVITATIONS = """
+			UPDATE user_invitation
+			SET mail_claimed_at = ?,
+				updated_at = ?
+			WHERE invitation_id IN (
+				SELECT invitation_id
+				FROM user_invitation
+				WHERE status = 'PENDING'
+					AND target_role_code = 'TRAINEE'
+					AND batch_request_id IS NOT NULL
+					AND (mail_claimed_at IS NULL OR mail_claimed_at < ?)
+				ORDER BY mail_claimed_at NULLS FIRST, invited_at
+				LIMIT ?
+				FOR UPDATE SKIP LOCKED
+			)
+			RETURNING invitation_id
+			""";
+	/**
+	 * 클레임한 초대의 메일 본문 재료. RETURNING은 갱신한 테이블의 컬럼만 돌려주므로 조인이 필요한
+	 * 이름·기관명·기수명은 여기서 따로 가져온다.
+	 */
+	private static final String FIND_CLAIMED_TRAINEE_INVITATIONS = """
+			SELECT ui.invitation_id,
+			       ui.target_email,
+			       ui.target_email_normalized,
+			       ui.invited_by,
+			       ui.batch_request_id,
+			       u.user_id,
+			       u.name,
+			       o.org_id,
+			       o.name AS org_name,
+			       c.cohort_id,
+			       c.name AS cohort_name
+			FROM user_invitation ui
+			JOIN app_user u ON u.normalized_email = ui.target_email_normalized
+				AND u.org_id = ui.org_id
+				AND u.deleted_at IS NULL
+			JOIN organization o ON o.org_id = ui.org_id
+			JOIN cohort c ON c.cohort_id = ui.target_cohort_id
+			WHERE ui.invitation_id = ANY(?)
+			""";
+
+	@Override
+	public Optional<BatchProgress> findBatchProgress(String batchRequestId, UUID organizationId, UUID cohortId) {
+		BatchProgress progress = jdbcTemplate.queryForObject(
+				FIND_BATCH_PROGRESS,
+				(ResultSet rs, int rowNum) -> new BatchProgress(
+						rs.getInt("registered_count"),
+						rs.getInt("invitation_sent_count"),
+						rs.getInt("mail_failed_count"),
+						rs.getInt("mail_pending_count")
+				),
+				batchRequestId,
+				organizationId,
+				cohortId
+		);
+		// 집계는 행이 없어도 0을 담은 한 줄을 돌려준다. 0건은 "그런 배치가 없다"와 같으므로 비워서 올린다.
+		return progress == null || progress.registeredCount() == 0 ? Optional.empty() : Optional.of(progress);
+	}
+
+	@Override
+	public List<StalledInvitation> claimStalledTraineeInvitations(
+			Instant claimedAt,
+			Instant stalledBefore,
+			int limit
+	) {
+		Timestamp claimedTimestamp = Timestamp.from(claimedAt);
+		List<UUID> claimed = jdbcTemplate.query(
+				CLAIM_STALLED_TRAINEE_INVITATIONS,
+				(PreparedStatement ps) -> {
+					ps.setTimestamp(1, claimedTimestamp);
+					ps.setTimestamp(2, claimedTimestamp);
+					ps.setTimestamp(3, Timestamp.from(stalledBefore));
+					ps.setInt(4, limit);
+				},
+				(ResultSet rs, int rowNum) -> rs.getObject("invitation_id", UUID.class)
+		);
+		if (claimed.isEmpty()) {
+			return List.of();
+		}
+
+		UUID[] invitationIds = claimed.toArray(new UUID[0]);
+		return jdbcTemplate.query(
+				FIND_CLAIMED_TRAINEE_INVITATIONS,
+				(PreparedStatement ps) -> ps.setArray(1, ps.getConnection().createArrayOf("uuid", invitationIds)),
+				(ResultSet rs, int rowNum) -> new StalledInvitation(
+						rs.getObject("invitation_id", UUID.class),
+						rs.getObject("user_id", UUID.class),
+						rs.getString("target_email"),
+						rs.getString("target_email_normalized"),
+						rs.getString("name"),
+						rs.getObject("invited_by", UUID.class),
+						rs.getString("batch_request_id"),
+						new InvitationContext(
+								rs.getObject("org_id", UUID.class),
+								rs.getString("org_name"),
+								rs.getObject("cohort_id", UUID.class),
+								rs.getString("cohort_name")
+						)
+				)
+		);
+	}
+
+	@Override
+	public Set<String> findEmailsWithIncompleteInvitation(Collection<String> normalizedEmails) {
+		return queryEmailSet(FIND_EMAILS_WITH_INCOMPLETE_INVITATION, "target_email_normalized", normalizedEmails);
+	}
+
+	@Override
+	public Set<String> findExistingUserEmails(Collection<String> normalizedEmails) {
+		return queryEmailSet(FIND_EXISTING_USER_EMAILS, "normalized_email", normalizedEmails);
+	}
+
+	@Override
+	public Map<String, UUID> findReusableInvitedUsers(Collection<String> normalizedEmails) {
+		if (normalizedEmails.isEmpty()) {
+			return Map.of();
+		}
+		String[] emails = normalizedEmails.toArray(new String[0]);
+		Map<String, UUID> reusable = new HashMap<>();
+		jdbcTemplate.query(
+				FIND_REUSABLE_INVITED_USERS,
+				(PreparedStatement ps) -> ps.setArray(1, ps.getConnection().createArrayOf("varchar", emails)),
+				(ResultSet rs) -> {
+					reusable.put(rs.getString("normalized_email"), rs.getObject("user_id", UUID.class));
+				}
+		);
+		return reusable;
+	}
+
+	private Set<String> queryEmailSet(String sql, String column, Collection<String> normalizedEmails) {
+		if (normalizedEmails.isEmpty()) {
+			return Set.of();
+		}
+		String[] emails = normalizedEmails.toArray(new String[0]);
+		return Set.copyOf(jdbcTemplate.query(
+				sql,
+				(PreparedStatement ps) -> ps.setArray(1, ps.getConnection().createArrayOf("varchar", emails)),
+				(ResultSet rs, int rowNum) -> rs.getString(column)
+		));
+	}
+
+	@Override
+	public void createPendingUsers(List<NewPendingUser> users) {
+		if (users.isEmpty()) {
+			return;
+		}
+		List<Object[]> batch = new ArrayList<>(users.size());
+		for (NewPendingUser user : users) {
+			Timestamp timestamp = Timestamp.from(user.now());
+			batch.add(new Object[]{
+					user.userId(), user.organizationId(), user.role().name(), user.email(),
+					user.normalizedEmail(), user.name(), user.passwordHash(),
+					timestamp, timestamp, timestamp
+			});
+		}
+		verifyBatch(jdbcTemplate.batchUpdate(INSERT_PENDING_USER, batch), "초대 대상 계정");
+	}
+
+	@Override
+	public void createInvitations(List<NewInvitation> invitations) {
+		if (invitations.isEmpty()) {
+			return;
+		}
+		List<Object[]> batch = new ArrayList<>(invitations.size());
+		for (NewInvitation invitation : invitations) {
+			Timestamp timestamp = Timestamp.from(invitation.invitedAt());
+			batch.add(new Object[]{
+					invitation.invitationId(), invitation.organizationId(), invitation.email(),
+					invitation.normalizedEmail(), invitation.targetRole().name(), invitation.targetCohortId(),
+					invitation.invitedBy(), timestamp, timestamp, timestamp,
+					invitation.batchRequestId(), mailClaimedAt(invitation.batchRequestId(), timestamp)
+			});
+		}
+		verifyBatch(jdbcTemplate.batchUpdate(INSERT_INVITATION, batch), "초대 원장");
+	}
+
+	@Override
+	public void saveTokens(List<InvitationToken> tokens) {
+		if (tokens.isEmpty()) {
+			return;
+		}
+		List<Object[]> batch = new ArrayList<>(tokens.size());
+		for (InvitationToken token : tokens) {
+			batch.add(new Object[]{
+					token.tokenId(), token.organizationId(), token.userId(), token.invitationId(),
+					token.targetEmail(), token.normalizedTargetEmail(), token.purpose().name(),
+					token.tokenHash(), token.payload(), Timestamp.from(token.issuedAt()),
+					Timestamp.from(token.expiresAt()), token.issuedBy(), token.issuedRequestId(),
+					Timestamp.from(token.issuedAt())
+			});
+		}
+		verifyBatch(jdbcTemplate.batchUpdate(INSERT_TOKEN, batch), "초대 토큰");
+	}
+
+	@Override
+	public void invalidatePreviousTokensForEmails(
+			UUID organizationId,
+			InvitationPurpose purpose,
+			Map<String, UUID> newTokenByEmail,
+			Instant invalidatedAt
+	) {
+		if (newTokenByEmail.isEmpty()) {
+			return;
+		}
+		// 두 배열의 순서가 서로 대응해야 하므로 같은 순회에서 만든다.
+		String[] emails = new String[newTokenByEmail.size()];
+		UUID[] tokenIds = new UUID[newTokenByEmail.size()];
+		int index = 0;
+		for (Map.Entry<String, UUID> entry : newTokenByEmail.entrySet()) {
+			emails[index] = entry.getKey();
+			tokenIds[index] = entry.getValue();
+			index++;
+		}
+		jdbcTemplate.update(INVALIDATE_PREVIOUS_TOKENS_FOR_EMAILS, (PreparedStatement ps) -> {
+			ps.setTimestamp(1, Timestamp.from(invalidatedAt));
+			ps.setArray(2, ps.getConnection().createArrayOf("varchar", emails));
+			ps.setArray(3, ps.getConnection().createArrayOf("uuid", tokenIds));
+			ps.setObject(4, organizationId);
+			ps.setString(5, purpose.name());
+		});
+	}
+
+	@Override
+	public void markInvitationsSent(List<SentInvitation> invitations, Instant sentAt) {
+		if (invitations.isEmpty()) {
+			return;
+		}
+		Timestamp timestamp = Timestamp.from(sentAt);
+		List<Object[]> batch = new ArrayList<>(invitations.size());
+		for (SentInvitation invitation : invitations) {
+			batch.add(new Object[]{
+					invitation.tokenId(), timestamp, timestamp, invitation.invitationId()
+			});
+		}
+		// 갱신 0행은 오류가 아니다 — 이미 SENT거나 취소된 초대일 수 있다(단건 SQL도 status='PENDING'만 잡는다).
+		jdbcTemplate.batchUpdate(MARK_INVITATION_SENT, batch);
+	}
+
+	/**
+	 * 배치의 모든 행이 정확히 1건씩 반영됐는지 본다.
+	 *
+	 * <p>드라이버가 건별 결과를 모르겠다고 답할 수 있어({@code SUCCESS_NO_INFO}) 음수는 성공으로 본다.
+	 * 0은 진짜로 적재되지 않은 것이므로 막는다 — 단건 경로가 {@code inserted != 1}을 검사하는 것과 같다.
+	 */
+	private void verifyBatch(int[] updateCounts, String subject) {
+		for (int updateCount : updateCounts) {
+			if (updateCount == 0) {
+				throw new IllegalStateException(subject + "을 생성할 수 없습니다.");
+			}
+		}
+	}
+
+	@Override
 	public void validateCohort(UUID organizationId, UUID cohortId) {
 		Integer cohortCount = jdbcTemplate.queryForObject(
 				"SELECT COUNT(*) FROM cohort WHERE cohort_id = ? AND org_id = ? AND deleted_at IS NULL",
@@ -324,7 +699,8 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 			Role targetRole,
 			UUID targetCohortId,
 			UUID invitedBy,
-			Instant invitedAt
+			Instant invitedAt,
+			String batchRequestId
 	) {
 		UUID invitationId = UUID.randomUUID();
 		Timestamp timestamp = Timestamp.from(invitedAt);
@@ -339,12 +715,22 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 				invitedBy,
 				timestamp,
 				timestamp,
-				timestamp
+				timestamp,
+				batchRequestId,
+				mailClaimedAt(batchRequestId, timestamp)
 		);
 		if (inserted != 1) {
 			throw new IllegalStateException("초대 원장을 생성할 수 없습니다.");
 		}
 		return invitationId;
+	}
+
+	/**
+	 * 일괄 등록 행만 적재 시점에 클레임한다. 단건 초대는 같은 트랜잭션 흐름에서 곧바로 발송·기록까지
+	 * 끝나 안전망이 볼 일이 없고, 애초에 batch_request_id가 NULL이라 조회에 걸리지 않는다.
+	 */
+	private static Timestamp mailClaimedAt(String batchRequestId, Timestamp invitedAt) {
+		return batchRequestId == null ? null : invitedAt;
 	}
 
 	@Override

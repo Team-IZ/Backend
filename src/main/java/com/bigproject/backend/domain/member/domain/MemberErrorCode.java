@@ -34,6 +34,14 @@ public enum MemberErrorCode implements ApiErrorCode {
 	INVITATION_SAVE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "초대 정보를 저장할 수 없습니다."),
 	/** 재발송할 수 있는 초대가 없다. 이미 수락됐거나 취소된 경우다. */
 	INVITATION_NOT_RESENDABLE(HttpStatus.NOT_FOUND, "재발송할 수 있는 초대를 찾을 수 없습니다."),
+	/**
+	 * 그 식별자로 만들어진 초대가 그 기수·기관에 하나도 없다. 오타이거나 남의 배치를 조회한 것이다.
+	 *
+	 * <p>등록된 행이 <b>0건인 배치</b>도 여기로 온다 — 명단이 전부 사전 판정에서 걸리면 초대 원장이
+	 * 하나도 생기지 않아 폴링할 대상 자체가 없다. 그래서 등록 응답은 그런 경우 {@code batchRequestId}를
+	 * 비워 돌려주고, 화면은 그 값이 없으면 폴링하지 않는다.
+	 */
+	REGISTRATION_BATCH_NOT_FOUND(HttpStatus.NOT_FOUND, "일괄 등록 진행 상황을 찾을 수 없습니다."),
 
 	/** 초대할 권한이 없는 역할이다(슈퍼어드민만 오퍼레이터를, 오퍼레이터만 매니저·교육생을 초대한다). */
 	INVITE_ROLE_NOT_ALLOWED(HttpStatus.FORBIDDEN, "이 역할을 초대할 권한이 없습니다."),
