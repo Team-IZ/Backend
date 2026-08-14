@@ -138,4 +138,34 @@ public class ActionRequiredAnalyticsService {
 	private int count(Object alert) {
 		return alert == null ? 0 : 1;
 	}
+
+	// =========================================================================
+	// 신규 추가: 조치 필요 항목 조회 (MG-07 담당 반 합계)
+	// =========================================================================
+	public List<ActionRequiredResponse> getActionRequiredProjects(UUID classId) {
+		ActionRequiredResponse.ManagerUnassignedAlert managerUnassigned = managerUnassigned(
+				operationalActionQueryRepository.findUnassignedClassesByClassId(classId));
+
+		ActionRequiredResponse.ConceptGapAlert conceptGap = conceptGap(
+				operationalActionQueryRepository.findConceptGapsByClassId(classId));
+
+		ActionRequiredResponse.GroupGapAlert groupGap = groupGap(
+				operationalActionQueryRepository.findGroupGapsByClassId(classId));
+
+		ActionRequiredResponse.InterviewBacklogAlert interviewBacklog = interviewBacklog(
+				operationalActionQueryRepository.findInterviewBacklogsByClassId(classId));
+
+		int actionCount = count(managerUnassigned) + count(conceptGap) + count(groupGap) + count(interviewBacklog);
+
+		ActionRequiredResponse response = new ActionRequiredResponse(
+				null,
+				actionCount,
+				managerUnassigned,
+				conceptGap,
+				groupGap,
+				interviewBacklog
+		);
+
+		return List.of(response);
+	}
 }

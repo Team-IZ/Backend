@@ -72,7 +72,7 @@ public class ManagerViewAnalyticsService {
 			return new ManagerHeatmapResponse.Scope(classroomId, className, null, null);
 		}
 		String teamName = repository.findParticipatingTeams(
-				managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
+						managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
 				.filter(team -> team.teamId().equals(teamId))
 				.map(ManagerAnalyticsRepository.TeamParticipant::teamName)
 				.findFirst().orElse(null);
@@ -158,7 +158,7 @@ public class ManagerViewAnalyticsService {
 					(map, classroom) -> map.put(classroom.classroomId(), classroom.memberCount()),
 					LinkedHashMap::putAll);
 			case TEAM -> repository.findParticipatingTeams(
-					managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
+							managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
 					.collect(LinkedHashMap::new,
 							(map, team) -> map.put(team.teamId(), team.memberCount()),
 							LinkedHashMap::putAll);
@@ -215,7 +215,7 @@ public class ManagerViewAnalyticsService {
 			return new ManagerHeatmapResponse.Navigation(classroomOptions, List.of());
 		}
 		var teamOptions = repository.findParticipatingTeams(
-				managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
+						managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
 				.map(team -> new ManagerHeatmapResponse.Team(
 						team.teamId(), team.teamName(), team.memberCount()))
 				.toList();
@@ -227,7 +227,7 @@ public class ManagerViewAnalyticsService {
 			UUID traineeId, String reasonCode) {
 		var actor = scopeGuard.requireCohort(email, cohortId);
 		var signals = repository.findRiskSignals(actor.userId(), cohortId, assessmentRoundId,
-				classroomId, traineeId, reasonCode).stream()
+						classroomId, traineeId, reasonCode).stream()
 				.map(signal -> new RiskSignalResponse.Signal(
 						signal.signalId(), signal.reasonCode(), signal.assessmentRoundId(),
 						signal.classroomId(), signal.teamId(), signal.traineeId(), signal.traineeName(),
@@ -263,5 +263,20 @@ public class ManagerViewAnalyticsService {
 		if (invalid) {
 			throw new ApiException(AnalyticsErrorCode.HEATMAP_SCOPE_INVALID);
 		}
+	}
+
+	// =========================================================
+	// 신규 추가: MG-01 인박스 행 근거 위험 신호 조회 구현
+	// =========================================================
+	public RiskSignalResponse getRiskSignalsForInbox(String email, UUID cohortId, UUID classId, UUID traineeId) {
+		var actor = scopeGuard.requireCohort(email, cohortId);
+		var signals = repository.findRiskSignals(actor.userId(), cohortId, null,
+						classId, traineeId, null).stream()
+				.map(signal -> new RiskSignalResponse.Signal(
+						signal.signalId(), signal.reasonCode(), signal.assessmentRoundId(),
+						signal.classroomId(), signal.teamId(), signal.traineeId(), signal.traineeName(),
+						signal.summary(), signal.status(), signal.policyVersion(), signal.detectedAt()))
+				.toList();
+		return new RiskSignalResponse(cohortId, signals);
 	}
 }
