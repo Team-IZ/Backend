@@ -12,12 +12,14 @@ import com.bigproject.backend.domain.usagemetering.domain.AiUsage;
 import com.bigproject.backend.global.ai.AiCallException;
 import com.bigproject.backend.global.exception.ApiException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class InterviewBriefServiceImpl implements InterviewBriefService {
@@ -184,10 +186,27 @@ public class InterviewBriefServiceImpl implements InterviewBriefService {
 	 * <b>모델 출력을 무검증으로 믿지 않는 것</b>이 이 계약의 전제다(AI 스키마 §5.1).
 	 */
 	private static void validateSourceIds(InterviewBriefAiResponse response, java.util.Set<UUID> allowed) {
-		boolean invalid = response.items().stream()
-				.anyMatch(item -> item.interviewSourceId() == null
-						|| !allowed.contains(item.interviewSourceId()));
-		if (invalid) {
+		if (response.items() == null || response.items().isEmpty()) {
+			// AI 계약은 4~8개를 요구한다. 비어 있으면 역직렬화가 어긋났을 가능성이 크다 —
+			// 필드 이름이 다르면 Jackson이 조용히 빈 목록을 만든다.
+			log.error("브리프 생성 응답에 items가 없습니다. openingRemark={}",
+					response.openingRemark() == null ? "(없음)" : "있음");
+			throw new ApiException(InterventionErrorCode.BRIEF_GENERATION_FAILED);
+		}
+
+		List<UUID> rejected = response.items().stream()
+				.map(InterviewBriefAiResponse.Item::interviewSourceId)
+				.filter(id -> id == null || !allowed.contains(id))
+				.toList();
+
+		if (!rejected.isEmpty()) {
+			/*
+			 * 어느 쪽이 어긋났는지 로그에 남긴다. 둘 중 하나다.
+			 *   · AI가 없는 UUID를 지어냈다        → 모델·프롬프트 문제
+			 *   · 우리가 보낸 id를 AI가 못 읽었다  → 필드 이름·직렬화 문제(전부 null로 온다)
+			 */
+			log.error("브리프 항목의 interviewSourceId가 요청 집합에 없습니다. "
+					+ "거부={} (허용 {}건: {})", rejected, allowed.size(), allowed);
 			throw new ApiException(InterventionErrorCode.BRIEF_GENERATION_FAILED);
 		}
 	}

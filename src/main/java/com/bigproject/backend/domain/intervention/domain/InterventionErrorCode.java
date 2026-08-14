@@ -65,7 +65,18 @@ public enum InterventionErrorCode implements ApiErrorCode {
 	 * 인증 정보에 기관 ID가 없다. 토큰 발급 쪽 문제라 사용자가 할 수 있는 일이 없다 —
 	 * 다른 도메인({@code AcademicOperationsErrorCode})과 같은 코드명을 쓴다.
 	 */
-	ORGANIZATION_CONTEXT_MISSING(HttpStatus.INTERNAL_SERVER_ERROR, "인증 정보에서 기관을 확인할 수 없습니다.");
+	ORGANIZATION_CONTEXT_MISSING(HttpStatus.INTERNAL_SERVER_ERROR, "인증 정보에서 기관을 확인할 수 없습니다."),
+
+	/**
+	 * 그 회차의 {@code INITIAL} 수행이 없다. 운영상 있을 수 없는 상태다 —
+	 * 회차가 OPEN이 되면 멱등 생성되고, 위험 판정 자체가 그 행에서 나온다.
+	 *
+	 * <p>그래도 막는 이유: AI가 근거 없는 질문(라포·일반)에
+	 * {@code attemptInterviewSourceId}를 앵커로 쓴다. 이 값이 없으면 AI가 붙일 곳이 없어
+	 * {@code interviewSourceId}를 null로 보내고, 그 항목은
+	 * {@code interview_brief_item.interview_source_id}(UUID NOT NULL) 때문에 저장 불가다.
+	 */
+	NO_ASSESSMENT_ATTEMPT(HttpStatus.CONFLICT, "이 회차의 응시 기록이 없어 브리프를 만들 수 없습니다.");
 
 	private final HttpStatus status;
 	private final String defaultMessage;

@@ -5,7 +5,9 @@ import com.bigproject.backend.domain.intervention.application.dto.InterviewBrief
 import com.bigproject.backend.domain.intervention.domain.InterviewBriefContextRepository;
 import com.bigproject.backend.domain.intervention.domain.InterviewBriefWriteRepository;
 import com.bigproject.backend.domain.intervention.domain.InterviewCaseLookupRepository.CaseSummary;
+import com.bigproject.backend.domain.intervention.domain.InterventionErrorCode;
 import com.bigproject.backend.domain.intervention.domain.InterviewSourceRepository;
+import com.bigproject.backend.global.exception.ApiException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -130,17 +132,32 @@ public class InterviewBriefWriter {
 					row.reasonSummary(), row.detectedAt(), row.sourceProblemStageId(), sourceId));
 		}
 
-		var attempt = contextRepository.findAttempt(summary.candidateId()).orElse(null);
-		UUID attemptSourceId = null;
+		/*
+		 * 🔴 attemptInterviewSourceId는 반드시 있어야 한다.
+		 *
+		 * AI가 근거 없는 질문(라포·일반)에 이 값을 앵커로 쓴다 — 관찰 메모가 있으면 그것을,
+		 * 없으면 이 값을 단다. 여기가 null이면 AI가 붙일 곳이 없어 interviewSourceId를
+		 * null로 보내고, interview_brief_item.interview_source_id가 UUID NOT NULL이라
+		 * 그 항목이 통째로 저장 불가가 된다.
+		 *
+		 * 운영상 없을 수 없다 — measurement_attempt COMMENT가 "회차 OPEN 전환 시 유효 참여
+		 * 교육생별 INITIAL 수행을 멱등 생성한다"고 규정하고, 위험 판정 자체가
+		 * measurement_attempt.outcome_*에서 나오므로 후보가 있다는 것은 수행이 있다는 뜻이다.
+		 * 그래도 막아 두는 이유는 이 전제가 깨지면 AI 쪽에서 조용히 null이 돌아오기 때문이다.
+		 */
+		var attempt = contextRepository.findAttempt(summary.candidateId())
+				.orElseThrow(() -> new ApiException(InterventionErrorCode.NO_ASSESSMENT_ATTEMPT));
+
+		UUID attemptSourceId = sourceRepository.createFromAttempt(
+				interviewId, attempt.attemptId(), managerUserId);
+		sourceIds.add(attemptSourceId);
+
 		UUID sessionSourceId = null;
-		if (attempt != null) {
-			attemptSourceId = sourceRepository.createFromAttempt(interviewId, attempt.attemptId(), managerUserId);
-			sourceIds.add(attemptSourceId);
-			if (attempt.sessionId() != null) {
-				sessionSourceId = sourceRepository.createFromSession(
-						interviewId, attempt.sessionId(), managerUserId);
-				sourceIds.add(sessionSourceId);
-			}
+		// 세션은 없을 수 있다 — 미응시(NOT_ATTENDED)면 세션 자체가 열리지 않는다.
+		if (attempt.sessionId() != null) {
+			sessionSourceId = sourceRepository.createFromSession(
+					interviewId, attempt.sessionId(), managerUserId);
+			sourceIds.add(sessionSourceId);
 		}
 
 		List<InterviewBriefContextRepository.StageRow> allStages =
@@ -191,10 +208,10 @@ public class InterviewBriefWriter {
 				reasons,
 				contextRepository.findValidityReview(summary.candidateId()).orElse(null),
 				new InterviewBriefAiRequest.Comprehension(
-						attempt == null ? null : attempt.attemptType(),
-						attempt == null ? null : attempt.attemptStatus(),
-						attempt == null ? null : attempt.terminalReasonCode(),
-						attempt == null ? null : attempt.sessionEndReasonCode(),
+						attempt.attemptType(),
+						attempt.attemptStatus(),
+						attempt.terminalReasonCode(),
+						attempt.sessionEndReasonCode(),
 						attemptSourceId, sessionSourceId, problems),
 				priors,
 				notes);
