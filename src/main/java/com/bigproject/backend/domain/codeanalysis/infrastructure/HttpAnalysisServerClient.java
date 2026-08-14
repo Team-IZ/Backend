@@ -101,6 +101,14 @@ public class HttpAnalysisServerClient implements AnalysisServerClient {
 		try {
 			return fetchProgressOnce(externalJobId);
 		} catch (AiCallException exception) {
+			// AI 앱이 스스로 "이 job을 모른다"고 명시한 404만 유실 신호로 다룬다(공통 봉투
+			// {error:"JOB_NOT_FOUND"} — AiClient.translate()가 이미 failureCode로 옮겨 준다).
+			//   WHY: 본문 없는 프록시·envoy 404(원본이 PAUSED이거나 라우팅 계층이 아직 준비되지
+			//        않았을 때 앞단에서 나는 404)는 AI가 낸 신호가 아니다. 이것까지 유실로 접으면
+			//        멀쩡한 job을 죽이고 LLM 호출을 다시 쓰게 된다.
+			//   COST: 판별이 AI 응답 봉투에 의존한다. 봉투 없이 404만 오면 아래 웜업 경로로 간다.
+			//   EXIT: AI가 모든 404에 JOB_NOT_FOUND를 싣게 되면 이 조건을 status==404만 보는
+			//        것으로 되돌려도 된다.
 			if (isJobNotFound(exception)) {
 				return Optional.empty();
 			}

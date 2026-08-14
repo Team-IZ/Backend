@@ -80,8 +80,16 @@ public class AnalysisJob {
 	/**
 	 * AI 서버가 202 응답으로 반환한 작업 ID.
 	 *
-	 * <p>정상 접수 건은 이 값을 채운 뒤 최초 INSERT한다. {@code updatable=false}이므로 이후 어떤 JPA
-	 * UPDATE에도 이 컬럼이 포함되지 않고, 폴링 상태 전이는 엔티티 merge 자체를 사용하지 않는다.
+	 * <p>{@code updatable = false}(2026-08-13).
+	 *   WHY: 폴러 중복(소유자 필터 없는 {@code findByStatusIn})이 겹치면서 남의 job에 404를 받고
+	 *        이 컬럼을 null로 되돌리는 버그가 실운영에서 재현됐다(PR #108). save()/merge()의
+	 *        자동생성 UPDATE가 이 컬럼을 아예 못 건드리게 막으면, 같은 종류의 실수가 또 나와도
+	 *        실제로 컬럼을 지울 방법이 없다.
+	 *   COST: 없다. 정상 접수 건은 202 응답의 ID를 채운 뒤 <b>최초 INSERT 한 번</b>으로 저장하므로
+	 *        (INSERT는 이 애너테이션의 영향을 받지 않는다) 기록해야 할 UPDATE 자체가 없다. 폴링
+	 *        상태 전이는 엔티티 merge가 아니라 이 컬럼을 SET 절에 넣지 않는 전용 쿼리를 쓴다.
+	 *   EXIT: 되돌리려면 이 애너테이션만 지운다. 다만 그 순간 merge가 만드는 UPDATE에 이 컬럼이
+	 *        다시 섞이므로, 되돌릴 이유가 생겼다면 그것부터 의심한다.
 	 */
 	@Column(name = "external_job_id", updatable = false)
 	private UUID externalJobId;

@@ -83,4 +83,8 @@ public interface AnalysisJobRepository extends JpaRepository<AnalysisJob, UUID> 
 
 	/** 폴링 대상. uq_analysis_job_active 가 batch_key+job_type 당 활성 1건을 보장한다. */
 	List<AnalysisJob> findByStatusIn(Collection<AnalysisJobStatus> statuses);
+
+	// external_job_id를 UPDATE하는 쿼리는 두지 않는다. 정상 접수 건은 202 응답의 ID를 채운 뒤
+	// 최초 INSERT 한 번으로 저장하므로 기록해야 할 UPDATE가 없고, 통로를 만들어 두면 언젠가
+	// 그 통로로 NULL이 들어간다 — 2026-08-13 사고가 정확히 그 모양이었다.
 }

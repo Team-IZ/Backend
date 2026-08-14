@@ -132,6 +132,14 @@ public class AnalysisBatchService {
 	private final int unknownJobMaxConsecutive;
 
 	/**
+	 * 활성 job을 폴링하는 최대 시간. 이 시간을 넘기면 원인과 무관하게 닫는다({@link #closeStuckJob}).
+	 *
+	 * <p>분석 1건이 5분 안팎이므로 기본값은 충분히 크다. 이 값을 줄이면 느린 분석을 죽이고,
+	 * 늘리면 정체된 job이 그만큼 오래 폴링에 남는다.
+	 */
+	private final Duration stuckJobTimeout;
+
+	/**
 	 * AI 앱의 {@code JOB_NOT_FOUND} 관측 상태. DB 스키마를 변경하지 않기 위해 프로세스 메모리에만 둔다.
 	 * 따라서 백엔드가 재시작되거나 여러 인스턴스가 서로 다른 요청을 받으면 관측 횟수와 최초 시각은
 	 * 각 인스턴스에서 다시 시작한다. {@code external_job_id} 자체는 DB에 계속 보존된다.
@@ -157,7 +165,8 @@ public class AnalysisBatchService {
 			@Value("${ai.analysis.model-code}") String analysisModelCode,
 			@Value("${ai.analysis.max-attempts}") int maxAttempts,
 			@Value("${ai.analysis.unknown-job-grace:PT10M}") Duration unknownJobGrace,
-			@Value("${ai.analysis.unknown-job-max-consecutive:3}") int unknownJobMaxConsecutive) {
+			@Value("${ai.analysis.unknown-job-max-consecutive:3}") int unknownJobMaxConsecutive,
+			@Value("${ai.analysis.stuck-job-timeout:PT30M}") Duration stuckJobTimeout) {
 		this.dispatchRepository = dispatchRepository;
 		this.analysisJobRepository = analysisJobRepository;
 		this.analysisModelRepository = analysisModelRepository;
@@ -177,6 +186,10 @@ public class AnalysisBatchService {
 			throw new IllegalArgumentException(
 					"unknown-job-max-consecutive는 1 이상이어야 한다: " + unknownJobMaxConsecutive);
 		}
+		if (stuckJobTimeout.isNegative() || stuckJobTimeout.isZero()) {
+			throw new IllegalArgumentException("stuck-job-timeout은 0보다 커야 한다: " + stuckJobTimeout);
+		}
+		this.stuckJobTimeout = stuckJobTimeout;
 		this.unknownJobGrace = unknownJobGrace;
 		this.unknownJobMaxConsecutive = unknownJobMaxConsecutive;
 	}
@@ -295,6 +308,9 @@ public class AnalysisBatchService {
 					traceId
 			));
 			job.acceptExternalJob(externalJobId);
+			// 여기가 이 job의 <b>최초 INSERT</b>다. 외부 ID를 넣은 뒤에 저장하므로 "활성인데
+			// external_job_id가 NULL"인 행이 DB에 존재하는 창이 아예 없다. updatable=false는
+			// INSERT를 막지 않으므로 전용 UPDATE 쿼리가 따로 필요하지 않다.
 			job = analysisJobRepository.save(job);
 			log.info("분석 작업 ID 저장: jobId={}, externalJobId={}, status={}, executionNo={}",
 					job.getJobId(), externalJobId, job.getStatus(), job.getExecutionNo());
@@ -334,8 +350,32 @@ public class AnalysisBatchService {
 	 * 왕복 내내 DB 커넥션을 붙들고 있었다 — {@link #dispatchOne}이 같은 이유로 피하던 것을 폴링에서는
 	 * 하고 있었던 셈이다.
 	 *
-	 * <p>404는 즉시 판단하지 않는다. {@code external_job_id}는 어떤 경우에도 지우지 않는다 —
-	 * 자세한 이유는 {@link #handleUnknownJob}에 있다.
+	 * <h2>활성 job은 반드시 유한한 시간 안에 활성 집합을 떠난다 (2026-08-13)</h2>
+	 *
+	 * <p>이 메서드의 진짜 위험은 개별 실패가 아니라 <b>영원히 끝나지 않는 조회 루프</b>다.
+	 * {@code findByStatusIn}은 QUEUED/RUNNING을 모두 다시 고르므로, 어떤 이유로든 종료되지 못하는
+	 * 행이 하나 생기면 폴링이 매 주기(PT1M) 그 행을 계속 집는다. 게다가
+	 * {@code BLOCKING_JOB_EXISTS}가 {@code status <> 'FAILED'}인 동안 재요청까지 막아, 그 제출은
+	 * 결과도 재시도도 없는 상태로 고정된다.
+	 *
+	 * <p>그래서 활성 job이 이 집합을 떠나지 못하는 경로를 <b>빠짐없이</b> 닫는다.
+	 *
+	 * <ol>
+	 *   <li>{@code external_job_id}가 NULL인 행(구버전 인스턴스가 지웠거나 과거 데이터) →
+	 *       {@link #closeJobMissingExternalId}. 물어볼 대상이 없으니 건너뛰지 않고 닫는다.</li>
+	 *   <li>AI 앱이 명시한 {@code JOB_NOT_FOUND} → {@link #handleUnknownJob}. 연속 횟수나 유예
+	 *       시간 중 하나에 도달하면 닫는다. 유예를 두는 이유는 그쪽에 적었다.</li>
+	 *   <li>그 밖의 모든 정체(프록시 404 지속, AI 5xx·타임아웃 반복, AI가 계속 RUNNING만 응답,
+	 *       인스턴스 재시작으로 위 관측이 초기화되는 경우) → {@link #closeStuckJob}. 벽시계 기준
+	 *       상한 하나로 한꺼번에 막는다.</li>
+	 * </ol>
+	 *
+	 * <p>①②는 원인을 아는 경로이고 ③은 <b>원인을 몰라도 걸리는 그물</b>이다. ③이 없으면 예외를
+	 * 삼키는 아래 {@code try/catch}가 곧바로 무한 스킵 루프가 된다 — 그 job만 건너뛴다는 뜻이지
+	 * 언젠가 끝난다는 뜻이 아니기 때문이다.
+	 *
+	 * <p>어느 경로에서도 {@code external_job_id}는 지우지 않는다. AI 로그와 대조할 유일한 열쇠이고,
+	 * 지우는 순간 ①의 대상이 되어 원인이 뒤섞인다.
 	 *
 	 * @return 상태가 바뀐 실행 수
 	 */
@@ -360,6 +400,12 @@ public class AnalysisBatchService {
 				continue;
 			}
 			try {
+				// AI를 부르기 <b>전에</b> 본다. fetchProgress가 계속 예외를 던지는 상황이야말로
+				// 이 상한이 필요한 경우인데, 뒤에 두면 그 예외 때문에 여기까지 오지 못한다.
+				if (closeStuckJob(job)) {
+					updated++;
+					continue;
+				}
 				if (applyProgress(job)) {
 					updated++;
 				}
@@ -368,6 +414,51 @@ public class AnalysisBatchService {
 			}
 		}
 		return updated;
+	}
+
+	/**
+	 * 너무 오래 활성으로 남은 job을 실패로 닫는다. <b>원인을 몰라도 걸리는 그물</b>이다.
+	 *
+	 * <p>{@link #handleUnknownJob}은 AI가 {@code JOB_NOT_FOUND}를 <b>말해 줄 때만</b> 동작하고,
+	 * 그 관측은 프로세스 메모리에 있어 재시작·다중 인스턴스에서 초기화된다. 그 밖에도 활성 job이
+	 * 끝나지 못하는 길은 여럿이다 — 프록시 404가 계속되거나, AI가 5xx·타임아웃만 주거나, AI가
+	 * 영원히 {@code RUNNING}이라고 답하거나. 이 경로들은 공통점이 하나뿐이다: <b>시간이 지나도
+	 * 끝나지 않는다.</b> 그래서 원인별 처리 대신 벽시계 상한 하나로 한꺼번에 닫는다.
+	 *
+	 * <p>기준 시각은 {@code created_at}이다. {@code started_at}은 AI가 준 값이라 우리 행보다 앞설 수
+	 * 있고(실측 확인), QUEUED에서는 아예 NULL이다. "우리 원장에 이 실행이 생긴 뒤 얼마나 지났는가"가
+	 * 이 판정이 묻는 것이므로 {@code created_at}이 맞다.
+	 *
+	 * <p>{@code ANALYSIS_TIMEOUT}으로 닫는 이유는 그것이 사실이기도 하고, 재시도 가능 4종에 들어
+	 * 있어 {@code BLOCKING_JOB_EXISTS}에서 빠지기 때문이다 — 안전망이 상한({@code max-attempts})
+	 * 안에서 다시 요청한다. 상한을 다 썼다면 응시도 함께 닫힌다.
+	 *
+	 * @return 닫았으면 {@code true}
+	 */
+	private boolean closeStuckJob(AnalysisJob job) {
+		Instant openedAt = job.getCreatedAt() == null ? job.getStartedAt() : job.getCreatedAt();
+		if (openedAt == null) {
+			// created_at은 DB 기본값이라 조회한 행에는 항상 있다. 그래도 없다면 판정 근거가 없으니
+			// 닫지 않는다 — 근거 없이 닫는 것보다 다음 폴링에서 정상 경로로 다루는 편이 낫다.
+			return false;
+		}
+		Instant now = Instant.now();
+		Duration active = Duration.between(openedAt, now);
+		if (active.compareTo(stuckJobTimeout) < 0) {
+			return false;
+		}
+		log.error("분석 job이 상한을 넘겨 활성으로 남아 있다. 폴링을 끝내고 재시도 대상으로 닫는다: "
+						+ "jobId={}, externalJobId={}, status={}, executionNo={}, 경과={}, 상한={}",
+				job.getJobId(), job.getExternalJobId(), job.getStatus(), job.getExecutionNo(),
+				active, stuckJobTimeout);
+		markAttemptsFailedIfTerminal(job, AnalysisFailureCode.ANALYSIS_TIMEOUT);
+		job.markFailed(AnalysisFailureCode.ANALYSIS_TIMEOUT,
+				"분석이 " + stuckJobTimeout + " 안에 끝나지 않아 폴링을 종료했다. 경과=" + active
+						+ ", externalJobId=" + job.getExternalJobId(),
+				job.getStartedAt(), now);
+		saveJob(job);
+		unknownJobObservations.remove(job.getExternalJobId());
+		return true;
 	}
 
 	/**
