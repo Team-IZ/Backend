@@ -217,9 +217,9 @@ public class JdbcInterviewListRepository implements InterviewListRepository {
 				rs.getString("screen_risk_type"),
 				rs.getString("candidate_status"),
 				rs.getString("interview_status"),
-				toList(rs.getArray("codes")),
-				toList(rs.getArray("summaries")),
-				toList(rs.getArray("evaluations")),
+				toStringList(rs.getArray("codes")),
+				toStringList(rs.getArray("summaries")),
+				toStringList(rs.getArray("evaluations")),
 				rs.getBoolean("is_first_mini_project"),
 				rs.getString("validity_review_status"),
 				rs.getObject("attempt_id", UUID.class),
@@ -231,8 +231,13 @@ public class JdbcInterviewListRepository implements InterviewListRepository {
 				rs.getString("next_action"));
 	}
 
-	/** 활성 사유가 없으면 배열 자체가 NULL이다(LATERAL의 ARRAY_AGG가 빈 그룹에서 NULL을 낸다). */
-	private static List<String> toList(Array array) throws SQLException {
+	/**
+	 * 활성 사유가 없으면 배열 자체가 NULL이다(LATERAL의 {@code ARRAY_AGG}가 빈 그룹에서 NULL을 낸다).
+	 *
+	 * <p>같은 도메인의 다른 리포지토리도 {@code TEXT[]}를 읽으므로 공유한다 —
+	 * NULL 배열 처리를 각자 구현하면 한쪽만 빠뜨려 NPE가 난다.
+	 */
+	static List<String> toStringList(Array array) throws SQLException {
 		if (array == null) {
 			return List.of();
 		}
