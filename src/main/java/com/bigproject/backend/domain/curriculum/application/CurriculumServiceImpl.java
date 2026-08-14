@@ -57,12 +57,14 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class CurriculumServiceImpl implements CurriculumService {
 
+    // ✅ 원본 방식 복구: 별도 설정 파일 없이 여기서 직접 S3Client 생성
     private static final S3Client S3_CLIENT = S3Client.builder()
             .region(Region.AP_SOUTHEAST_2)
             .build();
 
     private static final int POLL_MAX_ATTEMPTS = 100;
     private static final long POLL_INTERVAL_MS = 3000L;
+    private static final java.time.Duration MAX_WAIT_DURATION = java.time.Duration.ofMinutes(25);
 
     private final CurriculumVersionRepository curriculumVersionRepository;
     private final CurriculumTeachesMappingRepository mappingRepository;
@@ -271,9 +273,7 @@ public class CurriculumServiceImpl implements CurriculumService {
         }
     }
 
-    private static final java.time.Duration MAX_WAIT_DURATION = java.time.Duration.ofMinutes(25);
-
-    @Transactional
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void reconcileOne(CurriculumAnalysis analysis) {
         UUID jobId = analysis.getExternalJobId();
         if (jobId == null) {
@@ -341,6 +341,9 @@ public class CurriculumServiceImpl implements CurriculumService {
         analysis.start();
 
         int sectionSeq = 1;
+        // ✅ DB 중복 에러 해결: mappingSeq를 밖으로 꺼내서 순번이 누적되게 처리
+        int mappingSeq = 1;
+
         for (AiCurriculumClient.SectionResult sec : result.sections()) {
             CurriculumSection savedSection = sectionRepository.save(
                     CurriculumSection.builder()
@@ -354,7 +357,6 @@ public class CurriculumServiceImpl implements CurriculumService {
                             .confidence(sec.confidence())
                             .build());
 
-            int mappingSeq = 1;
             for (AiCurriculumClient.TeachesResult t : sec.teaches()) {
                 Teaches teaches = teachesRepository
                         .findByOrgIdAndNormalizedName(orgId, t.normalizedName())
@@ -363,6 +365,8 @@ public class CurriculumServiceImpl implements CurriculumService {
                                         .orgId(orgId)
                                         .canonicalName(t.canonicalName())
                                         .normalizedName(t.normalizedName())
+                                        .canonicalDescription(
+                                                t.description() != null ? t.description() : t.canonicalName())
                                         .build()));
 
                 mappingRepository.save(
@@ -376,7 +380,8 @@ public class CurriculumServiceImpl implements CurriculumService {
                                 .sourceDescription(t.description())
                                 .pageStart(sec.pageStart())
                                 .pageEnd(sec.pageEnd())
-                                .sequenceNo(mappingSeq++)
+                                .sourcePages(List.of(sec.pageStart()))
+                                .sequenceNo(mappingSeq++) // 순번이 꼬이지 않음
                                 .confidence(t.confidence())
                                 .mappingStatus(MappingStatus.ACTIVE)
                                 .build());
@@ -446,14 +451,28 @@ public class CurriculumServiceImpl implements CurriculumService {
         }
     }
 
+    // ✅ S3 다운로드 로직 추가: S3_CLIENT 상수를 사용하도록 매칭
     private byte[] readFileBytes(String fileUri) {
         URI uri = URI.create(fileUri);
         try {
             if ("s3".equals(uri.getScheme())) {
-                throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILE_UNREADABLE);
+                String bucket = uri.getHost();
+                String key = uri.getPath();
+                if (key != null && key.startsWith("/")) {
+                    key = key.substring(1);
+                }
+
+                GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(key)
+                        .build();
+
+                return S3_CLIENT.getObject(getObjectRequest, ResponseTransformer.toBytes()).asByteArray();
             }
+
             return Files.readAllBytes(Paths.get(uri));
-        } catch (IOException e) {
+        } catch (Exception e) {
+            log.error("파일 읽기 실패: {}", fileUri, e);
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILE_UNREADABLE);
         }
     }

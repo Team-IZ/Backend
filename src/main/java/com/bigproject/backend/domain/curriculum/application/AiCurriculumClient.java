@@ -116,7 +116,7 @@ public class AiCurriculumClient {
 
     public AnalysisResult checkStatus(String jobId) {
         return originClient.get()
-                .uri("/curricula/{jobId}", jobId)
+                .uri(CURRICULA_PATH + "/{jobId}", jobId)
                 .header("X-Internal-Key", internalKey)
                 .retrieve()
                 .body(AnalysisResult.class);
