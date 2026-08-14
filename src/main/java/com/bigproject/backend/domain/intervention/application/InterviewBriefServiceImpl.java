@@ -114,8 +114,38 @@ public class InterviewBriefServiceImpl implements InterviewBriefService {
 		}
 
 		// TX1 — 행을 만들고 요청을 조립한다. 커밋된 뒤에 AI를 부른다.
-		InterviewBriefWriter.BriefDraft draft = briefWriter.prepare(summary, managerUserId);
+		return runGeneration(briefWriter.prepare(summary, managerUserId),
+				managerUserId, orgId, caseId, traceId);
+	}
 
+	@Override
+	public BriefView regenerateBrief(UUID managerUserId, UUID orgId, UUID caseId, String traceId) {
+		CaseSummary summary = caseLookupRepository.findCase(managerUserId, orgId, caseId)
+				.orElseThrow(() -> new ApiException(InterventionErrorCode.INTERVIEW_CASE_NOT_FOUND));
+
+		if (summary.interviewId() == null) {
+			throw new ApiException(InterventionErrorCode.INTERVIEW_BRIEF_NOT_CREATED);
+		}
+		/*
+		 * 종결된 면담의 브리프는 읽기 전용이다 — "브리프 버전은 종결 시점 그대로 고정됩니다"
+		 * (테이블 COMMENT). 지난 면담에서 실제로 무엇을 물었는지가 다음 회차 브리프의
+		 * askedQuestions로 이어지므로 사후에 바꾸면 그 기록이 사실과 달라진다.
+		 */
+		if (completionRepository.isCompleted(summary.interviewId())) {
+			throw new ApiException(InterventionErrorCode.BRIEF_NOT_EDITABLE);
+		}
+
+		return runGeneration(briefWriter.prepareRegeneration(summary, managerUserId),
+				managerUserId, orgId, caseId, traceId);
+	}
+
+	/**
+	 * AI 호출 → 검증 → 저장 → 원장. 생성과 재생성이 공유한다.
+	 *
+	 * <p>이 구간은 <b>트랜잭션 밖</b>이다. TX1은 이미 커밋됐고 TX2는 {@code saveResult}가 연다.
+	 */
+	private BriefView runGeneration(InterviewBriefWriter.BriefDraft draft,
+			UUID managerUserId, UUID orgId, UUID caseId, String traceId) {
 		InterviewBriefAiResponse response;
 		try {
 			response = aiClient.generate(draft.request(), draft.briefId(), draft.versionNo(), traceId);

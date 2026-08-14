@@ -53,4 +53,19 @@ public interface InterviewBriefWriteRepository {
 
 	/** 이 교육생에게 종결된 면담이 있는가. {@code is_first_interview} 판정에 쓴다. */
 	boolean hasPriorCompletedInterview(UUID traineeUserId);
+
+	/**
+	 * 재생성 시 기존 브리프를 밀어낸다.
+	 *
+	 * <p>테이블 COMMENT가 "면담별 현재 DRAFT와 CONFIRMED는 각각 최대 1건"을 요구하므로
+	 * 새 DRAFT를 만들기 전에 이전 것을 {@code SUPERSEDED}로 내린다.
+	 *
+	 * <p>⚠️ 확정된 브리프까지 내리는 것은 <b>매니저가 명시적으로 재생성을 누른 경우뿐</b>이다.
+	 * COMMENT는 "새 버전 확정 성공 시에만 이전 CONFIRMED를 SUPERSEDED로 전환"한다고
+	 * 규정하지만, 그건 저장 흐름(IV-06) 이야기다 — 재생성은 여는 말·질문 자체를 다시 만드는
+	 * 별개 동작이고 화면이 확인 다이얼로그로 되돌릴 수 없음을 알린다.
+	 *
+	 * @return 밀어낸 행 수
+	 */
+	int supersedeExistingDrafts(UUID interviewId);
 }

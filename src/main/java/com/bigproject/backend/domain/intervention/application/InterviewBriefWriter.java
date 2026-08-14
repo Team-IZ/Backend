@@ -71,6 +71,22 @@ public class InterviewBriefWriter {
 		return new BriefDraft(interviewId, briefId, versionNo, request, sourceIds);
 	}
 
+	/**
+	 * TX1(재생성) — 기존 브리프를 밀어내고 새 버전을 준비한다.
+	 *
+	 * <p>{@code version_no}가 올라가므로 멱등키({@code briefId:versionNo})도 자동으로 달라진다 —
+	 * 이전 키를 재사용하면 {@code ai_usage.idempotency_key} 전역 UNIQUE에 걸리고 AI는 409를 준다.
+	 */
+	@Transactional
+	public BriefDraft prepareRegeneration(CaseSummary summary, UUID managerUserId) {
+		if (summary.interviewId() == null) {
+			// 만든 적이 없으면 재생성이 아니라 생성이다. 호출부가 막지만 방어로 둔다.
+			return prepare(summary, managerUserId);
+		}
+		writeRepository.supersedeExistingDrafts(summary.interviewId());
+		return prepare(summary, managerUserId);
+	}
+
 	private UUID createInterview(UUID candidateId, UUID managerUserId) {
 		UUID interviewId = writeRepository.insertInterview(candidateId, managerUserId);
 		// 면담 생성 성공 시에만 전이하고 원자적으로 연결한다(테이블 COMMENT).

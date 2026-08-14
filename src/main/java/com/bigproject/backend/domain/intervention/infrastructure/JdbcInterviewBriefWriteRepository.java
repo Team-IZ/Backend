@@ -146,6 +146,25 @@ public class JdbcInterviewBriefWriteRepository implements InterviewBriefWriteRep
 				""", requestId, actorUserId, briefId);
 	}
 
+	/**
+	 * 재생성 전 정리. {@code SUPERSEDED}는 이미 밀려난 것이라 건드리지 않는다.
+	 *
+	 * <p>{@code confirmed_by}·{@code confirmed_at}은 그대로 둔다 —
+	 * {@code ck_interview_brief_status_2}가 {@code SUPERSEDED}에는 아무 조건도 걸지 않으므로
+	 * "언제 누가 확정했던 버전인지"를 지울 이유가 없다.
+	 */
+	@Override
+	public int supersedeExistingDrafts(UUID interviewId) {
+		return jdbcTemplate.update("""
+				UPDATE interview_brief
+				   SET status      = 'SUPERSEDED',
+				       updated_at  = CURRENT_TIMESTAMP,
+				       row_version = row_version + 1
+				 WHERE interview_id = ?
+				   AND status IN ('DRAFT', 'CONFIRMED')
+				""", interviewId);
+	}
+
 	@Override
 	public boolean hasPriorCompletedInterview(UUID traineeUserId) {
 		Integer count = jdbcTemplate.queryForObject("""

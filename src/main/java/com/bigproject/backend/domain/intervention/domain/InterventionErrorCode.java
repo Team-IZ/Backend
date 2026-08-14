@@ -52,7 +52,14 @@ public enum InterventionErrorCode implements ApiErrorCode {
 	 * "CONFIRMED 전환 시 선택 항목 1건 이상"을 요구한다 — 질문 0개짜리 브리프로 면담을
 	 * 종결하면 나중에 "무엇을 물었는지"가 남지 않는다.
 	 */
-	BRIEF_HAS_NO_SELECTED_ITEM(HttpStatus.CONFLICT, "질문이 없는 브리프는 확정할 수 없습니다.");
+	BRIEF_HAS_NO_SELECTED_ITEM(HttpStatus.CONFLICT, "질문이 없는 브리프는 확정할 수 없습니다."),
+
+	/**
+	 * 종결된 면담의 브리프는 읽기 전용이다. 지난 면담에서 실제로 무엇을 물었는지가
+	 * 다음 회차 브리프의 {@code askedQuestions}로 이어지므로 사후에 바꾸면 그 기록이
+	 * 사실과 달라진다. 원인·기록은 여전히 고칠 수 있다.
+	 */
+	BRIEF_NOT_EDITABLE(HttpStatus.CONFLICT, "종결된 면담의 브리프는 다시 만들 수 없습니다.");
 
 	private final HttpStatus status;
 	private final String defaultMessage;
