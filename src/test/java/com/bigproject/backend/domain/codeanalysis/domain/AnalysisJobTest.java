@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.codeanalysis.domain;
 
+import jakarta.persistence.Column;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -35,6 +36,28 @@ class AnalysisJobTest {
 		assertThat(job.getCompletedAt()).isNull();
 		assertThat(job.getFailureReason()).isNull();
 		assertThat(job.isActive()).isTrue();
+	}
+
+	@Test
+	void externalJobIdCanOnlyBeAssignedOnce() {
+		AnalysisJob job = queued();
+		UUID externalJobId = UUID.randomUUID();
+
+		job.acceptExternalJob(externalJobId);
+		job.acceptExternalJob(externalJobId);
+
+		assertThat(job.getExternalJobId()).isEqualTo(externalJobId);
+		assertThatThrownBy(() -> job.acceptExternalJob(null))
+				.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> job.acceptExternalJob(UUID.randomUUID()))
+				.isInstanceOf(IllegalStateException.class);
+	}
+
+	@Test
+	void externalJobIdIsExcludedFromEveryJpaUpdate() throws NoSuchFieldException {
+		Column column = AnalysisJob.class.getDeclaredField("externalJobId").getAnnotation(Column.class);
+
+		assertThat(column.updatable()).isFalse();
 	}
 
 	@Test

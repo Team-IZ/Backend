@@ -26,6 +26,7 @@ import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnaly
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
 import com.bigproject.backend.global.ai.AiProxyWarmUp;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -51,6 +52,7 @@ import java.util.zip.ZipInputStream;
  * 실제 AI 호출은 이 서비스가 아니라 {@code codeanalysis} 모듈의 배치가 이벤트를 받아 수행한다.
  */
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class SubmissionService {
 
@@ -315,8 +317,29 @@ public class SubmissionService {
 
 		return analysisJobRepository
 				.findFirstBySubmissionIdOrderByExecutionNoDescStartedAtDescJobIdDesc(submissionId)
-				.map(job -> withSessionReadiness(job, userId))
+				.map(job -> analysisResponse(job, userId))
 				.orElseGet(() -> SubmissionAnalysisResponse.notStarted(submissionId));
+	}
+
+	/**
+	 * 활성 job은 AI 상태 조회에 쓸 {@code external_job_id}가 반드시 있어야 한다.
+	 *
+	 * <p>POST 자체가 실패해 {@code FAILED}로 닫힌 job은 외부 ID가 없는 것이 정상이므로 그대로 둔다.
+	 * 반면 QUEUED/RUNNING인데 비어 있으면 폴러가 상태를 물어볼 대상이 없어, 진행 중으로 응답하면
+	 * 클라이언트가 영원히 기다린다. 그래서 <b>실패로 내려 준다</b> — 오류 응답이 아니다. 자세한 이유는
+	 * {@link SubmissionAnalysisResponse#externalJobIdLost}에 있다.
+	 *
+	 * <p>{@code log.error}는 유지한다. 교육생에게는 정상 응답이지만 운영에는 여전히 조사할 사건이다 —
+	 * 정상 접수 건은 외부 ID를 포함해 INSERT되고 이후 어떤 UPDATE도 그 컬럼을 건드리지 않으므로,
+	 * 이 로그가 찍힌다는 것은 <b>이 코드베이스 밖의 writer</b>가 같은 DB를 쓰고 있다는 뜻이다.
+	 */
+	private SubmissionAnalysisResponse analysisResponse(AnalysisJob job, UUID userId) {
+		if (job.isActive() && job.getExternalJobId() == null) {
+			log.error("활성 분석 작업의 external_job_id가 없다: analysisJobId={}, submissionId={}, status={}",
+					job.getJobId(), job.getSubmissionId(), job.getStatus());
+			return SubmissionAnalysisResponse.externalJobIdLost(job);
+		}
+		return withSessionReadiness(job, userId);
 	}
 
 	/**
