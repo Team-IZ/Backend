@@ -56,6 +56,7 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				       ma.validity_review_status,
 				       rpt.trainee_release_status,
 				       rpt.trainee_disclosure_scope,
+				       r.submission_due_at,
 				       r.report_publish_not_before_at,
 				       rpt.published_at,
 				       (rpt.trainee_release_status = 'RELEASED'
@@ -109,6 +110,7 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				rs.getString("validity_review_status"),
 				rs.getString("trainee_release_status"),
 				rs.getString("trainee_disclosure_scope"),
+				instant(rs, "submission_due_at"),
 				instant(rs, "report_publish_not_before_at"),
 				instant(rs, "published_at"),
 				rs.getBoolean("can_view_report"),
