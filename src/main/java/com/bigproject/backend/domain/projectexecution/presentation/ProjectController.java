@@ -65,7 +65,7 @@ public class ProjectController {
 	private final ProjectService projectService;
 	private final CurrentUserResolver currentUserResolver;
 	private final ClassProgressService classProgressService;
-	private final SubmissionStatusService submissionStatusService;   // ← 추가
+	private final SubmissionStatusService submissionStatusService;
 
 	@Operation(
 			operationId = "findProjects",
@@ -116,10 +116,10 @@ public class ProjectController {
 
 					화면의 4값은 두 필드를 겹쳐 만든다:
 
-					```ts
+```ts
 					const label = status === 'PLANNED' ? readiness : status;
 					// PREP | READY | RUNNING | CLOSED
-					```
+```
 
 					**판정 규칙** — 교안·확정 개념·마감일 셋 중 **하나라도 비어 있으면 `PREP`**, 셋 다 차면 `READY`.
 					`sort=READINESS`가 쓰는 규칙과 **같은 자리**에서 계산하므로 목록의 순서와 배지가 어긋날 수 없다.
@@ -279,28 +279,6 @@ public class ProjectController {
 				.map(item -> new ProjectResponse.ActionItem(
 						item.classId(), item.className(), item.type(), item.teamCount()))
 				.toList();
-	}
-
-	/**
-	 * @deprecated {@code GET /projects?classId=}로 대체(19차). 프론트 연동 확인 전까지
-	 *             경로는 남기되 Swagger 목록에서는 숨긴다.
-	 */
-	@Deprecated(forRemoval = true)
-	@Operation(hidden = true)
-	@PreAuthorize("hasAnyRole('MANAGER')")
-	@GetMapping("/classes/{classId}/projects")
-	public ResponseEntity<ProjectListResponse> findProjectsByClass(
-			@PathVariable UUID classId,
-			@RequestParam(required = false) String search,
-			@RequestParam(required = false) UUID curriculumId,
-			@RequestParam(required = false) ProjectLifecycleStatus status,
-			@RequestParam(required = false) ProjectCategory category,
-			@RequestParam(required = false, defaultValue = "READINESS") ProjectListSort sort
-	) {
-		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-		ProjectService.ProjectList list = projectService.findProjectList(
-				null, orgId,
-				new ProjectService.ProjectListCriteria(search, curriculumId, status, sort, List.of(classId), category));		return ResponseEntity.ok(ProjectListResponse.from(list));
 	}
 
 	/**
