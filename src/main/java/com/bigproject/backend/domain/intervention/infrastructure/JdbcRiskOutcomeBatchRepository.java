@@ -529,8 +529,10 @@ public class JdbcRiskOutcomeBatchRepository implements RiskOutcomeBatchRepositor
 	 * 교육생이 마칠 수 있는 시각이 지나야 회차 모집단이 확정된다.
 	 *
 	 * <p>{@code MAX}가 NULL이면(분석이 한 건도 세션을 열지 못한 회차) 회차 레벨 마감으로 물러선다.
-	 * 그마저 없으면 회차가 잡히지 않는다 — {@code ck_project_assessment_round_assessment_window_required}가
-	 * {@code PLANNED}가 아닌 회차에 {@code assessment_due_at}을 요구하므로 정상 회차는 여기 걸리지 않는다.
+	 * 🔴 <b>그 뒷받침이 2026-08-16에 사라졌다</b> — 회차 응시 창이 폐기돼 {@code assessment_due_at}은
+	 * 전 행 NULL이다. 즉 <b>개인 창이 하나도 없는 회차는 판정 대상에서 빠진다.</b> 분석이 전부 실패한
+	 * 회차가 그런 모양인데, 그때는 셀 응시가 없으므로 결과가 달라지지 않는다. 응시가 있는데 창이 비는
+	 * 경로는 없다({@code JdbcAssessmentSessionPreparer}가 세션과 창을 함께 쓴다).
 	 *
 	 * <p>RETRY는 앵커에서 뺀다. 재시험은 판정 뒤에 열리므로 포함하면 재시험이 발급될 때마다 앵커가
 	 * 뒤로 밀려 INITIAL 판정이 영영 시작되지 않는다.

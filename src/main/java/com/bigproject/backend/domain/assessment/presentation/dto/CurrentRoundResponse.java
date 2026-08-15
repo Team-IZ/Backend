@@ -86,7 +86,14 @@ public record CurrentRoundResponse(
 		String analysisPhase,
 		@Schema(nullable = true, implementation = AnalysisJobStatus.class)
 		String analysisJobStatus,
-		@Schema(description = "분석 실패 사유. 15종. 상세는 Submission API 참고", nullable = true)
+		@Schema(description = """
+				분석이 실패했는가만 알린다. 값은 `ANALYSIS_FAILED` **한 종류**이고 실패하지 않았으면 `null`이다.
+
+				⚠️ 사유 코드가 아니다. `trainee_home_round_view`가
+				`CASE WHEN analysis_status='FAILED' THEN 'ANALYSIS_FAILED' ELSE NULL END`로 만든 상수다.
+				**실제 사유는 TR-02(`GET /projects/{projectId}/submissions/me`)의 `analysisFailureCode`에 있다** —
+				사유 문구를 두 화면에 복제하면 같은 실패가 화면마다 다르게 설명된다.""",
+				nullable = true, allowableValues = {"ANALYSIS_FAILED"})
 		String analysisFailureCode,
 
 		// 19차 R3로 둘 다 확정했다. 17차에서 "등"이라 보류했는데, 확인해 보니 두 값 집합 모두
@@ -126,41 +133,43 @@ public record CurrentRoundResponse(
 
 		@Schema(nullable = true) Instant submissionDueAt,
 		@Schema(description = """
-				회차 공통 응시 창 시작(운영자가 정한 일정). OPEN 회차면 DB가 non-null을 보장한다.
+				🔴 **폐기된 필드. 언제나 `null`이다**(2026-08-16).
 
-				**응시 가능 판정에 함께 쓰인다** — 개인 창과의 관계는 `assessmentCloseAt` 설명 참고.""",
+				회차 공통 응시 창 시작이었다. 컬럼이 폐기돼 `project_assessment_round`의 전 행이
+				`null`이며, 다시 채우는 코드 경로도 없다. 계약은 화면이 깨지지 않도록 남겨 두지만
+				**응시 가능 판정에 쓰지 말 것** — 개인 창(`assessmentOpenAt`)만 보면 된다.""",
 				nullable = true) Instant roundAssessmentOpenAt,
 		@Schema(description = """
-				회차 공통 응시 창 마감(운영자가 정한 일정). OPEN 회차면 DB가 non-null을 보장한다.
+				🔴 **폐기된 필드. 언제나 `null`이다**(2026-08-16). `roundAssessmentOpenAt`과 같다.
 
-				**응시 가능 판정에 함께 쓰인다** — 개인 창과의 관계는 `assessmentCloseAt` 설명 참고.""",
+				응시 마감은 개인 창(`assessmentCloseAt`) 하나로 정해진다.""",
 				nullable = true) Instant roundAssessmentDueAt,
 		@Schema(description = """
-				개인 응시 창 시작. 분석이 끝나 세션이 열린 시각이며, 수행 생성 전이면 null이다.""",
+				개인 응시 창 시작. 분석이 끝나 세션이 열린 시각이며, 수행 생성 전이면 null이다.
+
+				**응시 가능 여부를 정하는 것은 이 값과 `assessmentCloseAt`뿐이다.**""",
 				nullable = true) Instant assessmentOpenAt,
 		@Schema(description = """
 				개인 응시 창 종료. 세션이 열린 시각부터 24시간이며(`assessment.window-hours`),
 				수행 생성 전이면 null이다.
 
-				## 🔴 두 응시 창은 교집합이다 — 가장 좁은 것이 이긴다
+				## 🔴 응시 창은 이제 하나다 — 개인 창이 정본
 
-				응시 창이 두 개 온다. **둘 다 열려 있을 때만 응시할 수 있다.**
+				종전에는 개인 창과 회차 창의 **교집합**으로 판정하라고 적었다. 회차 창
+				(`roundAssessmentOpenAt`·`roundAssessmentDueAt`)이 2026-08-16에 폐기돼 **언제나 `null`**
+				이므로 그 식은 성립하지 않는다.
 
 				```
-				열림  = max(assessmentOpenAt,  roundAssessmentOpenAt)
-				닫힘  = min(assessmentCloseAt, roundAssessmentDueAt)
+				열림  = assessmentOpenAt
+				닫힘  = assessmentCloseAt
 				```
 
-				| | 무엇 |
-				|---|---|
-				| 개인 창 | 분석이 끝나 세션이 열린 시각부터 24시간. 사람마다 다르다 |
-				| 회차 창 | 운영자가 정한 회차 일정. 기수 전체가 같다 |
+				⚠️ **`min(assessmentCloseAt, roundAssessmentDueAt)`을 그대로 쓰면 안 된다.**
+				JS에서 `Math.min(x, null)`은 `null`을 `0`으로 바꿔 **마감이 1970-01-01로 그려진다.**
+				회차 창을 참조하는 코드가 남아 있으면 걷어낼 것.
 
-				⚠️ **어긋날 수 있다.** 마감 직전에 제출해 분석이 늦게 끝나면 개인 창이 회차 창보다
-				뒤에 닫히는데, 그때는 **회차 창이 먼저 닫히므로 24시간을 다 쓰지 못한다.**
-				반대로 회차 일정을 나중에 옮기면 개인 창이 먼저 닫힐 수 있다.
-
-				남은 시간 문구는 **두 값 중 이른 쪽**으로 그린다.""",
+				남은 시간 문구는 `assessmentCloseAt` 하나로 그린다. 서버도 같은 값으로 막는다 —
+				창이 지난 뒤 세션 API는 409 `ASSESSMENT_WINDOW_CLOSED`를 낸다.""",
 				nullable = true) Instant assessmentCloseAt,
 		@Schema(nullable = true) Instant initialTerminalAt,
 		@Schema(example = "ROUND_BATCH", nullable = true, allowableValues = {"ROUND_BATCH"})

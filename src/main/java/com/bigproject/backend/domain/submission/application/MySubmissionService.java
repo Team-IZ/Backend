@@ -128,8 +128,13 @@ public class MySubmissionService {
 	}
 
 	/**
-	 * 실패 코드 → 학생 문구. 15종 중 학생이 스스로 고칠 수 있는 것만 구체적으로 적고 나머지는 한 문장으로 접는다 —
+	 * 실패 코드 → 학생 문구. 12종 중 학생이 스스로 고칠 수 있는 것만 구체적으로 적고 나머지는 한 문장으로 접는다 —
 	 * 고칠 수 없는 실패에 원인을 자세히 적으면 학생이 자기 잘못이라 읽는다.
+	 *
+	 * <p>{@code FILE_TOO_LARGE}·{@code ARCHIVE_INVALID} 분기는 2026-08-16에 걷어냈다. ZIP 파일 자체의
+	 * 문제라 업로드가 400·413으로 먼저 거절해 {@code analysis_job}이 만들어지지 않으므로 여기 도달하지
+	 * 않는다({@code AnalysisFailureCode} javadoc). 죽은 분기를 남겨 두면 "이 문구는 언제 나오나"를
+	 * 다음 사람이 다시 판다.
 	 */
 	private String messageOf(String failureCode) {
 		if (failureCode == null) {
@@ -142,8 +147,6 @@ public class MySubmissionService {
 			case "INVALID_REPOSITORY_URL", "UNSUPPORTED_HOST" -> "저장소 주소 형식이 올바르지 않습니다.";
 			case "EMPTY_CODE" -> "분석할 코드가 없습니다. 제출 내용을 확인해 주세요.";
 			case "GIT_LOG_MISSING" -> "커밋 기록이 없습니다. `.git` 폴더를 포함해 다시 압축해 주세요.";
-			case "FILE_TOO_LARGE" -> "파일이 허용 크기를 넘었습니다.";
-			case "ARCHIVE_INVALID" -> "압축 파일을 열 수 없습니다.";
 			case "UNSUPPORTED_LANGUAGE" -> "분석할 수 있는 언어의 코드가 없습니다.";
 			default -> "코드 분석에 실패했습니다. 다시 제출하거나 매니저에게 문의해 주세요.";
 		};

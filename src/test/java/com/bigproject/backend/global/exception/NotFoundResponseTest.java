@@ -52,14 +52,14 @@ class NotFoundResponseTest {
 
 		var response = handler.handleNoResourceFound(
 				new NoResourceFoundException(
-						org.springframework.http.HttpMethod.GET, "/api/v0/bff/me/current-round", "bff/me/current-round"),
-				new MockHttpServletRequest("GET", "/api/v0/bff/me/current-round"));
+						org.springframework.http.HttpMethod.GET, "/api/v0/no-such-endpoint", "no-such-endpoint"),
+				new MockHttpServletRequest("GET", "/api/v0/no-such-endpoint"));
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
 		assertThat(response.getBody()).isNotNull();
 		assertThat(response.getBody().code()).isEqualTo("NOT_FOUND");
 		// 요청 경로는 싣지 않는다 — 반사형 노출의 통로가 된다.
-		assertThat(response.getBody().message()).doesNotContain("current-round");
+		assertThat(response.getBody().message()).doesNotContain("no-such-endpoint");
 	}
 
 	/**
