@@ -101,7 +101,15 @@ public record CurrentRoundResponse(
 		@Schema(description = "첫 응시의 세션 상태. 문제를 푸는 구간만 가리킨다", nullable = true,
 				implementation = AssessmentSessionStatus.class)
 		String initialSessionStatus,
-		@Schema(description = "출제된 문제 수", example = "3") int preparedProblemCount,
+		// 종전 설명이 "출제된 문제 수", example=3 이었는데 뷰가 NOT_GENERATED 슬롯까지 세어
+		// 실제로 항상 3이 나갔다(2026-08-15 실측: GENERATED 1건인데 3). View 쪽을 고쳤으므로
+		// 이제 세션 API의 problemTotal과 같은 수다.
+		@Schema(description = """
+				실제로 출제된 문제 수(`0`~`3`). 세션 API의 `problemTotal`과 같다.
+
+				⚠️ **`3`으로 가정하지 말 것.** 코드에 근거가 없는 검증 개념은 문항이 만들어지지 않아
+				(`NOT_GENERATED`) 세션에 나오지 않는다. 세션이 열리기 전에는 `0`이다.""",
+				example = "1") int preparedProblemCount,
 		// 19차 R3 회신으로 값 집합을 확정했다 — View의 latest_review_status가 REVIEW 응시의
 		// measurement_attempt.status를 그대로 옮긴 값이라 응시 상태 기계와 1:1이다.
 		// "배정 없음"은 값이 아니라 null이다(TraineeReviewStatus javadoc 참고).
