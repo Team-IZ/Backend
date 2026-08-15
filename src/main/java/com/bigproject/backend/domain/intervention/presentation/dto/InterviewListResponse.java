@@ -37,7 +37,8 @@ public record InterviewListResponse(
 				""")
 		List<ClassOptionResponse> classes,
 
-		@Schema(description = "조회한 회차의 표시용 메타. 담당 밖 회차 ID를 넣으면 null")
+		// 29차 R2 ② — 담당 밖 회차 ID면 null인데 타입이 그것을 말하지 않고 있었다.
+		@Schema(description = "조회한 회차의 표시용 메타. 담당 밖 회차 ID를 넣으면 null", nullable = true)
 		RoundResponse round) {
 
 	public static InterviewListResponse from(InterviewListResult result) {
@@ -180,8 +181,9 @@ public record InterviewListResponse(
 			@Schema(description = "면담 종결 시각. `DONE`일 때만")
 			Instant interviewedAt,
 
+			// 29차 R2 ② — 지난 면담이 없거나 그때 계획을 안 적었으면 null이다.
 			@Schema(description = "지난 면담에서 정한 `다음에 할 것`. 없으면 null",
-					example = "담당 기능 흐름 그려오기")
+					example = "담당 기능 흐름 그려오기", nullable = true)
 			String nextAction) {
 
 		public static InterviewCaseResponse from(InterviewCaseView view) {

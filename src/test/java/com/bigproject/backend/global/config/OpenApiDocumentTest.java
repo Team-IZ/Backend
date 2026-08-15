@@ -710,6 +710,148 @@ class OpenApiDocumentTest {
 				.path("get").path("responses").has("204")).isTrue();
 	}
 
+	/**
+	 * 29차 R2 ① — <b>속성이 있는 객체 스키마는 {@code required}를 가져야 한다.</b>
+	 *
+	 * <p>전 필드가 optional이면 응답 타입은 화면에서 {@code ?}·{@code !}를 남발하게 만들고,
+	 * 요청 타입은 <b>필수 누락이 컴파일에서 안 걸린다.</b>
+	 *
+	 * <h2>왜 스키마를 지목하지 않고 전부 쓸어 담나</h2>
+	 *
+	 * <p>이 파일의 다른 검사들은 스키마를 <b>하나씩 이름으로</b> 확인한다. 그러면 새로 생긴 스키마는
+	 * 아무도 보지 않는다 — 실제로 22차·25차에 이어 29차까지 프론트가 같은 종류의 위반을 세 번
+	 * 보고했고, 그때마다 지목 검사를 한 줄씩 늘려 왔다. 도메인이 늘 때마다 사람이 검사를 추가해야
+	 * 하는 구조가 원인이므로, 여기서는 <b>모집단 전체</b>를 본다.
+	 *
+	 * <p>{@link #PARTIAL_UPDATE_SCHEMAS}만 예외다 — 부분 수정 요청은 required가 없는 것이 계약이다.
+	 */
+	@Test
+	void everyObjectSchemaSaysWhichFieldsAlwaysArrive() throws Exception {
+		List<String> withoutRequired = new ArrayList<>();
+		spec().path("components").path("schemas").properties().forEach(schema -> {
+			String name = schema.getKey();
+			JsonNode definition = schema.getValue();
+			if (PARTIAL_UPDATE_SCHEMAS.contains(name)) {
+				return;
+			}
+			// 속성이 없는 스키마(enum·별칭)는 required를 말할 대상이 없다.
+			if (!definition.path("properties").isObject() || definition.path("properties").isEmpty()) {
+				return;
+			}
+			boolean saysWhatAlwaysArrives = definition.path("required").isArray()
+					&& !definition.path("required").isEmpty();
+			// 전 필드가 선택인 것이 사실인 요청도 있다(어느 값을 보낼지는 그때 상황이 정한다).
+			// 그때는 하나를 골라 required로 올리는 대신 "빈 객체는 안 된다"를 minProperties로 적는다 —
+			// 그것이 서버가 실제로 거절하는 것이고, 스펙이 거짓말을 하지 않는 유일한 표현이다.
+			if (!saysWhatAlwaysArrives && definition.path("minProperties").asInt(0) < 1) {
+				withoutRequired.add(name);
+			}
+		});
+
+		assertThat(withoutRequired)
+				.as("전 필드가 optional이면 응답은 화면에서 ?·!를 부르고 요청은 필수 누락이 컴파일에서 안 걸린다")
+				.isEmpty();
+	}
+
+	/**
+	 * 29차 R2 ② — <b>설명이 {@code null}을 말하면 타입도 {@code null}을 받아야 한다.</b>
+	 *
+	 * <p>이쪽이 optional보다 나쁘다. 키가 빠지는 것은 생성 타입이 {@code ?}로 드러내 주지만,
+	 * 이 경우는 <b>컴파일러가 null 검사를 요구하지 않는데 런타임에 null이 온다.</b>
+	 * 22차 {@code Team.submission} · 25차 {@code TraineeTimelineEvent.type}과 같은 모양이다.
+	 *
+	 * <p>설명문을 읽어 판정하므로 <b>부정문은 걸러낸다</b> — "null이 아니다"는 null이 오지 않는다는
+	 * 뜻이라 위반이 아니다. 그 구분이 없으면 정확히 쓴 설명이 검사에 걸려, 사람이 설명을 흐리게
+	 * 고치는 쪽으로 움직인다.
+	 */
+	@Test
+	void writesNullabilityIntoTheTypeWhereverTheDescriptionMentionsIt() throws Exception {
+		List<String> lying = new ArrayList<>();
+		spec().path("components").path("schemas").properties().forEach(schema ->
+				schema.getValue().path("properties").properties().forEach(property -> {
+					String description = property.getValue().path("description").asString("");
+					if (!mentionsNull(description) || allowsNull(property.getValue())) {
+						return;
+					}
+					lying.add(schema.getKey() + "." + property.getKey());
+				}));
+
+		assertThat(lying)
+				.as("설명은 null이라는데 타입이 안 받으면 컴파일러가 null 검사를 요구하지 않는다")
+				.isEmpty();
+	}
+
+	/**
+	 * 부분 수정 요청은 {@code required}가 없는 것이 계약이다 — 안 바꾸는 값을 매번 실어 보내게 되면
+	 * 그 순간 다른 사람이 바꾼 값을 되돌리는 경로가 열린다({@link #exposesTheOperationSettingsUpdateAsAPartialUpdate}).
+	 *
+	 * <p>여기에 이름을 더할 때는 <b>그 스키마가 PATCH 본문인지</b> 확인할 것. 응답 스키마를 넣으면
+	 * 검사만 조용해지고 화면은 그대로 {@code ?}를 달게 된다.
+	 */
+	private static final java.util.Set<String> PARTIAL_UPDATE_SCHEMAS = java.util.Set.of(
+			"UpdateOperationSettingRequest",
+			"UpdateClassroomRequest",
+			"UpdateCohortRequest"
+	);
+
+	/**
+	 * <b>"null이 온다"고 말하는 문장</b>이 있는지. 부정문은 반대를 말하므로 걸러낸다.
+	 *
+	 * <p>이 구분이 없으면 정확히 쓴 설명이 검사에 걸린다 — "항상 값이 있다(DB도 NOT NULL이다)"나
+	 * "null은 허용하지 않는다"는 <b>null이 오지 않는다</b>는 뜻인데 걸리면, 사람이 설명을 흐리게
+	 * 고치는 쪽으로 움직인다. 검사가 문서를 나쁘게 만들면 안 된다.
+	 *
+	 * <p>비교 전에 마크다운 강조(<code>`</code>·{@code *})를 벗기고 소문자로 맞춘다.
+	 * 설명은 대부분 {@code `null`은 허용하지 않는다}처럼 적혀 있어, 그대로 두면 부정문 목록이
+	 * 한 글자 차이로 빗나간다.
+	 */
+	private static boolean mentionsNull(String description) {
+		String text = description.toLowerCase(java.util.Locale.ROOT)
+				.replace("`", "")
+				.replace("*", "");
+		if (!text.contains("null")) {
+			return false;
+		}
+		for (String negation : NULL_NEGATIONS) {
+			text = text.replace(negation, "");
+		}
+		return text.contains("null");
+	}
+
+	/** 전부 소문자·마크다운 제거 후의 형태로 적는다({@link #mentionsNull}이 그렇게 맞춰 놓고 비교한다). */
+	private static final List<String> NULL_NEGATIONS = List.of(
+			"not null",
+			"null이 아니다",
+			"null이 아니라",
+			"null이 아닌",
+			"null이 아님",
+			"null은 아니다",
+			"null은 허용하지 않는다",
+			"null을 허용하지 않는다",
+			"null은 허용되지 않는다",
+			"null을 보내지"
+	);
+
+	/**
+	 * 3.1에서 null 가능은 <b>타입 배열</b>이거나 {@code oneOf}/{@code anyOf}의 한 갈래다.
+	 *
+	 * <p>3.0의 {@code nullable: true} 키는 <b>인정하지 않는다.</b> 3.1에서 그 키는 의미가 없어
+	 * 생성기가 읽지 않는다 — 인정해 버리면 검사만 통과하고 화면 타입은 그대로 non-null이 된다.
+	 * (소스에는 {@code @Schema(nullable = true)}로 적는다. springdoc이 그것을 3.1 형태로 옮겨 주며,
+	 * 이 검사는 <b>옮겨진 결과</b>를 본다.)
+	 */
+	private static boolean allowsNull(JsonNode property) {
+		if (property.path("type").toString().contains("\"null\"")) {
+			return true;
+		}
+		for (String combinator : List.of("oneOf", "anyOf", "allOf")) {
+			if (property.path(combinator).toString().contains("\"null\"")) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private interface ResponseVisitor {
 		void visit(String operationId, String status, JsonNode response);
 	}

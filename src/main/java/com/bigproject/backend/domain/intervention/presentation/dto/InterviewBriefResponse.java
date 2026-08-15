@@ -52,10 +52,13 @@ public record InterviewBriefResponse(
 				""")
 		List<BriefItemResponse> items,
 
-		@Schema(description = "지난 면담에서 정한 것. 없으면 null — ①칸의 ⚠ 줄이 통째로 빠진다")
+		// 29차 R2 ② — 설명만 "없으면 null"이라 적고 타입이 null을 안 받고 있었다. nullable을 붙이면
+		// springdoc이 oneOf: [$ref, null]로 내보내 화면이 null 검사를 강제받는다(22차 Team.submission과 같다).
+		@Schema(description = "지난 면담에서 정한 것. 없으면 null — ①칸의 ⚠ 줄이 통째로 빠진다",
+				nullable = true)
 		PriorInterviewResponse priorInterview,
 
-		@Schema(description = "저장된 매니저 입력. 처음 여는 브리프는 null")
+		@Schema(description = "저장된 매니저 입력. 처음 여는 브리프는 null", nullable = true)
 		SavedRecordResponse savedRecord,
 
 		@Schema(description = "⚠️ **미구현** — 교안 위치·반 문제 판정이 DB 회신 대기입니다. 현재 빈 배열")
@@ -68,7 +71,7 @@ public record InterviewBriefResponse(
 				이 화면이 하려는 일은 "다음 한 주를 어디에 쓸지"를 정하는 것입니다(정의서 §6-2).
 
 				⚠️ **관찰이지 판정이 아닙니다.** 화면도 "판단은 하지 않습니다"로 감싸 보여줍니다.
-				""")
+				""", nullable = true)
 		VoidEvidenceResponse voidEvidence) {
 
 	public static InterviewBriefResponse from(BriefView view) {

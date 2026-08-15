@@ -17,17 +17,27 @@ import java.math.BigDecimal;
  * <p>단가는 {@code pricePerMillionTokens}(100만 토큰당)로 받습니다. DB는 기준 토큰 수
  * ({@code price_unit_token_count})당 단가를 저장하므로 서버가 환산해 저장합니다.
  */
+/*
+ * 29차 R2 ① — 이 요청은 PUT이다. 전체 치환이므로 두 단가 키는 <b>항상 실어 보낸다</b>.
+ *
+ * 값이 null일 수 있다는 것과 키를 생략해도 된다는 것은 다르다. 여기서 null은 "미설정으로
+ * 되돌린다"는 <b>지시</b>인데, 키를 빼면 그 지시와 "이 필드는 손대지 않는다"가 구분되지 않는다.
+ * required + nullable로 적어야 생성 타입이 "키는 쓰되 null을 넣을 수 있다"가 된다
+ * (22차 R1의 Team.submission과 같은 조합이다).
+ */
 @Schema(description = "모델 단가 수정 요청")
 public record UpdateModelPricingRequest(
 
 		@Schema(description = """
 				100만 토큰당 입력 단가. null이면 단가 미설정으로 되돌린다.
 				0은 '무료'를 의미하므로 미설정 용도로 쓰지 말 것.""",
-				example = "5.000000", nullable = true)
+				example = "5.000000", nullable = true,
+				requiredMode = Schema.RequiredMode.REQUIRED)
 		@DecimalMin("0.000000")
 		BigDecimal inputPricePerMillionTokens,
 
-		@Schema(description = "100만 토큰당 출력 단가. null이면 단가 미설정.", example = "25.000000", nullable = true)
+		@Schema(description = "100만 토큰당 출력 단가. null이면 단가 미설정.", example = "25.000000",
+				nullable = true, requiredMode = Schema.RequiredMode.REQUIRED)
 		@DecimalMin("0.000000")
 		BigDecimal outputPricePerMillionTokens,
 

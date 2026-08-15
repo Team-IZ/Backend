@@ -20,34 +20,41 @@ import java.util.UUID;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @Schema(description = "검증 세션 진행 상태")
 public record SessionResponse(
-		@Schema(description = "세션 ID") UUID sessionId,
+		@Schema(description = "세션 ID", requiredMode = Schema.RequiredMode.REQUIRED) UUID sessionId,
 
 		@Schema(description = "FIRST(1차) · REVIEW(다시 보기). REVIEW는 힌트가 없고 판정에 반영되지 않는다",
-				allowableValues = {"FIRST", "REVIEW"})
+				allowableValues = {"FIRST", "REVIEW"}, requiredMode = Schema.RequiredMode.REQUIRED)
 		String mode,
 
 		// 이 조회는 READY·IN_PROGRESS만 돌려주지만(종료된 세션은 findCurrent가 고르지 않는다)
 		// 값 집합 자체는 세션 상태 8종이다. 좁혀서 내보내면 같은 컬럼이 API마다 다른 타입이 된다.
 		@Schema(description = "이 조회는 사실상 READY(시작 전) · IN_PROGRESS(진행 중)만 돌려준다",
-				implementation = AssessmentSessionStatus.class)
+				implementation = AssessmentSessionStatus.class,
+				requiredMode = Schema.RequiredMode.REQUIRED)
 		String status,
 
+		// 시작 전에는 서 있는 문제가 없다. NON_NULL이라 그때는 키가 빠진다.
 		@Schema(description = """
-				지금 서 있는 문제 번호. 시작 전이면 null. 생성된 문제만 1부터 세므로 항상
-				1~problemTotal 범위이며, 그대로 `GET .../problems/{problemNo}`에 넣으면 된다""",
-				nullable = true)
+				지금 서 있는 문제 번호. 시작 전이면 이 키가 없다. 생성된 문제만 1부터 세므로 항상
+				1~problemTotal 범위이며, 그대로 `GET .../problems/{problemNo}`에 넣으면 된다""")
 		Integer currentProblemNo,
 
 		@Schema(description = """
 				생성된 문제 수. 화면의 `문제 n/N`의 N이다. 코드 근거를 못 찾아 문항이 만들어지지 않은
-				개념(NOT_GENERATED)이 있으면 3보다 작다 — 그 문제는 세션에 아예 나오지 않는다""")
+				개념(NOT_GENERATED)이 있으면 3보다 작다 — 그 문제는 세션에 아예 나오지 않는다""",
+				requiredMode = Schema.RequiredMode.REQUIRED)
 		int problemTotal,
 
-		@Schema(description = "세션 시작 시각. 경과 시간 표시의 기산점") Instant startedAt,
+		@Schema(description = "세션 시작 시각. 경과 시간 표시의 기산점",
+				requiredMode = Schema.RequiredMode.REQUIRED)
+		Instant startedAt,
 
-		@Schema(description = "정책 시간 상한. 넘기면 답한 데까지 저장하고 닫는다") Instant timeLimitAt,
+		@Schema(description = "정책 시간 상한. 넘기면 답한 데까지 저장하고 닫는다",
+				requiredMode = Schema.RequiredMode.REQUIRED)
+		Instant timeLimitAt,
 
-		@Schema(description = "다시 보기 마감. REVIEW에서만 있다") Instant reviewDueAt
+		// FIRST 모드에는 다시 보기 마감이 없다. NON_NULL이라 그때는 키가 빠진다.
+		@Schema(description = "다시 보기 마감. REVIEW에서만 있다(FIRST면 이 키가 없다)") Instant reviewDueAt
 ) {
 
 	public static SessionResponse of(SessionHead head, List<SessionStage> stages) {
