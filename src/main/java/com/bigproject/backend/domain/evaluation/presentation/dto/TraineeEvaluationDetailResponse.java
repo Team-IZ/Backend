@@ -64,6 +64,7 @@ public record TraineeEvaluationDetailResponse(
 			String axisCode,
 			@Schema(description = "축 순서 1~4. L1=코드이해, L2=설계논리, L3=대안비교, L4=반례대응입니다.", example = "2")
 			int stepNo,
+			@Schema(description = "이 단계를 통과했는가. `helpCount`와 **따로** 읽는다 — 힌트를 받고 통과한 경우도 true다")
 			boolean passed,
 			@Schema(description = "힌트를 받고 답한 횟수 0~2", example = "1")
 			int helpCount,
