@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.assessment.domain;
 
+import com.bigproject.backend.global.exception.ApiErrorCode;
 import org.springframework.http.HttpStatus;
 
 /**
@@ -7,8 +8,12 @@ import org.springframework.http.HttpStatus;
  *
  * <p>세션은 20~60분 전체화면이고 나가는 경로가 없다. 그래서 실패를 뭉뚱그리면 학생이 할 수 있는 일이
  * 없어진다 — "다시 시도하면 되는가"와 "이 시험은 끝났는가"를 코드로 갈라 준다.
+ *
+ * <p>{@link ApiErrorCode}를 구현하는 이유는 {@code SwaggerConfig}가 카탈로그에서 상태·기본 메시지를
+ * 읽어 <b>각 오류 응답의 예시 본문</b>을 만들기 때문이다. 구현하지 않으면 세션 코드만 예시 메시지가
+ * "요청을 처리할 수 없습니다."로 뭉개져, 화면이 어떤 문구를 폴백으로 써야 하는지 문서에서 알 수 없다.
  */
-public enum SessionErrorCode {
+public enum SessionErrorCode implements ApiErrorCode {
 
 	// ── 세션 접근 ──
 	/** 세션이 없거나, 남의 세션이거나, 삭제됐다. 셋을 구분하지 않는다 — 남의 세션 존재를 알려줄 이유가 없다. */
@@ -66,11 +71,18 @@ public enum SessionErrorCode {
 		this.message = message;
 	}
 
+	@Override
 	public HttpStatus status() {
 		return status;
 	}
 
 	public String message() {
+		return message;
+	}
+
+	/** {@link ApiErrorCode} 계약. {@link #message()}와 같은 값이며 문서 예시가 이쪽을 읽는다. */
+	@Override
+	public String defaultMessage() {
 		return message;
 	}
 }
