@@ -37,10 +37,33 @@ public class SessionGuard {
 				.orElseThrow(() -> new SessionException(SessionErrorCode.SESSION_NOT_ACCESSIBLE));
 	}
 
+	/**
+	 * 아직 살아 있고 <b>마감 안에 있는</b> 세션인지 본다.
+	 *
+	 * <h2>🔴 응시 창 검사가 여기 있는 이유</h2>
+	 *
+	 * <p>종전에는 세션 API가 응시 창을 <b>아예 읽지 않았다.</b> 세션 상태와 시간 상한만 봤기 때문에
+	 * 개인 창이 닫힌 뒤에도 시작·답변이 그대로 통과했다 — 홈 카드는 {@code ASSESSMENT_WINDOW_CLOSED}에
+	 * CTA {@code NONE}을 그리는데 API는 받아 주는 상태였다.
+	 *
+	 * <p>{@link #running}이 이 메서드를 부르고 {@code AssessmentSessionService#start}도 여기를 지나므로
+	 * 시작·답변·힌트가 한 번에 막힌다. {@link #owned}에는 넣지 않는다 — 소유권만 확인하는 읽기 자리라,
+	 * 마감이 지났다고 조회까지 막으면 학생이 자기가 푼 것을 다시 볼 수 없다.
+	 *
+	 * <p><b>세션을 닫지는 않는다.</b> 시간 상한({@link #running})은 닫고 던지지만 마감은 거절만 한다 —
+	 * 창이 지나 응시하지 못한 응시를 어떤 종료 상태로 남길지가 아직 정해지지 않았고
+	 * ({@code NOT_ATTENDED}를 쓰는 코드가 없다), 지금 {@code end()}로 닫으면 한 번도 풀지 못한 학생이
+	 * {@code COMPLETED}로 기록된다. 그 판정은 별건이다.
+	 */
 	public SessionHead live(UUID userId, UUID sessionId) {
 		SessionHead head = owned(userId, sessionId);
 		if (head.isEnded()) {
 			throw new SessionException(SessionErrorCode.SESSION_ALREADY_ENDED);
+		}
+		if (head.isDeadlinePassed(Instant.now())) {
+			throw new SessionException(head.isReview()
+					? SessionErrorCode.REVIEW_DUE_AT_PASSED
+					: SessionErrorCode.ASSESSMENT_WINDOW_CLOSED);
 		}
 		return head;
 	}

@@ -22,6 +22,22 @@ public enum SessionErrorCode implements ApiErrorCode {
 	SESSION_ALREADY_ENDED(HttpStatus.CONFLICT, "이미 끝난 세션입니다."),
 	/** 아직 START를 부르지 않았다. 인트로 동의 없이 답을 받으면 정의서가 요구하는 고지 기록이 남지 않는다. */
 	SESSION_NOT_STARTED(HttpStatus.CONFLICT, "아직 시작하지 않은 세션입니다."),
+	/**
+	 * 개인 응시 창({@code measurement_attempt.assessment_close_at})이 닫혔다.
+	 *
+	 * <p>세션을 <b>닫지는 않는다</b> — 거절만 한다. 창이 지나 응시하지 못한 사람을 어떤 종료 상태로
+	 * 남길지는 아직 정해지지 않았고({@code NOT_ATTENDED}를 쓰는 코드가 없다), 지금
+	 * {@code JdbcSessionRepository#end}로 닫으면 한 번도 못 푼 학생이 {@code COMPLETED}로 기록된다.
+	 * 여기서는 <b>닫힌 시험에 쓰기가 통과하던 구멍만</b> 막는다.
+	 */
+	ASSESSMENT_WINDOW_CLOSED(HttpStatus.CONFLICT, "응시 창이 닫혀 더 진행할 수 없습니다."),
+	/**
+	 * 다시 보기 마감({@code measurement_attempt.review_due_at})이 지났다.
+	 *
+	 * <p>응시 창 만료와 코드를 가르는 이유는 <b>학생이 할 수 있는 일이 다르기</b> 때문이다 —
+	 * 응시 창은 매니저에게 문의할 여지가 있고, 다시 보기는 회차당 한 번뿐이라 그것으로 끝이다.
+	 */
+	REVIEW_DUE_AT_PASSED(HttpStatus.CONFLICT, "다시 보기 마감이 지났습니다."),
 	/** 정책 시간 상한(기본 60분)을 넘겼다. 답한 데까지는 저장되고 세션은 닫힌다. */
 	SESSION_TIMEOUT(HttpStatus.CONFLICT, "시간이 다 되어 세션이 종료되었습니다."),
 	/**

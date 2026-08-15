@@ -25,6 +25,9 @@ public final class SessionModels {
 	 * @param currentProblemStartedAt 지금 문제의 L1 축이 교육생에게 처음 표시된 시각({@code problem_stage.question_presented_at}).
 	 *                                문제별 20분 제한의 기준점이며, 세션 레벨과 달리 이 값을 담는 컬럼을 따로 두지 않고
 	 *                                이미 있는 컬럼을 그대로 읽는다 — L1이 표시된 순간이 곧 그 문제가 시작된 순간이다.
+	 * @param assessmentCloseAt       <b>개인</b> 응시 창 종료({@code measurement_attempt.assessment_close_at}).
+	 *                                NULL이면 창이 아직 정해지지 않은 것이라 막지 않는다. 회차 창은 폐기됐으므로
+	 *                                (2026-08-16) 응시 가능 여부를 정하는 것은 이 값 하나뿐이다
 	 */
 	public record SessionHead(
 			UUID sessionId,
@@ -40,8 +43,20 @@ public final class SessionModels {
 			Instant timeLimitAt,
 			Instant reviewDueAt,
 			UUID sourceSubmissionId,
-			Instant currentProblemStartedAt
+			Instant currentProblemStartedAt,
+			Instant assessmentCloseAt
 	) {
+		/** 응시 창을 검사하지 않는 맥락(테스트 등)에서는 null로 둔다. */
+		public SessionHead(
+				UUID sessionId, UUID orgId, UUID attemptId, UUID userId, UUID assessmentRoundId,
+				String mode, String status, UUID currentProblemId, UUID currentProblemStageId,
+				Instant startedAt, Instant timeLimitAt, Instant reviewDueAt, UUID sourceSubmissionId,
+				Instant currentProblemStartedAt) {
+			this(sessionId, orgId, attemptId, userId, assessmentRoundId, mode, status, currentProblemId,
+					currentProblemStageId, startedAt, timeLimitAt, reviewDueAt, sourceSubmissionId,
+					currentProblemStartedAt, null);
+		}
+
 		/** 기존 호출부 호환용. 문제별 시간 제한을 검사하지 않는 맥락(테스트 등)에서는 null로 둔다. */
 		public SessionHead(
 				UUID sessionId, UUID orgId, UUID attemptId, UUID userId, UUID assessmentRoundId,
@@ -57,6 +72,24 @@ public final class SessionModels {
 
 		public boolean isEnded() {
 			return !"READY".equals(status) && !"IN_PROGRESS".equals(status) && !"PAUSED".equals(status);
+		}
+
+		/**
+		 * 이 세션에 걸린 마감. 다시 보기는 {@code review_due_at}, 1차는 <b>개인</b> 응시 창이다.
+		 *
+		 * <p>두 값을 한 자리에서 고르는 이유는 {@code SessionGuard}가 두 종류의 세션을 같은 경로로
+		 * 검사하기 때문이다. 호출부마다 갈라 쓰면 한쪽만 고쳐지는 순간 다시 새어 나간다.
+		 *
+		 * @return 마감. NULL이면 마감이 없다(막지 않는다)
+		 */
+		public Instant deadlineAt() {
+			return isReview() ? reviewDueAt : assessmentCloseAt;
+		}
+
+		/** 마감이 있고 이미 지났는가. 마감이 없으면 언제나 {@code false}다. */
+		public boolean isDeadlinePassed(Instant now) {
+			Instant deadline = deadlineAt();
+			return deadline != null && !now.isBefore(deadline);
 		}
 	}
 
