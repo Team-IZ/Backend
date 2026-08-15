@@ -1,11 +1,13 @@
 package com.bigproject.backend.domain.assessment.presentation;
 
+import com.bigproject.backend.domain.assessment.application.AssessmentReviewService;
 import com.bigproject.backend.domain.assessment.application.AssessmentSessionService;
 import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitRequest;
 import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.SessionActivityRequest;
 import com.bigproject.backend.domain.assessment.presentation.dto.HintResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.ProblemActivityResponse;
+import com.bigproject.backend.domain.assessment.presentation.dto.ReviewOpenRequest;
 import com.bigproject.backend.domain.assessment.presentation.dto.SessionResponse;
 import com.bigproject.backend.global.exception.ErrorResponse;
 import com.bigproject.backend.global.security.CurrentUserResolver;
@@ -22,6 +24,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -61,6 +64,7 @@ public class AssessmentSessionController {
 	private static final String TRACE_ID_HEADER = "X-Request-Id";
 
 	private final AssessmentSessionService sessionService;
+	private final AssessmentReviewService reviewService;
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
@@ -114,15 +118,33 @@ public class AssessmentSessionController {
 					진행 중인 세션을 다시 보기보다 먼저 고른다. 둘 다 없으면 **`204 No Content`**이며 화면은
 					`진행 중인 회차 없음`으로 그린다.
 
+					## 🔴 이 조회가 시간 상한을 정리한다
+
+					조회이지만 **읽기만 하지 않는다.** 상한을 넘긴 세션·문제를 이 자리에서 닫고, 그 결과를
+					반영한 상태를 돌려준다.
+
+					| 넘긴 상한 | 이 조회가 하는 일 | 응답 |
+					|---|---|---|
+					| 세션(`timeLimitAt`) | 세션을 `INTERRUPTED`로 닫는다 | **204**(다른 살아 있는 세션이 없으면) |
+					| 문제(시작 + 20분) | 그 문제를 접고 다음 문제로 커서를 옮긴다 | 200. `currentProblemNo`가 다음 번호 |
+
+					그래서 **학생이 아무것도 제출하지 않고 새로고침만 해도** 상한이 반영된다. 종전에는 쓰기
+					요청만 상한을 봐서, 끝났어야 할 세션이 계속 진행 중으로 내려가고 남은 시간이 음수인 화면이
+					그려졌다(2026-08-15 교정).
+
+					마지막 문제가 상한을 넘기면 그 자리에서 세션이 끝나므로 **204**가 온다.
+
 					## 204를 "응시 완료"로 읽지 말 것
 
 					204는 **살아 있는 세션(`READY`·`IN_PROGRESS`·`PAUSED`)이 하나도 없다**는 뜻일 뿐이고 그 이유는
-					네 가지다 — 이미 완료했다 · 아직 분석이 끝나지 않아 세션이 만들어지지 않았다 · 분석이
-					실패했다 · 팀 배정이 끊겼다. 넷을 가르는 것은 `GET /assessment-rounds`의
-					`representativeStatus`이며, 완료는 그중 `ASSESSMENT_COMPLETED` 하나다.
+					다섯 가지다 — 이미 완료했다 · **방금 상한을 넘겨 닫혔다** · 아직 분석이 끝나지 않아 세션이
+					만들어지지 않았다 · 분석이 실패했다 · 팀 배정이 끊겼다. 이들을 가르는 것은
+					`GET /assessment-rounds`의 `representativeStatus`이며, 완료는 그중 `ASSESSMENT_COMPLETED`
+					하나다. 상한 초과로 닫힌 세션은 응시가 `SESSION_INCOMPLETE`로 끝나 `initialSessionStatus`가
+					`INTERRUPTED`다.
 
-					⚠️ **응시 창이 닫혀도 204가 아니다.** 이 조회는 `assessmentCloseAt`을 보지 않으므로 창이
-					지난 `READY` 세션도 200으로 내려온다.
+					⚠️ **응시 창(`assessmentCloseAt`)이 닫혀도 204가 아니다.** 여기서 보는 것은 세션의 정책
+					시간 상한이지 응시 창이 아니다 — 창이 지난 `READY` 세션은 여전히 200으로 내려온다.
 
 					## 오류
 
@@ -187,7 +209,9 @@ public class AssessmentSessionController {
 							})),
 			@ApiResponse(
 					responseCode = "204",
-					description = "이어서 할 세션이 없다. **본문이 없다** — 완료·미준비·분석 실패를 구분하지 않는다",
+					description = """
+							이어서 할 세션이 없다. **본문이 없다** — 완료·상한 초과로 방금 닫힘·미준비·분석 \
+							실패를 구분하지 않는다. 사유는 `GET /assessment-rounds`로 가른다""",
 					content = @Content),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED",
 					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
@@ -200,6 +224,128 @@ public class AssessmentSessionController {
 		return sessionService.findCurrent(userId)
 				.map(ResponseEntity::ok)
 				.orElseGet(() -> ResponseEntity.noContent().build());
+	}
+
+	@Operation(
+			operationId = "openReviewSession",
+			summary = "다시 보기 개설(리포트에서 파생) | ✅ 사용 가능",
+			description = """
+					공개된 리포트를 근거로 **다시 보기 응시를 만든다.** 이 경로가 없으면 다시 보기는 존재할 수
+					없다 — `measurement_attempt`를 만드는 다른 두 자리는 모두 `INITIAL` 고정이다.
+
+					## 무엇을 다시 보는가
+
+					**도달 단계가 2단 미만인 문제**만 골라 그 문제의 **첫 번째 질문(L1)부터** 다시 본다.
+					2단(설계 논리)이 합격선이므로 그 미만이 다시 볼 대상이고, 리포트가 `retryTarget`으로
+					표시하는 개념과 **같은 규칙·같은 기준값**이다.
+
+					| 1차 도달 단계 | 다시 보기 |
+					|---|---|
+					| 0단(통과한 축 없음) · 1단 | **대상.** L1~L4를 처음부터 |
+					| 2단 이상 | 대상 아님. 세션에 나오지 않는다 |
+
+					도달 단계는 `problem_stage`에서 센다(통과한 가장 높은 축). 미응시로 단계가 전부
+					`NOT_REACHED`인 문제도 0단이라 대상이다.
+
+					## 문제와 질문은 1차와 완전히 같다
+
+					AI를 다시 부르지 않고 1차 세션의 `problem_stage`를 **그대로 복사한다** — 같은 문제,
+					같은 질문, 같은 힌트 문구다. 새로 만들면 문구가 달라져 1차와 도달 단계를 비교할 수
+					없게 되고(매니저 지표가 그 비교를 읽는다) 비용도 다시 나간다.
+
+					답변·점수는 복사하지 않는다. 복사된 단계는 `source_problem_stage_id`로 원본을 가리키며,
+					매니저 화면의 `0단 → 1단` 비교가 이 연결을 따라간다.
+
+					## 요청 (본문)
+
+					| 필드 | 필수 | 타입 | 설명 |
+					|---|---|---|---|
+					| `reportId` | 필수 | UUID | 근거 리포트. `GET /assessment-rounds`의 `current.reportId` |
+
+					리포트는 **본인 것이고 공개된 것**이어야 한다(`lifecycle_status=ACTIVE` ·
+					`traineeReleaseStatus=RELEASED`). 회차·1차 응시는 리포트에서 도출하므로 따로 받지 않는다.
+
+					스키마가 리포트를 요구한다 — `ck_measurement_attempt_attempt_type_2`가 REVIEW에
+					리포트 ID와 스냅샷 ID를 둘 다 NOT NULL로 못박고 있다.
+
+					## 응답 (201)
+
+					**`GET /current`와 같은 구조**(`SessionResponse`)다. `mode`가 `REVIEW`이고 `status`는
+					`READY`, `reviewDueAt`이 채워진다. `problemTotal`은 **다시 볼 문제 수**라 1차보다 작다.
+
+					만든 다음은 1차와 똑같다 — 받은 `sessionId`로 `POST /{sessionId}/start`를 부르면 된다.
+					커서·인트로 동의·문제별 20분 시계는 그쪽이 세운다.
+
+					⚠️ **다시 보기에는 힌트가 없다.** `POST /{sessionId}/hints`는 409 `HINT_NOT_AVAILABLE`이다
+					("지난번과 같은 질문이라 이미 한 번 들었어요").
+
+					## 두 번 눌러도 안전하다
+
+					이미 열려 있는 다시 보기가 있으면 **새로 만들지 않고 그것을 돌려준다.** 다시 보기는
+					회차당 한 번이라, 두 번 눌러 응시가 둘 생기면 도달 단계 비교가 어느 쪽을 봐야 하는지
+					알 수 없게 된다.
+
+					## 오류
+
+					| 코드 | 상태 | 언제 |
+					|---|---|---|
+					| `REVIEW_REPORT_NOT_ACCESSIBLE` | 404 | 리포트가 없거나·남의 것이거나·아직 공개되지 않았다 |
+					| `REVIEW_SOURCE_NOT_READY` | 409 | 1차 응시가 끝나지 않았다. 도달 단계가 확정되지 않았다 |
+					| `REVIEW_NOT_ELIGIBLE` | 409 | 2단 미만인 문제가 없다. **다시 볼 것이 없다** |
+					| `REVIEW_ALREADY_COMPLETED` | 409 | 이 회차의 다시 보기를 이미 끝냈다 |
+
+					`REVIEW_NOT_ELIGIBLE`은 실패가 아니라 **안내**다. 화면은 `다시 볼 개념이 없어요`로
+					그리면 된다 — 리포트의 `retryTarget`이 전부 `false`인 경우와 같은 상태다.""")
+	@ApiResponses({
+			@ApiResponse(
+					responseCode = "201",
+					description = "다시 보기 개설됨. 이미 열려 있었으면 그것을 그대로 돌려준다",
+					content = @Content(
+							schema = @Schema(implementation = SessionResponse.class),
+							examples = {
+									@ExampleObject(
+											name = "새로 개설 (2단 미만 2문제)",
+											description = "1차는 3문제였지만 다시 볼 것은 2문제다",
+											value = """
+													{
+													  "sessionId": "9c1a7e33-42b6-4d80-8e15-7a3f2b9d6c04",
+													  "mode": "REVIEW",
+													  "status": "READY",
+													  "problemTotal": 2,
+													  "reviewDueAt": "2026-08-22T04:02:11Z"
+													}"""),
+									@ExampleObject(
+											name = "이미 열려 있음 (재클릭)",
+											description = "새 응시를 만들지 않는다. 진행 중이었으면 커서가 그대로다",
+											value = """
+													{
+													  "sessionId": "9c1a7e33-42b6-4d80-8e15-7a3f2b9d6c04",
+													  "mode": "REVIEW",
+													  "status": "IN_PROGRESS",
+													  "currentProblemNo": 2,
+													  "problemTotal": 2,
+													  "startedAt": "2026-08-16T01:10:00Z",
+													  "timeLimitAt": "2026-08-16T02:10:00Z",
+													  "reviewDueAt": "2026-08-22T04:02:11Z"
+													}""")
+							})),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED · reportId가 없다",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "404", description = "REVIEW_REPORT_NOT_ACCESSIBLE",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "409",
+					description = "REVIEW_SOURCE_NOT_READY · REVIEW_NOT_ELIGIBLE · REVIEW_ALREADY_COMPLETED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+	})
+	@PostMapping(value = "/reviews", consumes = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<SessionResponse> openReview(@Valid @RequestBody ReviewOpenRequest request) {
+		UUID userId = currentUserResolver.resolveCurrentMemberId();
+		return ResponseEntity.status(HttpStatus.CREATED)
+				.body(reviewService.openReview(userId, request.reportId()));
 	}
 
 	@Operation(
@@ -598,9 +744,25 @@ public class AssessmentSessionController {
 					|---|---|---|
 					| `ANSWER_TEXT_REQUIRED` | 400 | 본문이 비었다 |
 					| `SESSION_NOT_STARTED` | 409 | `POST /start`를 아직 부르지 않았다 |
-					| `SESSION_TIMEOUT` | 409 | 시간 상한 초과. 답한 데까지 저장하고 세션을 닫는다 |
+					| `SESSION_TIMEOUT` | 409 | 세션 상한(기본 60분) 초과. 답한 데까지 저장하고 세션을 닫는다 |
+					| `PROBLEM_TIME_LIMIT_EXCEEDED` | 409 | 이 문제의 상한(기본 20분) 초과. **이미 다음 문제로 넘어갔다** |
 					| `ANSWER_ALREADY_SUBMITTED` | 409 | 같은 자리에 이미 제출됐다(낙관적 잠금). 다시 불러오면 된다 |
 					| `GRADING_FAILED` | 503 | AI 채점 실패. **같은 답을 그대로 다시 제출하면 된다** |
+
+					### 🔴 시간 상한 두 개는 결과가 다르다
+
+					| | 상한 | 넘기면 | 그다음 |
+					|---|---|---|---|
+					| 세션 | `timeLimitAt`(기본 60분) | 세션이 `INTERRUPTED`로 닫힌다 | `GET /current`가 **204** |
+					| 문제 | 지금 문제 시작 + 20분 | 그 문제만 접고 **다음 문제로 커서가 옮겨진다** | `GET /current`가 새 `currentProblemNo` |
+
+					⚠️ **둘 다 409를 받은 시점에 서버 상태는 이미 바뀌어 있다.** 이 응답에는 다음 자리가 실리지
+					않으므로 화면은 `GET /current`를 다시 불러 커서를 읽는다 — 200이면 그 문제로 이동하고,
+					204면 종료 화면이다. `PROBLEM_TIME_LIMIT_EXCEEDED`가 마지막 문제에서 나면 세션이 함께
+					끝나므로 204가 온다.
+
+					접힌 문제의 남은 축은 `NOT_REACHED`로 닫히고, 다음 문제의 20분은 **그 문제로 옮겨간
+					시점부터** 새로 센다.
 
 					⚠️ AI 채점에 **4.5~7.7초**가 걸린다. 클라이언트 타임아웃을 짧게 잡지 말 것.
 					재전송이 안전한 이유는 서버가 자리마다 고정된 멱등키를 만들어 보내기 때문이다 —
