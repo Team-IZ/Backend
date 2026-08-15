@@ -367,7 +367,95 @@ class AssessmentSessionServiceTest {
 		verifyNoInteractions(expirer);
 	}
 
+	// ── 응시 창 ──
+
+	/**
+	 * 종전에는 세션 API가 응시 창을 <b>아예 읽지 않아서</b> 개인 창이 닫힌 뒤에도 시작이 통과했다.
+	 * 홈 카드는 {@code ASSESSMENT_WINDOW_CLOSED}에 CTA {@code NONE}을 그리는데 API는 받아 주던
+	 * 상태다(28차 P2). 창이 닫힌 계정으로 TR-03을 열면 바로 만나는 구멍이라 여기서 고정한다.
+	 */
+	@Test
+	void 개인_응시_창이_닫히면_시작할_수_없다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(windowClosedHead()));
+
+		assertThatThrownBy(() -> service.start(USER_ID, SESSION_ID))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.ASSESSMENT_WINDOW_CLOSED);
+
+		verify(repository, never()).start(any(), org.mockito.ArgumentMatchers.anyInt(), any());
+	}
+
+	/**
+	 * 힌트도 같은 자리에서 막힌다 — {@code running()}이 {@code live()}를 지나기 때문이다.
+	 * 시간 상한보다 <b>먼저</b> 걸리므로 세션을 닫지도 않는다.
+	 */
+	@Test
+	void 개인_응시_창이_닫히면_힌트도_받지_않는다() {
+		when(repository.findOwned(SESSION_ID, USER_ID))
+				.thenReturn(Optional.of(windowClosedHead("IN_PROGRESS")));
+
+		assertThatThrownBy(() -> service.openHint(USER_ID, SESSION_ID))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.ASSESSMENT_WINDOW_CLOSED);
+
+		verifyNoInteractions(expirer);
+	}
+
+	/**
+	 * 다시 보기는 코드가 갈린다. 학생이 할 수 있는 일이 달라서다 — 응시 창은 매니저에게 문의할
+	 * 여지가 있고, 다시 보기는 회차당 한 번뿐이라 마감이 지나면 그것으로 끝이다.
+	 */
+	@Test
+	void 다시_보기_마감이_지나면_다른_코드로_막는다() {
+		SessionHead review = new SessionHead(SESSION_ID, UUID.randomUUID(), UUID.randomUUID(), USER_ID,
+				UUID.randomUUID(), "REVIEW", "READY", null, null, null, null,
+				Instant.now().minus(Duration.ofMinutes(1)), UUID.randomUUID(), null, null);
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(review));
+
+		assertThatThrownBy(() -> service.start(USER_ID, SESSION_ID))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.REVIEW_DUE_AT_PASSED);
+	}
+
+	/** 마감 컬럼이 비어 있으면(창이 아직 정해지지 않았다) 막지 않는다 — 없는 규칙을 만들지 않는다. */
+	@Test
+	void 마감이_없으면_막지_않는다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
+		when(repository.findStages(SESSION_ID)).thenReturn(List.of());
+
+		assertThat(service.start(USER_ID, SESSION_ID).status()).isEqualTo("IN_PROGRESS");
+	}
+
+	/**
+	 * 창이 닫혀도 <b>조회는 열어 둔다.</b> {@code owned()}는 소유권만 보는 자리라, 마감이 지났다고
+	 * 여기까지 막으면 학생이 자기가 푼 것을 다시 볼 수 없다.
+	 */
+	@Test
+	void 창이_닫혀도_지난_문제_조회는_막지_않는다() {
+		when(repository.findOwned(SESSION_ID, USER_ID))
+				.thenReturn(Optional.of(windowClosedHead("COMPLETED")));
+		when(repository.findProblems(any(), any())).thenReturn(List.of(problem(1, OTHER_PROBLEM_ID)));
+
+		assertThat(service.findProblem(USER_ID, SESSION_ID, 1).problemNo()).isEqualTo(1);
+	}
+
 	// ── 픽스처 ──
+
+	/** 개인 응시 창이 1분 전에 닫힌 머리. */
+	private static SessionHead windowClosedHead() {
+		return windowClosedHead("READY");
+	}
+
+	private static SessionHead windowClosedHead(String status) {
+		return new SessionHead(SESSION_ID, UUID.randomUUID(), UUID.randomUUID(), USER_ID,
+				UUID.randomUUID(), "INITIAL", status, PROBLEM_ID, STAGE_ID,
+				"READY".equals(status) ? null : Instant.now().minus(Duration.ofMinutes(30)),
+				null, null, UUID.randomUUID(), null,
+				Instant.now().minus(Duration.ofMinutes(1)));
+	}
 
 	/** 세션 상한(timeLimitAt)을 1분 넘긴 머리. */
 	private static SessionHead timedOutHead() {
