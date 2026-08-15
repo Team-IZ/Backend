@@ -46,6 +46,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import com.bigproject.backend.domain.submission.application.SubmissionStatusService;
 
 import java.util.List;
 import java.util.UUID;
@@ -64,6 +65,7 @@ public class ProjectController {
 	private final ProjectService projectService;
 	private final CurrentUserResolver currentUserResolver;
 	private final ClassProgressService classProgressService;
+	private final SubmissionStatusService submissionStatusService;   // ← 추가
 
 	@Operation(
 			operationId = "findProjects",
@@ -198,10 +200,11 @@ public class ProjectController {
              ⚠️ **`cohort`·`classId` 중 하나만 보내야 한다.** 둘 다 없거나 둘 다 있으면
              400 `PROJECT_LIST_SCOPE_AMBIGUOUS`다.
 
-             ⚠️ **아직 없는 것** — 정의 문서(MG-07)의 "A반 미제출 2팀" 같은 제출 단위 집계는
-             이 응답에 없다. 제출 현황은 Submission 도메인에서 와야 한다. 지금은 회차 목록과
-             `readiness`·교안/개념 집계까지만 내려주고, 제출 집계는 Submission 도메인
-             착수 후 별도로 얹는다.
+             ## 🆕 진행·조치 필드가 목록 행에 붙는다
+
+             미니프로젝트 행마다 `progress`·`actionItems`가 함께 온다(Submission 도메인 위임).
+             빅프로젝트는 앵커가 개인 커밋 영역이라 반별 집계 대상이 아니므로 계산하지 않고,
+             `PLANNED` 상태는 진행이 아직 없으므로 `progress`가 null로 온다.
              """
 	)
 	@PreAuthorize("hasAnyRole('MANAGER')")
@@ -226,7 +229,9 @@ public class ProjectController {
 			@Parameter(description = "MINI_PROJECT·BIG_PROJECT로 좁힌다. 생략하면 전체")
 			@RequestParam(required = false) ProjectCategory category,
 			@Parameter(description = "정렬 기준", example = "READINESS")
-			@RequestParam(required = false, defaultValue = "READINESS") ProjectListSort sort
+			@RequestParam(required = false, defaultValue = "READINESS") ProjectListSort sort,
+			@Parameter(hidden = true)
+			Authentication authentication
 	) {
 		if ((cohort == null) == (classId == null || classId.isEmpty())) {
 			throw new ApiException(ProjectExecutionErrorCode.PROJECT_LIST_SCOPE_AMBIGUOUS);
@@ -235,7 +240,45 @@ public class ProjectController {
 		ProjectService.ProjectList list = projectService.findProjectList(
 				cohort, orgId,
 				new ProjectService.ProjectListCriteria(search, curriculumId, status, sort, classId, category));
-		return ResponseEntity.ok(ProjectListResponse.from(list));
+		ProjectListResponse response = ProjectListResponse.from(list);
+		List<ProjectResponse> enriched = response.projects().stream()
+				.map(project -> enrichWithProgress(project, authentication.getName()))
+				.toList();
+		return ResponseEntity.ok(new ProjectListResponse(
+				enriched, response.total(), response.counts(), response.readinessCounts()));
+	}
+
+	/**
+	 * MG-07 목록 한 행에 '진행'·'조치'를 덧붙인다(반별 제출 진행률 조회, Submission 도메인 위임).
+	 *
+	 * <p>빅프는 계산하지 않는다 — 앵커가 개인 커밋 영역이라 반별 집계 대상이 아니다. PLANNED는
+	 * {@link SubmissionStatusService#findManagerProjectProgress}가 알아서 null을 돌려준다.
+	 */
+	private ProjectResponse enrichWithProgress(ProjectResponse project, String email) {
+		if (project.category() != ProjectCategory.MINI_PROJECT) {
+			return project;
+		}
+		var result = submissionStatusService.findManagerProjectProgress(email, project.projectId());
+		return project.withProgress(toProgress(result.progress()), toActionItems(result.actionItems()));
+	}
+
+	private ProjectResponse.Progress toProgress(SubmissionStatusService.ManagerProjectProgress.Progress progress) {
+		if (progress == null) {
+			return null;
+		}
+		ProjectResponse.LaggingClass lagging = progress.laggingClass() == null ? null
+				: new ProjectResponse.LaggingClass(
+				progress.laggingClass().classId(), progress.laggingClass().className(),
+				progress.laggingClass().assessedCount(), progress.laggingClass().targetTraineeCount());
+		return new ProjectResponse.Progress(progress.assessedCount(), progress.targetTraineeCount(), lagging);
+	}
+
+	private List<ProjectResponse.ActionItem> toActionItems(
+			List<SubmissionStatusService.ManagerProjectProgress.ActionItem> items) {
+		return items.stream()
+				.map(item -> new ProjectResponse.ActionItem(
+						item.classId(), item.className(), item.type(), item.teamCount()))
+				.toList();
 	}
 
 	/**
