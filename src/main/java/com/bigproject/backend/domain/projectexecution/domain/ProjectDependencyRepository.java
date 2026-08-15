@@ -92,9 +92,12 @@ public interface ProjectDependencyRepository {
 	 * 생성에서 마감을 받을 수 없었고, 현황 탭({@code class-progress})은 회차를 못 찾아 답하지 못했다.
 	 *
 	 * <p>미니프로젝트는 정의서가 "활성 회차 정확히 1건, {@code round_no}=1"을 요구하므로 그대로 만든다.
-	 * {@code status}는 {@code PLANNED}로 연다 — {@code ck_project_assessment_round_assessment_window_required}가
-	 * {@code PLANNED}가 아닌 회차에 응시 창 두 개를 NOT NULL로 요구하는데, 그 시각은 코드 분석이
-	 * 끝나야 정해지므로 생성 시점에는 알 수 없다.
+	 * {@code status}는 {@code PLANNED}로 연다.
+	 *
+	 * <p>종전에는 {@code ck_project_assessment_round_assessment_window_required}가
+	 * {@code PLANNED}가 아닌 회차에 응시 창 두 개를 NOT NULL로 요구해서 그랬다. 그 제약은
+	 * 2026-08-16에 제거됐고 회차 응시 창은 폐기됐지만, <b>{@code PLANNED}로 여는 것은 그대로 둔다</b> —
+	 * 회차를 만드는 시점에는 아직 아무것도 시작되지 않았다는 사실 자체가 맞는 표현이다.
 	 *
 	 * @param submissionDueAt 제출 마감. DB가 NOT NULL이라 호출부가 반드시 정해서 넘긴다
 	 * @return 만들어진 회차 ID
