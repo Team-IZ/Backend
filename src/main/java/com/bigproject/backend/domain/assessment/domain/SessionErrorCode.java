@@ -59,6 +59,21 @@ public enum SessionErrorCode implements ApiErrorCode {
 	 */
 	HINT_NOT_AVAILABLE(HttpStatus.CONFLICT, "지금은 다시 설명을 받을 수 없습니다."),
 
+	// ── 다시 보기 파생 ──
+	/**
+	 * 리포트가 없거나, 남의 리포트이거나, 아직 공개되지 않았거나, 활성 스냅샷이 없다. 넷을 구분하지
+	 * 않는다 — 남의 리포트 존재를 알려줄 이유가 없고, 화면이 할 일은 어느 쪽이든 같다.
+	 */
+	REVIEW_REPORT_NOT_ACCESSIBLE(HttpStatus.NOT_FOUND, "다시 보기를 열 수 있는 리포트를 찾을 수 없습니다."),
+	/**
+	 * 1차 응시가 끝나지 않았거나 세션이 없다. 도달 단계가 확정되지 않아 다시 볼 문제를 고를 수 없다.
+	 */
+	REVIEW_SOURCE_NOT_READY(HttpStatus.CONFLICT, "1차 응시가 끝나지 않아 다시 보기를 열 수 없습니다."),
+	/** 기준 단계 미만인 문제가 하나도 없다. 다시 볼 것이 없다는 뜻이라 오류가 아니라 안내다. */
+	REVIEW_NOT_ELIGIBLE(HttpStatus.CONFLICT, "다시 볼 문제가 없습니다."),
+	/** 이미 끝낸 다시 보기가 있다. 회차당 한 번이다. */
+	REVIEW_ALREADY_COMPLETED(HttpStatus.CONFLICT, "이 회차의 다시 보기는 이미 끝났습니다."),
+
 	// ── AI ──
 	/** 채점 실패. AI가 503으로 재전송을 요구한 경우다 — 같은 답을 그대로 다시 보내면 된다. */
 	GRADING_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "채점에 실패했습니다. 잠시 후 다시 제출해 주세요.");
