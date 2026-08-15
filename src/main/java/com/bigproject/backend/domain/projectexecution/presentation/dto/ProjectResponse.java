@@ -82,7 +82,28 @@ public record ProjectResponse(
 
                 `conceptCount`와 길이가 다를 수 있는 이유는 위와 같다.""",
                 example = "[\"예외 처리와 롤백 전략\", \"API 응답 계약 설계\"]")
-        List<String> conceptNames
+        List<String> conceptNames,
+
+        // ── MG-07: 매니저 프로젝트 목록의 '진행'·'조치' 열 ──────────────────────
+        // SubmissionStatusService.ManagerProjectProgress를 그대로 옮기지 않고 이 record로 한 번 감싼다 —
+        // presentation DTO가 application 계층의 내부 응답 타입을 그대로 노출하지 않기 위해서다.
+        @Schema(description = """
+                매니저 담당 반 기준 진행 현황. **매니저 전용 목록(`GET /projects`)에서만 채워진다.**
+
+                오퍼레이터 목록(`GET /cohorts/{cohortId}/projects`)이나 생성·수정 직후 응답에서는
+                항상 `null`이다 — 계산 자체를 하지 않는다.
+
+                빅프로젝트 행이거나(개인 커밋 영역이라 반별 집계 대상이 아님) 회차가 `PLANNED`거나
+                아직 회차가 없으면 `null`이다.""",
+                nullable = true)
+        Progress progress,
+
+        @Schema(description = """
+                매니저가 바로 조치할 수 있는 항목 목록. 반별 미제출·분석 실패 팀을 담는다.
+
+                **매니저 전용 목록에서만 채워진다.** 조치가 필요 없으면 빈 배열이며,
+                **그것이 정상이다** — 화면은 —로 그리면 된다.""")
+        List<ActionItem> actionItems
 ) {
     public static ProjectResponse from(ProjectSummary summary) {
         Project project = summary.project();
@@ -102,7 +123,48 @@ public record ProjectResponse(
                 summary.conceptCount(),
                 summary.conceptCandidateCount(),
                 summary.curriculumNames(),
-                summary.conceptNames()
+                summary.conceptNames(),
+                null,
+                List.of()
         );
+    }
+
+    /** 매니저 목록 enrichWithProgress()가 진행·조치를 계산한 뒤 붙일 때 쓴다. 다른 필드는 그대로 복사한다. */
+    public ProjectResponse withProgress(Progress progress, List<ActionItem> actionItems) {
+        return new ProjectResponse(
+                projectId, cohortId, name, sequenceNo, category, status, readiness,
+                startDate, endDate, submissionDueAt, totalRounds,
+                curriculumCount, conceptCount, conceptCandidateCount,
+                curriculumNames, conceptNames,
+                progress, actionItems
+        );
+    }
+
+    /** 화면의 `응시 58/71` + 그 아래 `C반이 12/23`. */
+    @Schema(description = "매니저 담당 반 진행 합계")
+    public record Progress(
+            @Schema(description = "담당 반 전체에서 응시(완료)를 마친 인원") long assessedCount,
+            @Schema(description = "담당 반 전체 대상 인원") long targetTraineeCount,
+            @Schema(description = "담당 반이 둘 이상일 때, 진행률이 가장 낮은 반. 담당 반이 하나뿐이면 null",
+                    nullable = true) LaggingClass laggingClass) {
+    }
+
+    /** 담당 반 중 진행률이 가장 낮은 반. */
+    @Schema(description = "담당 반 중 진행률이 가장 낮은 반")
+    public record LaggingClass(
+            UUID classId,
+            String className,
+            @Schema(description = "그 반에서 응시(완료)를 마친 인원") long assessedCount,
+            @Schema(description = "그 반의 전체 대상 인원") long targetTraineeCount) {
+    }
+
+    /** 화면의 `A반 미제출 2팀` 한 줄. */
+    @Schema(description = "매니저가 조치할 수 있는 항목")
+    public record ActionItem(
+            UUID classId,
+            String className,
+            @Schema(description = "UNSUBMITTED_TEAMS(제출 마감 지남·미제출) · ANALYSIS_FAILED_TEAMS(제출했으나 분석 실패)",
+                    example = "UNSUBMITTED_TEAMS") String type,
+            @Schema(description = "해당 유형에 걸린 팀 수") int teamCount) {
     }
 }
