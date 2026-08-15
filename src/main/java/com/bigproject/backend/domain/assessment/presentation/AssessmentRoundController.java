@@ -132,9 +132,14 @@ public class AssessmentRoundController {
 					| --- | --- | --- |
 					| `initialAttemptStatus` | enum? | `NOT_STARTED` · `SUBMITTED` · `ANALYZING` · `SESSION_READY` · `SESSION_IN_PROGRESS` · `COMPLETED` · `FAILED` · `EXPIRED` |
 					| `initialSessionStatus` | enum? | `READY` · `IN_PROGRESS` · `PAUSED` · `COMPLETED` 등 |
-					| `preparedProblemCount` | int | 출제된 문제 수. 보통 `3` |
+					| `preparedProblemCount` | int | 실제로 출제된 문제 수 `0`~`3`. ⚠️ **`3`이 아닐 수 있다** |
 					| `reviewStatus` | enum? | 다시 보기 상태. 배정이 없으면 `null` |
 					| `completedReviewCount` | int | 완료한 다시 보기 건수 |
+
+					⚠️ **`preparedProblemCount`를 `3`으로 가정하지 말 것.** 검증 개념은 항상 3건이 계획되지만
+					코드에 근거가 없는 개념은 문항이 만들어지지 않고(`NOT_GENERATED`) 세션에도 나오지 않는다.
+					이 값은 **교육생이 실제로 받게 될 문제 수**이며 세션 API의 `problemTotal`과 같다.
+					세션이 열리기 전(분석 중·분석 실패)에는 `0`이다.
 
 					**리포트**
 
@@ -321,7 +326,7 @@ public class AssessmentRoundController {
 													    "analysisFailureCode": null,
 													    "initialAttemptStatus": "ANALYZING",
 													    "initialSessionStatus": null,
-													    "preparedProblemCount": 3,
+													    "preparedProblemCount": 0,
 													    "reviewStatus": null,
 													    "completedReviewCount": 0,
 													    "reportId": null,
