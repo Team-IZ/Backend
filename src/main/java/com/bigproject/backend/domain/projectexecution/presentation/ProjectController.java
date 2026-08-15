@@ -51,7 +51,6 @@ import java.util.List;
 import java.util.UUID;
 
 @Tag(name = "Project Execution", description = "프로젝트 구성·일정·요구사항 API")
-@Tag(name = "Project", description = "프로젝트 진행 현황 조회")
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController

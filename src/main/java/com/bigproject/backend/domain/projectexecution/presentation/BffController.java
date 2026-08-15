@@ -21,15 +21,15 @@ import org.springframework.http.MediaType;
 @Tag(name = "Project Execution", description = "프로젝트 구성·일정·요구사항 API")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/api/v0")
+@RequestMapping
 @RequiredArgsConstructor
 public class BffController {
 
-    private final CurrentRoundService currentRoundService;
+	private final CurrentRoundService currentRoundService;
 
 	@Operation(
 			summary = "이번 회차 상태 판정 조회 (지금 할 일 하나) | ✅ 사용 가능",
-            description = """
+			description = """
 					TR-01(교육생 홈)이 보여줄 상태 하나를 조회한다. 진행 중인 회차가 없으면
 					status=NO_ACTIVE_ROUND로 200을 내려준다 — 빈 상태는 에러가 아니다.
 
@@ -44,14 +44,14 @@ public class BffController {
 					  NO_ACTIVE_ROUND)
 					- 그 외 필드는 status에 따라 의미 있는 것만 채워지고 나머지는 null
 					"""
-    )
-    @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "조회 성공(회차 없음도 200)"),
-            @ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
-            @ApiResponse(responseCode = "403", description = "NOT_A_TRAINEE 교육생 계정이 아님"),
-    })
+	)
+	@ApiResponses({
+			@ApiResponse(responseCode = "200", description = "조회 성공(회차 없음도 200)"),
+			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
+			@ApiResponse(responseCode = "403", description = "NOT_A_TRAINEE 교육생 계정이 아님"),
+	})
 	@GetMapping(value = "/bff/me/current-round", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<CurrentRoundResponse> findCurrentRound() {
-        return ResponseEntity.ok(currentRoundService.findCurrentRound());
-    }
+	public ResponseEntity<CurrentRoundResponse> findCurrentRound() {
+		return ResponseEntity.ok(currentRoundService.findCurrentRound());
+	}
 }
