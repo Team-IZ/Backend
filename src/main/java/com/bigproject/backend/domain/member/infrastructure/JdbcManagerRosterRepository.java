@@ -40,7 +40,17 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 	 */
 	private static final String MANAGER_SELECT = """
 			SELECT u.user_id AS manager_id,
-			       u.name,
+			       /*
+			        * 25차 R9 — 이름이 없는 자리는 null로 나간다.
+			        *
+			        * app_user.ck_app_user_status_2가 PENDING이 아닌 계정에 name NOT NULL을 요구해서,
+			        * 초대 취소로 INACTIVE가 되는 자리는 무언가를 넣어야 한다. 그 값이 빈 문자열이고
+			        * (JdbcManagerAccountRepository.updateManagerStatus), 여기서 null로 되돌린다.
+			        *
+			        * 종전에는 그 자리에 이메일 로컬파트를 넣어서 `name: "nulltest-probe"`가 화면에
+			        * 실명처럼 나갔다. 「이름을 모른다」는 사실이 사라지는 값이라 되돌릴 수도 없었다.
+			        */
+			       NULLIF(u.name, '') AS name,
 			       u.email,
 			       u.status AS account_status,
 			       u.last_login_at,
