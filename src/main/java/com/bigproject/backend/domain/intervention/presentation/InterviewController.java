@@ -42,7 +42,7 @@ public class InterviewController {
 	private final InterviewService interviewService;
 	private final CurrentUserResolver currentUserResolver;
 
-	@Operation(operationId = "findInterviews", summary = "면담 목록 조회 | ✅ 사용 가능", description = """
+	@Operation(operationId = "findInterviews", summary = "[면담 목록] 면담 목록 조회 | ✅ 사용 가능", description = """
 			위험 판정이 켜진 교육생의 **작업 큐**입니다. 매니저가 고르는 목록이 아니라
 			이해도 확인 결과가 만든 목록이라, 회차 결과가 나오기 전에는 **비어 있는 것이 정상**입니다.
 
@@ -111,7 +111,7 @@ public class InterviewController {
 		return ResponseEntity.ok(InterviewListResponse.from(result));
 	}
 
-	@Operation(operationId = "findInterviewRoundOptions", summary = "면담 회차 옵션 조회", description = """
+	@Operation(operationId = "findInterviewRoundOptions", summary = "[면담 목록] 면담 회차 옵션 조회 | ✅ 사용 가능", description = """
 			목록 화면의 **회차 드롭다운**을 채웁니다. 담당 기수의 회차를 프로젝트 순서대로 반환합니다.
 
 			### `PLANNED` 회차도 포함합니다
@@ -139,7 +139,7 @@ public class InterviewController {
 		return ResponseEntity.ok(options);
 	}
 
-	@Operation(operationId = "excludeInterviewCase", summary = "면담 대상 제외", description = """
+	@Operation(operationId = "excludeInterviewCase", summary = "[면담 목록] 면담 대상 제외 | ✅ 사용 가능", description = """
 			이번 회차 대상에서 뺍니다. **되돌릴 수 있습니다**(`DELETE`).
 
 			화면이 확인 다이얼로그 없이 즉시 실행하고 배너로 되돌리기를 남기므로 **요청 본문이 없습니다.**
@@ -175,7 +175,7 @@ public class InterviewController {
 		return ResponseEntity.noContent().build();
 	}
 
-	@Operation(operationId = "reincludeInterviewCase", summary = "면담 대상 제외 되돌리기", description = """
+	@Operation(operationId = "reincludeInterviewCase", summary = "[면담 목록] 면담 대상 제외 되돌리기 | ✅ 사용 가능", description = """
 			제외를 되돌립니다.
 
 			### 복귀 상태가 두 가지입니다

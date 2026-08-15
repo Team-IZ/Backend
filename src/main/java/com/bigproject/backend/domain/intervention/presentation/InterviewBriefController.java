@@ -43,7 +43,7 @@ public class InterviewBriefController {
 	private final InterviewBriefService interviewBriefService;
 	private final CurrentUserResolver currentUserResolver;
 
-	@Operation(operationId = "findInterviewBrief", summary = "면담 브리프 조회 | ✅ 사용 가능", description = """
+	@Operation(operationId = "findInterviewBrief", summary = "[면담 상세] 면담 브리프 조회 | ✅ 사용 가능", description = """
 			저장된 브리프를 읽습니다. **AI를 부르지 않아 즉시 반환됩니다.**
 
 			### 생성은 이 경로가 하지 않습니다
@@ -84,7 +84,7 @@ public class InterviewBriefController {
 		return ResponseEntity.ok(InterviewBriefResponse.from(view));
 	}
 
-	@Operation(operationId = "createInterviewBrief", summary = "면담 브리프 생성 (AI) | ✅ 사용 가능", description = """
+	@Operation(operationId = "createInterviewBrief", summary = "[면담 목록] 면담 브리프 생성 (AI) | ✅ 사용 가능", description = """
 			**AI를 호출해 여는 말과 질문 체크리스트를 만듭니다. 수 초~수십 초 걸립니다.**
 
 			화면은 이 응답을 기다리는 동안 로딩 상태를 유지해야 합니다 — AI가 동기 계약이라
@@ -134,7 +134,7 @@ public class InterviewBriefController {
 		return ResponseEntity.ok(InterviewBriefResponse.from(view));
 	}
 
-	@Operation(operationId = "saveInterviewBrief", summary = "브리프 저장하고 면담 종결", description = """
+	@Operation(operationId = "saveInterviewBrief", summary = "[면담 상세] 브리프 저장하고 면담 종결 | ✅ 사용 가능", description = """
 			**저장은 항상 종결입니다**(정의서 §5). 별도의 "면담 시작" 단계가 없습니다 —
 			면담하는 30분 동안 매니저는 화면을 안 보기 때문입니다.
 
