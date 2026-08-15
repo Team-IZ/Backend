@@ -19,7 +19,8 @@ public record RegisterTraineesResponse(
 		@Schema(
 				description = "이 일괄 등록의 진행률 조회 식별자입니다. "
 						+ "`GET /cohorts/{cohortId}/trainees/registrations/{batchRequestId}`에 그대로 넣습니다. "
-						+ "등록된 행이 하나도 없거나 사전 검증(미리보기) 응답이면 폴링할 대상이 없어 null입니다.",
+						+ "등록된 행이 하나도 없으면 폴링할 대상이 없어 null입니다. "
+						+ "사전 검증(미리보기)은 이 필드가 아예 없는 `PreviewTraineesResponse`로 답합니다.",
 				example = "trainee-batch-001",
 				nullable = true
 		)

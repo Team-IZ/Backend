@@ -443,13 +443,9 @@ class OpenApiDocumentTest {
 		assertThat(paths.path("/api/v0/members/organizations/{organizationId}/managers/{managerId}/classrooms")
 				.has("put")).isTrue();
 
-		// ③ 등록하지 않고 무엇이 걸리는지만 본다. 등록 응답과 같은 스키마라 화면이 한 컴포넌트로 그린다.
+		// ③ 등록하지 않고 무엇이 걸리는지만 본다.
 		assertThat(paths.path("/api/v0/cohorts/{cohortId}/trainees/preview").has("post")).isTrue();
 		assertThat(paths.path("/api/v0/cohorts/{cohortId}/trainees/invitations/preview").has("post")).isTrue();
-		assertThat(paths.path("/api/v0/cohorts/{cohortId}/trainees/preview").path("post")
-				.path("responses").path("200").path("content").path("application/json")
-				.path("schema").path("$ref").asString())
-				.isEqualTo("#/components/schemas/RegisterTraineesResponse");
 
 		// ④ GET /organizations/{id}는 슈퍼어드민 전용이라 오퍼레이터가 기관 도메인을 읽을 곳이 없었다.
 		assertThat(spec().path("components").path("schemas").path("MemberProfileResponse")
@@ -778,6 +774,78 @@ class OpenApiDocumentTest {
 
 		assertThat(lying)
 				.as("설명은 null이라는데 타입이 안 받으면 컴파일러가 null 검사를 요구하지 않는다")
+				.isEmpty();
+	}
+
+	/**
+	 * 31차 R2 — <b>드라이런의 결과는 등록의 결과와 같은 이름을 쓰면 안 된다.</b>
+	 *
+	 * <p>9차 Q3-③ 이래 미리보기는 등록 응답을 그대로 돌려줬고, 그래서 <b>아무것도 만들지 않은 호출이
+	 * {@code registeredCount: 1}로 답했다.</b> 프론트는 그것을 보고 미리보기가 진짜 등록을 했는지
+	 * 기수 명단을 뒤졌다. 한 컴포넌트로 그리게 하려던 이득보다, 수의 이름이 거짓말을 하는 값이 컸다.
+	 *
+	 * <p>{@code Failure}만은 계속 공유한다 — 행별 판정을 등록과 같은 메서드가 내리므로 뜻이 같고,
+	 * 여기서 형을 가르면 실패 목록을 그리는 컴포넌트가 두 벌이 된다.
+	 */
+	@Test
+	void namesTheDryRunResultAfterWhatItActuallyCounted() throws Exception {
+		for (String path : List.of("/api/v0/cohorts/{cohortId}/trainees/preview",
+				"/api/v0/cohorts/{cohortId}/trainees/invitations/preview")) {
+			assertThat(spec().path("paths").path(path).path("post")
+					.path("responses").path("200").path("content").path("application/json")
+					.path("schema").path("$ref").asString())
+					.as("드라이런이 등록 응답을 돌려주면 registeredCount가 「등록됐다」로 읽힌다")
+					.isEqualTo("#/components/schemas/PreviewTraineesResponse");
+		}
+
+		JsonNode preview = spec().path("components").path("schemas").path("PreviewTraineesResponse");
+
+		// 항상 0·null이던 두 필드는 남겨 두면 화면이 null 여부로 무엇을 갈라야 하는지 묻게 된다.
+		assertThat(preview.path("properties").propertyNames())
+				.containsExactlyInAnyOrder("requestedCount", "registrableCount", "failures");
+		assertThat(preview.path("properties").path("failures").path("items").path("$ref").asString())
+				.isEqualTo("#/components/schemas/Failure");
+	}
+
+	/**
+	 * 31차 R1 — <b>boolean은 true가 무슨 뜻인지 말해야 한다.</b> 다른 타입과 달리 이름과 타입만으로는
+	 * 읽는 쪽이 아무것도 알 수 없다 — {@code passed}가 힌트를 받고 통과한 경우를 포함하는지,
+	 * {@code resolved}가 {@code reminderEligible}의 반대인지는 설명에만 있다.
+	 *
+	 * <h2>설명이 빈 boolean은 둘 중 하나다</h2>
+	 *
+	 * <p><b>① 샌 검사 메서드.</b> {@code isEmpty()}·{@code isMutableStatus()} 같은 {@code @AssertTrue}
+	 * 메서드는 자바에서 boolean 게터의 모양을 하고 있어, 막지 않으면 {@code empty}·{@code mutableStatus}
+	 * 라는 <b>요청 필드로 스펙에 나간다.</b> 화면은 서버가 보지도 않는 값을 무엇으로 채울지 묻게 되고
+	 * 답이 없다 — 그 값은 애초에 요청의 일부가 아니다. 고치는 법은 {@code @JsonIgnore}다.
+	 *
+	 * <p><b>② 설명이 스펙에 닿지 않은 진짜 필드.</b> javadoc {@code @param}에 잘 적어 두어도
+	 * springdoc은 그것을 읽지 않는다 — <b>{@code @Schema}로 옮겨야</b> 생성된 타입에 주석으로 따라간다.
+	 * 실제로 여기 걸린 12개가 그랬다.
+	 *
+	 * <p>둘 다 화면에서는 같은 모양이다 — <b>정체를 알 수 없는 boolean</b>. 그래서 함께 본다.
+	 *
+	 * <p>{@link #exposesTheOperationSettingsUpdateAsAPartialUpdate}가 ①을 이미 보고 있지만
+	 * <b>스키마 하나를 이름으로</b> 지목한다. 그래서 옆 도메인의 {@code SessionActivityRequest}가
+	 * 그대로 통과했고, 프론트가 31차에 그것을 찾아 왔다. 검사를 한 줄 더 늘리는 대신 모집단 전체를 본다
+	 * (실제로 지목 검사가 못 보던 위반이 18개 더 있었다 — ① 6개 · ② 12개).
+	 */
+	@Test
+	void everyBooleanFieldSaysWhatItMeans() throws Exception {
+		List<String> undescribed = new ArrayList<>();
+		spec().path("components").path("schemas").properties().forEach(schema ->
+				schema.getValue().path("properties").properties().forEach(property -> {
+					if (!property.getValue().path("type").toString().contains("\"boolean\"")) {
+						return;
+					}
+					if (!property.getValue().path("description").asString("").isBlank()) {
+						return;
+					}
+					undescribed.add(schema.getKey() + "." + property.getKey());
+				}));
+
+		assertThat(undescribed)
+				.as("설명 없는 boolean은 샌 검사 메서드(@JsonIgnore 누락)이거나 설명이 @Schema에 닿지 않은 필드다")
 				.isEmpty();
 	}
 

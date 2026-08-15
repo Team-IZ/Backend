@@ -78,7 +78,9 @@ public record CurrentRoundResponse(
 		@Schema(nullable = true, implementation = SubmissionStatus.class)
 		String submissionStatus,
 		@Schema(nullable = true) Instant submittedAt,
+		@Schema(description = "마감 전이고 아직 세션을 시작하지 않았는가. 제출 버튼을 여는 값이다")
 		boolean canSubmit,
+		@Schema(description = "위 조건에 더해 **이미 제출이 있는가.** 버튼 문구를 「제출」과 「재제출」로 가른다")
 		boolean canResubmit,
 
 		@Schema(description = "View가 계산한 5값. 미제출이면 NOT_SUBMITTED", example = "ANALYZING",

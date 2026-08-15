@@ -509,14 +509,19 @@ public class SubmissionController {
 
 					### failureCode
 
-					분석 실행 실패 6종과 저장소·ZIP 접근 실패를 합해 15종이다. 저장소 주소 오류도 제출이 아니라
-					여기로 드러난다.
+					분석 실행 실패와 저장소 접근 실패, ZIP 내용 검증을 합해 **12종**이다. 저장소 주소 오류도
+					제출이 아니라 여기로 드러난다.
 
 					| 묶음 | 값 |
 					| --- | --- |
 					| 분석 실행 | `TEMPORARY_ERROR` · `ANALYSIS_TIMEOUT` · `MODEL_ERROR` · `SOURCE_UNREACHABLE` · `UNSUPPORTED_LANGUAGE` |
 					| 저장소 접근 | `INVALID_REPOSITORY_URL` · `REPO_NOT_FOUND` · `REPOSITORY_ACCESS_DENIED` · `BRANCH_NOT_FOUND` · `UNSUPPORTED_HOST` |
-					| ZIP 검증 | `FILE_TOO_LARGE` · `ARCHIVE_INVALID` · `EMPTY_CODE` · `PROHIBITED_FILE` · `GIT_LOG_MISSING` |
+					| ZIP 내용 | `EMPTY_CODE` · `GIT_LOG_MISSING` |
+
+					⚠️ 종전 설명은 15종이라 적고 ZIP 묶음에 `FILE_TOO_LARGE`·`ARCHIVE_INVALID`·`PROHIBITED_FILE`을
+					함께 실었는데 **셋 다 이 필드로 올 수 없다**(2026-08-16 정정). ZIP 파일 자체의 문제라 업로드가
+					`400 ARCHIVE_INVALID`·`413 FILE_TOO_LARGE`로 먼저 거절하고 제출 행조차 만들지 않으므로 분석이
+					시작되지 않는다 — 그 셋은 **제출 API의 에러 응답**에서 받는다.
 
 					🔴 **`SESSION_PREPARATION_FAILED`만 예외다.** `analysis_job.failure_code`에 없는 값이며
 					서버가 조회 시점에 판정해 내려 준다. **분석은 성공했지만 이 교육생의 세션·문항이 준비되지
