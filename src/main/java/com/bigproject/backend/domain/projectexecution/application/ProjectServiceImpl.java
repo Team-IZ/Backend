@@ -783,28 +783,80 @@ public class ProjectServiceImpl implements ProjectService {
         return counts;
     }
 
-    // ── 9차 R3: 검색·필터·정렬·상태별 개수 ────────────────────────────────────
-
     /**
-     * 기수당 회차가 6~8건이라 전량이 한 페이지에 들어가고 페이저도 없다. 그래서 SQL로 거르지 않고
-     * <b>전량을 읽어 메모리에서 거르고 정렬한다</b> — 교안 필터가 project_curriculum·curriculum_version
-     * 두 단계 조인이라 SQL로 옮기면 쿼리가 훨씬 복잡해지는데 얻는 것이 없다.
+     * 목록 한 벌 + 필터와 무관한 상태별 개수(19차 — classId 필터 흡수).
      *
-     * <p>회차가 쌓이거나 페이지를 나눠야 할 때는 이 메서드 안만 SQL로 바꾸면 된다 —
-     * 계약(파라미터·응답)은 그대로다.
+     * <p>{@code criteria.classId()}가 있으면 그 반의 팀이 편성된 프로젝트로 모집단을 좁히고,
+     * 없으면 {@code cohortId} 기수 전체가 모집단이다. 반과 기수를 동시에 좁힐 이유가 없어
+     * 정확히 하나만 쓴다 — 반이 정해지면 그 반이 속한 기수는 이미 정해져 있다.
+     */
+    /**
+     * 목록 한 벌 + 필터와 무관한 상태별 개수(19차 — classId 필터 흡수).
+     *
+     * <p>{@code criteria.classId()}가 있으면 그 반들의 팀이 편성된 프로젝트로 모집단을 좁히고,
+     * 없으면 {@code cohortId} 기수 전체가 모집단이다. 매니저가 담당하는 반은 보통 1~3개라
+     * 반마다 한 번씩 조회해 합치는 것으로 충분하다 — 반 수가 수십 단위로 늘면 그때
+     * {@link ProjectDependencyRepository}에 다건 조회를 추가한다.
      */
     @Override
     public ProjectList findProjectList(UUID cohortId, UUID orgId, ProjectListCriteria criteria) {
-        // 22차 R7 — 없는 기수에 200 · 빈 목록으로 답하면 「아직 회차를 안 만든 기수」와 구분되지
-        // 않는다. 남이 보낸 링크나 그 사이 지워진 기수를 열어도 운영자에게는 정상으로 보였다.
-        requireCohort(cohortId, orgId);
+        List<ProjectSummary> population;
+        if (criteria.classId() != null && !criteria.classId().isEmpty()) {
+            Set<UUID> projectIds = new LinkedHashSet<>();
+            for (UUID classId : criteria.classId()) {
+                projectIds.addAll(projectDependencyRepository.findProjectIdsByClassId(classId, orgId));
+            }
+            if (projectIds.isEmpty()) {
+                return emptyProjectList();
+            }
+            List<Project> projects = projectRepository
+                    .findByProjectIdInAndOrgIdAndDeletedAtIsNull(projectIds, orgId);
+            population = summarizeAll(projects, orgId, projects.size());
+        } else {
+            requireCohort(cohortId, orgId);
+            List<Project> projects = findProjects(cohortId, orgId);
+            population = summarizeAll(projects, orgId, projects.size());
+        }
+        return buildProjectList(population, orgId, criteria, criteria.category());
+    }
 
-        // 모집단 전체를 먼저 요약한다. readiness 개수(10차 Q1)가 걸러지지 않은 모집단 기준이라
-        // 필터를 통과한 것만 요약해서는 만들 수 없다. totalRounds(22차 R10)도 같은 모집단이다 —
-        // 필터를 걸어도 `3차 / 6회`의 분모는 줄지 않아야 한다.
-        List<Project> projects = findProjects(cohortId, orgId);
-        List<ProjectSummary> population = summarizeAll(projects, orgId, projects.size());
+    /**
+     * @deprecated {@link #findProjectList}가 {@code criteria.classId()}로 같은 일을 한다
+     *             (19차). 기존 {@code /classes/{classId}/...} 엔드포인트가 아직 이 시그니처로
+     *             호출하므로, 그 엔드포인트를 걷어낼 때까지는 지우지 않고 새 메서드로 위임만 한다.
+     */
+    @Override
+    @Deprecated(forRemoval = true)
+    public ProjectList findProjectListByClass(
+            UUID classId, UUID orgId, ProjectListCriteria criteria, ProjectCategory category) {
+        ProjectListCriteria merged = new ProjectListCriteria(
+                criteria.search(), criteria.curriculumId(), criteria.status(), criteria.sort(), List.of(classId), category);
+        return findProjectList(null, orgId, merged);
+    }
 
+    /** 팀이 하나도 편성되지 않은 반을 위한 빈 목록. 카운트 키는 전부 채우고 값만 0이다. */
+    /** 팀이 하나도 편성되지 않은 반을 위한 빈 목록. 카운트 키는 전부 채우고 값만 0이다. */
+    private ProjectList emptyProjectList() {
+        Map<ProjectLifecycleStatus, Long> counts = new EnumMap<>(ProjectLifecycleStatus.class);
+        for (ProjectLifecycleStatus status : ProjectLifecycleStatus.values()) {
+            counts.put(status, 0L);
+        }
+
+        Map<ProjectReadiness, Long> readinessCounts = new EnumMap<>(ProjectReadiness.class);
+        for (ProjectReadiness readiness : ProjectReadiness.values()) {
+            readinessCounts.put(readiness, 0L);
+        }
+        return new ProjectList(List.of(), counts, readinessCounts);
+    }
+
+    // ── 9차 R3: 검색·필터·정렬·상태별 개수 ────────────────────────────────────
+
+    /**
+     * 카운트 계산 → 필터 → 정렬. population은 이미 조회 범위가 좁혀진 상태(기수 전체 또는 반 제한)다.
+     * category는 반 기준 조회에서만 쓰이는 축이다.
+     */
+    private ProjectList buildProjectList(
+            List<ProjectSummary> population, UUID orgId, ProjectListCriteria criteria, ProjectCategory category) {
         // 상태별 개수는 필터를 적용하지 않은 모집단이다 — 상태 칩이 자기 자신을 필터링하면
         // 언제나 자기 개수만 남아 다른 칩이 0이 된다. 0인 상태도 키를 채운다(키가 빠지는 것과 다르다).
         Map<ProjectLifecycleStatus, Long> counts = new EnumMap<>(ProjectLifecycleStatus.class);
@@ -813,9 +865,6 @@ public class ProjectServiceImpl implements ProjectService {
         }
         population.forEach(summary -> counts.merge(summary.project().getLifecycleStatus(), 1L, Long::sum));
 
-        // 화면의 상태 필터는 4값인데 status는 3값이라 `준비 중`·`준비됨`만 개수를 못 쓰고 있었다(10차 Q1).
-        // PLANNED만 준비 상태로 다시 가른다 — RUNNING·CLOSED에는 readiness가 의미 없다
-        // (화면도 `status === 'PLANNED' ? readiness : status`로 겹친다).
         Map<ProjectReadiness, Long> readinessCounts = new EnumMap<>(ProjectReadiness.class);
         for (ProjectReadiness readiness : ProjectReadiness.values()) {
             readinessCounts.put(readiness, 0L);
@@ -832,6 +881,9 @@ public class ProjectServiceImpl implements ProjectService {
         for (ProjectSummary summary : population) {
             Project project = summary.project();
             if (criteria.status() != null && project.getLifecycleStatus() != criteria.status()) {
+                continue;
+            }
+            if (category != null && project.getProjectCategory() != category) {
                 continue;
             }
             if (search != null && !project.getName().toLowerCase(Locale.ROOT).contains(search)) {
@@ -891,7 +943,6 @@ public class ProjectServiceImpl implements ProjectService {
         // 끝난 것을 뒤로 보내는 공통 1차 키. CLOSED면 1, 아니면 0이다.
         Comparator<ProjectSummary> closedLast =
                 Comparator.comparingInt(summary -> isClosed(summary) ? 1 : 0);
-
         return switch (sort) {
             /*
              * 준비 필요 순 — "지금 손대야 하는 것".

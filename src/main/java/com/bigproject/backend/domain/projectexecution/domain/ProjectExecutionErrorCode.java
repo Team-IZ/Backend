@@ -4,7 +4,7 @@ import com.bigproject.backend.global.exception.ApiErrorCode;
 import org.springframework.http.HttpStatus;
 
 /**
- * 프로젝트 실행(구성·일정·요구사항·교안 연결·검증개념) API가 내려보내는 도메인 에러 코드.
+ * 프로젝트 실행(구성·일정·요구사항·교안 연결·검증개념·팀 편성) API가 내려보내는 도메인 에러 코드.
  *
  * <p><b>왜 만드는가.</b> 이 도메인의 실패는 전부 {@code NOT_FOUND}·{@code BAD_REQUEST}·{@code CONFLICT}
  * 셋 중 하나로만 나가고 있었다. 상태 코드에 이미 있는 정보라 화면이 새로 알 수 있는 것이 없다 —
@@ -48,15 +48,8 @@ public enum ProjectExecutionErrorCode implements ApiErrorCode {
     /** 확정하려는 매핑 ID가 원장에 없다. 후보 목록이 낡았다는 뜻이라 화면은 후보를 다시 읽어야 한다. */
     CONCEPT_MAPPING_NOT_FOUND(HttpStatus.BAD_REQUEST, "존재하지 않는 매핑입니다."),
 
-    /**
-     * 한 번에 확정하는 목록에 같은 개념(teaches)이 두 번 들어왔다(10차 R1).
-     *
-     * <p>교안 두 벌이 같은 개념을 가르치면 후보 목록에 그 개념이 각각 다른 매핑으로 두 줄 나오는데,
-     * 둘 다 고르면 {@code uq_project_verification_concept_concept_set_id_teaches_id}에 걸린다.
-     * 그대로 두면 DB 제약 위반이 <b>정체를 알 수 없는 409</b>로 나가므로, 어떤 개념이 겹쳤는지
-     * 이름을 담아 400으로 돌려준다 — 화면이 그 줄을 짚어 줄 수 있어야 한다.
-     */
-    CONCEPT_DUPLICATED(HttpStatus.BAD_REQUEST, "같은 개념을 두 번 확정할 수 없습니다."),
+    /** 확정하려는 매핑 ID가 이미 확정된 검증 개념 목록에 있다. */
+    CONCEPT_DUPLICATED(HttpStatus.BAD_REQUEST, "이미 확정된 개념입니다."),
 
     /** 떼려는 교안 연결이 이 프로젝트에 없다. 이미 해제됐거나 다른 프로젝트의 연결 ID다. */
     CURRICULUM_LINK_NOT_FOUND(HttpStatus.NOT_FOUND, "교안 연결을 찾을 수 없습니다."),
@@ -94,7 +87,55 @@ public enum ProjectExecutionErrorCode implements ApiErrorCode {
      * null을 흘려보내면 화면이 빈칸을 그리고 원인은 한참 뒤에 드러난다 — DB가 규약 밖에서
      * 바뀐 것이므로 조용히 넘기지 않고 5xx로 알린다.
      */
-    CONCEPT_SOURCE_MAPPING_MISSING(HttpStatus.INTERNAL_SERVER_ERROR, "확정 개념의 출처 매핑을 찾을 수 없습니다.");
+    CONCEPT_SOURCE_MAPPING_MISSING(HttpStatus.INTERNAL_SERVER_ERROR, "확정 개념의 출처 매핑을 찾을 수 없습니다."),
+
+    // ── 팀 편성(MG-08) ────────────────────────────────────────────────────
+
+    /** 그 프로젝트·기관에 그 팀이 없다. 해체된 팀도 여기로 온다. */
+    TEAM_NOT_FOUND(HttpStatus.NOT_FOUND, "팀을 찾을 수 없습니다."),
+
+    /**
+     * 배정하려는 사람이 이 프로젝트의 참여자(project_membership)가 아니다.
+     * 다른 반·다른 프로젝트 사람을 팀에 넣으려 한 경우가 여기로 온다.
+     */
+    PROJECT_MEMBERSHIP_NOT_FOUND(HttpStatus.BAD_REQUEST, "이 프로젝트의 참여자가 아닙니다."),
+
+    /** 팀 안에 그 사람이 없다(이미 빠졌거나 애초에 없었음). 팀원 제외 요청에서 난다. */
+    TEAM_MEMBERSHIP_NOT_FOUND(HttpStatus.NOT_FOUND, "그 팀에 속한 인원이 아닙니다."),
+
+    /**
+     * 팀을 만들려는 매니저가 이 프로젝트의 기수에 담당 반이 없거나, 반이 2개 이상이라
+     * 어느 반의 팀인지 하나로 정할 수 없다. Project 엔티티엔 classId가 없어 매니저의
+     * 담당 반 배정에서 역산하는데, 그 전제(매니저가 기수당 반 하나만 담당)가 깨진 경우다.
+     */
+    MANAGER_CLASSROOM_AMBIGUOUS(HttpStatus.BAD_REQUEST, "담당 반을 하나로 정할 수 없습니다."),
+
+    /** 자동 배분은 팀이 하나도 없을 때만 된다(정의 문서). 이미 팀이 있으면 여기로 온다. */
+    AUTO_ASSIGN_NOT_ALLOWED(HttpStatus.CONFLICT, "이미 팀이 편성되어 있어 자동 배분을 실행할 수 없습니다."),
+
+    /** 배분할 미배정 인원이 없다. */
+    NO_MEMBERS_TO_ASSIGN(HttpStatus.BAD_REQUEST, "배분할 인원이 없습니다."),
+
+    /** 확정하려는데 팀이 하나도 없다. */
+    NO_TEAMS_TO_CONFIRM(HttpStatus.BAD_REQUEST, "확정할 팀이 없습니다."),
+
+    /** 미배정 인원이 남아있는 채로 확정하려 했다. 전원 배정이 되어야 확정할 수 있다(정의 문서 ③→④). */
+    TEAMS_NOT_READY(HttpStatus.BAD_REQUEST, "아직 팀에 들어가지 않은 인원이 있어 확정할 수 없습니다."),
+
+    /**
+     * 이 팀이 이미 정상 접수된 제출을 했다. 제출된 코드가 팀 구성에 묶여 있어 배정을 바꿀 수 없다
+     * (정의 문서 ⑤ "제출 시작됨: [팀 이동]만 남는다 — 되돌릴 수 없다").
+     */
+    TEAM_SUBMISSION_LOCKED(HttpStatus.CONFLICT, "이미 제출한 팀은 팀 구성을 바꿀 수 없습니다."),
+
+    /**
+     * 확정된(CONFIRMED) 팀은 구성을 바꿀 수 없다(정의 문서 "확정하면 학생들이 코드를 제출할 수
+     * 있게 되고, 팀은 잠깁니다"). [편성 다시 열기]로 DRAFT로 되돌린 뒤에만 편집할 수 있다.
+     */
+    TEAM_CONFIRMED_LOCKED(HttpStatus.CONFLICT, "확정된 팀은 편성 다시 열기 후에만 바꿀 수 있습니다."),
+
+    /** 목록 조회 시 cohort와 classId 중 정확히 하나만 지정해야 하는데 둘 다 없거나 둘 다 있다. */
+    PROJECT_LIST_SCOPE_AMBIGUOUS(HttpStatus.BAD_REQUEST, "cohort와 classId 중 정확히 하나를 지정해야 합니다.");
 
     private final HttpStatus status;
     private final String defaultMessage;

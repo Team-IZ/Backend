@@ -6,18 +6,27 @@ import com.bigproject.backend.domain.member.domain.PendingInvitation;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.mail.MailSendException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -86,5 +95,85 @@ class TransactionalInvitationDispatcherTest {
 		ordered.verify(persistenceService).markInvitationFailed(eq(invitation), contains("SMTP failure"));
 		// 실패했으므로 발송 완료로 표시하지 않는다.
 		verify(persistenceService, never()).markInvitationSent(invitation);
+	}
+
+	/**
+	 * 대량 발송은 <b>청크마다 보내고 곧바로 기록</b>해야 한다.
+	 *
+	 * <p>전량을 보낸 뒤 한 번에 기록하면 900명이 다 나갈 때까지 원장이 PENDING으로 멈춰 있어
+	 * 진행률 폴링이 0%에서 100%로 튄다. 중간에 인스턴스가 죽으면 이미 나간 메일까지 전부
+	 * "안 나간 것"으로 남아 안전망이 다시 보내게 된다.
+	 *
+	 * <p>이 테스트가 없으면 기록을 루프 밖으로 빼도 기능은 그대로 동작하고 진행률만 죽는다.
+	 */
+	@Test
+	void recordsEachChunkAsSoonAsItIsSent() {
+		InvitationPersistenceService persistenceService = mock(InvitationPersistenceService.class);
+		InvitationMailSender mailSender = mock(InvitationMailSender.class);
+		TransactionalInvitationDispatcher dispatcher = new TransactionalInvitationDispatcher(
+				persistenceService,
+				mailSender
+		);
+		ReflectionTestUtils.setField(dispatcher, "mailBatchSize", 2);
+		when(mailSender.sendTraineeInvitations(anyList())).thenReturn(Map.of());
+		List<InvitationMailSender.TraineeInvitationMail> mails = new ArrayList<>();
+		for (int index = 0; index < 5; index++) {
+			mails.add(new InvitationMailSender.TraineeInvitationMail(
+					traineeInvitation("trainee" + index + "@example.com"), "교육생" + index));
+		}
+
+		dispatcher.sendTraineeInvitations(mails);
+
+		// 5건을 2건씩 → 청크 3개. 발송과 기록이 청크 수만큼 짝지어 일어난다.
+		ArgumentCaptor<List<InvitationMailSender.TraineeInvitationMail>> sentCaptor =
+				ArgumentCaptor.forClass(List.class);
+		verify(mailSender, times(3)).sendTraineeInvitations(sentCaptor.capture());
+		assertThat(sentCaptor.getAllValues()).extracting(List::size).containsExactly(2, 2, 1);
+		ArgumentCaptor<List<PendingInvitation>> recordedCaptor = ArgumentCaptor.forClass(List.class);
+		verify(persistenceService, times(3)).markInvitationsSent(recordedCaptor.capture());
+		assertThat(recordedCaptor.getAllValues()).extracting(List::size).containsExactly(2, 2, 1);
+	}
+
+	/** 청크 하나가 통째로 실패해도 나머지 청크는 계속 나가고, 실패한 것만 돌아온다. */
+	@Test
+	void keepsSendingRemainingChunksWhenOneChunkFails() {
+		InvitationPersistenceService persistenceService = mock(InvitationPersistenceService.class);
+		InvitationMailSender mailSender = mock(InvitationMailSender.class);
+		TransactionalInvitationDispatcher dispatcher = new TransactionalInvitationDispatcher(
+				persistenceService,
+				mailSender
+		);
+		ReflectionTestUtils.setField(dispatcher, "mailBatchSize", 1);
+		PendingInvitation first = traineeInvitation("first@example.com");
+		PendingInvitation second = traineeInvitation("second@example.com");
+		when(mailSender.sendTraineeInvitations(anyList())).thenAnswer(invocation -> {
+			List<InvitationMailSender.TraineeInvitationMail> chunk = invocation.getArgument(0);
+			UUID tokenId = chunk.get(0).invitation().tokenId();
+			return tokenId.equals(first.tokenId()) ? Map.of(tokenId, "SMTP failure") : Map.of();
+		});
+
+		Set<UUID> failed = dispatcher.sendTraineeInvitations(List.of(
+				new InvitationMailSender.TraineeInvitationMail(first, "첫째"),
+				new InvitationMailSender.TraineeInvitationMail(second, "둘째")
+		));
+
+		assertThat(failed).containsExactly(first.tokenId());
+		verify(persistenceService).markInvitationFailed(eq(first), contains("SMTP failure"));
+		verify(persistenceService).markInvitationsSent(List.of(second));
+	}
+
+	private static PendingInvitation traineeInvitation(String email) {
+		Instant now = Instant.now();
+		return new PendingInvitation(
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				email,
+				"raw-token",
+				Role.TRAINEE,
+				now,
+				now.plusSeconds(3600),
+				new InvitationContext(UUID.randomUUID(), "AIVLE", UUID.randomUUID(), "7기")
+		);
 	}
 }

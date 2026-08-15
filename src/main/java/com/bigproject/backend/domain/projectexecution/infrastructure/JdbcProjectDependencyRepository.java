@@ -9,6 +9,8 @@ import java.sql.Array;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Collection;
@@ -78,6 +80,18 @@ public class JdbcProjectDependencyRepository implements ProjectDependencyReposit
 					names.put(rs.getObject("cohort_id", UUID.class), rs.getString("name"));
 				});
 		return names;
+	}
+	/**
+	 * 반(class) 하나에 편성된 팀들이 참여 중인 프로젝트 ID 목록(중복 제거).
+	 * team을 거쳐 이어 붙인다 — Project 자체는 class 연관이 없다. 이 반에 팀이
+	 * 하나도 편성되지 않았으면 빈 목록이다.
+	 */
+	@Override
+	public List<UUID> findProjectIdsByClassId(UUID classId, UUID orgId) {
+		return jdbcTemplate.query(
+				"SELECT DISTINCT project_id FROM team WHERE class_id = ? AND org_id = ? AND deleted_at IS NULL",
+				(rs, rowNum) -> rs.getObject("project_id", UUID.class),
+				classId, orgId);
 	}
 
 	/** 22차 R7 — 지운 기수는 없는 것으로 본다. org_id를 함께 걸어 남의 기관 기수는 존재도 알리지 않는다. */

@@ -9,6 +9,7 @@ import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionRes
 import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.GithubSubmissionContent;
 import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.SubmissionContent;
 import com.bigproject.backend.domain.submission.presentation.dto.MySubmissionResponse.ZipSubmissionContent;
+import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -81,6 +82,9 @@ public class MySubmissionService {
 		if ("FETCH_FAILED".equals(row.submissionStatus()) || "INVALID".equals(row.submissionStatus())) {
 			return "ANALYSIS_FAILED";
 		}
+		if (hasLostExternalJobId(row)) {
+			return "ANALYSIS_FAILED";
+		}
 		if ("FAILED".equals(row.analysisJobStatus())) {
 			return "ANALYSIS_FAILED";
 		}
@@ -111,7 +115,16 @@ public class MySubmissionService {
 		if (row.submissionFailureReason() != null) {
 			return row.submissionFailureReason();
 		}
+		if (hasLostExternalJobId(row)) {
+			// 같은 사실을 상세 조회(GET .../analysis)도 내려 준다. 문구가 갈라지지 않게 그쪽 상수를 쓴다.
+			return SubmissionAnalysisResponse.EXTERNAL_JOB_ID_LOST_MESSAGE;
+		}
 		return messageOf(row.analysisFailureCode());
+	}
+
+	private boolean hasLostExternalJobId(MySubmissionRow row) {
+		return ("QUEUED".equals(row.analysisJobStatus()) || "RUNNING".equals(row.analysisJobStatus()))
+				&& row.analysisExternalJobId() == null;
 	}
 
 	/**

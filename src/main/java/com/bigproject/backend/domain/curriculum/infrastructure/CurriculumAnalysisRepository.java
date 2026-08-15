@@ -36,4 +36,6 @@ public interface CurriculumAnalysisRepository extends JpaRepository<CurriculumAn
     Optional<CurriculumAnalysis> findByVersionIdAndIdempotencyKey(UUID versionId, UUID idempotencyKey);
 
     long countByVersionId(java.util.UUID versionId);
+    // 스케줄러가 PENDING/RUNNING 건을 전부(버전 무관) 찾을 때 사용
+    List<CurriculumAnalysis> findAllByStatusIn(List<CurriculumAnalysisStatus> statuses);
 }
