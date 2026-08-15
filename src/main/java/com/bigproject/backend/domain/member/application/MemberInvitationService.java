@@ -13,6 +13,7 @@ import com.bigproject.backend.domain.member.domain.TraineeInvitationFailureStatu
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerRequest;
 import com.bigproject.backend.domain.member.presentation.dto.InviteManagerResponse;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
+import com.bigproject.backend.domain.member.presentation.dto.PreviewTraineesResponse;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -385,14 +386,17 @@ public class MemberInvitationService {
 	 *
 	 * <p><b>미리보기가 통과했다고 등록이 반드시 성공하지는 않는다.</b> 두 호출 사이에 다른 운영자가
 	 * 같은 주소를 등록할 수 있다. 등록 응답의 {@code failures}를 그대로 두는 이유다.
+	 *
+	 * <p>응답은 {@link PreviewTraineesResponse}로 등록과 <b>갈라 놓는다</b>(31차 R2) — 판정이 같은
+	 * 메서드라고 해서 결과의 이름까지 같아도 되는 것은 아니다.
 	 */
-	public RegisterTraineesResponse previewTrainees(
+	public PreviewTraineesResponse previewTrainees(
 			UUID cohortId, RegisterTraineesRequest request, String actorEmail) {
 		return previewTrainees(cohortId, toRows(request), actorEmail);
 	}
 
 	/** @see #previewTrainees(UUID, RegisterTraineesRequest, String) */
-	public RegisterTraineesResponse previewTrainees(UUID cohortId, List<TraineeCsvRow> rows, String actorEmail) {
+	public PreviewTraineesResponse previewTrainees(UUID cohortId, List<TraineeCsvRow> rows, String actorEmail) {
 		AuthUser actor = activeActor(actorEmail);
 		if (actor.role() != Role.OPERATOR) {
 			throw new ApiException(MemberErrorCode.INVITE_ROLE_NOT_ALLOWED, "오퍼레이터만 교육생을 초대할 수 있습니다.");
@@ -419,13 +423,10 @@ public class MemberInvitationService {
 			}
 		}
 
-		// 아무것도 만들지 않았으므로 registeredCount는 "등록될 수 있는 수", invitationSentCount는 항상 0이며
-		// 폴링할 잡도 없어 batchRequestId는 null이다.
-		return new RegisterTraineesResponse(
+		// 아무것도 만들지 않았으므로 수는 전부 "그렇게 될 것"이다 — 이름이 registrableCount인 이유다.
+		return new PreviewTraineesResponse(
 				rows.size(),
 				rows.size() - failures.size(),
-				0,
-				null,
 				List.copyOf(failures)
 		);
 	}
