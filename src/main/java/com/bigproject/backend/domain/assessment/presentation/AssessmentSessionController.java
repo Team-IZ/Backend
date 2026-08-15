@@ -137,14 +137,16 @@ public class AssessmentSessionController {
 					## 204를 "응시 완료"로 읽지 말 것
 
 					204는 **살아 있는 세션(`READY`·`IN_PROGRESS`·`PAUSED`)이 하나도 없다**는 뜻일 뿐이고 그 이유는
-					다섯 가지다 — 이미 완료했다 · **방금 상한을 넘겨 닫혔다** · 아직 분석이 끝나지 않아 세션이
-					만들어지지 않았다 · 분석이 실패했다 · 팀 배정이 끊겼다. 이들을 가르는 것은
-					`GET /assessment-rounds`의 `representativeStatus`이며, 완료는 그중 `ASSESSMENT_COMPLETED`
-					하나다. 상한 초과로 닫힌 세션은 응시가 `SESSION_INCOMPLETE`로 끝나 `initialSessionStatus`가
-					`INTERRUPTED`다.
+					여섯 가지다 — 이미 완료했다 · **방금 상한을 넘겨 닫혔다** · **응시 창이 닫혔다** ·
+					아직 분석이 끝나지 않아 세션이 만들어지지 않았다 · 분석이 실패했다 · 팀 배정이 끊겼다.
+					이들을 가르는 것은 `GET /assessment-rounds`의 `representativeStatus`이며, 완료는 그중
+					`ASSESSMENT_COMPLETED` 하나다. 상한 초과로 닫힌 세션은 응시가 `SESSION_INCOMPLETE`로 끝나
+					`initialSessionStatus`가 `INTERRUPTED`다.
 
-					⚠️ **응시 창(`assessmentCloseAt`)이 닫혀도 204가 아니다.** 여기서 보는 것은 세션의 정책
-					시간 상한이지 응시 창이 아니다 — 창이 지난 `READY` 세션은 여전히 200으로 내려온다.
+					**응시 창(`assessmentCloseAt`)이 닫혔으면 204다**(2026-08-16 변경). 종전에는 창이 지난
+					`READY` 세션을 200으로 내려줬는데, 화면이 시작할 수 없는 세션을 "지금 할 일"로 그려 놓고
+					`POST /start`에서만 막히는 상태였다. 다시 보기도 같다 — `reviewDueAt`이 지나면 204다.
+					그 회차의 홈 카드는 `ASSESSMENT_WINDOW_CLOSED` · CTA `NONE`으로 나간다.
 
 					## 오류
 
@@ -385,6 +387,8 @@ public class AssessmentSessionController {
 					|---|---|---|
 					| `SESSION_NOT_ACCESSIBLE` | 404 | 없거나 남의 세션 |
 					| `SESSION_ALREADY_ENDED` | 409 | 이미 끝난 세션 |
+					| `ASSESSMENT_WINDOW_CLOSED` | 409 | 개인 응시 창(`assessmentCloseAt`)이 닫혔다. **시작할 수 없다** |
+					| `REVIEW_DUE_AT_PASSED` | 409 | 다시 보기 마감(`reviewDueAt`)이 지났다 |
 					| `STAGE_NOT_FOUND` | 409 | 세울 단계가 없다. 문항이 하나도 만들어지지 않은 세션이다 |
 
 					`STAGE_NOT_FOUND`는 문제 3개가 전부 `NOT_GENERATED`일 때 나온다. 200을 받고 전체화면으로
@@ -429,7 +433,8 @@ public class AssessmentSessionController {
 					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
 			@ApiResponse(responseCode = "404", description = "SESSION_NOT_ACCESSIBLE",
 					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-			@ApiResponse(responseCode = "409", description = "SESSION_ALREADY_ENDED · STAGE_NOT_FOUND",
+			@ApiResponse(responseCode = "409",
+					description = "SESSION_ALREADY_ENDED · ASSESSMENT_WINDOW_CLOSED · REVIEW_DUE_AT_PASSED · STAGE_NOT_FOUND",
 					content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
 	})
 	@PostMapping("/{sessionId}/start")
@@ -744,6 +749,8 @@ public class AssessmentSessionController {
 					|---|---|---|
 					| `ANSWER_TEXT_REQUIRED` | 400 | 본문이 비었다 |
 					| `SESSION_NOT_STARTED` | 409 | `POST /start`를 아직 부르지 않았다 |
+					| `ASSESSMENT_WINDOW_CLOSED` | 409 | 개인 응시 창이 닫혔다. **답변이 더는 받아들여지지 않는다** |
+					| `REVIEW_DUE_AT_PASSED` | 409 | 다시 보기 마감이 지났다 |
 					| `SESSION_TIMEOUT` | 409 | 세션 상한(기본 60분) 초과. 답한 데까지 저장하고 세션을 닫는다 |
 					| `PROBLEM_TIME_LIMIT_EXCEEDED` | 409 | 이 문제의 상한(기본 20분) 초과. **이미 다음 문제로 넘어갔다** |
 					| `ANSWER_ALREADY_SUBMITTED` | 409 | 같은 자리에 이미 제출됐다(낙관적 잠금). 다시 불러오면 된다 |
@@ -878,7 +885,8 @@ public class AssessmentSessionController {
 			@ApiResponse(responseCode = "404", description = "SESSION_NOT_ACCESSIBLE",
 					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
 			@ApiResponse(responseCode = "409",
-					description = "SESSION_NOT_STARTED · SESSION_TIMEOUT · ANSWER_ALREADY_SUBMITTED · PROBLEM_TIME_LIMIT_EXCEEDED",
+					description = "SESSION_NOT_STARTED · ASSESSMENT_WINDOW_CLOSED · REVIEW_DUE_AT_PASSED"
+							+ " · SESSION_TIMEOUT · ANSWER_ALREADY_SUBMITTED · PROBLEM_TIME_LIMIT_EXCEEDED",
 					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
 			@ApiResponse(responseCode = "503",
 					description = "GRADING_FAILED — **같은 답을 그대로 다시 제출하면 된다**",
@@ -940,6 +948,7 @@ public class AssessmentSessionController {
 					| `HINT_EXHAUSTED` | 409 | 단계당 2회를 다 썼다 |
 					| `HINT_NOT_AVAILABLE` | 409 | 다시 보기이거나, 이미 답을 제출한 질문이다 |
 					| `SESSION_NOT_STARTED` | 409 | `POST /start`를 아직 부르지 않았다 |
+					| `ASSESSMENT_WINDOW_CLOSED` | 409 | 개인 응시 창이 닫혔다 |
 
 					다시 보기에서 막는 근거는 정의서 §6+다 — "이번에는 다시 설명해 드리지 않아요. 지난번과 같은
 					질문이라 이미 한 번 들었어요."
