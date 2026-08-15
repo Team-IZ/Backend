@@ -362,7 +362,24 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 			return " ORDER BY COALESCE(mv.excellent_occurrence_count, -1) DESC, r.name ASC, r.email ASC";
 		}
 		if (sort == TraineeRosterSort.RECENT_ENROLLED) {
-			return " ORDER BY r.sort_at DESC, r.name ASC, r.email ASC";
+			/*
+			 * 25차 R5 — 등록일이 없는 사람(초대 수락 전)은 맨 뒤다.
+			 *
+			 * 종전에는 sort_at 하나로만 정렬했는데, sort_at은 수락한 행에서 joined_at이고
+			 * 초대 대기 행에서는 invited_at이다. 방금 초대한 사람의 invited_at이 가장 커서
+			 * 「최근 등록순」을 골랐는데 등록일 열이 전부 `—`인 사람들이 맨 위에 쌓였다 —
+			 * 한 정렬이 "최근 등록순"과 "최근 초대순" 두 뜻을 섞고 있었다.
+			 *
+			 * joined_at을 첫 키로 두고 NULLS LAST를 못 박는다(Postgres의 DESC 기본은
+			 * NULLS FIRST라 명시하지 않으면 지금 동작이 그대로다). 등록한 사람이 최신순으로
+			 * 먼저 오고, 그 뒤에 미등록자가 온다.
+			 *
+			 * sort_at을 둘째 키로 남긴 이유는 미등록자끼리의 순서다 — joined_at이 전부 NULL이라
+			 * 이 키가 없으면 이름순으로 떨어지는데, 그 무리 안에서는 최근에 초대한 사람이 위에
+			 * 오는 편이 명단을 훑는 방향과 맞는다. 등록한 사람에게는 sort_at = joined_at이라
+			 * 이 키가 순서를 바꾸지 않는다.
+			 */
+			return " ORDER BY r.joined_at DESC NULLS LAST, r.sort_at DESC, r.name ASC, r.email ASC";
 		}
 		return " ORDER BY r.name ASC, r.email ASC";
 	}

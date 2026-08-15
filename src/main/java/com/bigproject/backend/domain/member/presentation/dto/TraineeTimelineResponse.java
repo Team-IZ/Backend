@@ -6,12 +6,28 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
-@Schema(description = "교육생 상세(MG-06)의 이력 — 회차마다 그 회차에서 일어난 사건을 묶어 낸다")
+/**
+ * 25차 R13 — 이 봉투는 <b>커서 페이징</b>이다. 페이지를 넘기는 값은 {@code nextCursor}·{@code hasNext}
+ * 둘뿐이고, {@code totalElements}는 페이저가 읽는 값이 아니라 화면 머리글에 찍는 부가값이다.
+ * 그래서 {@code page}·{@code totalPages} 같은 오프셋 페이징 필드는 없고 앞으로도 넣지 않는다.
+ */
+@Schema(description = """
+		교육생 상세(MG-06)의 이력 — 회차마다 그 회차에서 일어난 사건을 묶어 낸다.
+
+		**페이징은 커서 방식이다.** 다음 페이지는 `nextCursor`·`hasNext`로만 넘긴다.
+		`totalElements`는 페이징 값이 아니라 머리글용 집계다(아래 필드 설명 참고).
+		""")
 public record TraineeTimelineResponse(
 		UUID cohortId, UUID traineeId,
 		@Schema(description = """
 				필터를 적용한 **전체 이벤트 수**이며 화면 상단의 `이벤트 8건`이다.
-				페이지와 무관하다 — 한 페이지에 담긴 수가 아니다.
+
+				🔴 **페이저가 읽는 값이 아니다.** 이 봉투는 커서 페이징이고 페이지 이동은
+				`nextCursor`·`hasNext`가 전담한다. 이 값은 오프셋 페이징의 `totalElements`와
+				이름만 같을 뿐, 페이지 수를 계산하는 데 쓸 수 없다 — 페이지 단위가 이벤트가
+				아니라 **회차**라서 `totalElements / size`가 페이지 수가 되지 않는다.
+
+				지금까지 받은 수도, 이 페이지에 담긴 수도 아닌 **필터 적용 후 전체 수**다.
 				""", example = "8")
 		int totalElements,
 		@Schema(description = """
@@ -57,11 +73,12 @@ public record TraineeTimelineResponse(
 	public record Event(
 			UUID eventId,
 			@Schema(description = """
-					`ASSESSMENT`(이해도 확인) · `REPORT`(리포트 발행) · `REVIEW`(다시 보기) ·
-					`REVIEW_CLOSED`(다시 보기 창 마감) · `INTERVIEW`(면담).
+					사건 유형. 이 다섯 값 중 하나이며 늘어나면 스펙이 먼저 바뀐다.
 
-					유형마다 아래 블록 중 하나만 채워진다 — 나머지는 `null`이거나 빈 배열이다.
-					""", example = "ASSESSMENT")
+					유형에 따라 아래 블록 중 **하나만** 채워진다. 어느 블록이 어느 유형 전용인지는
+					각 필드 설명에 적어 두었고, 해당 없는 필드의 값은 그 필드 설명이 말한다.
+					""", example = "ASSESSMENT",
+					allowableValues = {"ASSESSMENT", "REPORT", "REVIEW", "REVIEW_CLOSED", "INTERVIEW"})
 			String type,
 			@Schema(description = "일어난 시각. 화면 왼쪽의 `07.12`") OffsetDateTime occurredAt,
 			String sourceEntityType, UUID sourceEntityId,
@@ -83,6 +100,8 @@ public record TraineeTimelineResponse(
 					**ASSESSMENT 전용.** 문항별 결과이며 **문항 번호 오름차순**이다. 화면의
 					`0단 · 1단 · 3단`과 `재진술 2회`가 이 배열에서 나온다.
 					문항이 만들어지지 않은 개념도 번호를 지켜 남는다 — 빼면 격자 칸이 밀린다.
+
+					`type`이 `ASSESSMENT`가 아니면 **빈 배열**이다(null이 아니다).
 					""")
 			List<AssessmentProblem> problems,
 
@@ -101,12 +120,16 @@ public record TraineeTimelineResponse(
 					**REVIEW 전용.** 다시 보기로 답한 문항의 도달 단계 변화이며 화면의
 					`HITL Trigger 0단 → 1단`이 이 배열의 한 항목이다. 답한 문항이 하나도 없으면
 					`REVIEW` 사건 자체가 생기지 않는다.
+
+					`type`이 `REVIEW`가 아니면 **빈 배열**이다(null이 아니다).
 					""")
 			List<ReviewChange> reviewChanges,
 			@Schema(description = """
 					**REVIEW_CLOSED 전용.** 창이 닫힐 때까지 **답하지 않은** 문항이며 화면의
 					`Graph 구성 미응시`가 이 배열의 한 항목이다. 창이 아직 열려 있으면
 					`REVIEW_CLOSED` 사건이 생기지 않는다 — 마감돼야 미응시가 확정된다.
+
+					`type`이 `REVIEW_CLOSED`가 아니면 **빈 배열**이다(null이 아니다).
 					""")
 			List<MissedConcept> missedConcepts,
 

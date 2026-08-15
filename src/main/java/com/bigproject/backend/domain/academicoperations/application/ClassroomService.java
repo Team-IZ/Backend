@@ -13,6 +13,9 @@ import com.bigproject.backend.domain.academicoperations.infrastructure.ManagerAs
 import com.bigproject.backend.domain.academicoperations.domain.CohortMember;
 import com.bigproject.backend.domain.academicoperations.infrastructure.CohortMemberRepository;
 import com.bigproject.backend.domain.academicoperations.infrastructure.CohortRepository;
+// 25차 R3 — 담당 매니저 검증에만 쓴다. 매니저 계정의 주인은 member 도메인이므로 코드도 그쪽 것을
+// 그대로 쓴다(같은 일을 하는 PUT …/managers/{managerId}/classrooms와 code 문자열이 같아야 한다).
+import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -237,7 +240,22 @@ public class ClassroomService {
                 .findByCohortMemberIdInAndOrgIdAndUnassignedAtIsNull(cohortMemberIds, orgId);
 
         OffsetDateTime now = OffsetDateTime.now();
-        activeMemberships.forEach(membership -> membership.unassign(now, actorUserId, "REASSIGNED"));
+        // 25차 R7 ① — 사유는 "MANUAL_MOVE"다. 종전 값 "REASSIGNED"는
+        // ck_class_membership_unassigned_reason(IMMEDIATE_ROLLBACK · MANUAL_MOVE · COHORT_CLOSED ·
+        // MEMBER_LEFT · ADMIN_CORRECTION)에 없는 값이라, 이미 어느 반에 있는 사람을 옮기려 하면
+        // 해제 UPDATE 자체가 CHECK 위반으로 튕겼다. 그 예외가 DataIntegrityViolationException으로
+        // 올라와 화면에는 도메인 코드가 아닌 409 DATA_INTEGRITY_VIOLATION이 보였다 —
+        // 「이동이 아예 안 된다」의 정체가 이것이다. 미배정 학생은 해제할 행이 없어 통과했고,
+        // 그래서 「처음 배정만 되고 이동만 안 되는」 모양이 나왔다.
+        activeMemberships.forEach(membership -> membership.unassign(now, actorUserId, "MANUAL_MOVE"));
+
+        // 25차 R7 ② — 해제를 새 배정보다 먼저 DB에 내보낸다.
+        // uq_class_membership_active_member는 (cohort_member_id) WHERE unassigned_at IS NULL인
+        // 부분 유니크 인덱스인데, 하이버네이트의 액션 큐는 한 트랜잭션 안에서 INSERT를 UPDATE보다
+        // 먼저 실행한다. 그대로 두면 옛 행이 아직 활성인 채로 새 행이 들어가 같은 인덱스를 두 번
+        // 건드린다. 순서를 못 박아야 ①을 고쳐도 같은 자리에서 다시 409가 나지 않는다.
+        classMembershipRepository.saveAll(activeMemberships);
+        classMembershipRepository.flush();
 
         List<ClassMembership> newMemberships = cohortMembers.stream()
                 .map(cohortMember -> ClassMembership.builder()
@@ -421,6 +439,7 @@ public class ClassroomService {
         if (distinctManagerUserIds.isEmpty()) {
             return List.of();
         }
+        requireManagersInOrganization(orgId, distinctManagerUserIds);
 
         List<ManagerAssignment> newAssignments = distinctManagerUserIds.stream()
                 .map(managerUserId -> ManagerAssignment.builder()
@@ -468,6 +487,34 @@ public class ClassroomService {
                         toProfiles(managerUserIdsByClassId.getOrDefault(classroom.getClassId(), List.of()), profileById),
                         traineeCountByClassId.getOrDefault(classroom.getClassId(), 0L)))
                 .toList();
+    }
+
+    /**
+     * 25차 R3 — 담당으로 지정한 ID가 <b>이 기관의 매니저인지</b> 확인한다.
+     *
+     * <p>종전에는 검증이 없어 존재하지 않거나 다른 역할인 사용자 ID를 보내도 배정 행이 만들어졌고,
+     * 그 사실이 스펙에 "⚠️ 검증하지 않는다"로만 적혀 있었다. 매니저 쪽 같은 기능
+     * ({@code PUT …/managers/{managerId}/classrooms})은 처음부터 {@code MANAGER_NOT_FOUND}를 던지고
+     * 있었으므로, 같은 일을 하는 두 경로가 서로 다른 계약을 갖고 있었다.
+     *
+     * <p>프로필 조회는 이미 {@link ManagerDirectoryRepository}로 하고 있어 왕복이 늘지 않는다 —
+     * 배정 후 응답을 조립할 때 어차피 같은 조회를 한다.
+     *
+     * <p>어느 ID가 문제인지 메시지에 담는다. 전체를 거부하므로 화면이 "일부만 반영됐나"를
+     * 되묻지 않아도 된다.
+     */
+    private void requireManagersInOrganization(UUID orgId, List<UUID> managerUserIds) {
+        Set<UUID> foundMemberIds = managerDirectoryRepository.findProfiles(orgId, managerUserIds).stream()
+                .map(ManagerDirectoryRepository.ManagerProfile::memberId)
+                .collect(Collectors.toSet());
+
+        List<UUID> missingManagerIds = managerUserIds.stream()
+                .filter(managerUserId -> !foundMemberIds.contains(managerUserId))
+                .toList();
+        if (!missingManagerIds.isEmpty()) {
+            throw new ApiException(MemberErrorCode.MANAGER_NOT_FOUND,
+                    "이 기관의 매니저 계정을 찾을 수 없습니다: " + missingManagerIds);
+        }
     }
 
     private List<ManagerDirectoryRepository.ManagerProfile> resolveManagers(UUID orgId, List<UUID> managerUserIds) {

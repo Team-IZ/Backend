@@ -73,23 +73,39 @@ public interface CurriculumService {
     com.bigproject.backend.domain.curriculum.domain.CurriculumVersion registerCurriculum(
             UUID orgId, String title, String topic, org.springframework.web.multipart.MultipartFile file, UUID actorUserId);
 
-    void requestAnalysis(UUID materialId, UUID orgId, UUID actorUserId);
+    /**
+     * 교안 재분석 요청.
+     *
+     * @param force 진행 중({@code PENDING}·{@code RUNNING}) 검사를 건너뛴다(25차 R2).
+     *              평소에는 {@code false}이고, 오래 멈춘 분석을 강제로 다시 돌릴 때만 켠다
+     */
+    void requestAnalysis(UUID materialId, UUID orgId, UUID actorUserId, boolean force);
 
     // ── 9차 R8: 기관 전체 교안 목록 · 단건 상세 ────────────────────────────────
 
     /**
      * 교안 탭이 보는 기관 전체 목록 한 페이지.
      *
-     * @param notAnalyzedOnly 한 번도 분석하지 않은 교안만(13차 R2). {@code status}와 함께 오면 400이다
+     * @param statuses        분석 상태 필터. null·빈 목록이면 전체이고, 여러 값이면 합집합이다(25차 R1)
+     * @param notAnalyzedOnly 한 번도 분석하지 않은 교안만(13차 R2). {@code statuses}와 함께 오면 400이다
      */
     CurriculumCatalogPage findCatalog(
             UUID orgId,
             String query,
-            com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus status,
+            java.util.List<com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus> statuses,
             boolean notAnalyzedOnly,
             com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogSort sort,
             int page,
             int size);
+
+    /**
+     * 교안을 논리 삭제한다(25차 R11).
+     *
+     * <p>연결된 회차가 하나라도 있으면 지우지 않고 409({@code CURRICULUM_MATERIAL_IN_USE})다 —
+     * 회차가 근거로 삼는 교안이 목록에서 사라지면 안 되기 때문이다. 연결을 먼저 끊는 경로는
+     * {@code DELETE /projects/{projectId}/curricula/{id}}가 이미 있다.
+     */
+    void deleteCurriculum(UUID materialId, UUID orgId, UUID actorUserId);
 
     /** 교안 하나. 목록과 같은 조회를 쓰므로 필드가 어긋나지 않는다. */
     com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogRepository.CurriculumCatalogRow

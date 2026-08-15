@@ -62,7 +62,7 @@ public class CurriculumController {
 					|---|---|---|---|
 					| `organizationId` | **필수**(경로) | UUID | 기관 식별자. 호출자의 소속 기관과 다르면 403 |
 					| `query` | 선택 | string | 파일명·교안 제목 부분검색(대소문자 무시) |
-					| `status` | 선택 | enum | `PENDING` · `RUNNING` · `SUCCEEDED` · `FAILED`. 최신 버전의 **가장 최근 분석 시도** 기준 |
+					| `status` | 선택 | enum **배열** | `PENDING` · `RUNNING` · `SUCCEEDED` · `FAILED`. 최신 버전의 **가장 최근 분석 시도** 기준. 여러 개 보내면 합집합(25차 R1) |
 					| `notAnalyzedOnly` | 선택 | boolean | **한 번도 분석하지 않은 교안만.** 기본 `false`(13차 R2) |
 					| `sort` | 선택 | enum | `RECENT`(최근 업로드 순, **기본**) · `NAME`(파일명순) · `USAGE`(사용 회차 많은 순) |
 					| `page` | 선택 | int | 0부터 시작. 기본 `0` |
@@ -102,6 +102,19 @@ public class CurriculumController {
 					서로를 배제하는 조건이라 결과가 항상 비는데, 빈 목록을 조용히 주면 화면이
 					"그런 교안이 없다"로 읽는다.
 
+					## `분석 중`처럼 두 상태를 한 라벨로 묶어 보기 (25차 R1)
+
+					`status`는 **값을 여러 개 받는다.** 반복 파라미터·콤마 둘 다 되고 결과는 **합집합**이다.
+
+					```
+					?status=PENDING&status=RUNNING   →  분석 중(둘 다)
+					?status=PENDING,RUNNING          →  같은 결과
+					```
+
+					종전에는 반복 파라미터를 보내면 **첫 값만 적용한 목록이 200으로** 나갔다. 화면은
+					그것이 전부인 줄 알고 그렸으므로, 있는 교안을 없다고 말하게 되는 자리였다.
+					콤마 형식은 400으로 막고 있었는데 이제 둘 다 같은 뜻으로 받는다.
+
 					💡 **한 행이 교안(material) 하나다.** 버전은 같은 자리의 새 파일이지 별도 항목이 아니라서,
 					값은 전부 최신 버전 기준이고 `usedProjectCount`만 모든 버전을 합쳐 센다.
 					"""
@@ -119,9 +132,16 @@ public class CurriculumController {
             @PathVariable UUID organizationId,
             @Parameter(description = "파일명·교안 제목 부분검색", example = "spring")
             @RequestParam(required = false) String query,
-            @Parameter(description = "분석 상태 필터. 최신 버전의 가장 최근 분석 시도 기준. "
-                    + "`notAnalyzedOnly=true`와 함께 보내면 400이다")
-            @RequestParam(required = false) CurriculumAnalysisStatus status,
+            @Parameter(description = """
+                    분석 상태 필터. 최신 버전의 가장 최근 분석 시도 기준입니다.
+
+                    **여러 값을 보낼 수 있습니다**(25차 R1). `?status=PENDING&status=RUNNING`처럼 반복해
+                    보내거나 `?status=PENDING,RUNNING`처럼 콤마로 이어 보내면 **합집합**으로 거릅니다 —
+                    화면이 `분석 중` 한 라벨로 묶어 쓰는 두 상태를 한 번에 고를 수 있어야 하기 때문입니다.
+
+                    `notAnalyzedOnly=true`와 함께 보내면 400입니다.
+                    """)
+            @RequestParam(required = false) List<CurriculumAnalysisStatus> status,
             @Parameter(description = """
                     한 번도 분석하지 않은 교안만 남깁니다(13차 R2).
 
@@ -391,24 +411,44 @@ public class CurriculumController {
 
 					**요청**
 					- materialId (경로): 교안 ID
+					- force (쿼리, 선택): 기본 `false`. 진행 중 검사를 건너뛴다
 
 					**응답 (202)**
 					- 본문 없음. 요청이 접수됐다는 뜻이며, 분석 완료 여부는
-					  `GET /curricula/{materialId}/sections`로 나중에 확인한다(503이면 아직 미완료)
+					  `GET /curricula/{materialId}/sections`로 나중에 확인한다(409면 아직 미완료)
+
+					## 이미 분석 중이면 409다 (25차 R2)
+
+					최신 버전에 `PENDING`·`RUNNING`인 분석이 있으면 `409 CURRICULUM_ANALYSIS_IN_PROGRESS`로
+					끊는다. 종전에는 그 상태에서도 202로 접수해서, 운영자가 「분석 중」 화면에서 버튼을
+					세 번 누르면 **AI 분석이 세 번 걸렸다.** 화면이 다이얼로그로 말릴 수는 있어도 서버가
+					막지 않으면 중복 요청은 계속 나간다 — 분석 1회가 LLM 호출 여러 건이라 그대로 비용이다.
+
+					**멈춘 분석을 푸는 출구는 남겨 뒀다.** `?force=true`를 보내면 진행 중이어도 새 분석을
+					건다. `PENDING`에서 오래 멈춰 있는 교안이 실제로 있고, 그때 이 버튼이 유일한 출구라
+					잠그면 안 되기 때문이다. 화면은 확인을 한 번 더 받고 보내는 것을 권한다.
 					"""
     )
     @ApiResponses({
             @ApiResponse(responseCode = "202", description = "재분석 요청 접수됨"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
             @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 교안 원장이 없거나 그 교안에 버전이 하나도 없음"),
+            @ApiResponse(responseCode = "409", description = "CURRICULUM_ANALYSIS_IN_PROGRESS 이미 분석이 진행 중임 — `?force=true`로 덮어쓸 수 있다(25차 R2)"),
     })
     @PostMapping("/curricula/{materialId}/analyses")
     public ResponseEntity<Void> requestAnalysis(
-            @Parameter(description = "교안 ID") @PathVariable UUID materialId
+            @Parameter(description = "교안 ID") @PathVariable UUID materialId,
+            @Parameter(description = """
+                    진행 중 검사를 건너뜁니다. 기본 `false`.
+
+                    `PENDING`에서 오래 멈춘 분석을 강제로 다시 돌릴 때만 씁니다 — 평소에는 보내지
+                    마세요. 켜면 돌고 있는 분석과 별개로 새 분석이 한 번 더 걸립니다.
+                    """, example = "false")
+            @RequestParam(required = false, defaultValue = "false") boolean force
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
         UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
-        curriculumService.requestAnalysis(materialId, orgId, actorUserId);
+        curriculumService.requestAnalysis(materialId, orgId, actorUserId, force);
         return ResponseEntity.accepted().build();
     }
 }

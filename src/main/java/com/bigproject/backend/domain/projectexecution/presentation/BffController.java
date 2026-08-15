@@ -11,17 +11,19 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.http.MediaType;
 
 /**
  * 화면 하나 대 API 하나가 아니라 화면이 필요로 하는 조합을 그대로 내려주는 BFF(Backend for Frontend) 성격
  * 엔드포인트를 모은 컨트롤러다. {@code /bff/} 하위는 특정 도메인 리소스가 아니라 화면 단위로 묶인다.
+ *
+ * <p>25차 R10 — {@code /api/v0} 접두사를 여기에 적지 않는다. {@code ApiPathConfig}가
+ * {@code com.bigproject.backend.domain} 아래 모든 컨트롤러에 그 접두사를 붙이므로,
+ * 클래스에서 한 번 더 적으면 {@code /api/v0/api/v0/bff/…}가 되어 스펙에 그대로 실린다.
  */
 @Tag(name = "Project Execution", description = "프로젝트 구성·일정·요구사항 API")
 @SecurityRequirement(name = "bearerAuth")
 @RestController
-@RequestMapping("/api/v0")
 @RequiredArgsConstructor
 public class BffController {
 

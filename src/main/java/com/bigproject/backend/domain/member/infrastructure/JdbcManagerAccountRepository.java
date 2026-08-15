@@ -48,8 +48,20 @@ public class JdbcManagerAccountRepository implements ManagerAccountRepository {
 	 * 모두 NOT NULL이어야 한다. ACTIVE로 되돌릴 때는 반대로 비운다 — 활성 계정에 정지 이력이 남아 있으면 모순이다.
 	 *
 	 * <p>{@code ck_app_user_status_2}: PENDING이 아니면 name이 NOT NULL이어야 한다. 초대만 받은 자리는
-	 * 이름이 비어 있으므로(이름은 수락할 때 본인이 넣는다) 이메일 로컬파트로 메운다.
-	 * 재초대가 이 자리를 되살리면서 name을 이번 초대 값으로 덮어쓰므로 임시값이 화면에 남지 않는다.
+	 * 이름이 비어 있으므로(이름은 수락할 때 본인이 넣는다) 제약을 만족시킬 값을 하나 넣어야 한다.
+	 *
+	 * <h2>🔴 이메일 로컬파트가 아니라 빈 문자열이다(25차 R9)</h2>
+	 *
+	 * <p>종전에는 {@code split_part(email, '@', 1)}을 넣었다. "재초대가 덮어쓰니 화면에 남지 않는다"고
+	 * 봤는데 <b>사실이 아니었다</b> — 초대를 취소하기만 하고 재초대하지 않으면 그 값이 그대로 남아,
+	 * 이름 없이 초대한 매니저가 목록에서 {@code name: "nulltest-probe"}로 보였다.
+	 *
+	 * <p>그것은 <b>거짓을 사실처럼 만드는 값</b>이다. 이메일 조각이지 그 사람의 이름이 아닌데
+	 * 목록에서 실명과 나란히 서면 구분되지 않고, 한 번 박히면 「이름을 모른다」는 사실이 사라진다.
+	 *
+	 * <p>빈 문자열은 CHECK를 만족시키면서도 <b>이름이 아니다.</b> 읽는 쪽
+	 * ({@code JdbcManagerRosterRepository})이 {@code NULLIF(name, '')}로 되돌려 API는 {@code null}을 준다 —
+	 * 이름이 없다는 사실이 그대로 보존된다. 표시는 화면의 몫이라 서버가 채울 필요가 없다.
 	 */
 	@Override
 	public int updateManagerStatus(UUID managerId, String rawStatus, UUID inactivatedBy,
@@ -58,7 +70,7 @@ public class JdbcManagerAccountRepository implements ManagerAccountRepository {
 		String sql = """
 				UPDATE app_user
 				SET status = ?,
-				    name = CASE WHEN ? THEN COALESCE(name, split_part(email, '@', 1)) ELSE name END,
+				    name = CASE WHEN ? THEN COALESCE(name, '') ELSE name END,
 				    inactivated_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,
 				    inactivated_by = CASE WHEN ? THEN ?::uuid ELSE NULL END,
 				    inactivated_reason_code = CASE WHEN ? THEN ? ELSE NULL END,
