@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.platformgovernance.presentation.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.DecimalMin;
@@ -52,11 +53,13 @@ public record UpdateModelPricingRequest(
 		@Positive
 		Integer priceUnitTokenCount
 ) {
+	@JsonIgnore
 	@AssertTrue(message = "입력 단가와 출력 단가는 함께 설정하거나 함께 비워야 합니다.")
 	public boolean isPricePairConsistent() {
 		return (inputPricePerMillionTokens == null) == (outputPricePerMillionTokens == null);
 	}
 
+	@JsonIgnore
 	@AssertTrue(message = "입력·출력 단가가 없으면 캐시 입력 단가도 설정할 수 없습니다.")
 	public boolean isCachedPriceConsistent() {
 		return cachedInputPricePerMillionTokens == null || inputPricePerMillionTokens != null;

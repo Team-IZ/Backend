@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.member.presentation.dto;
 
 import com.bigproject.backend.domain.member.domain.AccountStatus;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotNull;
@@ -28,6 +29,7 @@ public record UpdateManagerStatusRequest(
 		@Schema(description = "변경 사유(감사 로그용, 선택)", example = "퇴사 처리", nullable = true)
 		String reason
 ) {
+	@JsonIgnore
 	@AssertTrue(message = "매니저 계정 상태는 활성 또는 정지만 직접 설정할 수 있습니다.")
 	public boolean isMutableStatus() {
 		return status == null
