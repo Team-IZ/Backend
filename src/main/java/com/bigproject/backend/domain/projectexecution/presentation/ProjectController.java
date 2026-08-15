@@ -239,27 +239,6 @@ public class ProjectController {
 		return ResponseEntity.ok(ProjectListResponse.from(list));
 	}
 
-	/**
-	 * @deprecated {@code GET /projects?classId=}로 대체(19차). 프론트 연동 확인 전까지
-	 *             경로는 남기되 Swagger 목록에서는 숨긴다.
-	 */
-	@Deprecated(forRemoval = true)
-	@Operation(hidden = true)
-	@PreAuthorize("hasAnyRole('MANAGER')")
-	@GetMapping("/classes/{classId}/projects")
-	public ResponseEntity<ProjectListResponse> findProjectsByClass(
-			@PathVariable UUID classId,
-			@RequestParam(required = false) String search,
-			@RequestParam(required = false) UUID curriculumId,
-			@RequestParam(required = false) ProjectLifecycleStatus status,
-			@RequestParam(required = false) ProjectCategory category,
-			@RequestParam(required = false, defaultValue = "READINESS") ProjectListSort sort
-	) {
-		UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-		ProjectService.ProjectList list = projectService.findProjectList(
-				null, orgId,
-				new ProjectService.ProjectListCriteria(search, curriculumId, status, sort, List.of(classId), category));		return ResponseEntity.ok(ProjectListResponse.from(list));
-	}
 
 	/**
 	 * @deprecated {@code GET /projects?classId=&status=RUNNING&sort=DUE_SOON}로 대체(19차).

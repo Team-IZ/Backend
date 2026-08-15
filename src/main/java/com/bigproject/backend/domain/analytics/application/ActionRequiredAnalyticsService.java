@@ -1,6 +1,8 @@
 package com.bigproject.backend.domain.analytics.application;
 
 import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.domain.academicoperations.domain.Classroom;
+import com.bigproject.backend.domain.academicoperations.infrastructure.ClassroomRepository;
 import com.bigproject.backend.domain.analytics.domain.GroupGapPolicy;
 import com.bigproject.backend.domain.analytics.domain.OperationalActionQueryRepository;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeQueryRepository;
@@ -28,6 +30,7 @@ public class ActionRequiredAnalyticsService {
 	private final AnalyticsActorGuard analyticsActorGuard;
 	private final RiskTraineeQueryRepository riskTraineeQueryRepository;
 	private final OperationalActionQueryRepository operationalActionQueryRepository;
+	private final ClassroomRepository classroomRepository;
 
 	public ActionRequiredResponse findActionsRequired(UUID cohortId, String actorEmail) {
 		AuthUser actor = analyticsActorGuard.operatorOrManager(actorEmail, "매니저만 조치 필요 목록을 조회할 수 있습니다.");
@@ -142,7 +145,14 @@ public class ActionRequiredAnalyticsService {
 	// =========================================================================
 	// 신규 추가: 조치 필요 항목 조회 (MG-07 담당 반 합계)
 	// =========================================================================
-	public List<ActionRequiredResponse> getActionRequiredProjects(UUID classId) {
+	public ActionRequiredResponse getActionRequiredProjects(UUID classId, String actorEmail) {
+		AuthUser actor = analyticsActorGuard.operatorOrManager(actorEmail, "매니저만 조치 필요 목록을 조회할 수 있습니다.");
+		// classId + orgId를 함께 물어 존재 확인과 기관 소속 확인을 한 번에 처리한다.
+		// 다른 기관 소속 classId면 결과가 비어 CLASSROOM_NOT_FOUND로 떨어진다 —
+		// findActionsRequired가 COHORT_NOT_FOUND·requireSameOrganization로 하던 것과 같은 목적이다.
+		Classroom classroom = classroomRepository.findByClassIdAndOrgIdAndDeletedAtIsNull(classId, actor.organizationId())
+				.orElseThrow(() -> new ApiException(AcademicOperationsErrorCode.CLASSROOM_NOT_FOUND));
+
 		ActionRequiredResponse.ManagerUnassignedAlert managerUnassigned = managerUnassigned(
 				operationalActionQueryRepository.findUnassignedClassesByClassId(classId));
 
@@ -157,15 +167,15 @@ public class ActionRequiredAnalyticsService {
 
 		int actionCount = count(managerUnassigned) + count(conceptGap) + count(groupGap) + count(interviewBacklog);
 
-		ActionRequiredResponse response = new ActionRequiredResponse(
-				null,
+		// cohortId는 방금 조회한 Classroom에서 그대로 채운다 — 별도 조회 없이 얻을 수 있는 값이라
+		// null로 비워둘 이유가 없다(4번 재검토).
+		return new ActionRequiredResponse(
+				classroom.getCohortId(),
 				actionCount,
 				managerUnassigned,
 				conceptGap,
 				groupGap,
 				interviewBacklog
 		);
-
-		return List.of(response);
 	}
 }
