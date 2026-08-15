@@ -73,7 +73,8 @@ public class TraineeController {
 					200명을 붙여 넣고 나서야 30명이 중복이라는 걸 알게 되는 것을 없앤다.
 
 					**요청** (multipart/form-data) — 등록(`POST /cohorts/{cohortId}/trainees`)과 완전히 같다.
-					- cohortId (경로) · file: 첫 행이 '이름,이메일'인 UTF-8 CSV
+					- cohortId (경로) · file: 첫 행에 `이름`·`이메일` 열이 있는 CSV
+					  (UTF-8·CP949 둘 다 되고 열 순서는 상관없다 — 등록 API와 같은 파서다, 25차 Q1)
 
 					**응답 (200)** — 등록 응답과 **같은 스키마**다(`RegisterTraineesResponse`).
 					화면이 미리보기와 등록 결과를 한 컴포넌트로 그릴 수 있다.
@@ -112,7 +113,7 @@ public class TraineeController {
 	public ResponseEntity<RegisterTraineesResponse> previewTraineesFromCsv(
 			@Parameter(description = "교육생을 등록할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
 			@PathVariable UUID cohortId,
-			@Parameter(description = "첫 행이 '이름,이메일'인 UTF-8 CSV 파일")
+			@Parameter(description = "첫 행에 '이름'·'이메일' 열이 있는 CSV 파일(UTF-8 또는 CP949, 열 순서 무관)")
 			@RequestPart("file") MultipartFile file,
 			@Parameter(hidden = true)
 			Authentication authentication
@@ -169,7 +170,25 @@ public class TraineeController {
 
 					**요청** (multipart/form-data)
 					- cohortId (경로): 교육생을 등록할 기수 ID
-					- file (필수): UTF-8 CSV. **첫 행은 `이름,이메일` 헤더**이며 최대 1MB·1,000행
+					- file (필수): CSV. **첫 행에 `이름`·`이메일` 열**이 있어야 하며 최대 1MB·1,000행
+
+					## 받는 파일 범위를 넓혔다 (25차 Q1)
+
+					| | 종전 | 지금 |
+					|---|---|---|
+					| 인코딩 | UTF-8만 | **UTF-8 · CP949** — 윈도우 엑셀의 「CSV(쉼표로 분리)」 기본 저장이 그대로 올라간다 |
+					| 열 | `이름,이메일` 두 개, 그 순서 | **머리글 이름으로 찾는다** — 순서가 달라도, `번호`·`소속` 같은 열이 섞여 있어도 된다 |
+
+					모르는 열은 읽지 않는다. `이름`·`이메일` 중 하나라도 머리글에 없으면 400
+					`CSV_FORMAT_INVALID`이고, 어느 열이 없는지 `message`에 담는다.
+
+					**기존 파일은 그대로 통과한다** — UTF-8 `이름,이메일`은 넓힌 규칙의 부분집합이다.
+					프런트가 인코딩·열을 미리 정규화할 필요가 없어졌다(프론트 제안 「가」는 하지 않아도 된다).
+
+					⚠️ **`.xlsx`는 받지 않는다.** 파싱 라이브러리가 통째로 하나 더 붙는데, 엑셀 파일은
+					서식·이미지 때문에 커지기 쉬워 앞단 Lambda의 6MB(base64로 부풀어 실질 4.5MB) 상한에
+					먼저 걸린다 — 라이브러리를 넣고도 "큰 파일은 안 된다"가 남는다. 엑셀에서
+					「CSV로 저장」 한 번이면 위 완화로 그대로 올라간다.
 
 					## 🔴 등록은 202이고 메일은 그 뒤에 나간다
 
@@ -216,7 +235,7 @@ public class TraineeController {
 	public ResponseEntity<RegisterTraineesResponse> registerTraineesFromCsv(
 			@Parameter(description = "교육생을 등록할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
 			@PathVariable UUID cohortId,
-			@Parameter(description = "첫 행이 '이름,이메일'인 UTF-8 CSV 파일")
+			@Parameter(description = "첫 행에 '이름'·'이메일' 열이 있는 CSV 파일(UTF-8 또는 CP949, 열 순서 무관)")
 			@RequestPart("file") MultipartFile file,
 			@Parameter(hidden = true)
 			Authentication authentication
@@ -372,13 +391,18 @@ public class TraineeController {
 					| `unassignedOnly` | 선택 | boolean | 반 배정이 없는 교육생만. 기본 `false`. **오퍼레이터 전용** — 매니저가 `true`로 보내면 400 |
 					| `accountStatus` | 선택 | enum | `INVITED`(초대 대기) · `ACTIVE`(활성) · `INACTIVE`(비활성). 비우면 전체(화면의 `계정 · 전체`) |
 					| `query` | 선택 | string | 이름·이메일 부분검색. 비우면 전체 |
-					| `sort` | 선택 | enum | `NAME`(이름순, 기본) · `RECENT_ENROLLED`(최근 등록순) · `RISK`(위험순) · `EXCELLENCE`(우수순) |
+					| `sort` | 선택 | enum | `NAME`(이름순, 기본) · `RECENT_ENROLLED`(최근 등록순, **등록일 없는 사람은 맨 뒤**) · `RISK`(위험순) · `EXCELLENCE`(우수순) |
 					| `assessmentRoundId` | 선택 | UUID | **이 화면의 `회차 · 미프 N차` 필터.** 도달 단계·2단 이하·위험 배지·우수 누적 같은 회차 지표를 이 회차 기준으로 채운다. **생략하면 서버가 「이번 회차」를 고른다**(아래 표) |
 					| `page` | 선택 | int | 0부터 시작. 기본 `0` |
 					| `size` | 선택 | int | 페이지당 개수. 기본 `20`, 최대 `100` |
 
 					💡 **`accountStatus`는 세 값뿐이다.** `LOCKED`는 9차 Q3-②로 `AccountStatus`에서 제거했다 —
 					`ck_app_user_status`가 `PENDING`·`ACTIVE`·`INACTIVE`만 허용해 실제로 올 수 없던 값이다.
+
+					💡 **`RECENT_ENROLLED`는 등록일 있는 사람 → 없는 사람 순이다(25차 R5).** `joinedAt`이
+					`null`인 초대 수락 전 교육생은 **맨 뒤**로 간다(`NULLS LAST`). 종전에는 초대 시각으로
+					같이 정렬해서, 「최근 등록순」을 골랐는데 등록일 열이 `—`인 사람들이 맨 위에 쌓였다.
+					미등록자끼리는 최근에 초대한 사람이 앞이다.
 
 					⚠️ **`classroomId`와 `unassignedOnly`는 함께 못 쓴다.** 화면에서 `반 · 전체 / 미배정 / A반…`이
 					단일 드롭다운이라 동시에 지정될 일이 없고, 들어오면 400으로 막는다.

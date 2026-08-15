@@ -48,6 +48,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -224,7 +225,7 @@ public class CurriculumServiceImpl implements CurriculumService {
 
     @Override
     @Transactional
-    public void requestAnalysis(UUID materialId, UUID orgId, UUID actorUserId) {
+    public void requestAnalysis(UUID materialId, UUID orgId, UUID actorUserId, boolean force) {
         if (!materialRepository.existsByMaterialIdAndOrgId(materialId, orgId)) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND);
         }
@@ -233,6 +234,17 @@ public class CurriculumServiceImpl implements CurriculumService {
                 .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId)
                 .stream().findFirst()
                 .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+
+        // 25차 R2 — 진행 중인 분석이 있으면 여기서 끊는다. AI에 보내기 전에 판정해야
+        // 중복 요청 한 건마다 LLM 비용이 한 번 더 나가는 것을 막을 수 있다.
+        if (!force) {
+            boolean alreadyRunning = !analysisRepository.findAllByVersionIdAndStatusIn(
+                    version.getVersionId(),
+                    List.of(CurriculumAnalysisStatus.PENDING, CurriculumAnalysisStatus.RUNNING)).isEmpty();
+            if (alreadyRunning) {
+                throw new CurriculumException(CurriculumErrorCode.CURRICULUM_ANALYSIS_IN_PROGRESS);
+            }
+        }
 
         byte[] pdfBytes = readFileBytes(version.getFileUri());
 
@@ -404,16 +416,22 @@ public class CurriculumServiceImpl implements CurriculumService {
     }
 
     @Override
-    public CurriculumCatalogPage findCatalog(UUID orgId, String query, CurriculumAnalysisStatus status,
+    public CurriculumCatalogPage findCatalog(UUID orgId, String query, List<CurriculumAnalysisStatus> statuses,
                                              boolean notAnalyzedOnly,
                                              CurriculumCatalogSort sort, int page, int size) {
-        if (status != null && notAnalyzedOnly) {
+        // 25차 R1 — 같은 값을 두 번 보내도 IN 목록만 길어질 뿐이라 여기서 한 번 정리한다.
+        List<CurriculumAnalysisStatus> distinctStatuses = statuses == null
+                ? List.of()
+                : statuses.stream().filter(Objects::nonNull).distinct().toList();
+
+        if (!distinctStatuses.isEmpty() && notAnalyzedOnly) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILTER_CONFLICT);
         }
 
         CurriculumCatalogRepository.CurriculumCatalogCriteria criteria =
                 new CurriculumCatalogRepository.CurriculumCatalogCriteria(
-                        orgId, query, status, notAnalyzedOnly, sort == null ? CurriculumCatalogSort.RECENT : sort);
+                        orgId, query, distinctStatuses, notAnalyzedOnly,
+                        sort == null ? CurriculumCatalogSort.RECENT : sort);
 
         long totalElements = catalogRepository.count(criteria);
         List<CurriculumCatalogRepository.CurriculumCatalogRow> content =
@@ -428,7 +446,7 @@ public class CurriculumServiceImpl implements CurriculumService {
         long analyzed = statusCounts.values().stream().mapToLong(Long::longValue).sum();
         long notAnalyzedCount = Math.max(0, catalogRepository.count(
                 new CurriculumCatalogRepository.CurriculumCatalogCriteria(
-                        orgId, null, null, false, criteria.sort())) - analyzed);
+                        orgId, null, List.of(), false, criteria.sort())) - analyzed);
 
         int totalPages = (int) ((totalElements + size - 1) / size);
         return new CurriculumCatalogPage(
@@ -439,6 +457,38 @@ public class CurriculumServiceImpl implements CurriculumService {
     public CurriculumCatalogRepository.CurriculumCatalogRow findCatalogItem(UUID materialId, UUID orgId) {
         return catalogRepository.findOne(orgId, materialId)
                 .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+    }
+
+    /**
+     * 25차 R11 — 교안 논리 삭제.
+     *
+     * <p>연결 판정에 {@code findCatalogItem}의 {@code usedProjectCount}를 그대로 쓴다. 목록·상세가
+     * `3개 회차에서 사용 중`으로 보여 주는 값과 <b>같은 식</b>이라, 화면이 0으로 읽은 교안이
+     * 삭제에서만 409가 되는 어긋남이 생기지 않는다.
+     *
+     * <p>행을 지우지 않고 {@code deleted_at}만 찍는다 — 분석·섹션·개념 매핑이 이 교안을 참조하고
+     * 있어 물리 삭제는 이력을 함께 지운다.
+     *
+     * <p>⚠ <b>제목은 그대로 점유된다.</b> {@code uq_curriculum_material_org_id_normalized_title}이
+     * 부분 인덱스가 아니라 전역 UNIQUE라, 지운 교안과 같은 제목으로 다시 올리면
+     * {@code CURRICULUM_TITLE_DUPLICATED}가 난다(22차 R2와 같은 자리).
+     */
+    @Override
+    @Transactional
+    public void deleteCurriculum(UUID materialId, UUID orgId, UUID actorUserId) {
+        CurriculumMaterial material = materialRepository.findByMaterialIdAndOrgId(materialId, orgId)
+                .filter(found -> !found.isDeleted())
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+
+        long usedProjectCount = findCatalogItem(materialId, orgId).usedProjectCount();
+        if (usedProjectCount > 0) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_IN_USE,
+                    "이 교안을 쓰는 회차가 " + usedProjectCount + "건 있어 삭제할 수 없습니다.");
+        }
+
+        material.softDelete();
+        materialRepository.save(material);
+        log.info("교안 논리 삭제: materialId={}, orgId={}, actorUserId={}", materialId, orgId, actorUserId);
     }
 
     private static String sha256Hex(String input) {

@@ -123,9 +123,12 @@ public class ClassroomController {
 
 					**요청**
 					- cohortId (경로): 반을 만들 기수 ID
-					- name (필수): 반 이름. 같은 기수 안에서 중복되면 409
+					- name (필수): 반 이름. 같은 기수 안에서 중복되면 **409 `CLASSROOM_NAME_TAKEN`**
+					  (25차 R3 — 코드 이름이 응답 목록에 없어서 화면이 분기할 근거가 없었다.
+					  수정(`PATCH …/{classroomId}`)과 같은 코드다)
 					- capacity (필수, 1 이상): 정원
-					- managerIds (선택): 담당 매니저로 지정할 사용자 ID 목록. **반 생성과 같은 트랜잭션에서 배정된다**
+					- managerIds (선택): 담당 매니저로 지정할 사용자 ID 목록. **반 생성과 같은 트랜잭션에서 배정된다**.
+					  이 기관의 매니저가 아닌 ID가 있으면 반도 만들지 않고 `404 MANAGER_NOT_FOUND`다(25차 R3)
 
 					**응답 (201)**
 					- 생성된 반 정보(응답 필드는 "기수 반 목록 조회"의 classrooms[] 항목과 동일).
@@ -143,7 +146,8 @@ public class ClassroomController {
 			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 반 이름이 비었거나 정원이 1 미만임"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한이 없음"),
-			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수 포함)")
+			@ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수 포함) · MANAGER_NOT_FOUND managerIds에 이 기관의 매니저가 아닌 ID가 포함됨(25차 R3)"),
+			@ApiResponse(responseCode = "409", description = "CLASSROOM_NAME_TAKEN 같은 기수에 이미 있는 반 이름(25차 R3 — 동작은 처음부터 이랬고 목록에만 빠져 있었다)")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@PostMapping
@@ -280,7 +284,7 @@ public class ClassroomController {
 			summary = "반 담당 매니저 변경 | ✅ 사용 가능",
 			description = """
 					반의 담당 매니저를 **전체 교체**한다. 부분 추가·삭제가 아니라 보낸 목록이 그대로 최종 상태가 된다 —
-					기존 활성 배정을 모두 해제(사유 `REASSIGNED`)한 뒤 요청받은 매니저로 새 배정을 만든다.
+					기존 활성 배정을 모두 해제(사유 `MANUAL_UNASSIGN`)한 뒤 요청받은 매니저로 새 배정을 만든다.
 					빈 배열을 보내면 전체 해제가 되어 담당자가 없는 반이 된다.
 
 					**요청**
@@ -293,8 +297,11 @@ public class ClassroomController {
 
 					해제된 배정은 지워지지 않고 이력으로 남는다 — 과거 기수의 담당자를 추적할 수 있어야 하기 때문이다.
 
-					⚠️ managerIds에 담긴 UUID가 실제 매니저인지 검증하지 않는다. 존재하지 않거나 다른 역할인 사용자
-					ID를 보내도 배정 행이 만들어진다. 화면은 매니저 목록에서 고른 값만 보내야 한다.
+					**managerIds는 검증한다(25차 R3).** 이 기관의 매니저가 아닌 ID가 하나라도 있으면
+					`404 MANAGER_NOT_FOUND`로 **전체를 거부**하며 어느 ID가 문제인지 메시지에 담는다.
+					종전에는 검증이 없어 존재하지 않는 사용자 ID로도 배정 행이 만들어졌다 —
+					매니저 쪽 같은 기능(`PUT …/managers/{managerId}/classrooms`)은 처음부터 막고
+					있었으므로, 같은 일을 하는 두 경로의 계약이 서로 달랐다.
 					"""
 	)
 	@ApiResponses({
@@ -302,7 +309,7 @@ public class ClassroomController {
 			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED managerIds가 누락됨"),
 			@ApiResponse(responseCode = "401", description = "액세스 토큰이 없거나 유효하지 않음"),
 			@ApiResponse(responseCode = "403", description = "오퍼레이터 권한이 없음"),
-			@ApiResponse(responseCode = "404", description = "CLASSROOM_NOT_FOUND 반을 찾을 수 없거나 지정한 기수에 속하지 않음")
+			@ApiResponse(responseCode = "404", description = "CLASSROOM_NOT_FOUND 반을 찾을 수 없거나 지정한 기수에 속하지 않음 · MANAGER_NOT_FOUND 이 기관의 매니저가 아닌 ID가 포함됨(전체 거부, 25차 R3)")
 	})
 	@PreAuthorize("hasRole('OPERATOR')")
 	@PatchMapping("/{classroomId}/managers")
@@ -326,7 +333,12 @@ public class ClassroomController {
 			summary = "교육생 일괄 반 배정 | ✅ 사용 가능",
 			description = """
 					교육생 여러 명을 한 반으로 **옮긴다**(이동 배정). 대상자가 이미 다른 반에 있으면 그 배정을
-					해제(사유 `REASSIGNED`)한 뒤 새 반에 넣으므로, 교육생은 항상 기수 안에서 반 하나에만 속한다.
+					해제(사유 `MANUAL_MOVE`)한 뒤 새 반에 넣으므로, 교육생은 항상 기수 안에서 반 하나에만 속한다.
+
+					**이동에 되돌리기를 먼저 부를 필요가 없다.** 이미 배정된 사람을 그대로 보내면 되고,
+					같은 반으로 다시 보내도 된다(그 경우 배정 이력만 한 줄 새로 쌓인다). 25차 R7 전까지는
+					이 자리에서 `409 DATA_INTEGRITY_VIOLATION`이 났는데, 해제 사유 값이 DB 제약에 없는
+					값이어서 해제 자체가 실패한 것이었다 — 계약이 아니라 결함이었고 지금은 나지 않는다.
 
 					**요청**
 					- cohortId (경로): 대상 기수
