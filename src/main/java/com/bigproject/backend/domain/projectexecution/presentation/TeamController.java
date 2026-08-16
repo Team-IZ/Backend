@@ -55,9 +55,27 @@ public class TeamController {
 					- projectId (경로): 대상 프로젝트 ID
 
 					**응답 (200)**
-					- teams[]: 팀 목록(teamId · teamNumber · name · status · memberCount)
-					- unassignedCount: 아직 어느 팀에도 속하지 않은 인원 수 —
+					- teams[]: 팀 목록(teamId · **classId** · **className** · teamNumber · name ·
+					  status · memberCount · **members[]**)
+					- unassignedMembers[] / unassignedCount: 아직 어느 팀에도 속하지 않은 인원 —
 					  화면의 "팀에 들어가지 않은 사람이 n명 있어요" 배너가 이 값을 쓴다
+
+					## 🔴 30차 R3 — 담당 반만 온다
+
+					**매니저의 담당 반에 속한 팀만** 내려간다. 제출 현황(`findProjectSubmissionStatus`)·
+					반별 진행(`findClassProgress`)과 같은 모집단이다. 담당 반이 없으면 빈 배열이다.
+
+					종전에는 기수 전체(48팀)가 나왔다. 이 조회는 매니저 전용이라 오퍼레이터 갈래가 없다.
+
+					## 🔴 30차 R4 — 반 이름과 구성원
+
+					`teamNumber`는 **반 안에서만** 유일하다. 반이 여덟이면 `1팀`이 여덟 번 나오므로
+					`className` 없이는 목록에서 팀을 구분할 수 없다. 담당 반이 둘 이상인 매니저가 있어
+					담당 반으로 좁힌 뒤에도 이 값이 필요하다.
+
+					`members[]`는 `unassignedMembers[]`와 **같은 모양**(projectMembershipId · userId ·
+					name)이다 — 편성 화면이 사람을 두 목록 사이로 끌어다 옮기는 자리라 한 컴포넌트로
+					다룰 수 있어야 한다. `memberCount`는 이 배열의 길이다.
 
 					⚠️ 팀 편성 화면의 5단계(편성 전·편성 중·전원 배정·확정·제출 시작)를 이 응답 하나로
 					전부 판정할 수는 없다 — "제출 시작됨" 여부는 Submission 도메인(미착수)이 있어야
@@ -76,11 +94,13 @@ public class TeamController {
             @Parameter(description = "프로젝트 ID") @PathVariable UUID projectId
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-        var teams = teamService.findTeams(projectId, orgId);
-        var memberCounts = teamService.countMembersByTeamIds(
-                teams.stream().map(Team::getTeamId).toList());
+        UUID managerUserId = currentUserResolver.resolveCurrentMemberId();
+        var teams = teamService.findManagedTeams(projectId, orgId, managerUserId);
+        var classNames = teamService.findClassNames(
+                teams.stream().map(Team::getClassId).distinct().toList(), orgId);
+        var members = teamService.findMembersByTeamIds(teams.stream().map(Team::getTeamId).toList());
         var unassigned = teamService.findUnassignedMembers(projectId, orgId);
-        return ResponseEntity.ok(TeamListResponse.from(teams, memberCounts, unassigned));
+        return ResponseEntity.ok(TeamListResponse.from(teams, classNames, members, unassigned));
     }
 
     @Operation(
@@ -117,7 +137,9 @@ public class TeamController {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
         UUID managerUserId = currentUserResolver.resolveCurrentMemberId();
         Team team = teamService.createTeam(projectId, orgId, request.name(), managerUserId);
-        return ResponseEntity.status(HttpStatus.CREATED).body(TeamResponse.from(team, 0));
+        String className = teamService.findClassNames(List.of(team.getClassId()), orgId)
+                .get(team.getClassId());
+        return ResponseEntity.status(HttpStatus.CREATED).body(TeamResponse.empty(team, className));
     }
 
     @Operation(
@@ -155,9 +177,12 @@ public class TeamController {
         UUID managerUserId = currentUserResolver.resolveCurrentMemberId();
         List<Team> teams = teamService.autoAssign(
                 projectId, orgId, request.teamSize(), request.skillBalanced(), managerUserId);
-        var memberCounts = teamService.countMembersByTeamIds(teams.stream().map(Team::getTeamId).toList());
+        var classNames = teamService.findClassNames(
+                teams.stream().map(Team::getClassId).distinct().toList(), orgId);
+        var members = teamService.findMembersByTeamIds(teams.stream().map(Team::getTeamId).toList());
         List<TeamResponse> response = teams.stream()
-                .map(team -> TeamResponse.from(team, memberCounts.getOrDefault(team.getTeamId(), 0L).intValue()))
+                .map(team -> TeamResponse.from(team, classNames.get(team.getClassId()),
+                        members.getOrDefault(team.getTeamId(), List.of())))
                 .toList();
         return ResponseEntity.ok(response);
     }

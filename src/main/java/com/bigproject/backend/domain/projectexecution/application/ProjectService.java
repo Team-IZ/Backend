@@ -69,6 +69,26 @@ public interface ProjectService {
     }
 
     /**
+     * 이 기수의 프로젝트들이 <b>실제로 연결한</b> 교안 링크 전부(30차 Q2).
+     *
+     * <p>교안 화면은 「이 기수 회차에 연결된 것만」 보여 주는데 그 목록을 주는 조회가 없었다.
+     * {@code GET /cohorts/{cohortId}/curricula}는 이름과 달리 <b>연결할 수 있는 후보</b>(기관 전체)를
+     * 주고, 회차별 {@code curricula[]}를 모으면 기수당 회차 수만큼 호출이 붙는다.
+     *
+     * <p>한 교안이 여러 회차에 걸릴 수 있어 <b>같은 versionId가 여러 번</b> 나온다 — 묶는 것은
+     * 호출부의 몫이다.
+     */
+    List<CohortCurriculumLink> findCurriculumLinksInCohort(UUID cohortId, UUID orgId);
+
+    /** 교안 하나와 그것을 연결한 회차 하나의 짝. {@code sequenceNo}가 화면의 `미프 N차`다. */
+    record CohortCurriculumLink(
+            UUID versionId,
+            UUID projectId,
+            String projectName,
+            int sequenceNo) {
+    }
+
+    /**
      * 프로젝트 생성. <b>평가 회차 1건을 함께 만든다</b>(22차 R5·R6).
      *
      * <p>여태 회차를 만들지 않아, 화면에서 만든 프로젝트는 {@code project_assessment_round}가 없는
