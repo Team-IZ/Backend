@@ -320,7 +320,8 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			       ma.code_analysis_id    AS codeAnalysisId,
 			       r.report_publish_not_before_at AS reportPublishNotBeforeAt,
 			       ps.problem_id          AS problemId,
-			       ap.problem_no          AS problemNo
+			       ap.problem_no          AS problemNo,
+			       ps.problem_closed_at   AS problemClosedAt
 			  FROM problem_stage ps
 			  JOIN assessment_session s
 			    ON s.session_id = ps.session_id
@@ -733,6 +734,19 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 
 		/** 1~3. 범위 밖이거나 미지정이면 NULL이다. */
 		Integer getProblemNo();
+
+		/**
+		 * 이 문제가 종료로 확정된 시각.
+		 *
+		 * <p>디스패치는 이 값을 쓰지 않는다. <b>{@code SELECT DISTINCT}가 {@code ORDER BY} 식을
+		 * SELECT 목록에 요구하기 때문에</b> 실어 보낸다 — 빼면 실행 시점에
+		 * {@code for SELECT DISTINCT, ORDER BY expressions must appear in select list}로 터진다.
+		 * 컴파일도 단위 테스트도 잡지 못하는 자리다.
+		 *
+		 * <p>같은 문제의 네 축에 한 UPDATE로 찍히므로 값이 같고, {@code DISTINCT}가 문제 1행으로
+		 * 접는 것을 방해하지 않는다.
+		 */
+		java.time.Instant getProblemClosedAt();
 	}
 
 	/** 세션이 다룬 문제 하나. */

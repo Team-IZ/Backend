@@ -634,6 +634,12 @@ class ReportBatchServiceTest {
 			return problemId;
 		}
 
+		/** 디스패치가 쓰지 않는다 — SELECT DISTINCT 가 ORDER BY 식을 요구해서 실려 오는 값이다. */
+		@Override
+		public Instant getProblemClosedAt() {
+			return Instant.parse("2026-08-16T06:00:00Z");
+		}
+
 		@Override
 		public Integer getProblemNo() {
 			return problemNo;
