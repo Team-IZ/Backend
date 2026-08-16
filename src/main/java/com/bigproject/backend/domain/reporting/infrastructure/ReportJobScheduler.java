@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.reporting.infrastructure;
 
 import com.bigproject.backend.domain.reporting.application.ReportBatchService;
+import com.bigproject.backend.domain.reporting.application.ReportCloseMarkerBackfiller;
 import com.bigproject.backend.domain.reporting.application.ReportPublishService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +31,7 @@ public class ReportJobScheduler {
 
 	private final ReportBatchService reportBatchService;
 	private final ReportPublishService reportPublishService;
+	private final ReportCloseMarkerBackfiller closeMarkerBackfiller;
 
 	/**
 	 * 종료 스탬프가 찍힌 문제를 찾아 요청한다.
@@ -69,25 +71,49 @@ public class ReportJobScheduler {
 	}
 
 	/**
-	 * 회차 마감이 지났는데 아직 리포트가 없는 세션을 줍는다. <b>안전망</b>이다.
+	 * 종료 표식을 놓친 문제를 메우고, 그래도 남은 세션을 줍는다. <b>안전망</b>이다.
 	 *
 	 * <h2>왜 문제 단위 dispatch만으로 부족한가</h2>
 	 *
-	 * <p>{@link #dispatchDueProblems}는 <b>{@code problem_stage}가 종료 상태로 정리된 문제</b>만
-	 * 집는다. 세션이 비정상적으로 끝나 단계가 {@code PREPARED}·{@code IN_PROGRESS}로 남으면
-	 * 그 문제는 영영 안 잡히고, 학생은 리포트를 못 받는다.
+	 * <p>{@link #dispatchDueProblems}는 {@code problem_closed_at}이 찍힌 문제만 집는다.
+	 * Assessment의 종료 처리가 닿지 않는 경로가 생기면 그 표식이 안 찍히고, 그 문제는 영영
+	 * 안 잡힌다 — <b>조용히 끊긴다.</b> 이 전환을 시작하게 만든 실패 형태가 그것이다.
 	 *
-	 * <p>이 배치는 세션 단위 조회({@code findDueSessions})를 쓰므로 <b>회차 마감 후</b>에
-	 * 남은 것을 한 번 더 훑는다. 자주 돌 이유가 없어 주기를 길게 둔다.
+	 * <h2>두 단계다 — 메우고, 줍는다</h2>
+	 *
+	 * <ol>
+	 *   <li>{@link ReportCloseMarkerBackfiller} — 세션이 끝났고 전 축이 터미널인데 표식이 없는
+	 *       문제에 종료 시각을 찍는다. 다음 틱의 문제 단위 배치가 그것을 집는다</li>
+	 *   <li>{@code dispatchDueSessions} — 세션 단위로 한 번 더 훑는다. 표식과 무관하게 도는
+	 *       두 번째 그물이다</li>
+	 * </ol>
+	 *
+	 * <p>순서가 중요하다. 표식을 먼저 찍어야 그 판정이 반영된 상태로 세션 조회가 돈다.
+	 *
+	 * <h2>주기를 하루로 늘렸다 (2026-08-16)</h2>
+	 *
+	 * <p>종전 10분은 대상 판정이 <b>전체 훑기</b>이던 시절의 값이다. 지금은 종료가 이벤트로
+	 * 기록되므로 정상 경로가 다 돌면 <b>이 배치는 아무것도 하지 않는다</b> — 자주 돌 이유가 없고,
+	 * 자주 돌면 백필 UPDATE가 잠그는 행만 늘어난다.
+	 *
+	 * <p>⚠️ 백필이 0이 아니면 그것 자체가 신호다. 정상이라면 표식은 Assessment가 이미 찍었어야
+	 * 한다. 그래서 {@code log.warn}으로 남긴다.
 	 */
 	@Scheduled(
-			fixedDelayString = "${ai.report.scheduler.sweep-delay:PT10M}",
+			fixedDelayString = "${ai.report.scheduler.sweep-delay:P1D}",
 			initialDelayString = "${ai.report.scheduler.initial-delay:PT1M}")
 	public void sweepDueSessions() {
 		try {
+			closeMarkerBackfiller.backfill();
+		} catch (RuntimeException exception) {
+			// 백필이 실패해도 아래 세션 단위 안전망은 돌아야 한다 — 둘은 서로 다른 그물이다.
+			log.error("종료 표식 백필 실패", exception);
+		}
+
+		try {
 			int dispatched = reportBatchService.dispatchDueSessions();
 			if (dispatched > 0) {
-				log.info("마감 후 남은 세션을 요청했다: sessions={}", dispatched);
+				log.info("표식 없이 남은 세션을 요청했다: sessions={}", dispatched);
 			}
 		} catch (RuntimeException exception) {
 			log.error("리포트 생성 안전망 배치 실패", exception);

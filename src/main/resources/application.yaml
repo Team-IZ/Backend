@@ -239,6 +239,13 @@ ai:
     # 결국 전부 나간다. 총량을 끊는 것은 아래 transition-cutoff-at 이다.
     dispatch-batch-size: ${AI_REPORT_DISPATCH_BATCH_SIZE:20}
 
+    # 종료 표식이 빠진 문제를 안전망이 한 번에 몇 세션까지 메울지.
+    #
+    # LLM 호출이 없는 UPDATE라 디스패치 상한보다 크게 잡아도 된다. 상한을 두는 이유는 비용이
+    # 아니라 한 트랜잭션이 잠그는 행 수다 — 한 세션이 문제 3개 x 축 4개라 200건이면 2,400행
+    # 안팎이다. 정상 경로가 다 돌면 이 배치는 항상 0행이므로 값이 커도 부담이 없다.
+    backfill-limit: ${AI_REPORT_BACKFILL_LIMIT:200}
+
     # 🔴 전환 컷오프. 이 시각 이전에 "시작된" 세션은 리포트 생성 대상이 아니다. 임시 조건이다.
     #
     # 회차 응시 창 폐기(28차 R1 §2)로 대상 판정이 개인 창으로 옮겨가면서, 회차 창이 자연히
@@ -284,9 +291,13 @@ ai:
       # 🔴 report_generation_run(report_id) 인덱스가 있어야 한다. 없으면 이 조회가 31초 걸려
       # (시드 기준 실측) 1분 주기를 감당하지 못한다. 인덱스가 있으면 527ms 다.
       dispatch-delay: ${AI_REPORT_SCHEDULER_DISPATCH_DELAY:PT1M}
-      # 안전망. 단계가 정리되지 않아 문제 단위 조회에 안 잡힌 세션을 회차 마감 후 줍는다.
-      # 자주 돌 이유가 없다.
-      sweep-delay: ${AI_REPORT_SCHEDULER_SWEEP_DELAY:PT10M}
+      # 안전망. 종료 표식이 빠진 문제를 메우고(백필), 그래도 남은 세션을 세션 단위로 줍는다.
+      #
+      # [2026-08-16] PT10M -> P1D. 종전 10분은 대상 판정이 전체 훑기이던 시절의 값이다.
+      # 지금은 종료가 problem_stage.problem_closed_at 에 이벤트로 기록되므로, 정상 경로가
+      # 다 돌면 이 배치는 아무것도 하지 않는다 — 자주 돌면 백필 UPDATE 가 잠그는 행만 늘어난다.
+      # 백필이 0이 아니면 그것 자체가 Assessment 종료 처리의 구멍을 뜻하는 신호다.
+      sweep-delay: ${AI_REPORT_SCHEDULER_SWEEP_DELAY:P1D}
       # 발행 예정 시각 때문에 보류된 리포트를 발행하는 주기.
       # 시각 단위 판정이라 촘촘할 이유가 없다 — 예정 시각 후 최대 이 간격 안에 발행된다.
       publish-delay: ${AI_REPORT_SCHEDULER_PUBLISH_DELAY:PT5M}
