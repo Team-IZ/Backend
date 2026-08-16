@@ -50,7 +50,12 @@ public record ClassProgressResponse(
 			제출률은 submittedCount / targetTraineeCount, 응시율은 assessedCount / analysisTargetCount 입니다.
 			""")
 	public record Summary(
-			@Schema(description = "이번 회차 수행 대상 교육생 수(기수 총원)이며 제출률의 분모입니다.", example = "250")
+			@Schema(description = """
+					이번 회차 수행 대상 교육생 수이며 제출률의 분모입니다.
+
+					**모집단은 역할이 정합니다**(30차 R3) — 오퍼레이터는 기수 총원, 매니저는 담당 반
+					총원입니다. `classes[]`를 합한 값과 항상 같습니다.
+					""", example = "250")
 			long targetTraineeCount,
 			@Schema(description = "제출을 마친 교육생 수", example = "231")
 			long submittedCount,

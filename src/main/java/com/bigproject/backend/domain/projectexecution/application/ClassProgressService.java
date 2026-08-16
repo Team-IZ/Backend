@@ -3,9 +3,12 @@ package com.bigproject.backend.domain.projectexecution.application;
 import com.bigproject.backend.domain.analytics.application.AnalyticsActorGuard;
 import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.auth.domain.AuthUser;
+import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.projectexecution.domain.ClassProgressQueryRepository;
 import com.bigproject.backend.domain.projectexecution.presentation.dto.ClassProgressResponse;
 import com.bigproject.backend.global.exception.ApiException;
+import com.bigproject.backend.global.security.ManagerViewAccessErrorCode;
+import com.bigproject.backend.global.security.ManagerViewScopeGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +30,7 @@ import java.util.stream.Collectors;
 public class ClassProgressService {
 
 	private final AnalyticsActorGuard analyticsActorGuard;
+	private final ManagerViewScopeGuard managerViewScopeGuard;
 	private final ClassProgressQueryRepository classProgressQueryRepository;
 
 	public ClassProgressResponse findClassProgress(UUID projectId, int roundNo, String actorEmail) {
@@ -39,9 +43,10 @@ public class ClassProgressService {
 		if (!round.organizationId().equals(actor.organizationId())) {
 			throw new ApiException(AnalyticsErrorCode.PROJECT_CROSS_ORGANIZATION);
 		}
+		UUID scopedManagerId = scopedManagerId(actor, round.cohortId());
 
 		ClassProgressQueryRepository.RoundSummaryRow summaryRow = classProgressQueryRepository
-				.findRoundSummary(round.assessmentRoundId(), round.organizationId());
+				.findRoundSummary(round.assessmentRoundId(), round.organizationId(), scopedManagerId);
 		ClassProgressResponse.Summary summary = new ClassProgressResponse.Summary(
 				summaryRow.targetTraineeCount(),
 				summaryRow.submittedCount(),
@@ -52,7 +57,7 @@ public class ClassProgressService {
 		);
 
 		Map<UUID, List<ClassProgressResponse.FailedTeam>> failedTeamsByClass = classProgressQueryRepository
-				.findFailedTeams(round.assessmentRoundId(), round.organizationId())
+				.findFailedTeams(round.assessmentRoundId(), round.organizationId(), scopedManagerId)
 				.stream()
 				.collect(Collectors.groupingBy(
 						ClassProgressQueryRepository.FailedTeamRow::classId,
@@ -66,7 +71,7 @@ public class ClassProgressService {
 				));
 
 		List<ClassProgressResponse.ClassProgress> classes = classProgressQueryRepository
-				.findClassProgress(round.assessmentRoundId(), round.organizationId())
+				.findClassProgress(round.assessmentRoundId(), round.organizationId(), scopedManagerId)
 				.stream()
 				.map(row -> new ClassProgressResponse.ClassProgress(
 						row.classId(),
@@ -87,7 +92,7 @@ public class ClassProgressService {
 				.toList();
 
 		List<ClassProgressResponse.ConceptMatch> conceptMatches = classProgressQueryRepository
-				.findConceptMatches(round.assessmentRoundId(), round.organizationId())
+				.findConceptMatches(round.assessmentRoundId(), round.organizationId(), scopedManagerId)
 				.stream()
 				.map(row -> new ClassProgressResponse.ConceptMatch(
 						row.teachesId(),
@@ -112,6 +117,25 @@ public class ClassProgressService {
 				classes,
 				conceptMatches
 		);
+	}
+
+	/**
+	 * 목록을 담당 반으로 좁힐 매니저(30차 R3). <b>오퍼레이터는 {@code null}</b>이라 기수 전체를 본다 —
+	 * 명단({@code findTraineeRoster})·반 목록과 같은 규칙이다.
+	 *
+	 * <p>담당 반이 하나도 없는 기수를 매니저가 열면 <b>404로 끊는다.</b> 좁히기만 하면 그 화면은
+	 * 「반 0개 · 인원 0명」이 되어, 권한이 없다는 사실이 「아직 데이터가 없다」로 보인다 — 화면이
+	 * 기다리라고 안내하게 되고 기다려도 달라지지 않는다. 제출 현황·명단·상세가 같은 자리에서
+	 * 같은 코드({@code MANAGER_SCOPE_NOT_FOUND})를 쓴다.
+	 */
+	private UUID scopedManagerId(AuthUser actor, UUID cohortId) {
+		if (actor.role() != Role.MANAGER) {
+			return null;
+		}
+		if (!managerViewScopeGuard.managesCohort(actor.userId(), actor.organizationId(), cohortId)) {
+			throw new ApiException(ManagerViewAccessErrorCode.MANAGER_SCOPE_NOT_FOUND);
+		}
+		return actor.userId();
 	}
 
 	/**
