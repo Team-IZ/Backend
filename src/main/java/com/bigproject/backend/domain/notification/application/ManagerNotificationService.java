@@ -18,6 +18,7 @@ import java.time.OffsetDateTime;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -26,6 +27,22 @@ public class ManagerNotificationService {
 	private final ManagerViewScopeGuard scopeGuard;
 	private final ManagerNotificationRepository repository;
 
+	/**
+	 * MG-01 정렬 규칙(구현 근거 스펙) — "① 창이 닫히기 직전 → ② 확인해야 판정이 확정되는 것
+	 * → ③ 면담 대기 → ④ 미제출" 네 그룹 우선순위다. 그룹 안에서는 마감 임박순으로 세부 정렬한다.
+	 *
+	 * <p>{@code ASSESSMENT}(reasonCode 없는 진행 중 응시)는 스펙에 별도 언급이 없어 마지막 그룹(5)으로
+	 * 둔다 — 매니저가 지금 당장 할 일이 없는 상태라 뒤로 밀려도 스펙 의도와 어긋나지 않는다.
+	 */
+	private static final Map<String, Integer> TYPE_PRIORITY = Map.of(
+			"ASSESSMENT_NOT_STARTED", 1,
+			"REVIEW", 1,
+			"INVALID_ATTEMPT", 2,
+			"INTERVIEW", 3,
+			"SUBMISSION_MISSING", 4,
+			"ANALYSIS_FAILED", 4
+	);
+
 	@Transactional(readOnly = true)
 	public NotificationInboxResponse findInbox(
 			String email, UUID cohortId, UUID projectId, UUID assessmentRoundId,
@@ -33,7 +50,9 @@ public class ManagerNotificationService {
 		var actor = scopeGuard.requireCohort(email, cohortId);
 		String afterId = decodeCursor(cursor);
 		Comparator<ManagerNotificationRepository.InboxRow> order = Comparator
-				.comparing(ManagerNotificationRepository.InboxRow::deadlineAt,
+				.<ManagerNotificationRepository.InboxRow, Integer>comparing(
+						row -> TYPE_PRIORITY.getOrDefault(row.itemType(), 5))
+				.thenComparing(ManagerNotificationRepository.InboxRow::deadlineAt,
 						Comparator.nullsLast(Comparator.naturalOrder()))
 				.thenComparing(ManagerNotificationRepository.InboxRow::occurredAt, Comparator.reverseOrder())
 				.thenComparing(ManagerNotificationRepository.InboxRow::itemId);
