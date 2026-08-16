@@ -34,6 +34,12 @@ public class RiskOutcomeScheduler {
 
 	private final RiskOutcomeBatchService riskOutcomeBatchService;
 
+	/**
+	 * 판정과 해소를 차례로 돌린다.
+	 *
+	 * <p>둘을 각각 감싸는 이유는 서로 독립이기 때문이다. 판정 큐 조회가 깨졌다고 이미 끝난 회차의
+	 * 재시험 해소까지 멈출 이유가 없다.
+	 */
 	@Scheduled(
 			fixedDelayString = "${intervention.risk-outcome.scheduler.delay:PT10M}",
 			initialDelayString = "${intervention.risk-outcome.scheduler.initial-delay:PT2M}")
@@ -47,6 +53,15 @@ public class RiskOutcomeScheduler {
 		} catch (RuntimeException exception) {
 			// 여기서 예외가 새면 다음 실행은 계속 돌지만 스택트레이스가 묻힌다.
 			log.error("위험·우수 유형 판정 배치 실행 실패", exception);
+		}
+
+		try {
+			int resolved = riskOutcomeBatchService.resolvePendingRounds();
+			if (resolved > 0) {
+				log.info("재시험 해소 배치가 회차를 처리했다: rounds={}", resolved);
+			}
+		} catch (RuntimeException exception) {
+			log.error("재시험 해소 배치 실행 실패", exception);
 		}
 	}
 }

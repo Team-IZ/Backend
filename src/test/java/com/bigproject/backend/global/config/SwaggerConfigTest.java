@@ -46,8 +46,15 @@ class SwaggerConfigTest {
 		// examples의 키가 곧 에러 코드 목록이다 — 프론트가 여기서 상수를 기계적으로 뽑는다.
 		assertThat(conflict.getContent().get("application/json").getExamples())
 				.containsOnlyKeys("ORG_NAME_TAKEN", "ORG_IDEMPOTENCY_CONFLICT");
+		// 예시는 응답 본문 전체다. code·message만 실으면 예시를 그대로 목 응답으로 쓴 화면에서
+		// status로 분기하는 공통 처리(재시도·토큰 갱신)가 조용히 빗나간다.
 		assertThat(conflict.getContent().get("application/json").getExamples().get("ORG_NAME_TAKEN").getValue())
-				.isEqualTo(Map.of("code", "ORG_NAME_TAKEN", "message", "이미 있는 기관명입니다."));
+				.isEqualTo(Map.of(
+						"timestamp", "2026-08-15T04:21:33.512Z",
+						"status", 409,
+						"error", "CONFLICT",
+						"code", "ORG_NAME_TAKEN",
+						"message", "이미 있는 기관명입니다."));
 
 		// 성공 응답은 건드리지 않는다.
 		ApiResponse created = operationOf(openApi, "/api/v0/organizations").getResponses().get("201");
@@ -178,7 +185,12 @@ class SwaggerConfigTest {
 				.containsOnlyKeys("PROJECT_NOT_FOUND", "CURRICULUM_VERSION_NOT_FOUND");
 		assertThat(examplesOf(responses.get("409")).get("CURRICULUM_ALREADY_LINKED"))
 				.extracting("value")
-				.isEqualTo(Map.of("code", "CURRICULUM_ALREADY_LINKED", "message", "이미 연결된 교안 버전입니다."));
+				.isEqualTo(Map.of(
+						"timestamp", "2026-08-15T04:21:33.512Z",
+						"status", 409,
+						"error", "CONFLICT",
+						"code", "CURRICULUM_ALREADY_LINKED",
+						"message", "이미 연결된 교안 버전입니다."));
 	}
 
 	private void customise(OpenAPI openApi) {

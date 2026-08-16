@@ -89,11 +89,16 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 		 * ck_app_user_status_2: status='PENDING' OR (name IS NOT NULL AND password_hash IS NOT NULL
 		 * AND password_changed_at IS NOT NULL). 초대 시점에 만드는 자리는 이름이 비어 있다 —
 		 * 이름은 수락할 때 본인이 넣는 값이기 때문이다. 그 자리를 PENDING 밖으로 내보내려면
-		 * 이름을 채워야 하므로 이메일 로컬파트로 메운다.
+		 * 이름을 채워야 하므로 빈 문자열로 메운다.
 		 *
-		 * 임시값이 화면에 남지는 않는다. 재초대는 이 자리를 REACTIVATE_INVITED_USER로 되살리면서
-		 * name을 이번 초대 값으로 덮어쓴다(member 도메인). password_hash·password_changed_at은
-		 * 초대 시점에 이미 채워지므로 여기서 손댈 것이 없다.
+		 * 🔴 25차 R9 — 종전에는 split_part(email, '@', 1)을 넣었다. "재초대가 덮어쓰니 화면에
+		 * 남지 않는다"고 봤는데 사실이 아니었다. 취소만 하고 재초대하지 않으면 그 값이 그대로
+		 * 남아, 이름 없이 초대한 사람이 목록에서 이메일 조각을 이름처럼 달고 있게 된다.
+		 * 그것은 「이름을 모른다」는 사실을 지우는 값이고 되돌릴 수도 없다. 매니저 쪽
+		 * (JdbcManagerAccountRepository)과 같은 규칙으로 맞춘다 — 같은 테이블에 같은 제약이라
+		 * 규칙이 역할별로 갈리면 안 된다. 읽는 쪽이 NULLIF(name, '')로 null을 되돌린다.
+		 *
+		 * password_hash·password_changed_at은 초대 시점에 이미 채워지므로 여기서 손댈 것이 없다.
 		 *
 		 * row_version은 낙관적 락 컬럼이라 JPA가 아닌 직접 UPDATE에서도 함께 올려 준다.
 		 */
@@ -101,7 +106,7 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 		String sql = """
 				UPDATE app_user
 				SET status = ?,
-				    name = CASE WHEN ? THEN COALESCE(name, split_part(email, '@', 1)) ELSE name END,
+				    name = CASE WHEN ? THEN COALESCE(name, '') ELSE name END,
 				    inactivated_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,
 				    inactivated_by = CASE WHEN ? THEN ?::uuid ELSE NULL END,
 				    inactivated_reason_code = CASE WHEN ? THEN ? ELSE NULL END,
@@ -188,7 +193,12 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 	private String selectOperators() {
 		return """
 				SELECT u.user_id,
-				       u.name,
+				       /*
+				        * 25차 R9 — 이름이 없는 자리는 null로 나간다. 초대 취소로 INACTIVE가 되는 자리는
+				        * ck_app_user_status_2 때문에 name을 비워 둘 수 없어 빈 문자열이 들어간다
+				        * (updateOperatorStatus). 여기서 되돌려, 이름을 모른다는 사실이 보존된다.
+				        */
+				       NULLIF(u.name, '') AS name,
 				       u.email,
 				       u.status,
 				       u.last_login_at,

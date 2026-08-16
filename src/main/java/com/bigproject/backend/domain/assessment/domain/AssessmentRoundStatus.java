@@ -21,8 +21,12 @@ import io.swagger.v3.oas.annotations.media.Schema;
 public enum AssessmentRoundStatus {
 
 	/**
-	 * 예정. 이 상태에서만 응시 창 일정이 비어 있을 수 있다
-	 * ({@code ck_project_assessment_round_assessment_window_required}가 PLANNED만 면제한다).
+	 * 예정.
+	 *
+	 * <p>종전에는 "이 상태에서만 회차 응시 창이 비어 있을 수 있다"고 적혀 있었다
+	 * ({@code ck_project_assessment_round_assessment_window_required}). 그 제약은 2026-08-16에
+	 * 제거됐고 회차 응시 창은 <b>모든 상태에서 비어 있다</b> — 응시 창은 개인 창
+	 * ({@code measurement_attempt.assessment_open_at}·{@code assessment_close_at})만 남았다.
 	 */
 	PLANNED,
 

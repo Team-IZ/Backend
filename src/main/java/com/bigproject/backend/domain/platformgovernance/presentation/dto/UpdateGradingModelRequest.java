@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.platformgovernance.presentation.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotNull;
@@ -43,6 +44,7 @@ public record UpdateGradingModelRequest(
 		@NotNull
 		Boolean acknowledgeRecalibration
 ) {
+	@JsonIgnore
 	@AssertTrue(message = "전 기관 재캘리브레이션 발생을 확인해야 채점 모델을 변경할 수 있습니다.")
 	public boolean isRecalibrationAcknowledged() {
 		return Boolean.TRUE.equals(acknowledgeRecalibration);

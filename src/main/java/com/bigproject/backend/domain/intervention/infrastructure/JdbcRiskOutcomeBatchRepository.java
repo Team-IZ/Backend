@@ -377,13 +377,80 @@ public class JdbcRiskOutcomeBatchRepository implements RiskOutcomeBatchRepositor
 			""";
 
 	/**
+	 * 재시험으로 풀릴 수 있는 사유.
+	 *
+	 * <p>무효 응시(INVALID_ATTEMPT)와 저기여(LOW_PARTICIPATION)는 빠진다. 게이트에서 나온 유형이
+	 * 아니라 각각 무결성·기여도 축이라 재시험 결과로 풀리지 않는다.
+	 */
+	private static final String RESOLVABLE_REASON_CODES =
+			"'PERSISTENT_LOW', 'STAGE_DECLINE', 'CONTRIBUTION_UNDERSTANDING_GAP'";
+
+	/**
+	 * 해소 대상 회차 찾기.
+	 *
+	 * <p>판정 배치와 <b>분리된</b> 큐다. 함께 돌면 해소가 영영 실행되지 않는다 — 판정은 회차의 마지막
+	 * 응시 마감 뒤 한 번에 끝나고, 재시험은 그 <b>뒤에</b> 열린다. 판정이 끝난 회차는
+	 * {@code ROUNDS_TO_JUDGE_SQL}의 "미판정 수행이 남아 있을 것"을 더는 만족하지 못하므로 다시 잡히지
+	 * 않는다.
+	 *
+	 * <p>{@code rma.terminal_at > r.updated_at}이 이 큐를 끝나게 하는 조건이다. 사유 하나를 재시험
+	 * 결과와 맞춰 본 뒤에는 {@code updated_at}이 그 재시험보다 뒤가 되므로, <b>더 새로운</b> 재시험이
+	 * 끝나기 전에는 같은 회차가 다시 잡히지 않는다. 이 조건이 없으면 끝내 풀리지 않는 사유를 가진 회차가
+	 * 매 주기 목록에 남아 {@code LIMIT}을 차지하고 새 회차를 굶긴다. 갱신은
+	 * {@link #MARK_RESOLUTION_EVALUATED_SQL}이 한다.
+	 *
+	 * <p>오래 기다린 회차부터 돌린다. {@code LIMIT}에 걸려 밀리더라도 순서가 돌아온다.
+	 */
+	private static final String ROUNDS_TO_RESOLVE_SQL = """
+			SELECT c.assessment_round_id
+			  FROM interview_candidate_reason r
+			  JOIN interview_candidate c ON c.candidate_id = r.candidate_id
+			 WHERE r.reason_status = 'ACTIVE'
+			   AND r.reason_code IN (%1$s)
+			   AND EXISTS (
+			     SELECT 1 FROM measurement_attempt rma
+			      WHERE rma.assessment_round_id = c.assessment_round_id
+			        AND rma.user_id = c.user_id
+			        AND rma.attempt_type = 'RETRY'
+			        AND rma.status = 'COMPLETED'
+			        AND rma.terminal_at > r.updated_at)
+			 GROUP BY c.assessment_round_id
+			 ORDER BY MIN(r.updated_at)
+			 LIMIT ?
+			""".formatted(RESOLVABLE_REASON_CODES);
+
+	/**
+	 * 해소 판정을 시도했다는 표시.
+	 *
+	 * <p>{@link #RESOLVE_SQL} <b>뒤에</b> 돌아야 한다. 그때까지 살아남은 ACTIVE 사유가 "재시험 결과와
+	 * 맞춰 봤지만 풀리지 않은" 것들이고, 이 갱신이 {@link #ROUNDS_TO_RESOLVE_SQL}의 워터마크를 밀어
+	 * 회차를 큐에서 내린다.
+	 *
+	 * <p>{@code row_version}은 건드리지 않는다. 낙관적 잠금 값이라 사유의 내용이 바뀌지 않았는데 올리면
+	 * 같은 행을 들고 있던 편집이 근거 없이 충돌한다.
+	 */
+	private static final String MARK_RESOLUTION_EVALUATED_SQL = """
+			UPDATE interview_candidate_reason r
+			   SET updated_at = CURRENT_TIMESTAMP
+			  FROM interview_candidate c
+			 WHERE c.candidate_id = r.candidate_id
+			   AND c.assessment_round_id = ?
+			   AND r.reason_status = 'ACTIVE'
+			   AND r.reason_code IN (%1$s)
+			   AND EXISTS (
+			     SELECT 1 FROM measurement_attempt rma
+			      WHERE rma.assessment_round_id = c.assessment_round_id
+			        AND rma.user_id = c.user_id
+			        AND rma.attempt_type = 'RETRY'
+			        AND rma.status = 'COMPLETED'
+			        AND rma.terminal_at > r.updated_at)
+			""".formatted(RESOLVABLE_REASON_CODES);
+
+	/**
 	 * 재시험 해소 (정책 §5B).
 	 *
 	 * <p>게이트를 만든 문제가 <b>전부</b> 2단 이상에 도달해야 닫는다. 하나라도 남으면 게이트가 여전히
 	 * 성립하므로 유지한다. 재시험을 안 봤거나 다시 실패해도 그대로 둔다.
-	 *
-	 * <p>무효 응시(INVALID_ATTEMPT)와 저기여(LOW_PARTICIPATION)는 대상이 아니다. 게이트에서 나온
-	 * 유형이 아니라 각각 무결성·기여도 축이라 재시험 결과로 풀리지 않는다.
 	 */
 	private static final String RESOLVE_SQL = """
 			WITH active AS (
@@ -393,8 +460,7 @@ public class JdbcRiskOutcomeBatchRepository implements RiskOutcomeBatchRepositor
 			      JOIN interview_candidate c ON c.candidate_id = r.candidate_id
 			      JOIN measurement_attempt ma ON ma.attempt_id = r.source_attempt_id
 			     WHERE r.reason_status = 'ACTIVE'
-			       AND r.reason_code IN ('PERSISTENT_LOW','STAGE_DECLINE',
-			                             'CONTRIBUTION_UNDERSTANDING_GAP')
+			       AND r.reason_code IN (%1$s)
 			       AND c.assessment_round_id = ?
 			       AND ma.outcome_verdict IS NOT NULL
 			),
@@ -440,13 +506,48 @@ public class JdbcRiskOutcomeBatchRepository implements RiskOutcomeBatchRepositor
 			       row_version = r.row_version + 1
 			  FROM resolved x
 			 WHERE r.candidate_reason_id = x.candidate_reason_id
-			""";
+			""".formatted(RESOLVABLE_REASON_CODES);
 
+	/**
+	 * 판정 유예. 회차의 <b>마지막 응시 마감</b> 이후 이만큼 지나야 그 회차를 판정한다.
+	 *
+	 * <p>1시간은 세션 상한({@code session.time-limit-minutes}, 기본 60분)에서 온다. 상한은 세션을 여는
+	 * 순간부터 재고({@code AssessmentSessionService#start}) 응시 마감으로 잘리지 않으므로, 마감 직전에
+	 * 연 세션은 마감을 넘겨 최대 60분까지 살아 있다. 1분은 그 경계에 정확히 걸치지 않기 위한 여유다.
+	 *
+	 * <p>세션 상한을 늘리면 이 값도 같이 올려야 한다. 짧으면 아직 응시 중인 교육생이 기수 평균의
+	 * 모수에서 빠진 채 다른 교육생의 판정이 확정된다.
+	 */
+	private static final String JUDGE_GRACE_INTERVAL = "INTERVAL '1 hour 1 minute'";
+
+	/**
+	 * 판정할 회차 찾기.
+	 *
+	 * <p>회차의 응시 마감은 교육생마다 다르다 — {@code measurement_attempt.assessment_close_at}은 팀
+	 * 분석이 끝난 시점부터 열려 개인별로 찍힌다. 그래서 앵커는 회차 레벨의
+	 * {@code assessment_due_at}이 아니라 그 회차 INITIAL 수행 중 <b>가장 늦은</b> 마감이다. 마지막
+	 * 교육생이 마칠 수 있는 시각이 지나야 회차 모집단이 확정된다.
+	 *
+	 * <p>{@code MAX}가 NULL이면(분석이 한 건도 세션을 열지 못한 회차) 회차 레벨 마감으로 물러선다.
+	 * 🔴 <b>그 뒷받침이 2026-08-16에 사라졌다</b> — 회차 응시 창이 폐기돼 {@code assessment_due_at}은
+	 * 전 행 NULL이다. 즉 <b>개인 창이 하나도 없는 회차는 판정 대상에서 빠진다.</b> 분석이 전부 실패한
+	 * 회차가 그런 모양인데, 그때는 셀 응시가 없으므로 결과가 달라지지 않는다. 응시가 있는데 창이 비는
+	 * 경로는 없다({@code JdbcAssessmentSessionPreparer}가 세션과 창을 함께 쓴다).
+	 *
+	 * <p>RETRY는 앵커에서 뺀다. 재시험은 판정 뒤에 열리므로 포함하면 재시험이 발급될 때마다 앵커가
+	 * 뒤로 밀려 INITIAL 판정이 영영 시작되지 않는다.
+	 */
 	private static final String ROUNDS_TO_JUDGE_SQL = """
 			SELECT r.assessment_round_id
 			  FROM project_assessment_round r
 			  JOIN project p ON p.project_id = r.project_id
 			 WHERE p.project_category = 'MINI_PROJECT'
+			   AND now() >= COALESCE(
+			         (SELECT MAX(ma2.assessment_close_at)
+			            FROM measurement_attempt ma2
+			           WHERE ma2.assessment_round_id = r.assessment_round_id
+			             AND ma2.attempt_type = 'INITIAL'),
+			         r.assessment_due_at) + %1$s
 			   AND EXISTS (
 			     SELECT 1 FROM measurement_attempt ma
 			      WHERE ma.assessment_round_id = r.assessment_round_id
@@ -456,7 +557,7 @@ public class JdbcRiskOutcomeBatchRepository implements RiskOutcomeBatchRepositor
 			        AND ma.validity_review_status <> 'PENDING')
 			 ORDER BY p.sequence_no, r.round_no
 			 LIMIT ?
-			""";
+			""".formatted(JUDGE_GRACE_INTERVAL);
 
 	private final JdbcTemplate jdbcTemplate;
 
@@ -481,8 +582,19 @@ public class JdbcRiskOutcomeBatchRepository implements RiskOutcomeBatchRepositor
 	}
 
 	@Override
+	public int markResolutionEvaluated(UUID assessmentRoundId) {
+		return jdbcTemplate.update(MARK_RESOLUTION_EVALUATED_SQL, assessmentRoundId);
+	}
+
+	@Override
 	public List<UUID> findRoundsToJudge(int limit) {
 		return jdbcTemplate.query(ROUNDS_TO_JUDGE_SQL,
+				(rs, rowNum) -> rs.getObject("assessment_round_id", UUID.class), limit);
+	}
+
+	@Override
+	public List<UUID> findRoundsToResolve(int limit) {
+		return jdbcTemplate.query(ROUNDS_TO_RESOLVE_SQL,
 				(rs, rowNum) -> rs.getObject("assessment_round_id", UUID.class), limit);
 	}
 }

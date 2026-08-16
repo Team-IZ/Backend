@@ -8,10 +8,15 @@ import com.bigproject.backend.domain.submission.presentation.dto.RepositoryCheck
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionAnalysisResultResponse;
 import com.bigproject.backend.domain.submission.presentation.dto.SubmissionResponse;
+import com.bigproject.backend.global.exception.ErrorResponse;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -64,11 +69,9 @@ public class SubmissionController {
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
-			summary = "GitHub 저장소 URL 제출·재제출 | ⚠️ 사용 불가",
+			operationId = "submitGithubUrl",
+			summary = "GitHub 저장소 URL 제출·재제출 | ✅ 사용 가능",
 			description = """
-					> ⚠️ **사용 불가 (2026-08-13 기준)** — 2026-08-23 오전 3시 16분 경에 `nvidia provider error`으로
-					> 확인 후 사용가능 전환 예정.
-
 					**제출 → 분석 → 세션까지 끝까지 간다.** 접수 직후 트리거되는 코드 분석은 AI 원본 서버
 					(`ai.origin-base-url`)의 `POST /analyses`로 나가며 저장소 주소와 브랜치를 함께 싣는다 —
 					clone·분석의 주체는 AI 서버이지만 그쪽으로 주소를 넘기는 경로는 백엔드에 있다.
@@ -132,10 +135,88 @@ public class SubmissionController {
 					| `IDEMPOTENCY_KEY_CONFLICT` | 409 | 같은 키를 다른 회차에 재사용했다 |
 					| `AI_SERVER_UNAVAILABLE` | 503 | AI 프록시를 깨우지 못했다. **재시도하면 된다** |
 
-					ZIP 업로드는 같은 리소스를 만들지만 `POST /submissions/zip`으로 분리돼 있다.""")
+					ZIP 업로드는 같은 리소스를 만들지만 `POST /submissions/zip`으로 분리돼 있다.
+
+					## 🔴 성공 몸이 세 가지다 — 셋 다 `201`이다
+
+					| 상황 | `supersedesSubmissionId` | `submissionId` |
+					|---|---|---|
+					| 첫 제출 | `null` | 새 값 |
+					| 재제출 | **직전 제출 ID** | 새 값 |
+					| 멱등 재시도(같은 키·같은 내용) | 최초 결과 그대로 | **최초와 같은 값** |
+
+					세 번째가 있어서 클라이언트는 **`201`을 "새로 만들어졌다"로 읽으면 안 된다.** 같은 멱등키로
+					재시도하면 새 행을 만들지 않고 최초 결과를 그대로 돌려주므로, 화면이 제출 횟수를 세고 있다면
+					응답의 `submissionId`로 중복을 걸러야 한다.
+
+					`null`인 필드는 키가 빠지지 않고 `null`로 온다 — 세션 API와 직렬화 규칙이 다르다.""")
 	// 접수는 201이다. 선언하지 않으면 springdoc 이 기본값 200 으로 적어, 스펙과 서버가 서로 다른
 	// 상태 코드를 말하게 된다(23차 R4에서 오류 응답과 함께 드러났다).
-	@ApiResponse(responseCode = "201", description = "제출 접수됨")
+	@ApiResponses({
+			@ApiResponse(
+					responseCode = "201",
+					description = "제출 접수됨. 첫 제출·재제출·멱등 재시도가 모두 이 상태다",
+					content = @Content(
+							schema = @Schema(implementation = SubmissionResponse.class),
+							examples = {
+									@ExampleObject(
+											name = "첫 제출",
+											value = """
+													{
+													  "submissionId": "7d3c8a15-6e29-4b70-9c81-2f5a4d0b6e37",
+													  "method": "GITHUB_URL",
+													  "status": "ACCEPTED",
+													  "submittedAt": "2026-08-15T04:02:11Z",
+													  "current": true,
+													  "supersedesSubmissionId": null,
+													  "repositoryVerificationId": null,
+													  "artifactId": null
+													}"""),
+									@ExampleObject(
+											name = "재제출 (직전 제출을 supersede)",
+											description = "기존 행 수정이 아니라 새 행이다. 직전 제출은 current=false가 된다",
+											value = """
+													{
+													  "submissionId": "b1f4e2d9-30a7-4c68-85be-9d1c7a3f6042",
+													  "method": "GITHUB_URL",
+													  "status": "ACCEPTED",
+													  "submittedAt": "2026-08-15T06:41:55Z",
+													  "current": true,
+													  "supersedesSubmissionId": "7d3c8a15-6e29-4b70-9c81-2f5a4d0b6e37",
+													  "repositoryVerificationId": null,
+													  "artifactId": null
+													}"""),
+									@ExampleObject(
+											name = "멱등 재시도 (같은 Idempotency-Key)",
+											description = "새 행을 만들지 않는다. submissionId와 submittedAt이 최초 제출 그대로다",
+											value = """
+													{
+													  "submissionId": "7d3c8a15-6e29-4b70-9c81-2f5a4d0b6e37",
+													  "method": "GITHUB_URL",
+													  "status": "ACCEPTED",
+													  "submittedAt": "2026-08-15T04:02:11Z",
+													  "current": true,
+													  "supersedesSubmissionId": null,
+													  "repositoryVerificationId": null,
+													  "artifactId": null
+													}""")
+							})),
+			@ApiResponse(responseCode = "400",
+					description = "IDEMPOTENCY_KEY_REQUIRED · IDEMPOTENCY_KEY_INVALID · INVALID_REPOSITORY_URL · UNSUPPORTED_HOST · VALIDATION_FAILED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "404", description = "SUBMISSION_ROUND_NOT_ACCESSIBLE",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "409",
+					description = "SUBMISSION_ROUND_NOT_OPEN · SUBMISSION_DEADLINE_PASSED · SUBMISSION_METHOD_NOT_ALLOWED · IDEMPOTENCY_KEY_CONFLICT",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "503",
+					description = "AI_SERVER_UNAVAILABLE — **재시도하면 된다.** 같은 멱등키를 그대로 쓴다",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+	})
 	@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<SubmissionResponse> submitGithubUrl(
 			@Valid @RequestBody CreateGithubSubmissionRequest request,
@@ -148,12 +229,9 @@ public class SubmissionController {
 	}
 
 	@Operation(
-			summary = "ZIP 업로드 제출·재제출 | ⚠️ 사용 불가",
+			operationId = "submitZip",
+			summary = "ZIP 업로드 제출·재제출 | ✅ 사용 가능",
 			description = """
-					> ⚠️ **사용 불가 (2026-08-13 기준)** — 2026-08-23 오전 3시 16분 경에 `nvidia provider error`으로
-					> 확인 후 사용가능 전환 예정. 접수 직후 트리거되는 코드 분석이 GitHub URL 제출과 같은 경로를
-					> 타므로 함께 내린다.
-
 					GitHub URL 제출과 같은 리소스를 만드는 다른 표현이지만 **경로를 분리한다.** OpenAPI는
 					경로·메서드당 operation이 하나뿐이라, 한 경로에 `consumes`만 다른 핸들러를 둘 두면 springdoc이
 					둘을 한 operation으로 병합한다. 그러면 Swagger UI에서 `application/json`을 골라도 multipart
@@ -224,8 +302,88 @@ public class SubmissionController {
 					> **2026-08-09 보류 해제.** 종전에는 "AI 서버에 ZIP을 전달할 자리가 없다"는 이유로 이
 					> 경로를 막아 두었으나, `POST /api/v0/analyses`에 `multipart/form-data`(`payload` +
 					> `file`) 경로가 생겨 근거가 사라졌다. S3 presigned URL이 아니라 **백엔드가 파일을 직접
-					> 실어 보내는** 방식이라, GitHub 제출과 달리 AI 서버에 저장소 접근 권한이 없어도 된다.""")
-	@ApiResponse(responseCode = "202", description = "업로드 접수됨. 분석은 비동기로 이어진다")
+					> 실어 보내는** 방식이라, GitHub 제출과 달리 AI 서버에 저장소 접근 권한이 없어도 된다.
+
+					## 🔴 성공 몸이 세 가지다 — 셋 다 `202`다
+
+					| 상황 | `supersedesSubmissionId` | `submissionId` |
+					|---|---|---|
+					| 첫 제출 | `null` | 새 값 |
+					| 재제출 | **직전 제출 ID** | 새 값 |
+					| 멱등 재시도(같은 키) | 최초 결과 그대로 | **최초와 같은 값** |
+
+					GitHub 제출과 다른 점은 `artifactId`가 채워지고 `repositoryVerificationId`가 항상 `null`이라는
+					것뿐이다. `202`를 "새로 만들어졌다"로 읽으면 안 되는 이유도 같다 — 멱등 재시도가 같은 상태로
+					최초 결과를 돌려준다.""")
+	@ApiResponses({
+			@ApiResponse(
+					responseCode = "202",
+					description = "업로드 접수됨. 분석은 비동기로 이어진다",
+					content = @Content(
+							schema = @Schema(implementation = SubmissionResponse.class),
+							examples = {
+									@ExampleObject(
+											name = "첫 업로드",
+											value = """
+													{
+													  "submissionId": "5a2b9c74-1de3-4f86-90a5-6c8e3b7d2f19",
+													  "method": "ZIP_WITH_GITLOG",
+													  "status": "ACCEPTED",
+													  "submittedAt": "2026-08-15T04:02:11Z",
+													  "current": true,
+													  "supersedesSubmissionId": null,
+													  "repositoryVerificationId": null,
+													  "artifactId": "e8f1d0a6-4b57-4c29-83de-1a7b5c9f2064"
+													}"""),
+									@ExampleObject(
+											name = "재업로드 (직전 제출을 supersede)",
+											value = """
+													{
+													  "submissionId": "c7e0b342-95af-4d18-a26f-3b8d1e5c7049",
+													  "method": "ZIP_WITH_GITLOG",
+													  "status": "ACCEPTED",
+													  "submittedAt": "2026-08-15T06:41:55Z",
+													  "current": true,
+													  "supersedesSubmissionId": "5a2b9c74-1de3-4f86-90a5-6c8e3b7d2f19",
+													  "repositoryVerificationId": null,
+													  "artifactId": "9b4c6e28-7d15-403a-b8f9-2e6a1c5d8703"
+													}"""),
+									@ExampleObject(
+											name = "멱등 재시도 (같은 Idempotency-Key)",
+											description = "새 아티팩트를 저장하지 않는다. 최초 결과 그대로다",
+											value = """
+													{
+													  "submissionId": "5a2b9c74-1de3-4f86-90a5-6c8e3b7d2f19",
+													  "method": "ZIP_WITH_GITLOG",
+													  "status": "ACCEPTED",
+													  "submittedAt": "2026-08-15T04:02:11Z",
+													  "current": true,
+													  "supersedesSubmissionId": null,
+													  "repositoryVerificationId": null,
+													  "artifactId": "e8f1d0a6-4b57-4c29-83de-1a7b5c9f2064"
+													}""")
+							})),
+			@ApiResponse(responseCode = "400",
+					description = "IDEMPOTENCY_KEY_REQUIRED · IDEMPOTENCY_KEY_INVALID · ARCHIVE_INVALID · VALIDATION_FAILED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "404", description = "SUBMISSION_ROUND_NOT_ACCESSIBLE",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "409",
+					description = "SUBMISSION_ROUND_NOT_OPEN · SUBMISSION_DEADLINE_PASSED · SUBMISSION_METHOD_NOT_ALLOWED · IDEMPOTENCY_KEY_CONFLICT",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "413",
+					description = "FILE_TOO_LARGE — 50MB(52,428,800 바이트) 초과",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "500", description = "ARTIFACT_STORE_FAILED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "503",
+					description = "AI_SERVER_UNAVAILABLE — **재시도하면 된다.** 같은 멱등키를 그대로 쓴다",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+	})
 	@PostMapping(path = "/zip", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	public ResponseEntity<SubmissionResponse> submitZip(
 			@RequestParam @NotNull UUID assessmentRoundId,
@@ -351,14 +509,19 @@ public class SubmissionController {
 
 					### failureCode
 
-					분석 실행 실패 6종과 저장소·ZIP 접근 실패를 합해 15종이다. 저장소 주소 오류도 제출이 아니라
-					여기로 드러난다.
+					분석 실행 실패와 저장소 접근 실패, ZIP 내용 검증을 합해 **12종**이다. 저장소 주소 오류도
+					제출이 아니라 여기로 드러난다.
 
 					| 묶음 | 값 |
 					| --- | --- |
 					| 분석 실행 | `TEMPORARY_ERROR` · `ANALYSIS_TIMEOUT` · `MODEL_ERROR` · `SOURCE_UNREACHABLE` · `UNSUPPORTED_LANGUAGE` |
 					| 저장소 접근 | `INVALID_REPOSITORY_URL` · `REPO_NOT_FOUND` · `REPOSITORY_ACCESS_DENIED` · `BRANCH_NOT_FOUND` · `UNSUPPORTED_HOST` |
-					| ZIP 검증 | `FILE_TOO_LARGE` · `ARCHIVE_INVALID` · `EMPTY_CODE` · `PROHIBITED_FILE` · `GIT_LOG_MISSING` |
+					| ZIP 내용 | `EMPTY_CODE` · `GIT_LOG_MISSING` |
+
+					⚠️ 종전 설명은 15종이라 적고 ZIP 묶음에 `FILE_TOO_LARGE`·`ARCHIVE_INVALID`·`PROHIBITED_FILE`을
+					함께 실었는데 **셋 다 이 필드로 올 수 없다**(2026-08-16 정정). ZIP 파일 자체의 문제라 업로드가
+					`400 ARCHIVE_INVALID`·`413 FILE_TOO_LARGE`로 먼저 거절하고 제출 행조차 만들지 않으므로 분석이
+					시작되지 않는다 — 그 셋은 **제출 API의 에러 응답**에서 받는다.
 
 					🔴 **`SESSION_PREPARATION_FAILED`만 예외다.** `analysis_job.failure_code`에 없는 값이며
 					서버가 조회 시점에 판정해 내려 준다. **분석은 성공했지만 이 교육생의 세션·문항이 준비되지

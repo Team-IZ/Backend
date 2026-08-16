@@ -59,13 +59,20 @@ public record MySubmissionResponse(
 
 		@JsonInclude(JsonInclude.Include.NON_NULL)
 		@Schema(description = """
-				실패 코드 15종. `REPO_NOT_FOUND`·`REPOSITORY_ACCESS_DENIED`면 화면이 ZIP 전환을 안내한다.
-				`ANALYSIS_FAILED`에서만이고 그 외에는 키가 빠진다""",
+				실패 코드 **12종**. `REPO_NOT_FOUND`·`REPOSITORY_ACCESS_DENIED`면 화면이 ZIP 전환을 안내한다.
+				`ANALYSIS_FAILED`에서만이고 그 외에는 키가 빠진다.
+
+				⚠️ 종전 설명은 15종이라고 적고 `FILE_TOO_LARGE`·`ARCHIVE_INVALID`·`PROHIBITED_FILE`을
+				함께 실었는데 **셋 다 이 필드로 올 수 없습니다**(2026-08-16 정정). ZIP 파일 자체의 문제라
+				업로드 시점에 `400 ARCHIVE_INVALID` / `413 FILE_TOO_LARGE`로 거절되고 제출 행조차 만들어지지
+				않아 분석이 시작되지 않습니다 — 그 셋은 **제출 API의 에러 응답**에서 받으시면 됩니다.
+
+				반대로 `EMPTY_CODE`(분석할 코드가 없다)와 `GIT_LOG_MISSING`(커밋 기록이 없다)은 AI가
+				분석 중에 판정해 돌려주므로 **이 필드로 옵니다.**""",
 				allowableValues = {"SOURCE_UNREACHABLE", "UNSUPPORTED_LANGUAGE", "ANALYSIS_TIMEOUT",
 						"MODEL_ERROR", "TEMPORARY_ERROR", "INVALID_REPOSITORY_URL", "REPO_NOT_FOUND",
 						"REPOSITORY_ACCESS_DENIED", "BRANCH_NOT_FOUND", "UNSUPPORTED_HOST",
-						"FILE_TOO_LARGE", "ARCHIVE_INVALID", "EMPTY_CODE", "PROHIBITED_FILE",
-						"GIT_LOG_MISSING"})
+						"EMPTY_CODE", "GIT_LOG_MISSING"})
 		String failureCode,
 
 		@JsonInclude(JsonInclude.Include.NON_NULL)

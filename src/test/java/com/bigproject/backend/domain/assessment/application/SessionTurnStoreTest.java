@@ -58,7 +58,7 @@ class SessionTurnStoreTest {
 	@BeforeEach
 	void setUp() {
 		repository = mock(JdbcSessionRepository.class);
-		store = new SessionTurnStore(repository, new SessionGuard(repository));
+		store = new SessionTurnStore(repository, new SessionGuard(repository, new SessionExpirer(repository)));
 		when(repository.applyAnswer(any(), any(), anyString(), org.mockito.ArgumentMatchers.anyInt(),
 				org.mockito.ArgumentMatchers.anyBoolean(), anyString(), anyLong())).thenReturn(1);
 		// AI가 준 커서(문제 + 축)를 단계 ID로 되돌릴 때 쓰인다. 비워 두면 커서 이동이 STAGE_NOT_FOUND로 죽는다.

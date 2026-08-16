@@ -30,6 +30,22 @@ import java.util.UUID;
  *
  * <p>빼는 것은 시간 초과·창 만료·데이터 무결성·관리자 무효화·기술적 실패 6종뿐이다.
  * 이쪽은 답변이 없거나 신뢰할 수 없어 서술을 만들 근거 자체가 없다.
+ *
+ * <h2>🔴 마감 기준은 회차 창이 아니라 <b>개인 응시 창</b>이다 (2026-08-16)</h2>
+ *
+ * <p>종전에는 {@code project_assessment_round.assessment_due_at}(회차 창)을 봤다. 그 컬럼은
+ * 폐기됐고 전 행 {@code NULL}이다({@code docs/migration/2026-08-16_drop_round_assessment_window.sql}).
+ * 그대로 두면 {@code r.assessment_due_at IS NOT NULL}이 <b>전부 거짓이 되어 발행 대상이 조용히
+ * 0건</b>이 된다 — 스케줄러는 계속 도는데 아무것도 발행하지 않는다.
+ *
+ * <p>그래서 {@code COALESCE(ma.assessment_close_at, r.assessment_due_at)}으로 옮겼다.
+ * {@code JdbcRiskOutcomeBatchRepository.ROUNDS_TO_JUDGE_SQL}이 이미 같은 형태를 쓰고 있어
+ * 두 배치가 같은 기준을 본다. 회차 컬럼을 COALESCE 뒤에 남겨 둔 것은 개인 창이 아직 없는
+ * 옛 데이터를 위한 것이고, 컬럼을 실제로 {@code DROP} 할 때 함께 지운다.
+ *
+ * <p>판정이 <b>더 정확해진다</b> — "회차가 끝나기 전에 낸 응시"에서 "본인 응시 창 안에 낸 응시"로
+ * 바뀐다. 개인 창은 분석이 끝나 세션이 열린 시각부터 24시간이라 사람마다 다르고, 마감 직전에
+ * 제출해 분석이 늦게 끝난 학생이 회차 창 때문에 리포트를 못 받던 문제가 사라진다.
  */
 public interface ReportDispatchRepository extends Repository<ReportGenerationRun, UUID> {
 
@@ -142,13 +158,13 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			""";
 
 	/**
-	 * 회차 종료 시각 이전에 응시해 정상 완료한 세션 중, 아직 리포트를 만들지 않은 것들.
+	 * <b>본인 응시 창</b> 종료 이전에 응시해 정상 완료한 세션 중, 아직 리포트를 만들지 않은 것들.
 	 *
-	 * <p>배치 등록 시점은 {@code COALESCE(report_publish_not_before_at, assessment_due_at)}이다.
-	 * 앞의 값은 운영자가 "이 시각 전에는 발행하지 않는다"로 정해 둔 것이고, DDL CHECK가
-	 * {@code >= assessment_due_at}을 이미 보장하므로 COALESCE만으로 둘 다 존중된다.
+	 * <p>배치 등록 시점은 {@code COALESCE(report_publish_not_before_at, ma.assessment_close_at,
+	 * r.assessment_due_at)}이다. 맨 앞은 운영자가 "이 시각 전에는 발행하지 않는다"로 정해 둔 것이라
+	 * 언제나 우선한다. 그 값이 없으면 본인 창이 닫힌 시각부터 발행 대상이 된다.
 	 *
-	 * <p>정렬은 회차 종료가 이른 것부터다 — 밀린 회차가 있으면 오래된 쪽이 먼저 나가야 한다.
+	 * <p>정렬은 응시 창이 이른 것부터다 — 밀린 회차가 있으면 오래된 쪽이 먼저 나가야 한다.
 	 */
 	@Query(value = """
 			SELECT s.session_id           AS sessionId,
@@ -169,9 +185,10 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			 WHERE s.status  = 'COMPLETED'
 			   AND ma.status = 'COMPLETED'
 			   AND s.ended_at IS NOT NULL
-			   AND r.assessment_due_at IS NOT NULL
-			   AND s.ended_at < r.assessment_due_at
-			   AND now() >= COALESCE(r.report_publish_not_before_at, r.assessment_due_at)
+			   AND COALESCE(ma.assessment_close_at, r.assessment_due_at) IS NOT NULL
+			   AND s.ended_at < COALESCE(ma.assessment_close_at, r.assessment_due_at)
+			   AND now() >= COALESCE(r.report_publish_not_before_at,
+			                         ma.assessment_close_at, r.assessment_due_at)
 			   AND ma.validity_review_status <> 'CONFIRMED_INVALID'
 			   AND (s.end_reason_code IS NULL OR s.end_reason_code NOT IN (
 			           'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
@@ -180,7 +197,7 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			   AND\s""" + NO_UNFINISHED_STAGE + """
 			   AND NOT\s""" + BLOCKING_RUN_EXISTS + """
 			   AND\s""" + UNDER_ATTEMPT_LIMIT + """
-			 ORDER BY r.assessment_due_at, ma.user_id
+			 ORDER BY COALESCE(ma.assessment_close_at, r.assessment_due_at), ma.user_id
 			""", nativeQuery = true)
 	List<ReportTarget> findDueSessions(int maxAttempts);
 
@@ -200,16 +217,16 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 	 *   <caption>두 조회의 차이</caption>
 	 *   <tr><th></th><th>{@code findDueSessions}</th><th>이 조회</th></tr>
 	 *   <tr><td>단위</td><td>세션</td><td><b>문제</b></td></tr>
-	 *   <tr><td>시점</td><td>회차 마감 후</td><td><b>그 문제가 끝나는 즉시</b></td></tr>
+	 *   <tr><td>시점</td><td>응시 창 마감 후</td><td><b>그 문제가 끝나는 즉시</b></td></tr>
 	 *   <tr><td>세션 완료</td><td>필수</td><td><b>안 봄</b> — 아직 진행 중이다</td></tr>
-	 *   <tr><td>마감 판정</td><td>{@code ended_at &lt; due_at}</td><td><b>{@code started_at &lt; due_at}</b></td></tr>
+	 *   <tr><td>마감 판정</td><td>{@code ended_at &lt; close_at}</td><td><b>{@code started_at &lt; close_at}</b></td></tr>
 	 * </table>
 	 *
 	 * <h2>🔴 마감 기준이 "끝냈나"에서 "시작했나"로 바뀐다</h2>
 	 *
-	 * <p>{@code s.started_at < r.assessment_due_at} — <b>마감 전에 시작만 했으면</b> 그 세션의 모든
-	 * 문제가 리포트를 받는다. 마감에 걸쳐 푸는 학생이 마지막 문제만 리포트를 못 받는 상황을 막는다
-	 * (2026-08-11 결정).
+	 * <p>{@code s.started_at < COALESCE(ma.assessment_close_at, r.assessment_due_at)} —
+	 * <b>마감 전에 시작만 했으면</b> 그 세션의 모든 문제가 리포트를 받는다. 마감에 걸쳐 푸는 학생이
+	 * 마지막 문제만 리포트를 못 받는 상황을 막는다(2026-08-11 결정).
 	 *
 	 * <h2>유효성은 여기서 다 보지 않는다</h2>
 	 *
@@ -254,8 +271,8 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			  JOIN assessment_problem ap
 			    ON ap.problem_id = ps.problem_id
 			 WHERE s.started_at IS NOT NULL
-			   AND r.assessment_due_at IS NOT NULL
-			   AND s.started_at < r.assessment_due_at
+			   AND COALESCE(ma.assessment_close_at, r.assessment_due_at) IS NOT NULL
+			   AND s.started_at < COALESCE(ma.assessment_close_at, r.assessment_due_at)
 			   AND ma.validity_review_status <> 'CONFIRMED_INVALID'
 			   AND NOT EXISTS (
 			       SELECT 1 FROM problem_stage ps2
@@ -326,9 +343,10 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			   AND s.status  = 'COMPLETED'
 			   AND ma.status = 'COMPLETED'
 			   AND s.ended_at IS NOT NULL
-			   AND r.assessment_due_at IS NOT NULL
-			   AND s.ended_at < r.assessment_due_at
-			   AND now() >= COALESCE(r.report_publish_not_before_at, r.assessment_due_at)
+			   AND COALESCE(ma.assessment_close_at, r.assessment_due_at) IS NOT NULL
+			   AND s.ended_at < COALESCE(ma.assessment_close_at, r.assessment_due_at)
+			   AND now() >= COALESCE(r.report_publish_not_before_at,
+			                         ma.assessment_close_at, r.assessment_due_at)
 			   AND ma.validity_review_status <> 'CONFIRMED_INVALID'
 			   AND (s.end_reason_code IS NULL OR s.end_reason_code NOT IN (
 			           'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
@@ -356,9 +374,10 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			 WHERE s.status  = 'COMPLETED'
 			   AND ma.status = 'COMPLETED'
 			   AND s.ended_at IS NOT NULL
-			   AND r.assessment_due_at IS NOT NULL
-			   AND s.ended_at < r.assessment_due_at
-			   AND now() >= COALESCE(r.report_publish_not_before_at, r.assessment_due_at)
+			   AND COALESCE(ma.assessment_close_at, r.assessment_due_at) IS NOT NULL
+			   AND s.ended_at < COALESCE(ma.assessment_close_at, r.assessment_due_at)
+			   AND now() >= COALESCE(r.report_publish_not_before_at,
+			                         ma.assessment_close_at, r.assessment_due_at)
 			   AND ma.validity_review_status <> 'CONFIRMED_INVALID'
 			   AND (s.end_reason_code IS NULL OR s.end_reason_code NOT IN (
 			           'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
@@ -464,7 +483,8 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			                'REVIEW_DUE_AT_EXPIRED', 'DATA_INTEGRITY_INVALID',
 			                'ADMIN_INVALIDATED', 'TECHNICAL_FAILURE'))
 			       )                                                            AS eligible,
-			       COALESCE(r.report_publish_not_before_at, r.assessment_due_at) AS publishNotBeforeAt,
+			       COALESCE(r.report_publish_not_before_at,
+			                ma.assessment_close_at, r.assessment_due_at)        AS publishNotBeforeAt,
 			       (SELECT count(DISTINCT ps.problem_id)
 			          FROM problem_stage ps WHERE ps.session_id = s.session_id)  AS problemCount
 			  FROM assessment_session s
@@ -496,6 +516,10 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 	 * <p>🔴 <b>세션 유효성은 여기서 보지 않는다.</b> 무효 세션은 {@code ReportRunFinalizer}가 이미
 	 * 걸렀고, 그때 스냅샷은 만들어 두므로 이 조회에 걸린다. 그러나 무효인 리포트를 나중에
 	 * 발행하면 안 되므로 <b>발행 배치가 다시 확인한다</b>({@link #findFinalizeContext}).
+	 *
+	 * <p>여기만 {@code measurement_attempt}가 조인돼 있지 않아 개인 창을 상관 서브쿼리로 가져온다.
+	 * 리포트는 (회차, 교육생) 단위라({@code uq_report_active_user}) 그 사람의 INITIAL 응시가
+	 * 정확히 하나이고, 다른 조회들과 같은 기준을 보게 된다.
 	 */
 	@Query(value = """
 			SELECT rp.report_id AS reportId
@@ -509,7 +533,13 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			 WHERE rp.published_at IS NULL
 			   AND rp.class_id IS NULL
 			   AND rp.lifecycle_status <> 'SUPERSEDED'
-			   AND now() >= COALESCE(r.report_publish_not_before_at, r.assessment_due_at)
+			   AND now() >= COALESCE(r.report_publish_not_before_at,
+			                         (SELECT ma.assessment_close_at
+			                            FROM measurement_attempt ma
+			                           WHERE ma.assessment_round_id = rp.assessment_round_id
+			                             AND ma.user_id             = rp.user_id
+			                             AND ma.attempt_type        = 'INITIAL'),
+			                         r.assessment_due_at)
 			 ORDER BY rp.report_id
 			""", nativeQuery = true)
 	List<UUID> findReportsAwaitingPublish();
