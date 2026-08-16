@@ -13,6 +13,7 @@ public record RegisterTraineesRequest(
 		@Schema(description = "직접 입력으로 등록·초대할 교육생 목록. 각 행은 독립적으로 처리됩니다.")
 		@NotEmpty List<@NotNull @Valid Trainee> trainees
 ) {
+	@Schema(name = "RegisterTraineeItem")
 	public record Trainee(
 			@Schema(description = "교육생 명단에 저장할 필수 이름", example = "홍길동")
 			@NotBlank @Size(max = 200) String name,

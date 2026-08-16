@@ -57,11 +57,15 @@ public record ProjectSubmissionStatusResponse(
 		List<Team> teams
 ) {
 
-	@Schema(description = """
+	@Schema(name = "SubmissionStatusSummary", description = """
 			탭 머리의 `제출 6/8` 카운트.
 
 			teamCount = submittedTeamCount + unsubmittedTeamCount 입니다. analysisFailedTeamCount는
 			제출한 팀 중 최신 분석이 FAILED인 팀이라 이 등식과 별개입니다.
+
+			⚠️ **`class-progress`의 `summary`와 다른 스키마입니다**(30차 R2①). 이쪽은 **팀** 기준
+			4필드이고 그쪽은 **인원** 기준 6필드입니다. 30차까지 두 오퍼레이션이 스펙에서 같은
+			`Summary` 하나를 가리켰던 것은 이름을 명시하지 않아 생긴 사고입니다.
 			""")
 	public record Summary(
 			@Schema(description = "조회 범위의 팀 수", example = "8")
@@ -86,7 +90,8 @@ public record ProjectSubmissionStatusResponse(
 	) {
 	}
 
-	@Schema(description = "팀 한 행. 제출·분석이 없으면 submission·analysis가 null입니다.")
+	@Schema(name = "SubmissionStatusTeam",
+			description = "팀 한 행. 제출·분석이 없으면 submission·analysis가 null입니다.")
 	public record Team(
 			UUID teamId,
 			UUID classId,
@@ -141,11 +146,13 @@ public record ProjectSubmissionStatusResponse(
 	) {
 	}
 
-	@Schema(description = """
+	@Schema(name = "SubmissionStatusRequirementResult", description = """
 			요구사항 판정 한 건.
 
 			필드 이름은 `GET /submissions/{submissionId}/analysis/result`의 것과 같습니다 —
-			같은 값이 두 API에서 다른 이름으로 나가지 않게 맞췄습니다.
+			같은 값이 두 API에서 다른 이름으로 나가지 않게 맞췄습니다. 다만 **스키마는 따로**입니다
+			(`AnalysisRequirementResult`) — 필드가 같다고 한 정의를 공유하면 한쪽이 한 칸 늘 때
+			다른 쪽 스펙이 조용히 함께 바뀝니다.
 			""")
 	public record RequirementResult(
 			UUID requirementId,

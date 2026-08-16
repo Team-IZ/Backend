@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.curriculum.presentation;
 import com.bigproject.backend.domain.curriculum.application.CurriculumService;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumCatalogSort;
+import com.bigproject.backend.domain.curriculum.presentation.dto.CohortCurriculumResponse;
 import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumCatalogItemResponse;
 import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumCatalogResponse;
 import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumUsingProjectResponse;
@@ -17,6 +18,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -186,12 +188,21 @@ public class CurriculumController {
     }
 
     @Operation(
-            summary = "기수 연결 교안 목록 | ✅ 사용 가능",
+            operationId = "findLinkableCurricula",
+            summary = "회차에 연결할 수 있는 교안 후보 | ✅ 사용 가능",
             description = """
-					기관 범위의 활성 교안 버전 목록을 조회한다.
+					회차에 **붙일 수 있는** 교안 버전 후보를 조회한다(회차 생성·교안 연결 모달).
+					**기관 전체가 맞다** — 후보는 기수로 좁힐 것이 없다.
+
+					🔴 **30차 Q2 — 이름이 뜻과 어긋나 있었다.** 이 조회의 예전 요약은 「기수 연결 교안
+					목록」이었는데 실제로 주는 것은 **연결 가능한 후보**다. 경로에 `cohortId`가 있는데
+					목록을 좁히지 않는 것도 같은 오해를 키웠다 — 그 값은 **존재 검증**에만 쓴다(22차 R7).
+
+					💡 **이미 연결된 것**을 보려면 `GET /cohorts/{cohortId}/linked-curricula`를 쓴다.
+					매니저 교안 화면이 보는 것은 그쪽이다.
 
 					**요청**
-					- cohortId (경로): 현재 미검증(항상 토큰의 기관 범위로 조회)
+					- cohortId (경로): 목록을 좁히지 않는다. 존재하지 않으면 404다
 
 					**응답 (200)**
 					- versionId / materialId: 교안 버전 ID / 원장 ID
@@ -239,6 +250,75 @@ public class CurriculumController {
         List<CurriculumVersionResponse> response = curriculumService
                 .findLinkableCurriculaForCohort(cohortId, orgId).stream()
                 .map(CurriculumVersionResponse::from)
+                .toList();
+        return ResponseEntity.ok(response);
+    }
+
+    @Operation(
+            operationId = "findCohortLinkedCurricula",
+            summary = "기수에 연결된 교안 목록 | ✅ 사용 가능",
+            description = """
+					이 기수의 회차들이 **실제로 연결한** 교안만 조회한다(MG-09 교안 화면).
+					읽기 전용이며 등록·재분석은 오퍼레이터 소관이라 이 화면에 쓰기 액션이 없다.
+
+					## 🔴 30차 Q2 — 이 목록을 주는 조회가 없었다
+
+					네 후보 모두 다른 값을 주고 있었다.
+
+					| 조회 | 실제로 주던 것 |
+					|---|---|
+					| `GET /cohorts/{cohortId}/curricula` | **연결 가능한 후보**(기관 전체). 이름이 뜻과 어긋나 있었다 |
+					| `GET /organizations/{organizationId}/curricula` | 기관 전체(페이지네이션) |
+					| `GET /projects`의 `curriculumNames[]` | **이름만**. 상세로 갈 `materialId`가 없다 |
+					| `GET /projects/{projectId}`의 `curricula[]` | 정확하지만 **회차 수만큼** 불러야 모인다 |
+
+					마지막 모양을 피하려고 만든 조회다 — 기수당 회차가 여섯이면 여섯 콜이 되고,
+					회차가 늘면 그만큼 늘어난다.
+
+					## 요청
+
+					| 파라미터 | 위치 | 필수 | 설명 |
+					|---|---|---|---|
+					| `cohortId` | 경로 | **필수** | 조회할 기수. **이번에는 실제로 목록을 좁힌다** |
+
+					## 응답 (200)
+
+					| 필드 | 타입 | 설명 |
+					|---|---|---|
+					| `versionId`·`materialId` | UUID | 교안 버전 ID·원장 ID. 상세로 갈 때 쓴다 |
+					| `versionNo`·`originalFileName` | | 버전 번호·파일명 |
+					| `pageCount` | int? | 페이지 수. 분석 전이면 null |
+					| `analysisStatus` | enum? | 최근 분석 시도 상태. **한 번도 안 했으면 null**이며 `FAILED`와 다르다 |
+					| `teachesCount` | int | 승인된 가르친 항목 수 |
+					| `createdAt` | date-time | 등록 시각 |
+					| `linkedProjects[]` | array | **이 교안을 쓴 회차들**. `projectId` · `projectName` · `sequenceNo` |
+
+					**한 교안이 여러 회차에 걸리면 한 번만 나오고** `linkedProjects[]`에 그 회차가 모두
+					담긴다. 이 배열이 이 화면의 맥락 전부라 비어 있는 채로 나오는 일은 없다 —
+					연결이 있어야 목록에 들어오기 때문이다.
+
+					회차 차수는 `sequenceNo`다. 미니프로젝트는 `round_no`가 늘 1이라 그것으로는
+					차수를 셀 수 없다.
+
+					연결이 하나도 없으면 빈 배열이다(기수가 아직 교안을 붙이지 않은 상태이며 정상이다).
+					"""
+    )
+    @PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "조회 성공(연결이 없으면 빈 배열)"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "403", description = "ACCESS_DENIED 오퍼레이터·매니저가 아님"),
+            @ApiResponse(responseCode = "404", description = "COHORT_NOT_FOUND 기수를 찾을 수 없음(다른 기관의 기수·삭제된 기수 포함)"),
+    })
+    @GetMapping("/cohorts/{cohortId}/linked-curricula")
+    public ResponseEntity<List<CohortCurriculumResponse>> findCohortLinkedCurricula(
+            @Parameter(description = "기수 ID. **이 값으로 목록을 좁힌다**")
+            @PathVariable UUID cohortId
+    ) {
+        UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
+        List<CohortCurriculumResponse> response = curriculumService
+                .findLinkedCurriculaForCohort(cohortId, orgId).stream()
+                .map(CohortCurriculumResponse::from)
                 .toList();
         return ResponseEntity.ok(response);
     }

@@ -151,7 +151,9 @@ public class TraineeRosterService {
 		Page<TraineeRosterRepository.RosterRow> page = traineeRosterRepository.findRoster(criteria, pageable);
 		int unassignedCount = traineeRosterRepository.countUnassigned(cohortId, orgId, scopedManagerId);
 		int cohortTotal = traineeRosterRepository.countCohortTotal(cohortId, orgId, scopedManagerId);
-		return new RosterResult(page, unassignedCount, cohortTotal, rounds, resolvedRoundId);
+		TraineeRosterRepository.AccountStatusCounts statusCounts =
+				traineeRosterRepository.countByAccountStatus(cohortId, orgId, scopedManagerId);
+		return new RosterResult(page, unassignedCount, cohortTotal, statusCounts, rounds, resolvedRoundId);
 	}
 
 	/**
@@ -278,6 +280,7 @@ public class TraineeRosterService {
 			Page<TraineeRosterRepository.RosterRow> page,
 			int unassignedCount,
 			int cohortTotal,
+			TraineeRosterRepository.AccountStatusCounts statusCounts,
 			List<TraineeRosterRepository.RoundOption> rounds,
 			UUID assessmentRoundId
 	) {

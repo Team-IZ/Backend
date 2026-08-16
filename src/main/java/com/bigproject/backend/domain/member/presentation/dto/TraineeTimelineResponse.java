@@ -85,9 +85,17 @@ public record TraineeTimelineResponse(
 			String sourceEntityType, UUID sourceEntityId,
 			@Schema(description = "원천 상태(수행 상태·리포트 수명주기·면담 상태)", nullable = true)
 			String sourceStatus,
+			// 30차 Q1 — 이 설명이 매니저에게 `GET /assessment-sessions/{sessionId}/problems/{problemNo}`를
+			// 부르라고 안내하고 있었다. 그 조회는 교육생 본인 전용이라 매니저 토큰으로는 403이다.
+			// 스펙이 화면을 막다른 길로 보내고 있었다.
 			@Schema(description = """
-					검증 세션 ID. `자세히`가 `GET /assessment-sessions/{sessionId}/problems/{problemNo}`를
-					부를 때 쓴다. 세션이 없으면 null이며 그때는 `expandable`도 false다.
+					검증 세션 ID. 세션이 없으면 null이며 그때는 `expandable`도 false다.
+
+					⚠️ **매니저는 이 id로 문답 전문을 열 수 없다.**
+					`GET /assessment-sessions/{sessionId}/problems/{problemNo}`는 **교육생 본인 전용**이다.
+					매니저 화면이 개념별 채점 근거를 그리려면
+					`GET /projects/{projectId}/evaluations/{userId}`의 `concepts[].steps[].note`를 쓴다 —
+					교육생 한 명당 1콜이다.
 					""", nullable = true)
 			UUID sessionId,
 			@Schema(description = "`자세히`를 켤지 여부. 세션이 없는 이해도 확인은 false다")
@@ -109,7 +117,7 @@ public record TraineeTimelineResponse(
 			@Schema(description = """
 					**REPORT 전용.** 다시 보기로 지정된 문항 수이며 화면의 `다시 보기 2건 지정`이다.
 					기준은 그 회차에서 도달 **2단 미만**(0~1단)인 문항 수다 — 정책상 재시험 대상이며
-					명단(MG-05)의 `2단 이하` 분자와 같은 산식이다. 2단은 게이트 밖이라 세지 않는다.
+					명단(MG-05) `lowStageConceptCount`와 같은 산식이다. 2단은 게이트 밖이라 세지 않는다.
 					""", example = "2", nullable = true)
 			Integer reviewTargetCount,
 			@Schema(description = "**REPORT 전용.** 리포트 요약 한 줄", nullable = true)

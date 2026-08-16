@@ -14,6 +14,14 @@ import java.util.UUID;
  * <p>{@code rows}는 언제나 <b>지금 계층의 비교 단위</b>(반·팀·팀원)이고, 고정된 상위 계층은
  * {@code scope}가 한 번만 싣는다. 셀에 소속 식별자를 반복하지 않으므로 계층이 바뀌어도
  * {@code null}로 비는 칸이 생기지 않는다.
+ *
+ * <p><b>중첩 타입에 전부 {@code @Schema(name=)}을 붙인 이유</b>(30차 R2②) — springdoc은 중첩
+ * record를 <b>단순 이름</b>으로 컴포넌트에 등록한다. 이 응답의 이름들({@code Concept} ·
+ * {@code Cell} · {@code Row} · {@code Scope} · {@code Team} · {@code Classroom})은 스펙 전체에서
+ * 가장 겹치기 쉬운 축에 속해, 이름만 두면 <b>나중에 등록된 쪽이 앞의 것을 조용히 덮어쓴다.</b>
+ * 실제로 {@code Concept}·{@code Team}·{@code Classroom} 셋이 다른 도메인 DTO에 밀려 스펙에서
+ * 사라졌고, 프론트는 히트맵 열 이름({@code conceptName})이 생성 타입에 아예 없는 상태로
+ * 화면을 붙이지 못했다. 스키마가 문법적으로는 멀쩡해서 스펙을 읽어서는 보이지 않는다.
  */
 public record ManagerHeatmapResponse(
 		UUID cohortId, UUID projectId, UUID assessmentRoundId,
@@ -26,10 +34,14 @@ public record ManagerHeatmapResponse(
 		@JsonInclude(JsonInclude.Include.NON_NULL)
 		@Schema(description = "집계 대상 셀이 하나도 없으면 키가 빠진다") Row summary,
 		List<Row> rows, Navigation navigation) {
+	@Schema(name = "HeatmapLevel")
 	public enum Level { CLASS, TEAM, TRAINEE }
+
+	@Schema(name = "HeatmapAttemptView")
 	public enum AttemptView { INITIAL, REVIEW }
 
 	/** 이 조회에서 <b>고정된</b> 상위 계층이다. CLASS 계층은 고정 상위가 없어 {@code null}이다. */
+	@Schema(name = "HeatmapScope")
 	public record Scope(
 			UUID classroomId, String classroomName,
 			@JsonInclude(JsonInclude.Include.NON_NULL)
@@ -44,7 +56,16 @@ public record ManagerHeatmapResponse(
 	 * <p>{@code groupShortfall}이 열 머리 {@code ⚠}이고 판정 기준은 계층마다 다르다 —
 	 * CLASS는 담당 반 전체, TEAM·TRAINEE는 {@code scope}의 그 반이다.
 	 */
-	public record Concept(int problemNo, UUID teachesId, String conceptName, Boolean groupShortfall) {
+	@Schema(name = "HeatmapConcept")
+	public record Concept(
+			@Schema(description = "가로축 순번이며 격자 열 순서다", example = "1") int problemNo,
+			UUID teachesId,
+			@Schema(description = "화면의 **열 이름**이다", example = "API 응답 계약 설계") String conceptName,
+			@Schema(description = """
+					이 개념이 집단 미달이라 열 머리에 ⚠를 붙일지 여부다. 판정 기준 집단은 계층마다
+					다르다 — CLASS는 담당 반 전체, TEAM·TRAINEE는 `scope`의 그 반이다.
+					""")
+			Boolean groupShortfall) {
 	}
 
 	/**
@@ -54,6 +75,7 @@ public record ManagerHeatmapResponse(
 	 * <p>{@code memberCount}는 <b>명부 인원</b>이라 응시하지 않은 사람을 포함하며
 	 * 셀의 {@code validCount}와 다르다. 개인 행은 인원 개념이 없어 {@code null}이다.
 	 */
+	@Schema(name = "HeatmapRow")
 	public record Row(
 			@JsonInclude(JsonInclude.Include.NON_NULL)
 			@Schema(description = "합계 행에서는 키가 빠진다") UUID rowId,
@@ -76,6 +98,7 @@ public record ManagerHeatmapResponse(
 	 * <p>{@code initialLevel}·{@code comparisonLevel}·{@code delta}는 {@code REVIEW}
 	 * 전용이라 {@code INITIAL} 응답에서는 <b>키 자체가 빠진다</b>.
 	 */
+	@Schema(name = "HeatmapCell")
 	public record Cell(
 			int problemNo, BigDecimal value, String status,
 			Integer validCount, Integer notAttendedCount, Integer invalidCount, Integer interruptedCount,
@@ -94,12 +117,23 @@ public record ManagerHeatmapResponse(
 	 *
 	 * <p>CLASS 계층에서는 {@code rows}가 곧 반 목록이라 <b>비운다</b> — 같은 값을 두 번 싣지 않는다.
 	 */
+	@Schema(name = "HeatmapNavigation", description = """
+			계층을 바꾸는 툴바 셀렉터 데이터입니다.
+
+			⚠️ **`level=CLASS`에서는 두 배열이 모두 빕니다**(의도된 동작입니다) — 그 계층에서는
+			`rows[]`가 곧 반 목록이라 같은 값을 두 번 싣지 않습니다. 첫 화면의 반 셀렉터는
+			`rows[]`로 만드시면 됩니다.
+
+			`level=TEAM`이면 `classrooms`가 차고, `level=TRAINEE`면 `teams`까지 찹니다.
+			""")
 	public record Navigation(List<Classroom> classrooms, List<Team> teams) {
 	}
 
+	@Schema(name = "HeatmapClassroom")
 	public record Classroom(UUID classroomId, String classroomName, int memberCount) {
 	}
 
+	@Schema(name = "HeatmapTeam")
 	public record Team(UUID teamId, String teamName, int memberCount) {
 	}
 }

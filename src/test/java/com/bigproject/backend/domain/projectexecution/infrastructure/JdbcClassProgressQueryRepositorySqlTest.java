@@ -26,14 +26,41 @@ class JdbcClassProgressQueryRepositorySqlTest {
 	private final UUID projectId = UUID.randomUUID();
 	private final UUID roundId = UUID.randomUUID();
 	private final UUID organizationId = UUID.randomUUID();
+	private final UUID managerUserId = UUID.randomUUID();
 
 	@Test
 	void everyStatementParsesAndRunsAgainstTheRealSchema() {
 		JdbcClassProgressQueryRepository repository = repositoryOrSkip();
 
 		assertThatCode(() -> repository.findRound(projectId, 1)).doesNotThrowAnyException();
-		assertThatCode(() -> repository.findClassProgress(roundId, organizationId)).doesNotThrowAnyException();
-		assertThatCode(() -> repository.findConceptMatches(roundId, organizationId)).doesNotThrowAnyException();
+		assertThatCode(() -> repository.findClassProgress(roundId, organizationId, null))
+				.doesNotThrowAnyException();
+		assertThatCode(() -> repository.findRoundSummary(roundId, organizationId, null))
+				.doesNotThrowAnyException();
+		assertThatCode(() -> repository.findConceptMatches(roundId, organizationId, null))
+				.doesNotThrowAnyException();
+		assertThatCode(() -> repository.findFailedTeams(roundId, organizationId, null))
+				.doesNotThrowAnyException();
+	}
+
+	/**
+	 * 30차 R3 — 담당 반 제한은 SQL <b>문자열을 이어 붙여</b> 만들므로 오퍼레이터가 부를 때와
+	 * 매니저가 부를 때의 질의가 서로 다른 문장이다. 한쪽만 돌려 보면 나머지 한쪽의 문법 오류나
+	 * 바인딩 어긋남을 전혀 보지 못한다 — 개념 매칭은 조각이 CTE 두 곳에 들어가 매니저 ID를
+	 * <b>두 번</b> 싣는다.
+	 */
+	@Test
+	void everyManagerScopedStatementParsesToo() {
+		JdbcClassProgressQueryRepository repository = repositoryOrSkip();
+
+		assertThatCode(() -> repository.findClassProgress(roundId, organizationId, managerUserId))
+				.doesNotThrowAnyException();
+		assertThatCode(() -> repository.findRoundSummary(roundId, organizationId, managerUserId))
+				.doesNotThrowAnyException();
+		assertThatCode(() -> repository.findConceptMatches(roundId, organizationId, managerUserId))
+				.doesNotThrowAnyException();
+		assertThatCode(() -> repository.findFailedTeams(roundId, organizationId, managerUserId))
+				.doesNotThrowAnyException();
 	}
 
 	@Test
@@ -41,7 +68,8 @@ class JdbcClassProgressQueryRepositorySqlTest {
 		JdbcClassProgressQueryRepository repository = repositoryOrSkip();
 
 		assertThat(repository.findRound(projectId, 1)).isEmpty();
-		assertThat(repository.findClassProgress(roundId, organizationId)).isEmpty();
+		assertThat(repository.findClassProgress(roundId, organizationId, null)).isEmpty();
+		assertThat(repository.findClassProgress(roundId, organizationId, managerUserId)).isEmpty();
 	}
 
 	private JdbcClassProgressQueryRepository repositoryOrSkip() {

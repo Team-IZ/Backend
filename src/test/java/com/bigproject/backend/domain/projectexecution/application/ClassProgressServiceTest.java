@@ -8,6 +8,8 @@ import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.domain.projectexecution.domain.ClassProgressQueryRepository;
 import com.bigproject.backend.domain.projectexecution.presentation.dto.ClassProgressResponse;
 import com.bigproject.backend.global.exception.ApiException;
+import com.bigproject.backend.global.security.ManagerViewAccessErrorCode;
+import com.bigproject.backend.global.security.ManagerViewScopeGuard;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -18,35 +20,45 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ClassProgressServiceTest {
 	private static final String ACTOR_EMAIL = "lead@example.com";
 
+	private static final String MANAGER_EMAIL = "manager@example.com";
+
 	private final AuthUserRepository authUserRepository = mock(AuthUserRepository.class);
+	private final ManagerViewScopeGuard managerViewScopeGuard = mock(ManagerViewScopeGuard.class);
 	private final ClassProgressQueryRepository classProgressQueryRepository =
 			mock(ClassProgressQueryRepository.class);
 	private final ClassProgressService service = new ClassProgressService(
-			new AnalyticsActorGuard(authUserRepository), classProgressQueryRepository);
+			new AnalyticsActorGuard(authUserRepository), managerViewScopeGuard, classProgressQueryRepository);
 
 	private final UUID organizationId = UUID.randomUUID();
 	private final UUID projectId = UUID.randomUUID();
 	private final UUID roundId = UUID.randomUUID();
+	private final UUID cohortId = UUID.randomUUID();
 	private final UUID classId = UUID.randomUUID();
+	private final UUID managerUserId = UUID.randomUUID();
 
 	@BeforeEach
 	void givenOperatorAndRound() {
 		when(authUserRepository.findByNormalizedEmail(ACTOR_EMAIL)).thenReturn(Optional.of(new AuthUser(
 				UUID.randomUUID(), organizationId, ACTOR_EMAIL, "Actor", "hash",
 				"ACTIVE", true, null, Role.OPERATOR, "ACTIVE")));
+		when(authUserRepository.findByNormalizedEmail(MANAGER_EMAIL)).thenReturn(Optional.of(new AuthUser(
+				managerUserId, organizationId, MANAGER_EMAIL, "Manager", "hash",
+				"ACTIVE", true, null, Role.MANAGER, "ACTIVE")));
 		when(classProgressQueryRepository.findRound(projectId, 1)).thenReturn(Optional.of(
 				new ClassProgressQueryRepository.RoundScope(
-						roundId, projectId, "미프 3차", 1, "RAG 파이프라인", organizationId,
+						roundId, projectId, "미프 3차", 1, "RAG 파이프라인", organizationId, cohortId,
 						java.time.Instant.parse("2026-08-06T09:00:00Z"), "ROUND_BATCH", false, 6)));
-		when(classProgressQueryRepository.findRoundSummary(roundId, organizationId)).thenReturn(
+		when(classProgressQueryRepository.findRoundSummary(roundId, organizationId, null)).thenReturn(
 				new ClassProgressQueryRepository.RoundSummaryRow(250, 231, 231, 223, 223, 198));
 	}
 
@@ -83,7 +95,7 @@ class ClassProgressServiceTest {
 
 	@Test
 	void reportsAnEmptyManagerListRatherThanOmittingTheClass() {
-		when(classProgressQueryRepository.findClassProgress(roundId, organizationId)).thenReturn(List.of(
+		when(classProgressQueryRepository.findClassProgress(roundId, organizationId, null)).thenReturn(List.of(
 				new ClassProgressQueryRepository.ClassProgressRow(
 						classId, "F반", 25, 22, 22, 0, 0, 0, 18, 3, 1, 0, List.of())
 		));
@@ -98,7 +110,7 @@ class ClassProgressServiceTest {
 
 	@Test
 	void carriesConceptMatchCountsForTheSameRound() {
-		when(classProgressQueryRepository.findConceptMatches(roundId, organizationId)).thenReturn(List.of(
+		when(classProgressQueryRepository.findConceptMatches(roundId, organizationId, null)).thenReturn(List.of(
 				new ClassProgressQueryRepository.ConceptMatchRow(
 						UUID.randomUUID(), "Snapshot 개념과 구성 요소", 227, 84, 31)
 		));
@@ -143,13 +155,13 @@ class ClassProgressServiceTest {
 		UUID otherClassId = UUID.randomUUID();
 		UUID representativeUserId = UUID.randomUUID();
 		UUID failedTeamId = UUID.randomUUID();
-		when(classProgressQueryRepository.findClassProgress(roundId, organizationId)).thenReturn(List.of(
+		when(classProgressQueryRepository.findClassProgress(roundId, organizationId, null)).thenReturn(List.of(
 				new ClassProgressQueryRepository.ClassProgressRow(
 						classId, "B반", 25, 24, 23, 1, 0, 0, 20, 2, 1, 0, List.of("이도윤")),
 				new ClassProgressQueryRepository.ClassProgressRow(
 						otherClassId, "C반", 25, 25, 25, 0, 0, 0, 25, 0, 0, 0, List.of("박서준"))
 		));
-		when(classProgressQueryRepository.findFailedTeams(roundId, organizationId)).thenReturn(List.of(
+		when(classProgressQueryRepository.findFailedTeams(roundId, organizationId, null)).thenReturn(List.of(
 				new ClassProgressQueryRepository.FailedTeamRow(
 						classId, failedTeamId, "3팀", representativeUserId, "김민준", "REPOSITORY_ACCESS_DENIED")
 		));
@@ -175,13 +187,13 @@ class ClassProgressServiceTest {
 	void rejectsProjectOwnedByAnotherOrganization() {
 		when(classProgressQueryRepository.findRound(projectId, 1)).thenReturn(Optional.of(
 				new ClassProgressQueryRepository.RoundScope(
-						roundId, projectId, "미프 3차", 1, "RAG 파이프라인", UUID.randomUUID(),
+						roundId, projectId, "미프 3차", 1, "RAG 파이프라인", UUID.randomUUID(), cohortId,
 						java.time.Instant.parse("2026-08-06T09:00:00Z"), "ROUND_BATCH", false, 6)));
 
 		assertThatThrownBy(() -> service.findClassProgress(projectId, 1, ACTOR_EMAIL))
 				.isInstanceOfSatisfying(ApiException.class, exception ->
 						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.PROJECT_CROSS_ORGANIZATION));
-		verify(classProgressQueryRepository, never()).findClassProgress(any(), any());
+		verify(classProgressQueryRepository, never()).findClassProgress(any(), any(), any());
 	}
 
 	/** 회차는 있는데 <b>그 번호</b>가 없다. 화면은 회차 드롭다운을 되돌리면 된다. */
@@ -211,11 +223,66 @@ class ClassProgressServiceTest {
 						assertThat(exception.errorCode()).isEqualTo(AnalyticsErrorCode.PROJECT_ROUND_NOT_CREATED));
 	}
 
+	/**
+	 * 30차 R3 — <b>매니저는 네 질의 모두 담당 반으로 좁혀 받는다.</b>
+	 *
+	 * <p>{@code summary}까지 좁히는 것이 핵심이다. 좁히지 않으면 같은 응답 안에서 합계가 기수
+	 * 전체(208명)를, 반 행이 담당 반(26명)을 말하게 된다 — 탭 사이의 불일치를 응답 안으로
+	 * 옮기는 것일 뿐이다.
+	 */
+	@Test
+	void narrowsEveryQueryToTheClassesTheManagerOwns() {
+		when(managerViewScopeGuard.managesCohort(managerUserId, organizationId, cohortId)).thenReturn(true);
+		when(classProgressQueryRepository.findRoundSummary(roundId, organizationId, managerUserId))
+				.thenReturn(new ClassProgressQueryRepository.RoundSummaryRow(26, 26, 26, 25, 25, 24));
+		when(classProgressQueryRepository.findClassProgress(roundId, organizationId, managerUserId))
+				.thenReturn(List.of(new ClassProgressQueryRepository.ClassProgressRow(
+						classId, "C반", 26, 26, 25, 1, 0, 0, 24, 1, 0, 0, List.of("이도윤"))));
+
+		ClassProgressResponse response = service.findClassProgress(projectId, 1, MANAGER_EMAIL);
+
+		assertThat(response.summary().targetTraineeCount()).isEqualTo(26);
+		assertThat(response.classes()).singleElement()
+				.satisfies(row -> assertThat(row.className()).isEqualTo("C반"));
+		// 기수 전체를 세는 호출이 하나라도 남으면 탭마다 숫자가 달라진다.
+		verify(classProgressQueryRepository, never()).findRoundSummary(any(), any(), isNull());
+		verify(classProgressQueryRepository, never()).findClassProgress(any(), any(), isNull());
+		verify(classProgressQueryRepository, never()).findConceptMatches(any(), any(), isNull());
+		verify(classProgressQueryRepository, never()).findFailedTeams(any(), any(), isNull());
+	}
+
+	/** 오퍼레이터는 좁히지 않는다. 담당 반이라는 개념이 없어 기수 전체가 그의 모집단이다. */
+	@Test
+	void leavesTheOperatorSeeingTheWholeCohort() {
+		givenClass(25, 24, 23, 1, 0, 0, 20);
+
+		service.findClassProgress(projectId, 1, ACTOR_EMAIL);
+
+		verify(classProgressQueryRepository).findRoundSummary(roundId, organizationId, null);
+		verify(classProgressQueryRepository).findClassProgress(roundId, organizationId, null);
+		verifyNoInteractions(managerViewScopeGuard);
+	}
+
+	/**
+	 * 담당 반이 하나도 없는 기수를 매니저가 열면 <b>404로 끊는다.</b> 좁히기만 하면 그 화면은
+	 * 「반 0개 · 인원 0명」이 되어, 권한이 없다는 사실이 「아직 데이터가 없다」로 보인다 —
+	 * 화면이 기다리라고 안내하게 되고 기다려도 달라지지 않는다.
+	 */
+	@Test
+	void refusesACohortTheManagerDoesNotOwnRatherThanReturningZeros() {
+		when(managerViewScopeGuard.managesCohort(managerUserId, organizationId, cohortId)).thenReturn(false);
+
+		assertThatThrownBy(() -> service.findClassProgress(projectId, 1, MANAGER_EMAIL))
+				.isInstanceOfSatisfying(ApiException.class, exception -> assertThat(exception.errorCode())
+						.isEqualTo(ManagerViewAccessErrorCode.MANAGER_SCOPE_NOT_FOUND));
+		verify(classProgressQueryRepository, never()).findClassProgress(any(), any(), any());
+	}
+
 	private void givenClass(
 			long target, long submitted, long succeeded, long failed,
 			long partial, long inProgress, long assessed
 	) {
-		when(classProgressQueryRepository.findClassProgress(roundId, organizationId)).thenReturn(List.of(
+		when(classProgressQueryRepository.findClassProgress(roundId, organizationId, null)).thenReturn(List.of(
 				new ClassProgressQueryRepository.ClassProgressRow(
 						classId, "B반", target, submitted, succeeded, failed, partial, inProgress,
 						assessed, 2, 1, 0, List.of("이도윤"))

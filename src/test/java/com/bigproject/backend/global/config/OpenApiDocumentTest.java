@@ -1,14 +1,18 @@
 package com.bigproject.backend.global.config;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -525,7 +529,9 @@ class OpenApiDocumentTest {
 	 */
 	@Test
 	void letsTheTeamRowSayThereIsNoSubmissionOrAnalysisYet() throws Exception {
-		JsonNode team = spec().path("components").path("schemas").path("Team");
+		// 30차 R2① — 이 스키마는 `Team`이었다. 히트맵의 같은 이름 record와 부딪혀 있던 것을
+		// `SubmissionStatusTeam`으로 갈랐다(schemaNamesAreUniqueAcrossPresentationDtos).
+		JsonNode team = spec().path("components").path("schemas").path("SubmissionStatusTeam");
 
 		// 키는 항상 나간다. required에서 빼면 화면이 "키가 없을 수도 있다"로 읽어 옵셔널 체이닝이 는다.
 		assertThat(team.path("required").toString()).contains("submission", "analysis");
@@ -918,6 +924,67 @@ class OpenApiDocumentTest {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * <b>스키마 이름은 스펙 전체에서 유일해야 한다</b>(30차 R2①②).
+	 *
+	 * <p>springdoc은 중첩 record를 <b>단순 이름</b>으로 컴포넌트에 등록한다. 같은 이름이 둘이면
+	 * 예외도 경고도 없이 <b>나중 것이 앞의 것을 덮어쓰고</b>, 밀려난 쪽을 참조하던 응답은 남의 정의를
+	 * 가리키게 된다. 스펙은 문법적으로 멀쩡하고 CI도 통과하므로 <b>읽어서는 보이지 않는다</b> —
+	 * 30차에는 {@code Summary}(3중복)·{@code Concept}·{@code Classroom}·{@code Team}·
+	 * {@code RequirementResult}·{@code Trainee} 여섯 이름이 겹쳐 있었고, 프론트가 히트맵을 화면에
+	 * 붙이다가 열 이름이 생성 타입에 없다는 것을 발견하고서야 드러났다.
+	 *
+	 * <p>스펙 결과물만 봐서는 검사할 수 없다 — 밀려난 스키마는 <b>흔적 없이 사라지므로</b> 스펙에
+	 * 남는 것은 정상적인 스키마 하나뿐이다. 그래서 등록 <b>전</b>인 타입 쪽을 센다.
+	 *
+	 * <p>{@code ..presentation..}만 보는 이유는 이 프로젝트에서 응답·요청 DTO가 그 아래에만 있기
+	 * 때문이다. 그 밖(application·domain·infrastructure)의 record는 컴포넌트로 등록되지 않으므로
+	 * 같은 이름을 써도 부딪히지 않는다.
+	 */
+	@Test
+	void schemaNamesAreUniqueAcrossPresentationDtos() {
+		ClassPathScanningCandidateComponentProvider scanner =
+				new ClassPathScanningCandidateComponentProvider(false);
+		scanner.addIncludeFilter((reader, factory) -> true);
+
+		Map<String, List<String>> bySchemaName = new LinkedHashMap<>();
+		for (BeanDefinition definition : scanner.findCandidateComponents("com.bigproject.backend")) {
+			String className = definition.getBeanClassName();
+			if (className == null || !className.contains(".presentation.")) {
+				continue;
+			}
+			Class<?> type;
+			try {
+				type = Class.forName(className);
+			} catch (ClassNotFoundException | NoClassDefFoundError ignored) {
+				continue;
+			}
+			if (!type.isRecord() && !type.isEnum()) {
+				continue;
+			}
+			bySchemaName.computeIfAbsent(schemaNameOf(type), name -> new ArrayList<>())
+					.add(type.getName());
+		}
+
+		// 스캐너가 아무것도 못 찾으면 위 단언은 공허하게 통과한다. 실제로 세고 있는지부터 확인한다.
+		assertThat(bySchemaName).hasSizeGreaterThan(100);
+
+		List<String> collisions = bySchemaName.entrySet().stream()
+				.filter(entry -> entry.getValue().size() > 1)
+				.map(entry -> entry.getKey() + " ← " + String.join(" · ", entry.getValue()))
+				.toList();
+
+		assertThat(collisions)
+				.as("스키마 이름이 겹치면 한쪽이 스펙에서 조용히 사라진다. @Schema(name = \"...\")로 갈라라")
+				.isEmpty();
+	}
+
+	/** springdoc이 이 타입을 등록할 이름. {@code @Schema(name)}을 적었으면 그것이 이긴다. */
+	private static String schemaNameOf(Class<?> type) {
+		Schema schema = type.getAnnotation(Schema.class);
+		return schema == null || schema.name().isEmpty() ? type.getSimpleName() : schema.name();
 	}
 
 	private interface ResponseVisitor {

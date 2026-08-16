@@ -50,7 +50,7 @@ public record ProjectEvaluationSummaryResponse(
 		List<Trainee> trainees
 ) {
 
-	@Schema(description = """
+	@Schema(name = "ProjectEvaluationSummary", description = """
 			요약 카드 3장의 원자 값.
 
 			`retryTargetCount`(다시 보기 대상)는 화면이 `failedCount + notAttendedCount`로 만듭니다 —
@@ -104,7 +104,8 @@ public record ProjectEvaluationSummaryResponse(
 	public record Person(UUID userId, String name) {
 	}
 
-	@Schema(description = "교육생 한 명. 목록에 필요한 만큼만 담고 축별 단계는 상세 조회에서 옵니다.")
+	@Schema(name = "ProjectEvaluationTrainee",
+			description = "교육생 한 명. 목록에 필요한 만큼만 담고 축별 단계는 상세 조회에서 옵니다.")
 	public record Trainee(
 			UUID userId,
 			String name,
