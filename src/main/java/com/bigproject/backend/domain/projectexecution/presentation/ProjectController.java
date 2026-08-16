@@ -46,12 +46,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import com.bigproject.backend.domain.submission.application.SubmissionStatusService;
 
 import java.util.List;
 import java.util.UUID;
 
 @Tag(name = "Project Execution", description = "프로젝트 구성·일정·요구사항 API")
-@Tag(name = "Project", description = "프로젝트 진행 현황 조회")
 @SecurityRequirement(name = "bearerAuth")
 @Validated
 @RestController
@@ -65,6 +65,7 @@ public class ProjectController {
 	private final ProjectService projectService;
 	private final CurrentUserResolver currentUserResolver;
 	private final ClassProgressService classProgressService;
+	private final SubmissionStatusService submissionStatusService;
 
 	@Operation(
 			operationId = "findProjects",
@@ -115,10 +116,10 @@ public class ProjectController {
 
 					화면의 4값은 두 필드를 겹쳐 만든다:
 
-					```ts
+```ts
 					const label = status === 'PLANNED' ? readiness : status;
 					// PREP | READY | RUNNING | CLOSED
-					```
+```
 
 					**판정 규칙** — 교안·확정 개념·마감일 셋 중 **하나라도 비어 있으면 `PREP`**, 셋 다 차면 `READY`.
 					`sort=READINESS`가 쓰는 규칙과 **같은 자리**에서 계산하므로 목록의 순서와 배지가 어긋날 수 없다.
@@ -199,10 +200,11 @@ public class ProjectController {
              ⚠️ **`cohort`·`classId` 중 하나만 보내야 한다.** 둘 다 없거나 둘 다 있으면
              400 `PROJECT_LIST_SCOPE_AMBIGUOUS`다.
 
-             ⚠️ **아직 없는 것** — 정의 문서(MG-07)의 "A반 미제출 2팀" 같은 제출 단위 집계는
-             이 응답에 없다. 제출 현황은 Submission 도메인에서 와야 한다. 지금은 회차 목록과
-             `readiness`·교안/개념 집계까지만 내려주고, 제출 집계는 Submission 도메인
-             착수 후 별도로 얹는다.
+             ## 🆕 진행·조치 필드가 목록 행에 붙는다
+
+             미니프로젝트 행마다 `progress`·`actionItems`가 함께 온다(Submission 도메인 위임).
+             빅프로젝트는 앵커가 개인 커밋 영역이라 반별 집계 대상이 아니므로 계산하지 않고,
+             `PLANNED` 상태는 진행이 아직 없으므로 `progress`가 null로 온다.
              """
 	)
 	@PreAuthorize("hasAnyRole('MANAGER')")
@@ -227,7 +229,9 @@ public class ProjectController {
 			@Parameter(description = "MINI_PROJECT·BIG_PROJECT로 좁힌다. 생략하면 전체")
 			@RequestParam(required = false) ProjectCategory category,
 			@Parameter(description = "정렬 기준", example = "READINESS")
-			@RequestParam(required = false, defaultValue = "READINESS") ProjectListSort sort
+			@RequestParam(required = false, defaultValue = "READINESS") ProjectListSort sort,
+			@Parameter(hidden = true)
+			Authentication authentication
 	) {
 		if ((cohort == null) == (classId == null || classId.isEmpty())) {
 			throw new ApiException(ProjectExecutionErrorCode.PROJECT_LIST_SCOPE_AMBIGUOUS);
@@ -236,10 +240,50 @@ public class ProjectController {
 		ProjectService.ProjectList list = projectService.findProjectList(
 				cohort, orgId,
 				new ProjectService.ProjectListCriteria(search, curriculumId, status, sort, classId, category));
-		return ResponseEntity.ok(ProjectListResponse.from(list));
+		ProjectListResponse response = ProjectListResponse.from(list);
+		List<ProjectResponse> enriched = response.projects().stream()
+				.map(project -> enrichWithProgress(project, authentication.getName(), classId))
+				.toList();
+		return ResponseEntity.ok(new ProjectListResponse(
+				enriched, response.total(), response.counts(), response.readinessCounts()));
+	}
+	/**
+	 * MG-07 목록 한 행에 '진행'·'조치'를 덧붙인다(반별 제출 진행률 조회, Submission 도메인 위임).
+	 *
+	 * <p>빅프는 계산하지 않는다 — 앵커가 개인 커밋 영역이라 반별 집계 대상이 아니다. PLANNED는
+	 * {@link SubmissionStatusService#findManagerProjectProgress}가 알아서 null을 돌려준다.
+	 *
+	 * <p>{@code classId}로 반 필터를 걸었으면 그 반 하나로 좁혀서 계산한다 — "이미 그 반만 보고
+	 * 있다"(MG-07 정의)는 원칙에 따라 진행·조치도 필터 결과와 같은 스코프여야 한다. 여러 반을
+	 * 동시에 골랐으면(담당 반이 여럿) 좁힐 기준이 하나로 정해지지 않으므로 담당 반 전체로 계산한다.
+	 */
+	private ProjectResponse enrichWithProgress(ProjectResponse project, String email, List<UUID> classId) {
+		if (project.category() != ProjectCategory.MINI_PROJECT) {
+			return project;
+		}
+		UUID scopeClassId = (classId != null && classId.size() == 1) ? classId.get(0) : null;
+		var result = submissionStatusService.findManagerProjectProgress(email, project.projectId(), scopeClassId);
+		return project.withProgress(toProgress(result.progress()), toActionItems(result.actionItems()));
 	}
 
+	private ProjectResponse.Progress toProgress(SubmissionStatusService.ManagerProjectProgress.Progress progress) {
+		if (progress == null) {
+			return null;
+		}
+		ProjectResponse.LaggingClass lagging = progress.laggingClass() == null ? null
+				: new ProjectResponse.LaggingClass(
+				progress.laggingClass().classId(), progress.laggingClass().className(),
+				progress.laggingClass().assessedCount(), progress.laggingClass().targetTraineeCount());
+		return new ProjectResponse.Progress(progress.assessedCount(), progress.targetTraineeCount(), lagging);
+	}
 
+	private List<ProjectResponse.ActionItem> toActionItems(
+			List<SubmissionStatusService.ManagerProjectProgress.ActionItem> items) {
+		return items.stream()
+				.map(item -> new ProjectResponse.ActionItem(
+						item.classId(), item.className(), item.type(), item.teamCount()))
+				.toList();
+	}
 	/**
 	 * @deprecated {@code GET /projects?classId=&status=RUNNING&sort=DUE_SOON}로 대체(19차).
 	 */
