@@ -84,6 +84,13 @@ public class SessionTurnStore {
 		}
 
 		if (result.cursor() != null && result.cursor().problemId() != null) {
+			// 커서가 다른 문제로 넘어갔다면 방금까지 풀던 문제가 끝난 것이다. 그 자리에서 닫아
+			// 종료 표식을 찍는다 — 이 경로를 빠뜨리면 남은 축이 열린 채로 남아 그 문제의 리포트가
+			// 영영 만들어지지 않는다. 같은 문제의 다른 축으로 옮기는 것은 종료가 아니다.
+			if (!input.stage().problemId().equals(result.cursor().problemId())) {
+				repository.closeProblem(sessionId, input.stage().problemId(),
+						JdbcSessionRepository.CLOSE_CURSOR_MOVED);
+			}
 			repository.moveCursor(sessionId, result.cursor().problemId(),
 					resolveStageId(sessionId, result.cursor().problemId(), result.cursor().axisCode()));
 		} else {
@@ -105,13 +112,14 @@ public class SessionTurnStore {
 	 * 모델 응답에 따라 흔들리면 안 되기 때문이다 — 같은 상황에서 어떤 학생은 다음 질문을 받고 어떤
 	 * 학생은 다음 문제로 가면, 리포트의 "도달 축"이 사람마다 다른 뜻이 된다.
 	 *
-	 * <p>남은 축은 {@code NOT_REACHED}로 닫는다. 그러지 않으면 {@code PREPARED}로 남아 리포트가
-	 * "여기까지 오지도 못했다"를 표현할 수 없다.
+	 * <p>남은 축은 {@code NOT_REACHED}·{@code NOT_PASSED}로 닫고 종료 표식을 찍는다
+	 * ({@link JdbcSessionRepository#closeProblem}). 그러지 않으면 {@code PREPARED}로 남아 리포트가
+	 * "여기까지 오지도 못했다"를 표현할 수 없고, 표식이 없으면 리포트 자체가 만들어지지 않는다.
 	 */
 	private AnswerSubmitResponse closeProblem(GradingInput input, AnswerResult result) {
 		UUID sessionId = input.head().sessionId();
 		UUID closedProblemId = input.stage().problemId();
-		repository.markNotReached(sessionId, closedProblemId);
+		repository.closeProblem(sessionId, closedProblemId, JdbcSessionRepository.CLOSE_HINTS_EXHAUSTED);
 
 		SessionStage nextStage = repository.findStages(sessionId).stream()
 				.filter(stage -> !stage.problemId().equals(closedProblemId))
