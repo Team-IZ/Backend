@@ -267,6 +267,33 @@ public class ProjectServiceImpl implements ProjectService {
     }
 
     /**
+     * 30차 Q2 — 기수의 프로젝트 전부를 한 번에 읽고, 그 프로젝트들이 건 교안 링크를 한 번에 읽는다.
+     * 회차마다 링크를 부르면 기수당 회차 수만큼 조회가 붙는다(그것이 프론트가 피하려던 모양이다).
+     */
+    @Override
+    public List<CohortCurriculumLink> findCurriculumLinksInCohort(UUID cohortId, UUID orgId) {
+        List<Project> projects = projectRepository
+                .findByCohortIdAndOrgIdAndDeletedAtIsNullOrderByCreatedAtDesc(cohortId, orgId);
+        if (projects.isEmpty()) {
+            return List.of();
+        }
+        Map<UUID, Project> projectById = projects.stream()
+                .collect(Collectors.toMap(Project::getProjectId, project -> project));
+
+        return projectCurriculumRepository
+                .findAllByProjectIdInAndOrgId(projectById.keySet(), orgId).stream()
+                .map(link -> {
+                    Project project = projectById.get(link.getProjectId());
+                    return new CohortCurriculumLink(link.getCurriculumVersionId(),
+                            project.getProjectId(), project.getName(), project.getSequenceNo());
+                })
+                // 화면이 `미프 1차 · 2차 · 3차`를 위에서 아래로 그리는 순서와 같다.
+                .sorted(Comparator.comparingInt(CohortCurriculumLink::sequenceNo)
+                        .thenComparing(CohortCurriculumLink::projectName))
+                .toList();
+    }
+
+    /**
      * 11차 R3. 이름 배열만 주던 것을 회차 객체로 바꿨다 — 재분석 경고가
      * "연결된 회차가 있으면 무조건"에서 "응시가 시작된 회차만"으로 좁혀질 수 있어야 한다.
      */
