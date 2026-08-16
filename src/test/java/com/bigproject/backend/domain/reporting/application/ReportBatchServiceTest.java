@@ -289,11 +289,11 @@ class ReportBatchServiceTest {
 	@Test
 	void countsBlockedSessionsEvenWhenThereIsNothingToDispatch() {
 		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of());
-		when(dispatchRepository.countSessionsWithUnfinishedStages()).thenReturn(4L);
+		when(dispatchRepository.countSessionsWithUnfinishedStages(CUTOFF_AT)).thenReturn(4L);
 
 		assertThat(service.dispatchDueSessions()).isZero();
 
-		verify(dispatchRepository).countSessionsWithUnfinishedStages();
+		verify(dispatchRepository).countSessionsWithUnfinishedStages(CUTOFF_AT);
 	}
 
 	/** 경고를 못 남긴 것이 요청을 막을 이유는 없다. */
@@ -302,7 +302,7 @@ class ReportBatchServiceTest {
 		catalogHasTheConfiguredModel();
 		ReportTarget target = target();
 		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of(target));
-		when(dispatchRepository.countSessionsWithUnfinishedStages())
+		when(dispatchRepository.countSessionsWithUnfinishedStages(CUTOFF_AT))
 				.thenThrow(new IllegalStateException("집계 실패"));
 		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of(problem(1)));
 		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());

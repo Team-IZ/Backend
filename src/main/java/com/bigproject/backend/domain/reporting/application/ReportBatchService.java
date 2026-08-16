@@ -369,11 +369,12 @@ public class ReportBatchService {
 	 */
 	private void warnAboutUnfinishedStages() {
 		try {
-			long blocked = dispatchRepository.countSessionsWithUnfinishedStages();
+			long blocked = dispatchRepository.countSessionsWithUnfinishedStages(transitionCutoffAt);
 			if (blocked > 0) {
-				log.warn("정리되지 않은 단계가 남아 리포트를 만들지 않은 세션 {}건. "
-						+ "세션 종료 시 남은 problem_stage 가 NOT_REACHED/NOT_ANSWERED 로 "
-						+ "정리되지 않았다 — 그대로 보내면 도달하지 못한 축이 대표로 잡힌다", blocked);
+				log.warn("종료 스탬프가 없어 리포트를 만들지 않은 세션 {}건. "
+						+ "세션·응시는 정상 완료됐는데 problem_stage.problem_closed_at 이 비어 있다 — "
+						+ "Assessment 의 문제 종료 처리가 그 경로를 놓쳤다는 뜻이고, "
+						+ "안전망 백필이 줍지 못하면 그 세션은 리포트가 없는 채로 남는다", blocked);
 			}
 		} catch (RuntimeException exception) {
 			log.warn("미정리 세션 수를 세지 못했다", exception);

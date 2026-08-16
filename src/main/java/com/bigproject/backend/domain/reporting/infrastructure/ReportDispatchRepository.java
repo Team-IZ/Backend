@@ -266,12 +266,45 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 	 * 대신 발행되지 않고, {@code report_generation_run} 행이 남아 "왜 이 학생만 리포트가 없나"의
 	 * 근거가 된다(2026-08-11 ⓐ안).
 	 *
+	 * <h2>🔴 "끝났다"는 음의 추론이 아니라 양의 사실로 읽는다 (2026-08-16 전환)</h2>
+	 *
+	 * <p>종전에는 <b>"아직 안 끝난 단계가 없다"</b>로 판정했다.
+	 *
+	 * <pre>
+	 * NOT EXISTS (... ps2.status IN ('PREPARED','IN_PROGRESS'))
+	 * </pre>
+	 *
+	 * <p>그 술어가 <b>정상 경로에서 영원히 거짓이 되는 경우가 있었다.</b> 질문에 답했으나 미달이고
+	 * 힌트가 남았으면 {@code SessionTurnStore.stageStatus()}가 그 단계를 {@code IN_PROGRESS}로
+	 * 저장하는데, AI 커서가 다른 문제로 옮겨 가면 그 행에 붙일 종료 상태가 없다 —
+	 * {@code ck_problem_stage_status_2}가 {@code NOT_PASSED}에 세 슬롯 모두 {@code FALSE}를
+	 * 요구했고({@code NULL}인 힌트가 걸린다), {@code NOT_REACHED}·{@code NOT_ANSWERED}는 아홉 슬롯
+	 * 전부 {@code NULL}을 요구했다. Assessment가 그 행을 남겨 둔 것은 게으름이 아니라 CHECK를
+	 * 위반하지 않는 유일한 선택이었다.
+	 *
+	 * <p>같은 결함이 {@code JdbcReportPayloadRepository.findConceptContext}의 {@code block_level}도
+	 * 왜곡했다 — 버려진 축이 미통과 집합에서 빠져 {@code NULL}이 되고 <b>L4가 대표 축</b>으로 잡힌다.
+	 *
+	 * <p>그래서 CHECK를 완화해 그 행이 {@code NOT_PASSED}로 닫히게 하고
+	 * ({@code 2026-08-17_problem_stage_close_marker.sql}), Assessment가 문제를 접을 때
+	 * {@code problem_closed_at}에 종료 시각을 찍는다. 이 조회는 <b>그 컬럼만 본다.</b>
+	 *
+	 * <p>부수적으로 과거 데이터가 구조적으로 빠진다 — 전환 이전 행은 전 축이 터미널이어도
+	 * {@code problem_closed_at}이 {@code NULL}이라 대상이 되지 않는다. 나중에 누가 그 행들의
+	 * {@code status}를 일괄 정규화해도 마찬가지다. <b>상태 정리와 생성 트리거가 분리돼 있어서다.</b>
+	 *
+	 * <p>{@code ORDER BY ps.problem_closed_at} — 오래 밀린 것부터 나간다. 안전망 백필이
+	 * {@code now()}가 아니라 실제 종료 시각을 채우는 이유가 이 정렬이다.
+	 *
 	 * <h2>🔴 인덱스 전제</h2>
 	 *
 	 * <p>{@code report_generation_run(report_id)} 인덱스가 있어야 한다. 없으면 판정마다
 	 * 그 테이블을 통째로 훑어 <b>31초</b>가 걸린다(시드 기준 실측). 인덱스가 있으면 <b>527ms</b>다.
 	 * FK만으로는 인덱스가 생기지 않고, {@code uq_report_generation_run_active}는 부분 인덱스라
 	 * 종료된 run 조회에 쓰이지 않는다.
+	 *
+	 * <p>{@code ix_problem_stage_closed_at}도 함께 전제한다. 부분 인덱스라
+	 * ({@code WHERE problem_closed_at IS NOT NULL}) 전환 이전 행이 인덱스에 들어가지 않는다.
 	 *
 	 * @return 문제 1건이 행 1개. 같은 세션의 문제 여러 개가 함께 나올 수 있다
 	 */
@@ -302,12 +335,7 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			   AND COALESCE(ma.assessment_close_at, r.assessment_due_at) IS NOT NULL
 			   AND s.started_at < COALESCE(ma.assessment_close_at, r.assessment_due_at)
 			   AND ma.validity_review_status <> 'CONFIRMED_INVALID'
-			   AND NOT EXISTS (
-			       SELECT 1 FROM problem_stage ps2
-			        WHERE ps2.session_id = ps.session_id
-			          AND ps2.problem_id = ps.problem_id
-			          AND ps2.status IN ('PREPARED', 'IN_PROGRESS')
-			   )
+			   AND ps.problem_closed_at IS NOT NULL
 			   AND NOT EXISTS (
 			       SELECT 1 FROM report_generation_item it
 			         JOIN report_generation_run run ON run.generation_run_id = it.generation_run_id
@@ -320,7 +348,7 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			   )
 			   AND\s""" + UNDER_ATTEMPT_LIMIT + """
 			   AND s.started_at >= :transitionCutoffAt
-			 ORDER BY ma.user_id, ap.problem_no
+			 ORDER BY ps.problem_closed_at, ma.user_id, ap.problem_no
 			 LIMIT :batchSize
 			""", nativeQuery = true)
 	List<ProblemDueTarget> findDueProblems(
@@ -390,31 +418,51 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 	java.util.Optional<ReportTarget> findTargetBySession(UUID sessionId);
 
 	/**
-	 * 세션 1건의 맥락을 <b>아무 조건 없이</b> 읽는다. 강제 생성 경로 전용이다.
+	 * 세션 1건의 맥락을 <b>미정리 게이트 하나만 남기고</b> 읽는다. 강제 생성 경로 전용이다.
 	 *
-	 * <h2>🔴 이 질의에는 유효성 규칙이 하나도 없다</h2>
+	 * <h2>무엇을 푸는가</h2>
 	 *
 	 * <p>{@link #findTargetBySession}이 "조절기 둘만 빼고 유효성은 그대로 둔다"였다면 이쪽은
-	 * <b>전부 뺀다.</b> 세션·응시 완료도, 종료 사유도, 무효 확인도, 단계 정리도, 발행 예정 시각도,
-	 * 회차 {@code deleted_at}도 보지 않는다. 오직 세션 ID로 축을 찾을 뿐이다.
+	 * <b>거의 전부 뺀다.</b> 세션·응시 완료도, 종료 사유도, 무효 확인도, 발행 예정 시각도,
+	 * 회차 {@code deleted_at}도 보지 않는다.
 	 *
-	 * <p>그래서 <b>이 경로로 만든 리포트는 발행되지 않을 수 있다.</b> 생성과 발행의 판정이 갈라져
-	 * 있어서다 — {@code ReportRunFinalizer}가 확정 직전에
-	 * {@link #findFinalizeContext}로 세션 유효성과 발행 시각을 다시 보고, 어긋나면 스냅샷만 만들고
-	 * {@code published_at}을 비워 둔다. 즉 <b>이 질의가 푸는 것은 "요청을 보낼 수 있는가"뿐이고
-	 * "학생에게 나가는가"는 그대로 지켜진다.</b>
+	 * <p>그래도 만든 리포트가 학생에게 나가지는 않는다 — {@code ReportRunFinalizer}가 확정 직전에
+	 * {@link #findFinalizeContext}로 세션 유효성과 발행 시각을 다시 본다. <b>이 질의가 푸는 것은
+	 * "요청을 보낼 수 있는가"뿐이고 "학생에게 나가는가"는 그대로 지켜진다.</b>
+	 *
+	 * <h2>🔴 다만 미정리 게이트는 남긴다 — 재검사가 이것만은 안 잡는다</h2>
+	 *
+	 * <p>위 논거에 예외가 하나 있다. {@link #findFinalizeContext}의 {@code eligible}이 보는 것은
+	 * 넷뿐이다.
+	 *
+	 * <pre>
+	 * s.status = 'COMPLETED' AND ma.status = 'COMPLETED'
+	 * AND ma.validity_review_status &lt;&gt; 'CONFIRMED_INVALID'
+	 * AND s.end_reason_code NOT IN (...6종...)
+	 * </pre>
+	 *
+	 * <p><b>미정리 단계는 거기 없다.</b> 그래서 단계가 안 끝난 세션에 강제 생성을 걸면
+	 * 발행 직전 재검사를 그대로 통과하고 <b>틀린 리포트가 학생에게 나간다</b> —
+	 * {@code block_level}이 NULL이 되어 도달조차 못 한 축이 대표로 잡힌다.
+	 *
+	 * <p>{@link #NO_UNFINISHED_STAGE}의 javadoc이 이 구분을 이미 못박고 있다.
+	 * {@link #BLOCKING_RUN_EXISTS}·{@link #UNDER_ATTEMPT_LIMIT}는 <b>"얼마나 자주"를 막는 조절기</b>라
+	 * 사람이 넘어가도 되지만, 이것은 <b>"만들어도 되는 데이터인가"를 보는 유효성 규칙</b>이다.
+	 * 조절기는 풀고 유효성 규칙은 남기는 것이 이 질의의 설계다.
 	 *
 	 * <h2>왜 조건을 푸는 별도 질의를 두는가</h2>
 	 *
-	 * <p>연동 시험 때문이다. AI 계약이 바뀌었거나 8필드 조립이 맞는지 확인해야 할 때, 회차 마감을
-	 * 기다리거나 {@code assessment_due_at}을 손대는 것은 <b>확인하려는 것과 무관한 데이터를
-	 * 망가뜨린다.</b> 조건을 SQL에서 푸는 대신 <b>이 질의를 타지 않는 경로를 따로 두는</b> 원칙은
+	 * <p>연동 시험 때문이다. AI 계약이 바뀌었거나 8필드 조립이 맞는지 확인해야 할 때, 응시 창이
+	 * 닫히기를 기다리거나 회차 일정을 손대는 것은 <b>확인하려는 것과 무관한 데이터를 망가뜨린다.</b>
+	 * 조건을 SQL에서 푸는 대신 <b>이 질의를 타지 않는 경로를 따로 두는</b> 원칙은
 	 * {@link #findTargetBySession}과 같다.
 	 *
 	 * <p>⚠️ 이것을 쓰는 엔드포인트는 {@code ai.report.force-endpoint.enabled}로 꺼 둔다.
-	 * 켜져 있으면 아무 세션에나 LLM 비용을 태울 수 있다.
+	 * 켜져 있으면 아무 세션에나 LLM 비용을 태울 수 있다. {@code problem_closed_at} 전환이 끝나면
+	 * <b>엔드포인트째 제거한다</b> — 그때는 그 컬럼을 해당 (세션, 문제)에만 채우는 것으로 같은
+	 * 일을 할 수 있다(2026-08-16 합의 §4-3).
 	 *
-	 * @return 세션이 아예 없을 때만 빈 값
+	 * @return 세션이 없거나 아직 정리되지 않은 단계가 남았으면 빈 값
 	 */
 	@Query(value = """
 			SELECT s.session_id           AS sessionId,
@@ -432,15 +480,30 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			  JOIN project_assessment_round r
 			    ON r.assessment_round_id = ma.assessment_round_id
 			 WHERE s.session_id = :sessionId
+			   AND\s""" + NO_UNFINISHED_STAGE + """
 			""", nativeQuery = true)
 	java.util.Optional<ReportTarget> findSessionContext(@Param("sessionId") UUID sessionId);
 
 	/**
-	 * 정리되지 않은 stage 때문에 대상에서 빠진 세션 수. 경고에만 쓴다.
+	 * 종료 스탬프가 안 찍혀 대상에서 빠진 세션 수. 경고에만 쓴다.
 	 *
-	 * <p>{@link #NO_UNFINISHED_STAGE}가 조용히 걸러 버리면 "리포트가 왜 안 생기지"를 되짚을
-	 * 단서가 없다. 대상 조회와 같은 유효성 규칙을 적용한 뒤 <b>그 조건 하나만 뒤집어</b> 센다 —
-	 * 이미 리포트를 만든 세션까지 세면 숫자가 늘 커서 신호가 되지 않으므로 실행 게이트도 함께 본다.
+	 * <p>대상 조회가 조용히 걸러 버리면 "리포트가 왜 안 생기지"를 되짚을 단서가 없다. 대상 조회와
+	 * 같은 유효성 규칙을 적용한 뒤 <b>그 조건 하나만 뒤집어</b> 센다 — 이미 리포트를 만든 세션까지
+	 * 세면 숫자가 늘 커서 신호가 되지 않으므로 실행 게이트도 함께 본다.
+	 *
+	 * <h2>🔴 기준이 바뀌었다 (2026-08-16 전환)</h2>
+	 *
+	 * <p>종전에는 {@code PREPARED}·{@code IN_PROGRESS} <b>잔존</b>을 셌다. 그 술어가 대상 조회의
+	 * 판정이었기 때문이다. 이제 판정은 {@code problem_closed_at}이므로 세는 것도 <b>"세션·응시가
+	 * 정상 완료됐는데 스탬프가 안 찍힌 문제가 있다"</b>로 옮긴다.
+	 *
+	 * <p>옛 기준을 그대로 두면 <b>정상 진행 중인 세션까지 센다</b> — 지금 문제를 푸는 중이면 그 단계는
+	 * 당연히 {@code IN_PROGRESS}다. 경고가 늘 켜져 있으면 신호가 아니다.
+	 *
+	 * <p>⚠️ {@code transitionCutoffAt}을 함께 건다. 없으면 전환 직후 이 경고가 <b>과거 세션 때문에
+	 * 수천을 외친다</b> — 전환 이전 행은 전부 스탬프가 없다. 숫자가 크면 신호가 죽는다는 것은
+	 * 이 경고를 만든 논리 그대로다. 대상 조회의 컷오프는 전환이 끝나면 지우지만
+	 * <b>이쪽은 영구히 남는다.</b>
 	 */
 	@Query(value = """
 			SELECT count(*)
@@ -462,10 +525,16 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			           'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
 			           'REVIEW_DUE_AT_EXPIRED', 'DATA_INTEGRITY_INVALID',
 			           'ADMIN_INVALIDATED', 'TECHNICAL_FAILURE'))
-			   AND NOT\s""" + NO_UNFINISHED_STAGE + """
+			   AND s.started_at >= :transitionCutoffAt
+			   AND EXISTS (
+			       SELECT 1 FROM problem_stage ps
+			        WHERE ps.session_id = s.session_id
+			          AND ps.problem_closed_at IS NULL
+			   )
 			   AND NOT\s""" + BLOCKING_RUN_EXISTS + """
 			""", nativeQuery = true)
-	long countSessionsWithUnfinishedStages();
+	long countSessionsWithUnfinishedStages(
+			@Param("transitionCutoffAt") java.time.Instant transitionCutoffAt);
 
 	/**
 	 * 이 세션의 문제 목록. AI를 문제마다 부르므로 이 수만큼 item이 생긴다.
