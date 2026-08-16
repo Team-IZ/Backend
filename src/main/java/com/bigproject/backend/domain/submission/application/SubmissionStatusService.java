@@ -257,7 +257,7 @@ public class SubmissionStatusService {
 	 * <p><b>회차가 없거나 아직 시작 전인 프로젝트는 {@code progress}가 null이다.</b> 0/0으로 채우면
 	 * 화면이 "아무도 응시 안 함"으로 읽는데, 예정 회차는 그것과 다르다 — 잴 것 자체가 없다.
 	 */
-	public ManagerProjectProgress findManagerProjectProgress(String email, UUID projectId) {
+	public ManagerProjectProgress findManagerProjectProgress(String email, UUID projectId, UUID classId) {
 		// 미니프로젝트는 회차가 프로젝트당 1건이라 round_no=1로 특정된다.
 		var round = repository.findRound(projectId, 1).orElse(null);
 		if (round == null) {
@@ -273,18 +273,23 @@ public class SubmissionStatusService {
 			return new ManagerProjectProgress(null, List.of());
 		}
 
-		// classId=null이면 담당 반 전체다(프로젝트 전체가 아니다).
-		var teams = repository.findTeams(projectId, round.assessmentRoundId(), orgId, managerUserId, null);
+		// classId를 지정했는데 담당 밖이면 findSubmissionStatus와 같은 규칙으로 막는다 —
+		// 목록에서 필터를 걸었을 때만 이 검사를 타므로, 목록 진입 시 매번 담당 반을 재확인하지 않는다.
+		if (classId != null && !repository.isClassManagedBy(managerUserId, classId, round.cohortId())) {
+			throw new ApiException(ManagerViewAccessErrorCode.MANAGER_SCOPE_NOT_FOUND);
+		}
+
+		// classId=null이면 담당 반 전체, 지정하면 그 반 하나로 좁힌다.
+		var teams = repository.findTeams(projectId, round.assessmentRoundId(), orgId, managerUserId, classId);
 		if (teams.isEmpty()) {
 			return new ManagerProjectProgress(null, List.of());
 		}
-		var members = repository.findMembers(round.assessmentRoundId(), orgId, managerUserId, null);
+		var members = repository.findMembers(round.assessmentRoundId(), orgId, managerUserId, classId);
 
 		return new ManagerProjectProgress(
 				calculateProgress(teams, members),
 				calculateActionItems(teams));
 	}
-
 	/**
 	 * 반별 응시 인원을 세어 합계와 <b>가장 뒤처진 반</b>을 만든다.
 	 *

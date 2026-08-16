@@ -242,7 +242,7 @@ public class ProjectController {
 				new ProjectService.ProjectListCriteria(search, curriculumId, status, sort, classId, category));
 		ProjectListResponse response = ProjectListResponse.from(list);
 		List<ProjectResponse> enriched = response.projects().stream()
-				.map(project -> enrichWithProgress(project, authentication.getName()))
+				.map(project -> enrichWithProgress(project, authentication.getName(), classId))
 				.toList();
 		return ResponseEntity.ok(new ProjectListResponse(
 				enriched, response.total(), response.counts(), response.readinessCounts()));
@@ -253,12 +253,17 @@ public class ProjectController {
 	 *
 	 * <p>빅프는 계산하지 않는다 — 앵커가 개인 커밋 영역이라 반별 집계 대상이 아니다. PLANNED는
 	 * {@link SubmissionStatusService#findManagerProjectProgress}가 알아서 null을 돌려준다.
+	 *
+	 * <p>{@code classId}로 반 필터를 걸었으면 그 반 하나로 좁혀서 계산한다 — "이미 그 반만 보고
+	 * 있다"(MG-07 정의)는 원칙에 따라 진행·조치도 필터 결과와 같은 스코프여야 한다. 여러 반을
+	 * 동시에 골랐으면(담당 반이 여럿) 좁힐 기준이 하나로 정해지지 않으므로 담당 반 전체로 계산한다.
 	 */
-	private ProjectResponse enrichWithProgress(ProjectResponse project, String email) {
+	private ProjectResponse enrichWithProgress(ProjectResponse project, String email, List<UUID> classId) {
 		if (project.category() != ProjectCategory.MINI_PROJECT) {
 			return project;
 		}
-		var result = submissionStatusService.findManagerProjectProgress(email, project.projectId());
+		UUID scopeClassId = (classId != null && classId.size() == 1) ? classId.get(0) : null;
+		var result = submissionStatusService.findManagerProjectProgress(email, project.projectId(), scopeClassId);
 		return project.withProgress(toProgress(result.progress()), toActionItems(result.actionItems()));
 	}
 
