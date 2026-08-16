@@ -52,6 +52,12 @@ public class AssessmentSessionService {
 	 */
 	private static final int INTRO_NOTICE_VERSION = 1;
 
+	/**
+	 * {@link #findCurrent}가 상한 정리를 반복하는 최대 횟수. 살아 있는 세션은 1차·재시험·다시 보기
+	 * 셋을 넘지 않으므로 넉넉하다. 상한이 아니라 <b>루프를 끊는 안전장치</b>다.
+	 */
+	private static final int MAX_EXPIRY_SWEEPS = 3;
+
 	private final JdbcSessionRepository repository;
 	private final SessionGuard guard;
 	private final SessionTurnStore turnStore;
@@ -66,11 +72,29 @@ public class AssessmentSessionService {
 	 *
 	 * <p>새로고침·재접속 복귀가 이 하나로 해결된다. 진행 중인 세션을 먼저 고르므로 학생이 다시 들어오면
 	 * 커서가 서 있던 자리가 그대로 나온다.
+	 *
+	 * <h2>상한을 넘긴 세션을 여기서도 정리한다</h2>
+	 *
+	 * <p>종전에는 쓰기 요청({@code POST /answers}·{@code /hints}·{@code /activity})만 상한을 봤다.
+	 * 그래서 학생이 아무것도 제출하지 않고 새로고침만 하면 <b>이미 끝났어야 할 세션이 계속 진행 중으로
+	 * 내려갔다</b> — 남은 시간이 음수인 화면이 그려지고, 첫 제출에서야 409로 끊겼다.
+	 *
+	 * <p>정리 대상이 둘이라 반복한다. 세션 상한이면 그 세션이 닫히고, 문제 상한이면 다음 문제로 커서가
+	 * 옮겨진다(마지막 문제였으면 세션이 닫힌다). 닫힌 뒤에는 <b>다른 살아 있는 세션</b>이 뽑힐 수 있어
+	 * 다시 고른다 — 1차와 다시 보기를 함께 들고 있는 학생이 그렇다.
 	 */
 	@Transactional(readOnly = true)
 	public Optional<SessionResponse> findCurrent(UUID userId) {
-		return repository.findCurrent(userId)
-				.map(head -> SessionResponse.of(head, repository.findStages(head.sessionId())));
+		Optional<SessionHead> found = repository.findCurrent(userId);
+		// 한 사람이 동시에 들고 있는 살아 있는 세션은 많아야 1차·재시험·다시 보기 셋이다. 상한에 걸린
+		// 것을 하나씩 닫으며 내려가되, 예기치 못한 데이터로 무한히 돌지 않도록 횟수를 묶어 둔다.
+		for (int attempt = 0; attempt < MAX_EXPIRY_SWEEPS && found.isPresent(); attempt++) {
+			if (!guard.expireIfTimedOut(found.get())) {
+				break;
+			}
+			found = repository.findCurrent(userId);
+		}
+		return found.map(head -> SessionResponse.of(head, repository.findStages(head.sessionId())));
 	}
 
 	/**

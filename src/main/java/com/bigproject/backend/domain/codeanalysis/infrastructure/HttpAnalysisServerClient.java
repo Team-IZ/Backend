@@ -42,7 +42,7 @@ import java.util.UUID;
  * <h2>실패를 우리 값 집합으로 접는다</h2>
  *
  * <p>{@link AiClient}는 모든 실패를 {@link AiCallException} 하나로 주는데, 그 {@code failureCode}는
- * AI 명세 §5.2의 값(TIMEOUT·PROVIDER_ERROR 등)이라 {@code ck_analysis_job_failure_code_2}의 15종과
+ * AI 명세 §5.2의 값(TIMEOUT·PROVIDER_ERROR 등)이라 {@code ck_analysis_job_failure_code_2}의 12종과
  * 다르다. 그대로 저장하면 CHECK 위반으로 <b>실패를 기록조차 못 하게</b> 되므로 여기서 변환한다.
  */
 @Slf4j
@@ -184,10 +184,16 @@ public class HttpAnalysisServerClient implements AnalysisServerClient {
 	}
 
 	/**
-	 * AI 명세 §5.2의 {@code failureCode}를 {@code analysis_job.failure_code} 15종으로 옮긴다.
+	 * AI 명세 §5.2의 {@code failureCode}를 {@code analysis_job.failure_code} 12종으로 옮긴다.
 	 *
 	 * <p>대응되는 값이 없으면 {@code retryable}을 근거로 가른다 — 다시 불러서 풀릴 것은
-	 * {@code TEMPORARY_ERROR}, 아니면 {@code MODEL_ERROR}다. 둘 다 15종 안에 있어 저장이 막히지 않는다.
+	 * {@code TEMPORARY_ERROR}, 아니면 {@code MODEL_ERROR}다. 둘 다 12종 안에 있어 저장이 막히지 않는다.
+	 *
+	 * <p>⚠️ <b>이 변환은 오류 응답({@link AiCallException}) 경로에만 있다.</b> 폴링 본문의
+	 * {@code failureCode}는 {@code fetchProgress}가 {@link AnalysisFailureCode#parse}로 바로 읽고
+	 * 값 집합 밖이면 {@code null}로 넘기므로, {@code AnalysisBatchService}가 {@code MODEL_ERROR}로
+	 * 대체한다 — 사유가 조용히 틀리게 기록되는 자리다. AI가 보내는 값 집합을 12종에 맞추는 것이
+	 * 근본 해법이고, 그때까지는 원문이 {@code failure_reason}에 남는다.
 	 */
 	private static AnalysisFailureCode toFailureCode(AiCallException exception) {
 		AnalysisFailureCode direct = AnalysisFailureCode.parse(exception.failureCode()).orElse(null);

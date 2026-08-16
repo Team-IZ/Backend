@@ -3,7 +3,9 @@ package com.bigproject.backend.global.config;
 import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
 import com.bigproject.backend.domain.assessment.domain.AssessmentValidityErrorCode;
 import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
+import com.bigproject.backend.domain.assessment.domain.SessionErrorCode;
 import com.bigproject.backend.domain.auth.domain.AuthErrorCode;
+import com.bigproject.backend.domain.submission.domain.SubmissionErrorCode;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
 import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.notification.domain.NotificationErrorCode;
@@ -32,6 +34,7 @@ import io.swagger.v3.oas.models.security.SecurityRequirement;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -82,15 +85,44 @@ public class SwaggerConfig {
 	private static final Pattern ERROR_CODE_IN_DESCRIPTION =
 			Pattern.compile("\\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\\b");
 
-	/** 도메인 에러 코드 카탈로그. 새 도메인이 {@link ApiErrorCode} enum을 만들면 여기 등록한다. */
-	private static final Map<String, String> ERROR_CODE_CATALOG = Stream.<ApiErrorCode[]>of(
+	/**
+	 * 도메인 에러 코드 카탈로그. 새 도메인이 {@link ApiErrorCode} enum을 만들면 여기 등록한다.
+	 *
+	 * <p>값이 메시지 문자열이 아니라 코드 자체인 이유는 예시 본문에 <b>상태까지</b> 넣기 때문이다.
+	 * 코드가 자기 상태를 들고 있으므로({@link ApiErrorCode#status()}) 응답 키의 상태와 어긋나는
+	 * 코드가 섞이면 예시가 그 사실을 드러낸다.
+	 */
+	private static final Map<String, ApiErrorCode> ERROR_CODE_CATALOG = Stream.<ApiErrorCode[]>of(
 					OrganizationErrorCode.values(), ReportErrorCode.values(), AuthErrorCode.values(),
 					AcademicOperationsErrorCode.values(), MemberErrorCode.values(), AnalyticsErrorCode.values(),
 					ProjectExecutionErrorCode.values(), CurriculumErrorCode.values(),
 					ManagerViewAccessErrorCode.values(), NotificationErrorCode.values(),
-					AssessmentValidityErrorCode.values())
+					AssessmentValidityErrorCode.values(), SessionErrorCode.values(),
+					SubmissionErrorCode.values())
 			.flatMap(Arrays::stream)
-			.collect(LinkedHashMap::new, (map, code) -> map.put(code.name(), code.defaultMessage()), Map::putAll);
+			.collect(LinkedHashMap::new, (map, code) -> map.put(code.name(), code), Map::putAll);
+
+	/** 예시 본문의 고정 시각. 실제 값은 요청 시각이며 여기서는 모양만 보인다. */
+	private static final String EXAMPLE_TIMESTAMP = "2026-08-15T04:21:33.512Z";
+
+	/** 유일하게 {@code fieldErrors}를 함께 싣는 코드({@code GlobalExceptionHandler}). */
+	private static final String VALIDATION_FAILED_CODE = "VALIDATION_FAILED";
+
+	/**
+	 * 시큐리티 필터가 쓰는 {@code error} 문구. 상태 이름({@code UNAUTHORIZED}·{@code FORBIDDEN})이
+	 * 아니라 {@code SecurityConfig.writeSecurityError}에 박힌 값이라 따로 적어 둔다.
+	 */
+	private static final Map<String, String> SECURITY_ERROR_LABELS = Map.of(
+			"UNAUTHENTICATED", "Unauthenticated",
+			"ACCESS_DENIED", "Access Denied");
+
+	/** 카탈로그에 없는 코드(시큐리티 필터·GlobalExceptionHandler가 직접 만드는 값)의 기본 문구. */
+	private static final Map<String, String> FALLBACK_MESSAGES = Map.of(
+			"UNAUTHENTICATED", "로그인이 필요합니다.",
+			"ACCESS_DENIED", "접근 권한이 없습니다.",
+			"VALIDATION_FAILED", "요청 값이 올바르지 않습니다.",
+			"NOT_FOUND", "요청한 경로를 찾을 수 없습니다.",
+			"DATA_INTEGRITY_VIOLATION", "요청을 처리할 수 없습니다. 데이터 제약 조건에 맞지 않습니다.");
 
 	/**
 	 * 도메인 코드가 없는 상태에 붙는 코드. {@code GlobalExceptionHandler}가 실제로 내려보내는 값이다 —
@@ -500,7 +532,7 @@ public class SwaggerConfig {
 			}
 			MediaType mediaType = new MediaType().schema(new Schema<>().$ref(ERROR_SCHEMA_REF));
 			errorCodesFor(statusCode, response, publicPath)
-					.forEach(code -> mediaType.addExamples(code, exampleFor(code)));
+					.forEach(code -> mediaType.addExamples(code, exampleFor(statusCode, code)));
 			response.setContent(new Content().addMediaType(JSON, mediaType));
 		});
 	}
@@ -552,11 +584,38 @@ public class SwaggerConfig {
 		return codes;
 	}
 
-	private Example exampleFor(String code) {
-		String message = ERROR_CODE_CATALOG.getOrDefault(code, "요청을 처리할 수 없습니다.");
+	/**
+	 * 오류 코드 하나의 <b>응답 본문 전체</b>를 예시로 만든다.
+	 *
+	 * <p>종전에는 {@code code}·{@code message} 둘만 실었다. 스키마가 다섯 필드를 필수로 선언하고
+	 * 있는데 예시가 둘뿐이면, 화면 개발자가 예시를 그대로 목 응답으로 복사했을 때 {@code status}로
+	 * 분기하는 공통 처리(재시도·토큰 갱신)가 조용히 빗나간다. 실제 서버가 내려보내는 모양 그대로 적는다.
+	 *
+	 * <p>{@code status}는 응답 키에서 온다 — 카탈로그의 코드가 들고 있는 상태와 응답 키가 어긋나면
+	 * 사실인 쪽은 <b>키</b>다(그 자리에 그 코드가 실제로 실려 나간다). 다만 그런 조합은 설명의 오류
+	 * 표가 틀렸다는 뜻이므로 문서를 고쳐야 한다.
+	 */
+	private Example exampleFor(String statusCode, String code) {
+		ApiErrorCode catalogEntry = ERROR_CODE_CATALOG.get(code);
+		int status = Integer.parseInt(statusCode);
+		HttpStatus resolved = HttpStatus.resolve(status);
+
 		Map<String, Object> value = new LinkedHashMap<>();
+		value.put("timestamp", EXAMPLE_TIMESTAMP);
+		value.put("status", status);
+		// 시큐리티 필터의 401·403만 상태 이름이 아닌 고정 문구를 쓴다(SecurityConfig.writeSecurityError).
+		value.put("error", SECURITY_ERROR_LABELS.getOrDefault(code,
+				resolved == null ? "ERROR" : resolved.name()));
 		value.put("code", code);
-		value.put("message", message);
+		value.put("message", catalogEntry == null
+				? FALLBACK_MESSAGES.getOrDefault(code, "요청을 처리할 수 없습니다.")
+				: catalogEntry.defaultMessage());
+		// VALIDATION_FAILED만 몸이 한 겹 더 있다. 이 키가 있고 없고가 화면 처리를 가른다 —
+		// 입력칸 옆에 사유를 붙일 수 있는 유일한 400이라, 예시에서 빠지면 그 사실이 보이지 않는다.
+		if (VALIDATION_FAILED_CODE.equals(code)) {
+			value.put("fieldErrors", List.of(Map.of(
+					"field", "answerText", "code", "NOT_BLANK", "message", "must not be blank")));
+		}
 		return new Example().summary(code).value(value);
 	}
 

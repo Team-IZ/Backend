@@ -20,6 +20,13 @@ import java.util.UUID;
  *
  * <p>대신 {@code outcome}으로 <b>다음 화면</b>만 알려준다. 계단이 어디서 끊겼는지는 이 값에 드러나지만
  * 그것은 학생이 화면에서 이미 보는 사실이다(다음 질문이 오는가 / 문제가 닫히는가).
+ *
+ * <h2>29차 R2 — 무엇이 항상 오는지 스펙에 적는다</h2>
+ *
+ * <p>{@code @JsonInclude(NON_NULL)}이라 값이 없는 필드는 <b>키 자체가 빠진다.</b> 그래서
+ * {@code outcome}만 {@code required}이고 나머지 셋은 선택이다 — 이것이 실제로 나가는 모양이다.
+ * 종전에는 {@code required}가 하나도 없어 {@code outcome}까지 선택으로 나갔고, 화면은
+ * 항상 오는 값에도 {@code ?}를 달아야 했다.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @Schema(description = "답변 제출 결과")
@@ -28,7 +35,8 @@ public record AnswerSubmitResponse(
 				RETRY_WITH_HINT(같은 질문에 다시 답한다 — 힌트가 열렸다) · NEXT_TURN(같은 문제의 다음 질문) ·
 				NEXT_PROBLEM(다음 문제로) · PROBLEM_CLOSED(이 문제는 여기까지) · SESSION_ENDED(세션 종료)""",
 				allowableValues = {"RETRY_WITH_HINT", "NEXT_TURN", "NEXT_PROBLEM", "PROBLEM_CLOSED",
-						"SESSION_ENDED"})
+						"SESSION_ENDED"},
+				requiredMode = Schema.RequiredMode.REQUIRED)
 		String outcome,
 
 		@Schema(description = """
@@ -54,9 +62,14 @@ public record AnswerSubmitResponse(
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record AutoHint(
-			@Schema(description = "힌트 문구. 분석 시점에 동결된 것을 그대로 준다") String hintText,
-			@Schema(description = "지금까지 쓴 힌트 수(1~2)") int hintsUsed,
-			@Schema(description = "남은 횟수. 0이면 화면은 버튼을 문구로 바꾼다") int hintsLeft
+			@Schema(description = "힌트 문구. 분석 시점에 동결된 것을 그대로 준다",
+					requiredMode = Schema.RequiredMode.REQUIRED)
+			String hintText,
+			@Schema(description = "지금까지 쓴 힌트 수(1~2)", requiredMode = Schema.RequiredMode.REQUIRED)
+			int hintsUsed,
+			@Schema(description = "남은 횟수. 0이면 화면은 버튼을 문구로 바꾼다",
+					requiredMode = Schema.RequiredMode.REQUIRED)
+			int hintsLeft
 	) {
 	}
 
@@ -70,11 +83,15 @@ public record AnswerSubmitResponse(
 	 */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record NextQuestion(
-			UUID problemId,
-			@Schema(description = "이 질문이 서 있는 축(L1~L4)") String axisCode,
-			int sequenceNo,
-			String questionText,
-			@Schema(description = "지금까지 쓴 힌트 수") int hintsUsed,
+			@Schema(requiredMode = Schema.RequiredMode.REQUIRED) UUID problemId,
+			@Schema(description = "이 질문이 서 있는 축(L1~L4)", requiredMode = Schema.RequiredMode.REQUIRED)
+			String axisCode,
+			@Schema(requiredMode = Schema.RequiredMode.REQUIRED) int sequenceNo,
+			@Schema(requiredMode = Schema.RequiredMode.REQUIRED) String questionText,
+			@Schema(description = "지금까지 쓴 힌트 수", requiredMode = Schema.RequiredMode.REQUIRED)
+			int hintsUsed,
+			// 문제를 대조하지 못하면 구간이 없다(highlightOf 참고). NON_NULL이라 그때는 키가 빠지므로
+			// required가 아니다 — 화면은 GET .../problems/{problemNo}로 채우면 된다.
 			@Schema(description = "이 질문이 가리키는 코드 구간. 축이 바뀌면 함께 옮겨간다") Highlight highlight
 	) {
 	}

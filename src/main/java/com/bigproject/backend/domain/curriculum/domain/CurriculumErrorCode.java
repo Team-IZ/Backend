@@ -47,6 +47,29 @@ public enum CurriculumErrorCode implements ApiErrorCode {
      */
     CURRICULUM_ANALYSIS_NOT_COMPLETED(HttpStatus.CONFLICT, "분석이 아직 완료되지 않았습니다."),
 
+    /**
+     * 그 교안의 최신 버전에 <b>아직 끝나지 않은 분석</b>이 있다(25차 R2).
+     *
+     * <p>종전에는 {@code PENDING}·{@code RUNNING}인 교안에 재분석을 걸어도 그대로 202로 접수했다.
+     * 운영자가 「분석 중」 화면에서 버튼을 세 번 누르면 <b>AI 분석이 세 번 걸렸다</b> — 화면은
+     * 다이얼로그로 말릴 수는 있어도 잠글 수는 없었다(멈춘 분석을 푸는 유일한 출구가 그 버튼이라서).
+     *
+     * <p>{@code CURRICULUM_ANALYSIS_NOT_COMPLETED}와 상태 코드가 같지만 뜻이 반대다 —
+     * 그쪽은 "결과를 아직 못 준다"(읽기), 이쪽은 "지금은 더 걸 수 없다"(쓰기)다.
+     *
+     * <p>멈춘 분석을 강제로 다시 돌려야 하면 {@code ?force=true}로 이 검사를 건너뛴다.
+     */
+    CURRICULUM_ANALYSIS_IN_PROGRESS(HttpStatus.CONFLICT, "이 교안은 이미 분석 중입니다."),
+
+    /**
+     * 삭제하려는 교안을 <b>쓰고 있는 회차가 있다</b>(25차 R11).
+     *
+     * <p>연결을 남긴 채 지우면 그 회차의 문항이 근거로 삼는 교안이 목록에서 사라진다.
+     * 화면은 이 코드를 받으면 「어느 회차가 쓰는지」를 이미 보여 줄 수 있다
+     * ({@code GET /curricula/{materialId}/projects}).
+     */
+    CURRICULUM_MATERIAL_IN_USE(HttpStatus.CONFLICT, "회차에 연결된 교안은 삭제할 수 없습니다."),
+
     /** 업로드 본문에 파일이 없다. 서버 상태가 아니라 요청 결함이므로 400이다 — 전에는 503으로 나갔다. */
     CURRICULUM_FILE_REQUIRED(HttpStatus.BAD_REQUEST, "업로드할 파일이 없습니다."),
 

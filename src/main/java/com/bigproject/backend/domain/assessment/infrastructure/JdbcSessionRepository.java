@@ -74,7 +74,8 @@ public class JdbcSessionRepository {
 			SELECT s.session_id, s.org_id, s.attempt_id, a.user_id, a.assessment_round_id,
 			       a.attempt_type, s.status, s.current_problem_id, s.current_problem_stage_id,
 			       s.started_at, s.policy_time_limit_at, a.review_due_at, a.source_submission_id,
-			       cp.question_presented_at AS current_problem_started_at
+			       cp.question_presented_at AS current_problem_started_at,
+			       a.assessment_close_at
 			  FROM assessment_session s
 			  JOIN measurement_attempt a ON a.attempt_id = s.attempt_id
 			  LEFT JOIN LATERAL (
@@ -93,11 +94,19 @@ public class JdbcSessionRepository {
 	 *
 	 * <p>다시 보기를 1차보다 앞에 두는 이유: 다시 보기는 마감({@code review_due_at})이 붙어 있어
 	 * 미루면 사라지는 쪽이다. 1차는 이미 끝나 세션이 남아 있지 않거나 응시 창 안에 있다.
+	 *
+	 * <p><b>마감이 지난 세션은 내주지 않는다</b>(2026-08-16). 그대로 두면 화면이 "지금 이어서 할
+	 * 세션"으로 그려 놓고 START에서만 409가 나서, 학생이 들어갈 수 없는 시험을 계속 권유받는다.
+	 * 홈 카드가 이미 {@code ASSESSMENT_WINDOW_CLOSED} · CTA {@code NONE}으로 말하는 것과 맞춘다.
+	 * 마감 컬럼이 NULL이면(창이 아직 없거나 1차라 review_due_at이 없는 경우) 막지 않는다 —
+	 * {@code SessionHead#deadlineAt}이 쓰는 것과 같은 규칙이다.
 	 */
 	public Optional<SessionHead> findCurrent(UUID userId) {
 		List<SessionHead> found = jdbc.query(HEAD_COLUMNS + """
 				 WHERE a.user_id = ?
 				   AND s.status IN """ + LIVE_STATUSES + """
+				   AND COALESCE(CASE WHEN a.attempt_type = 'REVIEW' THEN a.review_due_at
+				                     ELSE a.assessment_close_at END > now(), TRUE)
 				 ORDER BY (s.status = 'IN_PROGRESS') DESC,
 				          (a.attempt_type = 'REVIEW') DESC,
 				          s.updated_at DESC
@@ -523,7 +532,8 @@ public class JdbcSessionRepository {
 				instant(rs, "policy_time_limit_at"),
 				instant(rs, "review_due_at"),
 				rs.getObject("source_submission_id", UUID.class),
-				instant(rs, "current_problem_started_at"));
+				instant(rs, "current_problem_started_at"),
+				instant(rs, "assessment_close_at"));
 	}
 
 	private static RowMapper<SessionStage> stageMapper() {

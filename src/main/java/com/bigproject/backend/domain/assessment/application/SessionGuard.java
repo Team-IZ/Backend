@@ -25,6 +25,7 @@ import java.util.UUID;
 public class SessionGuard {
 
 	private final JdbcSessionRepository repository;
+	private final SessionExpirer expirer;
 
 	/** 문제별 정책 시간 상한(분). 정의서 §2의 문제당 상한 20분이 기본값이다. */
 	@Value("${session.problem-time-limit-minutes:20}")
@@ -36,10 +37,33 @@ public class SessionGuard {
 				.orElseThrow(() -> new SessionException(SessionErrorCode.SESSION_NOT_ACCESSIBLE));
 	}
 
+	/**
+	 * 아직 살아 있고 <b>마감 안에 있는</b> 세션인지 본다.
+	 *
+	 * <h2>🔴 응시 창 검사가 여기 있는 이유</h2>
+	 *
+	 * <p>종전에는 세션 API가 응시 창을 <b>아예 읽지 않았다.</b> 세션 상태와 시간 상한만 봤기 때문에
+	 * 개인 창이 닫힌 뒤에도 시작·답변이 그대로 통과했다 — 홈 카드는 {@code ASSESSMENT_WINDOW_CLOSED}에
+	 * CTA {@code NONE}을 그리는데 API는 받아 주는 상태였다.
+	 *
+	 * <p>{@link #running}이 이 메서드를 부르고 {@code AssessmentSessionService#start}도 여기를 지나므로
+	 * 시작·답변·힌트가 한 번에 막힌다. {@link #owned}에는 넣지 않는다 — 소유권만 확인하는 읽기 자리라,
+	 * 마감이 지났다고 조회까지 막으면 학생이 자기가 푼 것을 다시 볼 수 없다.
+	 *
+	 * <p><b>세션을 닫지는 않는다.</b> 시간 상한({@link #running})은 닫고 던지지만 마감은 거절만 한다 —
+	 * 창이 지나 응시하지 못한 응시를 어떤 종료 상태로 남길지가 아직 정해지지 않았고
+	 * ({@code NOT_ATTENDED}를 쓰는 코드가 없다), 지금 {@code end()}로 닫으면 한 번도 풀지 못한 학생이
+	 * {@code COMPLETED}로 기록된다. 그 판정은 별건이다.
+	 */
 	public SessionHead live(UUID userId, UUID sessionId) {
 		SessionHead head = owned(userId, sessionId);
 		if (head.isEnded()) {
 			throw new SessionException(SessionErrorCode.SESSION_ALREADY_ENDED);
+		}
+		if (head.isDeadlinePassed(Instant.now())) {
+			throw new SessionException(head.isReview()
+					? SessionErrorCode.REVIEW_DUE_AT_PASSED
+					: SessionErrorCode.ASSESSMENT_WINDOW_CLOSED);
 		}
 		return head;
 	}
@@ -55,23 +79,76 @@ public class SessionGuard {
 	 * 다음 문제로 넘긴다 — 힌트를 다 쓰고도 미달일 때와 같은 전이다({@link JdbcSessionRepository
 	 * #expireCurrentProblem}). 세션 상한 검사를 먼저 하는 이유는 세션이 이미 끝났다면 문제 하나를
 	 * 더 접을 이유가 없기 때문이다.
+	 *
+	 * <p><b>닫기는 {@link SessionExpirer}가 독립 트랜잭션으로 한다.</b> 여기서 곧바로 저장소를 부르면
+	 * 뒤이어 던지는 예외에 그 쓰기가 함께 롤백된다 — 그래서 세션이 열린 채 남고 커서도 그대로였다.
 	 */
 	public SessionHead running(UUID userId, UUID sessionId) {
 		SessionHead head = live(userId, sessionId);
 		if (!"IN_PROGRESS".equals(head.status())) {
 			throw new SessionException(SessionErrorCode.SESSION_NOT_STARTED);
 		}
-		if (head.timeLimitAt() != null && Instant.now().isAfter(head.timeLimitAt())) {
-			repository.end(sessionId, "POLICY_TIME_LIMIT_EXCEEDED", null);
+		if (isSessionTimedOut(head)) {
+			expirer.closeTimedOutSession(sessionId);
 			throw new SessionException(SessionErrorCode.SESSION_TIMEOUT);
 		}
-		if (head.currentProblemStartedAt() != null
-				&& Instant.now().isAfter(head.currentProblemStartedAt().plus(Duration.ofMinutes(problemTimeLimitMinutes)))) {
+		if (isCurrentProblemTimedOut(head)) {
 			SessionStage stage = currentStage(head);
-			repository.expireCurrentProblem(sessionId, head.currentProblemId(), stage.problemNo(), head.isReview());
+			expirer.expireTimedOutProblem(sessionId, head.currentProblemId(), stage.problemNo(), head.isReview());
 			throw new SessionException(SessionErrorCode.PROBLEM_TIME_LIMIT_EXCEEDED);
 		}
 		return head;
+	}
+
+	/**
+	 * 읽기 경로가 부르는 지연 정리. <b>쓰기 요청이 오기 전에도</b> 상한을 반영하기 위해 있다.
+	 *
+	 * <p>{@link #running}만으로는 부족했다. 상한을 넘긴 뒤 학생이 아무것도 제출하지 않고 새로고침만 하면
+	 * {@code GET /current}가 끝났어야 할 세션을 계속 "진행 중"으로 돌려준다 — 화면은 남은 시간이 음수인
+	 * 세션을 그리고, 학생은 이미 닫힌 시험을 계속 붙들고 있게 된다.
+	 *
+	 * <p>예외를 던지지 않는다. 조회는 "무엇이 남았는가"에 답하는 자리이지 실패를 알리는 자리가 아니다 —
+	 * 호출자는 {@code true}를 받으면 커서가 바뀌었으므로 다시 읽으면 된다.
+	 *
+	 * @return 무언가를 닫았으면 {@code true}. 호출자는 세션 머리를 다시 읽어야 한다
+	 */
+	public boolean expireIfTimedOut(SessionHead head) {
+		if (head == null || head.isEnded()) {
+			return false;
+		}
+		if (isSessionTimedOut(head)) {
+			expirer.closeTimedOutSession(head.sessionId());
+			return true;
+		}
+		if (isCurrentProblemTimedOut(head)) {
+			// 커서가 비어 있으면 접을 문제를 특정할 수 없다. 조회 경로라 STAGE_NOT_FOUND로 끊지 않고
+			// 그대로 둔다 — 세션 준비가 깨진 것은 쓰기 경로에서 드러난다.
+			if (head.currentProblemStageId() == null) {
+				return false;
+			}
+			SessionStage stage = currentStage(head);
+			expirer.expireTimedOutProblem(head.sessionId(), head.currentProblemId(), stage.problemNo(),
+					head.isReview());
+			return true;
+		}
+		return false;
+	}
+
+	/** 세션 전체 상한(기본 60분)을 넘겼는가. 상한이 없으면 넘길 수 없다. */
+	private boolean isSessionTimedOut(SessionHead head) {
+		return head.timeLimitAt() != null && Instant.now().isAfter(head.timeLimitAt());
+	}
+
+	/**
+	 * 지금 문제의 상한(기본 20분)을 넘겼는가.
+	 *
+	 * <p>기산점은 지금 문제 L1의 {@code question_presented_at}이다. 시작 전(READY)이면 그 값이 없어
+	 * 항상 {@code false}이고, 커서가 다음 문제로 옮겨질 때 새로 찍히므로 문제마다 20분을 새로 센다.
+	 */
+	private boolean isCurrentProblemTimedOut(SessionHead head) {
+		return head.currentProblemStartedAt() != null
+				&& Instant.now().isAfter(
+						head.currentProblemStartedAt().plus(Duration.ofMinutes(problemTimeLimitMinutes)));
 	}
 
 	/** 커서가 가리키는 단계. 커서가 비었으면 세션 준비가 깨진 것이라 조용히 넘기지 않는다. */

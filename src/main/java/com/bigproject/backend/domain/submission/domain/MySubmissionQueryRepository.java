@@ -24,7 +24,7 @@ public interface MySubmissionQueryRepository {
 	 *
 	 * @param sessionStarted 이 교육생이 세션을 시작했는가. {@code READY}와 {@code LOCKED}를 가르는 유일한 축이다
 	 * @param analysisExternalJobId AI 서버가 발급한 작업 ID. 활성 job에서 비어 있으면 폴링 불가능한 실패 상태다
-	 * @param analysisFailureCode {@code analysis_job.failure_code}. 15종이며 사용자 문구로 옮겨 내보낸다
+	 * @param analysisFailureCode {@code analysis_job.failure_code}. 12종이며 사용자 문구로 옮겨 내보낸다
 	 * @param verifyClosesAt 개인 응시 창 종료({@code measurement_attempt.assessment_close_at})
 	 * @param artifactFileName ZIP 제출의 원본 파일 이름. GitHub 제출이면 null이다
 	 * @param artifactFileSize ZIP 제출의 파일 크기(바이트). GitHub 제출이면 null이다

@@ -9,7 +9,7 @@ import org.springframework.http.HttpStatus;
  * 알 수 없고, 마감 후 분석 단계의 사건으로 {@code analysis_job.failure_code}에 기록되어
  * {@code GET /submissions/{id}/analysis}로 노출된다(2026-08-06 확정).
  */
-public enum SubmissionErrorCode {
+public enum SubmissionErrorCode implements com.bigproject.backend.global.exception.ApiErrorCode {
 
 	// ── 제출 대상 ──
 	/** 회차가 없거나, 삭제됐거나, 호출자가 그 회차 프로젝트의 유효 팀 구성원이 아니다. 셋을 구분하지 않는다. */
@@ -73,10 +73,12 @@ public enum SubmissionErrorCode {
 		this.defaultMessage = defaultMessage;
 	}
 
+	@Override
 	public HttpStatus status() {
 		return status;
 	}
 
+	@Override
 	public String defaultMessage() {
 		return defaultMessage;
 	}

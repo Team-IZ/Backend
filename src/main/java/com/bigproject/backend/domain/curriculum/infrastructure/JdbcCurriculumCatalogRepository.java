@@ -71,12 +71,18 @@ public class JdbcCurriculumCatalogRepository implements CurriculumCatalogReposit
 			                      WHERE v2.material_id = m.material_id)
 			""";
 
-	/** 최신 분석 시도 상태로 거르는 조건. SELECT 절의 서브쿼리와 <b>같은 식이어야 한다</b>. */
-	private static final String LATEST_ANALYSIS_STATUS_CONDITION = """
+	/**
+	 * 최신 분석 시도 상태로 거르는 조건. SELECT 절의 서브쿼리와 <b>같은 식이어야 한다</b>.
+	 *
+	 * <p>25차 R1 — {@code = ?}가 아니라 {@code IN (…)}이다. 화면이 `분석 중` 한 라벨로 묶어 쓰는
+	 * {@code PENDING}·{@code RUNNING}을 한 번에 거를 수 있어야 해서다. 자리 표시자 개수는
+	 * 값 개수만큼 만들어 붙인다.
+	 */
+	private static final String LATEST_ANALYSIS_STATUS_PREFIX = """
 			AND (SELECT a3.status FROM curriculum_analysis a3
 			      WHERE a3.version_id = v.version_id
 			      ORDER BY a3.requested_at DESC
-			      LIMIT 1) = ?""";
+			      LIMIT 1) IN (""";
 
 	/**
 	 * 한 번도 분석하지 않은 교안만 남기는 조건(13차 R2).
@@ -190,9 +196,12 @@ public class JdbcCurriculumCatalogRepository implements CurriculumCatalogReposit
 				args.add(like);
 				args.add(like);
 			}
-			if (criteria.status() != null) {
-				where.append(' ').append(LATEST_ANALYSIS_STATUS_CONDITION);
-				args.add(criteria.status().name());
+			List<CurriculumAnalysisStatus> statuses = criteria.statuses();
+			if (statuses != null && !statuses.isEmpty()) {
+				where.append(' ').append(LATEST_ANALYSIS_STATUS_PREFIX)
+						.append("?, ".repeat(statuses.size() - 1))
+						.append("?)");
+				statuses.forEach(status -> args.add(status.name()));
 			}
 			// 상태 필터와 함께 오지 않는다 — 호출부가 400으로 먼저 끊는다(13차 R2).
 			if (criteria.notAnalyzedOnly()) {

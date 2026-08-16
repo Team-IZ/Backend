@@ -124,7 +124,7 @@ public class AssessmentRoundController {
 					| --- | --- | --- |
 					| `analysisPhase` | enum | `NOT_SUBMITTED` · `ANALYZING` · `FAILED` · `COMPLETED` · `WAITING` |
 					| `analysisJobStatus` | enum? | `QUEUED` · `RUNNING` · `SUCCEEDED` · `PARTIAL` · `FAILED` |
-					| `analysisFailureCode` | string? | 분석 실패 사유. 15종. 상세는 Submission API 참고 |
+					| `analysisFailureCode` | string? | 실패했는가만 알린다. 값은 `ANALYSIS_FAILED` 하나. **사유는 TR-02에 있다** |
 
 					**이해도 확인·다시 보기**
 
@@ -132,9 +132,14 @@ public class AssessmentRoundController {
 					| --- | --- | --- |
 					| `initialAttemptStatus` | enum? | `NOT_STARTED` · `SUBMITTED` · `ANALYZING` · `SESSION_READY` · `SESSION_IN_PROGRESS` · `COMPLETED` · `FAILED` · `EXPIRED` |
 					| `initialSessionStatus` | enum? | `READY` · `IN_PROGRESS` · `PAUSED` · `COMPLETED` 등 |
-					| `preparedProblemCount` | int | 출제된 문제 수. 보통 `3` |
+					| `preparedProblemCount` | int | 실제로 출제된 문제 수 `0`~`3`. ⚠️ **`3`이 아닐 수 있다** |
 					| `reviewStatus` | enum? | 다시 보기 상태. 배정이 없으면 `null` |
 					| `completedReviewCount` | int | 완료한 다시 보기 건수 |
+
+					⚠️ **`preparedProblemCount`를 `3`으로 가정하지 말 것.** 검증 개념은 항상 3건이 계획되지만
+					코드에 근거가 없는 개념은 문항이 만들어지지 않고(`NOT_GENERATED`) 세션에도 나오지 않는다.
+					이 값은 **교육생이 실제로 받게 될 문제 수**이며 세션 API의 `problemTotal`과 같다.
+					세션이 열리기 전(분석 중·분석 실패)에는 `0`이다.
 
 					**리포트**
 
@@ -151,10 +156,10 @@ public class AssessmentRoundController {
 					| 필드 | 타입 | 설명 |
 					| --- | --- | --- |
 					| `submissionDueAt` | datetime? | 제출 마감 |
-					| `roundAssessmentOpenAt` | datetime? | 회차 응시 창 시작. `OPEN` 회차면 DB가 non-null을 보장 |
-					| `roundAssessmentDueAt` | datetime? | 회차 응시 창 종료. 위와 같음 |
-					| `assessmentOpenAt` | datetime? | **개인** 응시 창 시작. 응시 생성 전이면 `null` |
-					| `assessmentCloseAt` | datetime? | **개인** 응시 창 종료. 응시 생성 전이면 `null` |
+					| `roundAssessmentOpenAt` | datetime? | 🔴 **폐기. 언제나 `null`**(2026-08-16) |
+					| `roundAssessmentDueAt` | datetime? | 🔴 **폐기. 언제나 `null`**(2026-08-16) |
+					| `assessmentOpenAt` | datetime? | **개인** 응시 창 시작. 응시 생성 전이면 `null`. **응시 가능 판정은 이것뿐** |
+					| `assessmentCloseAt` | datetime? | **개인** 응시 창 종료. 응시 생성 전이면 `null`. ⚠️ `min(…, roundAssessmentDueAt)` 금지 — JS에서 1970년이 된다 |
 					| `initialTerminalAt` | datetime? | 응시 종료 시각 |
 					| `reportPublishMode` | enum? | `ROUND_BATCH` |
 					| `reportPublishNotBeforeAt` | datetime? | 이 시각 이전에는 발행하지 않는다 |
@@ -321,7 +326,7 @@ public class AssessmentRoundController {
 													    "analysisFailureCode": null,
 													    "initialAttemptStatus": "ANALYZING",
 													    "initialSessionStatus": null,
-													    "preparedProblemCount": 3,
+													    "preparedProblemCount": 0,
 													    "reviewStatus": null,
 													    "completedReviewCount": 0,
 													    "reportId": null,

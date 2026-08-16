@@ -23,14 +23,20 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @Schema(description = "문제 하나의 코드·질문·지금까지의 문답")
 public record ProblemActivityResponse(
-		@Schema(description = "문제 번호. 생성된 문제만 1부터 세므로 항상 1~problemTotal 범위다")
+		@Schema(description = "문제 번호. 생성된 문제만 1부터 세므로 항상 1~problemTotal 범위다",
+				requiredMode = Schema.RequiredMode.REQUIRED)
 		int problemNo,
-		@Schema(description = "생성된 문제 수. 화면의 `문제 n/N`") int problemTotal,
-		@Schema(description = "문제 제목. 검증하는 교안 개념 이름이다") String title,
-		@Schema(description = "코드 패널") Code code,
-		@Schema(description = "이 문제에서 지금까지 확정된 문답. 화면은 위에서 아래로 쌓는다")
+		@Schema(description = "생성된 문제 수. 화면의 `문제 n/N`", requiredMode = Schema.RequiredMode.REQUIRED)
+		int problemTotal,
+		@Schema(description = "문제 제목. 검증하는 교안 개념 이름이다",
+				requiredMode = Schema.RequiredMode.REQUIRED)
+		String title,
+		@Schema(description = "코드 패널", requiredMode = Schema.RequiredMode.REQUIRED) Code code,
+		@Schema(description = "이 문제에서 지금까지 확정된 문답. 화면은 위에서 아래로 쌓는다. "
+				+ "아직 답한 것이 없으면 빈 배열이다", requiredMode = Schema.RequiredMode.REQUIRED)
 		List<Turn> turns,
-		@Schema(description = "지금 물어보는 질문. 문제가 끝났으면 null", nullable = true)
+		// 문제가 끝나면 물어볼 것이 없다. NON_NULL이라 그때는 키가 빠지므로 required가 아니다.
+		@Schema(description = "지금 물어보는 질문. 문제가 끝났으면 이 키가 없다")
 		CurrentQuestion current
 ) {
 
@@ -59,24 +65,35 @@ public record ProblemActivityResponse(
 	/** 확정된 문답 하나. 힌트 후 재질의도 한 턴이다. */
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record Turn(
-			@Schema(description = "질문 순번. 화면의 `◆ 질문 2`") int sequenceNo,
-			String questionText,
-			@Schema(description = "이 턴 직전에 보여준 힌트. 첫 시도면 null", nullable = true) String hintText,
-			String answerText,
-			Instant answeredAt,
-			@Schema(description = "강조할 구간. 질문마다 옮겨간다") Highlight highlight
+			@Schema(description = "질문 순번. 화면의 `◆ 질문 2`", requiredMode = Schema.RequiredMode.REQUIRED)
+			int sequenceNo,
+			@Schema(requiredMode = Schema.RequiredMode.REQUIRED) String questionText,
+			// 첫 시도에는 앞선 힌트가 없다. NON_NULL이라 그때는 키가 빠진다.
+			@Schema(description = "이 턴 직전에 보여준 힌트. 첫 시도면 이 키가 없다") String hintText,
+			@Schema(requiredMode = Schema.RequiredMode.REQUIRED) String answerText,
+			@Schema(requiredMode = Schema.RequiredMode.REQUIRED) Instant answeredAt,
+			@Schema(description = "강조할 구간. 질문마다 옮겨간다. 축별 구간이 없으면 문제의 대표 구간이다",
+					requiredMode = Schema.RequiredMode.REQUIRED)
+			Highlight highlight
 	) {
 	}
 
 	@JsonInclude(JsonInclude.Include.NON_NULL)
 	public record CurrentQuestion(
-			int sequenceNo,
-			String questionText,
-			@Schema(description = "이미 연 힌트 문구. 없으면 비어 있다") List<String> shownHints,
-			@Schema(description = "지금까지 쓴 힌트 수(0~2)") int hintsUsed,
-			@Schema(description = "남은 힌트 수. 다시 보기는 항상 0이다") int hintsLeft,
-			@Schema(description = "강조할 구간") Highlight highlight,
-			@Schema(description = "이 답변이 세션의 마지막인지. 버튼 문구가 `답변 제출하고 마치기`로 바뀐다")
+			@Schema(requiredMode = Schema.RequiredMode.REQUIRED) int sequenceNo,
+			@Schema(requiredMode = Schema.RequiredMode.REQUIRED) String questionText,
+			@Schema(description = "이미 연 힌트 문구. 없으면 빈 배열이다",
+					requiredMode = Schema.RequiredMode.REQUIRED)
+			List<String> shownHints,
+			@Schema(description = "지금까지 쓴 힌트 수(0~2)", requiredMode = Schema.RequiredMode.REQUIRED)
+			int hintsUsed,
+			@Schema(description = "남은 힌트 수. 다시 보기는 항상 0이다",
+					requiredMode = Schema.RequiredMode.REQUIRED)
+			int hintsLeft,
+			@Schema(description = "강조할 구간", requiredMode = Schema.RequiredMode.REQUIRED)
+			Highlight highlight,
+			@Schema(description = "이 답변이 세션의 마지막인지. 버튼 문구가 `답변 제출하고 마치기`로 바뀐다",
+					requiredMode = Schema.RequiredMode.REQUIRED)
 			boolean lastTurnOfSession
 	) {
 	}

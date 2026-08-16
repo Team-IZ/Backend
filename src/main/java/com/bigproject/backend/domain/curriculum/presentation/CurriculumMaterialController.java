@@ -17,6 +17,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -82,6 +83,59 @@ public class CurriculumMaterialController {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
         return ResponseEntity.ok(
                 CurriculumCatalogItemResponse.from(curriculumService.findCatalogItem(materialId, orgId)));
+    }
+
+    @Operation(
+            operationId = "deleteCurriculum",
+            summary = "교안 삭제 | ✅ 사용 가능",
+            description = """
+					교안 하나를 목록에서 지운다(25차 R11).
+
+					종전에는 삭제 경로가 아예 없어 **한 번 올린 교안이 기관 목록에서 영원히 사라지지
+					않았다.** 잘못 올린 파일·시험 삼아 올린 파일이 그대로 쌓이고, 회차를 만들 때
+					그 목록에서 골라야 했다.
+
+					**요청**
+					- materialId (경로): 교안 ID
+
+					**응답 (204)**
+					- 본문 없음
+
+					## 연결된 회차가 있으면 409다
+
+					이 교안을 쓰는 회차가 하나라도 있으면 지우지 않고 `409 CURRICULUM_MATERIAL_IN_USE`다 —
+					회차의 문항이 근거로 삼는 교안이 목록에서 사라지면 안 되기 때문이다. 판정 기준은
+					목록·상세의 `usedProjectCount`와 **같은 식**이라, 화면이 `0개 회차에서 사용 중`으로
+					읽은 교안이 삭제에서만 막히는 일은 없다.
+
+					먼저 연결을 끊으려면 `DELETE /projects/{projectId}/curricula/{curriculumVersionId}`를
+					쓴다. 어느 회차가 쓰는지는 `GET /curricula/{materialId}/projects`가 준다.
+
+					## 행은 남는다 — 지우는 것은 목록에서다
+
+					`deleted_at`만 찍는 논리 삭제다. 분석 이력·섹션·개념 매핑이 이 교안을 참조하고 있어
+					물리 삭제는 그 이력까지 함께 지운다.
+
+					⚠️ **제목은 계속 점유된다.** `uq_curriculum_material_org_id_normalized_title`이 부분
+					인덱스가 아니라 전역 UNIQUE라, 지운 교안과 **같은 제목으로 다시 올리면**
+					`409 CURRICULUM_TITLE_DUPLICATED`가 난다(22차 R2와 같은 자리). 다시 올릴 때는
+					제목을 바꿔야 한다.
+					"""
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "교안 삭제 성공"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 교안을 찾을 수 없음(이미 지운 교안·다른 기관의 교안도 여기로 온다)"),
+            @ApiResponse(responseCode = "409", description = "CURRICULUM_MATERIAL_IN_USE 이 교안을 쓰는 회차가 있음 — 연결을 먼저 끊어야 한다"),
+    })
+    @DeleteMapping
+    public ResponseEntity<Void> deleteCurriculum(
+            @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId
+    ) {
+        UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
+        UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
+        curriculumService.deleteCurriculum(materialId, orgId, actorUserId);
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(

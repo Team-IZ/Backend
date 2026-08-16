@@ -13,7 +13,9 @@ import com.bigproject.backend.domain.assessment.presentation.dto.ProblemActivity
 import com.bigproject.backend.domain.assessment.presentation.dto.SessionActivityRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -42,16 +44,21 @@ class AssessmentSessionServiceTest {
 	private static final UUID PROBLEM_ID = UUID.randomUUID();
 	private static final UUID OTHER_PROBLEM_ID = UUID.randomUUID();
 	private static final UUID STAGE_ID = UUID.randomUUID();
+	private static final int PROBLEM_TIME_LIMIT_MINUTES = 20;
 
 	private JdbcSessionRepository repository;
 	private SessionAnswerGrader grader;
+	private SessionExpirer expirer;
 	private AssessmentSessionService service;
 
 	@BeforeEach
 	void setUp() {
 		repository = mock(JdbcSessionRepository.class);
 		grader = mock(SessionAnswerGrader.class);
-		SessionGuard guard = new SessionGuard(repository);
+		// 상한 정리는 독립 트랜잭션이라 별도 빈이다. 목으로 두면 "닫았는가"를 호출로 확인할 수 있다.
+		expirer = mock(SessionExpirer.class);
+		SessionGuard guard = new SessionGuard(repository, expirer);
+		ReflectionTestUtils.setField(guard, "problemTimeLimitMinutes", PROBLEM_TIME_LIMIT_MINUTES);
 		service = new AssessmentSessionService(repository, guard, new SessionTurnStore(repository, guard), grader);
 	}
 
@@ -276,7 +283,196 @@ class AssessmentSessionServiceTest {
 		verify(repository, never()).recordAway(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt());
 	}
 
+	// ── 시간 상한 ──
+
+	/**
+	 * 상한을 넘긴 세션은 <b>조회만 해도</b> 닫힌다.
+	 *
+	 * <p>종전에는 쓰기 요청만 상한을 봤다. 그래서 학생이 제출하지 않고 새로고침만 하면
+	 * {@code GET /current}가 끝났어야 할 세션을 계속 진행 중으로 돌려줬다 — 남은 시간이 음수인 화면이
+	 * 그려지고, 첫 제출에서야 409로 끊겼다(2026-08-15 실측).
+	 */
+	@Test
+	void 상한을_넘긴_세션은_조회만_해도_닫히고_내려가지_않는다() {
+		SessionHead timedOut = timedOutHead();
+		// 닫힌 뒤 다시 고르면 이어서 할 세션이 없다 — findCurrent가 살아 있는 상태만 뽑기 때문이다.
+		when(repository.findCurrent(USER_ID)).thenReturn(Optional.of(timedOut), Optional.empty());
+
+		assertThat(service.findCurrent(USER_ID)).isEmpty();
+		verify(expirer).closeTimedOutSession(SESSION_ID);
+	}
+
+	/**
+	 * 문제 상한은 세션을 닫지 않고 <b>다음 문제로 커서를 옮긴다.</b> 조회 경로도 같은 정리를 하므로
+	 * 새로고침만으로 다음 문제가 나온다.
+	 */
+	@Test
+	void 문제_상한을_넘기면_조회에서_다음_문제로_옮긴다() {
+		SessionHead stuck = problemTimedOutHead();
+		SessionHead moved = head("INITIAL");
+		when(repository.findCurrent(USER_ID)).thenReturn(Optional.of(stuck), Optional.of(moved));
+		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(stage(0)));
+		when(repository.findStages(SESSION_ID)).thenReturn(List.of(stage(0)));
+
+		assertThat(service.findCurrent(USER_ID)).isPresent();
+		verify(expirer).expireTimedOutProblem(SESSION_ID, PROBLEM_ID, 1, false);
+		verify(expirer, never()).closeTimedOutSession(any());
+	}
+
+	/**
+	 * 🔴 닫기가 <b>독립 트랜잭션</b>이어야 하는 이유를 고정한다.
+	 *
+	 * <p>가드가 저장소를 직접 부르면 뒤이어 던지는 {@code SessionException}에 그 쓰기가 함께 롤백된다.
+	 * 그래서 409는 받는데 세션은 열린 채 남고 커서도 그대로였다 — 학생이 그 문제에 영원히 갇혔다.
+	 * {@link SessionExpirer}를 거치는 한 롤백돼도 닫기는 살아남는다.
+	 */
+	@Test
+	void 상한_초과_쓰기는_저장소를_직접_부르지_않는다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(timedOutHead()));
+
+		assertThatThrownBy(() ->
+				service.recordActivity(USER_ID, SESSION_ID, new SessionActivityRequest(42, null, null)))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.SESSION_TIMEOUT);
+
+		verify(expirer).closeTimedOutSession(SESSION_ID);
+		verify(repository, never()).end(any(), any(), any());
+	}
+
+	/** 문제 상한도 같다 — 커서 이동이 롤백되면 다음 문제로 갈 방법이 없어진다. */
+	@Test
+	void 문제_상한_초과_쓰기도_저장소를_직접_부르지_않는다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(problemTimedOutHead()));
+		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(stage(0)));
+
+		assertThatThrownBy(() ->
+				service.recordActivity(USER_ID, SESSION_ID, new SessionActivityRequest(42, null, null)))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.PROBLEM_TIME_LIMIT_EXCEEDED);
+
+		verify(expirer).expireTimedOutProblem(SESSION_ID, PROBLEM_ID, 1, false);
+		verify(repository, never()).expireCurrentProblem(any(), any(), org.mockito.ArgumentMatchers.anyInt(),
+				org.mockito.ArgumentMatchers.anyBoolean());
+	}
+
+	/** 상한 안이면 아무것도 닫지 않는다. 정리 로직이 정상 세션을 건드리면 시험이 사라진다. */
+	@Test
+	void 상한_안의_세션은_그대로_내려간다() {
+		when(repository.findCurrent(USER_ID)).thenReturn(Optional.of(head("INITIAL")));
+		when(repository.findStages(SESSION_ID)).thenReturn(List.of(stage(0)));
+
+		assertThat(service.findCurrent(USER_ID)).isPresent();
+		verifyNoInteractions(expirer);
+	}
+
+	// ── 응시 창 ──
+
+	/**
+	 * 종전에는 세션 API가 응시 창을 <b>아예 읽지 않아서</b> 개인 창이 닫힌 뒤에도 시작이 통과했다.
+	 * 홈 카드는 {@code ASSESSMENT_WINDOW_CLOSED}에 CTA {@code NONE}을 그리는데 API는 받아 주던
+	 * 상태다(28차 P2). 창이 닫힌 계정으로 TR-03을 열면 바로 만나는 구멍이라 여기서 고정한다.
+	 */
+	@Test
+	void 개인_응시_창이_닫히면_시작할_수_없다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(windowClosedHead()));
+
+		assertThatThrownBy(() -> service.start(USER_ID, SESSION_ID))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.ASSESSMENT_WINDOW_CLOSED);
+
+		verify(repository, never()).start(any(), org.mockito.ArgumentMatchers.anyInt(), any());
+	}
+
+	/**
+	 * 힌트도 같은 자리에서 막힌다 — {@code running()}이 {@code live()}를 지나기 때문이다.
+	 * 시간 상한보다 <b>먼저</b> 걸리므로 세션을 닫지도 않는다.
+	 */
+	@Test
+	void 개인_응시_창이_닫히면_힌트도_받지_않는다() {
+		when(repository.findOwned(SESSION_ID, USER_ID))
+				.thenReturn(Optional.of(windowClosedHead("IN_PROGRESS")));
+
+		assertThatThrownBy(() -> service.openHint(USER_ID, SESSION_ID))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.ASSESSMENT_WINDOW_CLOSED);
+
+		verifyNoInteractions(expirer);
+	}
+
+	/**
+	 * 다시 보기는 코드가 갈린다. 학생이 할 수 있는 일이 달라서다 — 응시 창은 매니저에게 문의할
+	 * 여지가 있고, 다시 보기는 회차당 한 번뿐이라 마감이 지나면 그것으로 끝이다.
+	 */
+	@Test
+	void 다시_보기_마감이_지나면_다른_코드로_막는다() {
+		SessionHead review = new SessionHead(SESSION_ID, UUID.randomUUID(), UUID.randomUUID(), USER_ID,
+				UUID.randomUUID(), "REVIEW", "READY", null, null, null, null,
+				Instant.now().minus(Duration.ofMinutes(1)), UUID.randomUUID(), null, null);
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(review));
+
+		assertThatThrownBy(() -> service.start(USER_ID, SESSION_ID))
+				.isInstanceOf(SessionException.class)
+				.extracting(exception -> ((SessionException) exception).getErrorCode())
+				.isEqualTo(SessionErrorCode.REVIEW_DUE_AT_PASSED);
+	}
+
+	/** 마감 컬럼이 비어 있으면(창이 아직 정해지지 않았다) 막지 않는다 — 없는 규칙을 만들지 않는다. */
+	@Test
+	void 마감이_없으면_막지_않는다() {
+		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("INITIAL")));
+		when(repository.findStages(SESSION_ID)).thenReturn(List.of());
+
+		assertThat(service.start(USER_ID, SESSION_ID).status()).isEqualTo("IN_PROGRESS");
+	}
+
+	/**
+	 * 창이 닫혀도 <b>조회는 열어 둔다.</b> {@code owned()}는 소유권만 보는 자리라, 마감이 지났다고
+	 * 여기까지 막으면 학생이 자기가 푼 것을 다시 볼 수 없다.
+	 */
+	@Test
+	void 창이_닫혀도_지난_문제_조회는_막지_않는다() {
+		when(repository.findOwned(SESSION_ID, USER_ID))
+				.thenReturn(Optional.of(windowClosedHead("COMPLETED")));
+		when(repository.findProblems(any(), any())).thenReturn(List.of(problem(1, OTHER_PROBLEM_ID)));
+
+		assertThat(service.findProblem(USER_ID, SESSION_ID, 1).problemNo()).isEqualTo(1);
+	}
+
 	// ── 픽스처 ──
+
+	/** 개인 응시 창이 1분 전에 닫힌 머리. */
+	private static SessionHead windowClosedHead() {
+		return windowClosedHead("READY");
+	}
+
+	private static SessionHead windowClosedHead(String status) {
+		return new SessionHead(SESSION_ID, UUID.randomUUID(), UUID.randomUUID(), USER_ID,
+				UUID.randomUUID(), "INITIAL", status, PROBLEM_ID, STAGE_ID,
+				"READY".equals(status) ? null : Instant.now().minus(Duration.ofMinutes(30)),
+				null, null, UUID.randomUUID(), null,
+				Instant.now().minus(Duration.ofMinutes(1)));
+	}
+
+	/** 세션 상한(timeLimitAt)을 1분 넘긴 머리. */
+	private static SessionHead timedOutHead() {
+		return new SessionHead(SESSION_ID, UUID.randomUUID(), UUID.randomUUID(), USER_ID, UUID.randomUUID(),
+				"INITIAL", "IN_PROGRESS", PROBLEM_ID, STAGE_ID,
+				Instant.now().minus(Duration.ofMinutes(61)), Instant.now().minus(Duration.ofMinutes(1)),
+				null, UUID.randomUUID(), Instant.now().minus(Duration.ofMinutes(5)));
+	}
+
+	/** 세션 상한은 남았지만 지금 문제가 20분을 넘긴 머리. */
+	private static SessionHead problemTimedOutHead() {
+		return new SessionHead(SESSION_ID, UUID.randomUUID(), UUID.randomUUID(), USER_ID, UUID.randomUUID(),
+				"INITIAL", "IN_PROGRESS", PROBLEM_ID, STAGE_ID,
+				Instant.now().minus(Duration.ofMinutes(30)), Instant.now().plus(Duration.ofMinutes(30)),
+				null, UUID.randomUUID(),
+				Instant.now().minus(Duration.ofMinutes(PROBLEM_TIME_LIMIT_MINUTES + 1)));
+	}
 
 	private static SessionHead head(String attemptType) {
 		return head(attemptType, "IN_PROGRESS");
