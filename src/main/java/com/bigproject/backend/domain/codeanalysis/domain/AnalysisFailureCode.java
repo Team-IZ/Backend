@@ -4,7 +4,8 @@ import java.util.Arrays;
 import java.util.Optional;
 
 /**
- * DB CHECK: {@code ck_analysis_job_failure_code_2} — 12종.
+ * 분석 실패 사유 12종. DB CHECK {@code ck_analysis_job_failure_code_2}는 <b>15종</b>이고
+ * 이 목록은 그 <b>부분집합</b>이다 — 크기가 다른 것이 정상이다(아래).
  *
  * <p>세 계열이 한 컬럼에 모여 있다. 저장소 접근 주체가 AI 서버로 확정되면서 저장소 실패를 별도 필드로
  * 받지 않기로 했고(S-03), ZIP 내용 검증도 같은 이유로 합쳤다(S-15).
@@ -13,32 +14,36 @@ import java.util.Optional;
  * 보내면 문자열은 INSERT 시점의 CHECK 위반으로 터지는데, 그때는 이미 트랜잭션 한복판이라 원인이
  * 스택트레이스에 묻힌다. {@link #parse}는 응답을 읽는 자리에서 바로 걸러낸다.
  *
- * <h2>🔴 이 목록은 DB CHECK와 <b>정확히 같아야 한다</b> (2026-08-16)</h2>
+ * <h2>🔴 이 목록은 DB CHECK의 <b>부분집합</b>이어야 한다 (2026-08-16)</h2>
  *
  * <p>enum에만 있고 CHECK에 없는 값이 생기면 {@link #parse}가 통과시켜 버려서, 위에서 말한
  * "빨리 드러내기"가 정확히 무너진다 — {@code AnalysisBatchService}의 {@code MODEL_ERROR} 대체 가드는
  * {@code parse}가 <b>비어 돌아올 때만</b> 작동하므로 그런 값은 가드를 그냥 지나 CHECK 위반으로 터진다.
  *
- * <p>이 목록은 <b>한 번도 CHECK와 일치한 적이 없었다.</b> 2026-08-07 최초 커밋(6656eb0)이 세 컬럼의
- * 값 집합을 여기 하나로 합치면서(S-03·S-15) 15종으로 시작했는데, 그 합의를 DB에 반영하는
- * 마이그레이션이 함께 나가지 않았다. javadoc 첫 줄이 "CHECK는 15종"이라고 적고 있었으나 그 CHECK는
- * 그때도 11종이었다 — <b>합의를 이미 이루어진 사실처럼 적은 것</b>이 아홉 날 뒤 28차 R1에서
- * 드러났다. 고친 것이 {@code docs/migration/2026-08-16_fix_analysis_job_failure_code_set.sql}이고,
- * {@code AnalysisFailureCodeContractTest}가 DDL 정본과 이 목록을 대조해 다시 갈라지지 않게 막는다.
+ * <p>반대로 <b>CHECK에만 있는 값은 쓰지 않는다.</b> {@code AnalysisJob}이
+ * {@code @Enumerated(STRING)}이라 여기 없는 값을 가진 행은 JPA가 읽는 순간 터진다. 값이 허용되는
+ * 것과 써도 되는 것은 다르다.
+ *
+ * <p>두 집합의 크기가 달라진 경위: 2026-08-07 최초 커밋(6656eb0)이 세 컬럼의 값 집합을 여기 하나로
+ * 합치면서(S-03·S-15) 15종으로 시작했고 <b>실 DB CHECK도 15종이었다.</b> 뒤처진 것은 DDL 정본
+ * 파일이었는데(11종), 그 파일을 실 DB로 착각해 "CHECK를 12종으로 줄이자"는 계획이 한 번 섰다가
+ * 실측 후 보류됐다({@code docs/migration/2026-08-16_fix_analysis_job_failure_code_set.sql}).
+ * 정본 파일을 실 DB에 맞춰 15종으로 되돌렸고, 지금 관계는 <b>enum 12 ⊆ CHECK 15</b>다.
+ * {@code AnalysisFailureCodeContractTest}가 그 포함 관계와 차이 3종을 고정한다.
  *
  * <h2>여기 없는 것 — {@code FILE_TOO_LARGE}·{@code ARCHIVE_INVALID}·{@code PROHIBITED_FILE}</h2>
  *
- * <p>ZIP <b>파일 자체</b>의 문제라 이 컬럼에 도달할 경로가 없다. 업로드 시점에
- * {@code SubmissionService#validateArchive}가 400·413으로 거절하고 {@code submission} 행조차 만들지
- * 않으므로 분석이 시작되지 않는다. {@code HttpAnalysisServerClient}도 저장된 ZIP을 못 읽었을 때
- * {@code ARCHIVE_INVALID}를 <b>일부러 피하고</b> {@link #TEMPORARY_ERROR}로 남긴다 — 우리 쪽 사정을
- * 교육생 잘못으로 기록하지 않기 위해서다. 값 집합에 남겨 두면 "왜 이 코드는 안 나오나"를 반복해서
- * 파게 되므로 뺐다. 그쪽 문구는 {@code SubmissionErrorCode}가 HTTP 응답으로 따로 낸다.
+ * <p><b>CHECK 15종과 이 목록 12종의 차이가 정확히 이 셋이다.</b> ZIP <b>파일 자체</b>의 문제라 이
+ * 컬럼에 도달할 경로가 없다 — 업로드 시점에 {@code SubmissionService#validateArchive}가 400·413으로
+ * 거절하고 {@code submission} 행조차 만들지 않으므로 분석이 시작되지 않는다.
+ * {@code HttpAnalysisServerClient}도 저장된 ZIP을 못 읽었을 때 {@code ARCHIVE_INVALID}를
+ * <b>일부러 피하고</b> {@link #TEMPORARY_ERROR}로 남긴다 — 우리 쪽 사정을 교육생 잘못으로 기록하지
+ * 않기 위해서다. 그쪽 문구는 {@code SubmissionErrorCode}가 HTTP 응답으로 따로 낸다.
  *
- * <p>이 셋이 여기 있었던 이유는 {@code ck_submission_artifact_validation_failure_code}(5종)를 통째로
- * 합쳤기 때문이다. 그런데 <b>그 CHECK는 실 DB에 존재하지 않고</b>(선언은 DDL 정본에만 있다)
- * {@code submission_artifact.validation_failure_code}에 값을 넣는 코드도 없다 — 합칠 대상 자체가
- * 비어 있었다.
+ * <p>CHECK에 셋이 남아 있는 것은 {@code ck_submission_artifact_validation_failure_code}(5종)를
+ * 통째로 합친 2026-08-07 결정의 흔적이다. 실 DB를 줄이지 않기로 했으므로 그대로 두되(정본도 15종),
+ * <b>여기에는 넣지 않는다</b> — 넣으면 {@link #parse}가 통과시켜 저장까지 가고, 그 행은
+ * {@code analysis_job}을 읽는 모든 곳에서 살아남지 못한다.
  */
 public enum AnalysisFailureCode {
 

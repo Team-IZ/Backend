@@ -33,16 +33,34 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * </ul>
  *
  * <p>🔴 <b>둘은 한 번도 일치한 적이 없었다.</b> 2026-08-07 최초 커밋이 세 컬럼의 값 집합을 enum
- * 하나로 합치면서(S-03·S-15) 15종으로 시작했는데, 그 합의를 DB에 반영하는 마이그레이션이 함께
- * 나가지 않았다. enum javadoc이 "DB CHECK — 15종"이라고 <b>합의를 이미 이루어진 사실처럼</b> 적어
- * 두어 아무도 다시 대조하지 않았고, 아홉 날 뒤 28차 R1에서 드러났다. 기존 시험도 잡지 못했다 —
+ * 하나로 합치면서(S-03·S-15) 15종으로 시작했는데, 그 합의가 <b>DDL 정본 파일에는</b> 반영되지
+ * 않은 채 남았다(실 DB에는 반영돼 있었다 — 아래 "이 시험이 못 보는 것"). enum javadoc의
+ * "DB CHECK — 15종"은 실 DB에 대해서는 사실이었고 정본 파일에 대해서는 아니었다. 아무도 다시
+ * 대조하지 않았고, 아홉 날 뒤 28차 R1에서 드러났다. 기존 시험도 잡지 못했다 —
  * {@code AnalysisJobTest}는 enum 크기만 보았고, 그 숫자는 enum 쪽 정의와 언제나 맞았다.
  * 값 집합이 Java와 SQL 문자열로 <b>따로</b> 적혀 있는 한 한쪽만 보는 시험은 어긋남을 못 본다.
  * 고친 것은 {@code docs/migration/2026-08-16_fix_analysis_job_failure_code_set.sql}이다.
  *
- * <p>대조 상대를 실 DB가 아니라 <b>DDL 정본 파일</b>로 둔 이유: 이 어긋남은 정본에도 똑같이 있었고
- * (정본과 실 DB가 둘 다 11종이었다), 파일 대조는 컨테이너 없이 매 빌드에 돈다. 실 DB가 정본보다
- * 뒤처지는 경우는 마이그레이션 적용 여부의 문제라 별개로 다룬다.
+ * <p>대조 상대를 실 DB가 아니라 <b>DDL 정본 파일</b>로 둔 이유: 파일 대조는 컨테이너 없이 매
+ * 빌드에 돈다. 그 대신 <b>이 시험이 통과해도 실 DB는 다를 수 있다.</b>
+ *
+ * <h2>🔴 두 집합은 크기가 다른 것이 정상이다 (2026-08-16)</h2>
+ *
+ * <p>운영/재현 DB 실측에서 CHECK는 <b>15종</b>이었다. 정본 파일이 11종·12종이던 동안에도 줄곧
+ * 그랬다 — 어긋난 짝은 "enum ↔ 실 DB"가 아니라 <b>"enum ↔ 정본 파일"</b>이었고, 실 DB가 정본보다
+ * <b>앞서</b> 있었다. 줄이는 마이그레이션은 보류하고 정본을 실 DB에 맞췄으므로, 지금 관계는
+ * <b>enum(12종) ⊆ CHECK(15종)</b>이고 남는 3종은 업로드 단계에서만 쓰는 값이다.
+ *
+ * <p>그래서 이 시험은 두 집합이 <b>같은지</b>가 아니라 <b>포함 관계와 그 차이</b>를 본다.
+ * <ul>
+ *   <li>enum에 있는데 CHECK에 없으면 → 저장이 CHECK 위반으로 터진다</li>
+ *   <li>CHECK에만 있는 값이 늘면 → 그 값을 쓰는 행이 생길 수 있고,
+ *       {@code AnalysisJob}의 {@code @Enumerated(STRING)}이 그 행을 <b>읽지 못한다</b></li>
+ * </ul>
+ *
+ * <p>실 DB에 무엇이 붙어 있는지는 여전히 물어봐야 안다 —
+ * {@code docs/analysis_job_failure_code_제약점검.sql}가 그 질문을 대신한다(읽기 전용).
+ * 폐쇄형 코드값을 정하거나 CHECK를 건드리기 전에는 이 시험이 아니라 그 점검 SQL을 본다.
  */
 class AnalysisFailureCodeContractTest {
 
@@ -54,31 +72,45 @@ class AnalysisFailureCodeContractTest {
 
 	private static final Pattern QUOTED = Pattern.compile("'([A-Z_]+)'");
 
+	/** CHECK에만 있어도 되는 값. 업로드가 먼저 거절해 이 컬럼에 도달할 경로가 없는 셋이다. */
+	private static final Set<String> UPLOAD_ONLY_CODES =
+			Set.of("FILE_TOO_LARGE", "ARCHIVE_INVALID", "PROHIBITED_FILE");
+
 	@Test
-	@DisplayName("enum과 DDL 정본의 CHECK가 같은 값 집합을 본다")
-	void enumMatchesDdlCheck() throws IOException {
+	@DisplayName("enum의 모든 값이 DDL 정본의 CHECK 안에 있다")
+	void everyEnumValueIsAllowedByCheck() throws IOException {
 		Set<String> fromEnum = Arrays.stream(AnalysisFailureCode.values())
 				.map(Enum::name)
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 
 		assertThat(checkValues())
-				.as("AnalysisFailureCode enum과 ck_analysis_job_failure_code_2가 어긋났다. "
-						+ "한쪽만 고치면 CHECK 위반으로 터지거나 사유가 조용히 MODEL_ERROR로 바뀐다 — "
-						+ "enum·DDL 정본·마이그레이션을 함께 고친다.")
-				.containsExactlyInAnyOrderElementsOf(fromEnum);
+				.as("enum에는 있는데 ck_analysis_job_failure_code_2가 받지 않는 값이 있다. "
+						+ "AI가 그 코드를 주면 저장이 CHECK 위반으로 터져 실패를 기록조차 못 한다 — "
+						+ "enum·DDL 정본·실 DB를 함께 고친다.")
+				.containsAll(fromEnum);
 	}
 
 	@Test
-	@DisplayName("업로드가 먼저 거절하는 3종은 값 집합에 없다")
-	void archiveLevelCodesAreNotAnalysisFailures() throws IOException {
-		// ZIP 파일 자체의 문제는 SubmissionService#validateArchive가 400·413으로 거절하고
-		// submission 행조차 만들지 않는다. 분석이 시작되지 않으므로 analysis_job도 없다.
-		// 값 집합에 남겨 두면 재현할 수 없는 코드를 두고 "왜 안 나오나"를 반복해서 파게 된다.
-		assertThat(checkValues())
-				.doesNotContain("FILE_TOO_LARGE", "ARCHIVE_INVALID", "PROHIBITED_FILE");
+	@DisplayName("CHECK가 enum보다 넓은 것은 업로드 단계 3종뿐이다")
+	void checkIsWiderOnlyByUploadOnlyCodes() throws IOException {
+		Set<String> fromEnum = Arrays.stream(AnalysisFailureCode.values())
+				.map(Enum::name)
+				.collect(Collectors.toSet());
 
-		assertThat(Arrays.stream(AnalysisFailureCode.values()).map(Enum::name))
-				.doesNotContain("FILE_TOO_LARGE", "ARCHIVE_INVALID", "PROHIBITED_FILE");
+		Set<String> extra = new LinkedHashSet<>(checkValues());
+		extra.removeAll(fromEnum);
+
+		// 🔴 넓은 것 자체는 괜찮지만, 넓어진 만큼이 무엇인지는 고정한다. 새 값이 CHECK에만 조용히
+		//    늘면 그 값을 쓰는 행이 생길 수 있고, AnalysisJob의 @Enumerated(STRING)이 그 행을
+		//    읽는 순간 터진다("No enum constant"). 값이 허용되는 것과 써도 되는 것은 다르다.
+		assertThat(extra)
+				.as("CHECK에만 있는 값이 예상과 다르다. 늘리려면 enum에 넣거나, 이 목록에 근거와 함께 "
+						+ "추가한다 — 쓰지 않을 값이라는 판단이 어딘가에 남아야 한다.")
+				.containsExactlyInAnyOrderElementsOf(UPLOAD_ONLY_CODES);
+
+		// 반대 방향. 그 셋은 enum에 들어오면 안 된다 — parse()가 통과시키면 저장까지 가고,
+		// 그 행은 다시 못 읽는다.
+		assertThat(fromEnum).doesNotContainAnyElementsOf(UPLOAD_ONLY_CODES);
 	}
 
 	@Test
