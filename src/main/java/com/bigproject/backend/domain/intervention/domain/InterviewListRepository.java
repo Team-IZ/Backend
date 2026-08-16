@@ -84,7 +84,8 @@ public interface InterviewListRepository {
 	 * @param screenStatus    화면 3종 {@code PLANNED} / {@code DONE} / {@code EXCLUDED}
 	 * @param screenRiskType  화면 4종 {@code INVALID} / {@code LOW_PERSISTENT} / {@code DECLINE} / {@code OBSERVE}
 	 * @param reasonCodes     활성 사유 코드. 1차는 NOT_APPLICABLE 사유만 들어 있을 수 있다
-	 * @param reasonSummaries 사유 요약. 시드 실측값이 화면 문구 그대로다("2단 이하 1 → 2")
+	 * @param reasonSummaries 사유 요약. 판정 배치가 만든 완성된 문장이 화면 문구 그대로다
+	 *                        ("평균 도달 단계 2.33 → 1.67. 2단 미만 2개."). 대괄호 태그는 없다(30차 R8)
 	 * @param briefStatus     {@code interview_brief.status}. 브리프가 없으면 null
 	 * @param briefHasContent {@code opening_remark_text IS NOT NULL} — 생성 실패한 DRAFT를 가른다
 	 */

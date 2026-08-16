@@ -23,7 +23,10 @@ public record InterviewBriefResponse(
 		@Schema(description = "위험 유형. 목록과 같은 값이다", example = "DECLINE")
 		String riskType,
 
-		@Schema(description = "판정 근거 문구", example = "2단 이하 1 → 2")
+		@Schema(description = """
+				판정 근거 문구이며 그대로 표시한다.
+				**대괄호 태그(`[SEVERE]` 등)는 붙지 않는다**(30차 R8).
+				""", example = "평균 도달 단계 2.33 → 1.67. 2단 미만 2개.")
 		String riskSummary,
 
 		@Schema(description = """

@@ -36,11 +36,19 @@ public record TraineeDetailResponse(
 				싣습니다 — 지난 회차의 위험까지 헤더에 얹으면 이미 해소된 것이 계속 남습니다.
 				""", example = "STAGE_DECLINE", nullable = true)
 		String riskTypeCode,
+		// 30차 R8 — 예시가 시드에서 그대로 베낀 옛 문구였다. 실제 배치(JdbcRiskOutcomeBatchRepository)가
+		// 쓰는 문장은 판정 근거 수치를 문장에 박은 완성형이며 `[SEVERE]` 같은 대괄호 태그가 없다.
+		// 태그가 붙은 값은 정책 v1 이전의 더미 시드에만 있었고 그 시드에서도 걷어냈다.
 		@Schema(description = """
-				위험 배지 옆 판정식이며 `2단 이하 0 → 2`가 이 값입니다.
+				위험 배지 옆 판정식이며 **화면에 그대로 표시하는 완성된 문장**입니다.
 				원장은 `interview_candidate_reason.reason_summary`이고 `riskTypeCode`와 **같은 회차**에서
 				읽습니다. 위험이 없으면 null입니다.
-				""", example = "2단 이하 0 → 2", nullable = true)
+
+				⚠️ **`[SEVERE]` 같은 대괄호 태그는 붙지 않습니다.** 현 정책에는 심각도라는 축이
+				없고(판정은 위험 유형 단위입니다), 심각도를 화면에 드러내는 것은 위험 배지
+				(`riskTypeCode` · `roundPrimaryStatusCode`)의 몫입니다. 태그가 섞인 값을 보셨다면
+				정책 v1 이전에 적재된 더미 데이터입니다.
+				""", example = "평균 도달 단계 2.33 → 1.67. 2단 미만 2개.", nullable = true)
 		String riskReasonSummary,
 
 		@Schema(description = "우수로 발견된 누적 횟수. 근거가 없으면 0") int excellentOccurrenceCount,
@@ -94,7 +102,7 @@ public record TraineeDetailResponse(
 			OffsetDateTime terminalAt,
 
 			@Schema(description = """
-					`2단 이하` 칸의 **분모**이며 그 회차에 이 교육생에게 실제로 만들어진 문항 수입니다.
+					`2단 미만` 칸의 **분모**이며 그 회차에 이 교육생에게 실제로 만들어진 문항 수입니다.
 					코드에 근거가 없어 문항이 생성되지 않은(`NOT_GENERATED`) 개념은 물을 수 없어 빠지므로
 					사람마다 다릅니다.
 					""", example = "3")

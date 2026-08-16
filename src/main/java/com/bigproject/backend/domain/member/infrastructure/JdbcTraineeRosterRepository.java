@@ -152,7 +152,7 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 			       mv.expected_concept_count,
 			       mv.low_stage_concept_count, mv.excellent_occurrence_count,
 			       mv.excellent_assessment_sequence_nos,
-			       mv.current_round_matched_risk_type_codes::text AS matched_risk_type_codes,
+			       mv.current_round_matched_risk_type_codes AS matched_risk_type_codes,
 			       mv.current_round_primary_status_code,
 			       mv.round_terminal_at,
 			       mv.row_aggregation_status
@@ -409,7 +409,7 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				integer(rs, "low_stage_concept_count"),
 				integer(rs, "excellent_occurrence_count"),
 				intArray(rs, "excellent_assessment_sequence_nos"),
-				rs.getString("matched_risk_type_codes"),
+				nullableStringList(rs, "matched_risk_type_codes"),
 				rs.getString("current_round_primary_status_code"),
 				toOffsetDateTime(rs.getTimestamp("round_terminal_at")),
 				rs.getString("row_aggregation_status")
@@ -425,6 +425,29 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 	 * 매니저·회차 지표가 붙지 않은 행(조회 시 assessmentRoundId를 안 넘겼거나 오퍼레이터 조회)은
 	 * 배열 컬럼 자체가 SQL null이다. 화면이 매번 null 검사를 하지 않도록 빈 배열로 통일한다.
 	 */
+	/**
+	 * {@code text[]} 컬럼을 그대로 배열로 읽는다(30차 R6).
+	 *
+	 * <p>종전에는 SQL에서 {@code ::text}로 캐스팅한 뒤 {@code getString}으로 받아
+	 * {@code "{}"}·{@code "{PERSISTENT_LOW}"} 같은 <b>PostgreSQL 배열 리터럴</b>이 그대로 나갔다.
+	 * 문서에는 "코드 배열(문자열로 직렬화됨)"이라 적혀 있었지만 그것은 JSON이 아니라서
+	 * {@code JSON.parse("{}")}가 배열이 아닌 빈 객체를 돌려준다 — 화면이 조용히 틀린다.
+	 * 같은 값을 교육생 상세는 처음부터 배열로 주고 있었다.
+	 *
+	 * <p><b>{@code null}과 빈 배열은 다르다.</b> {@code null}은 그 행에 회차 지표가 붙지 않은 것이고
+	 * (오퍼레이터 조회이거나 회차를 안 넘긴 경우), 빈 배열은 <b>걸린 위험이 없다</b>는 뜻이다.
+	 * {@code intArray}와 달리 빈 배열로 통일하지 않는 이유가 이것이다.
+	 */
+	private List<String> nullableStringList(ResultSet rs, String column) throws SQLException {
+		java.sql.Array array = rs.getArray(column);
+		if (array == null) {
+			return null;
+		}
+		return java.util.Arrays.stream((String[]) array.getArray())
+				.filter(java.util.Objects::nonNull)
+				.toList();
+	}
+
 	private int[] intArray(ResultSet rs, String column) throws SQLException {
 		java.sql.Array array = rs.getArray(column);
 		if (array == null) {
