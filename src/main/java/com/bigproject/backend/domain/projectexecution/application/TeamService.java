@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.projectexecution.application;
 
+import com.bigproject.backend.domain.academicoperations.domain.Classroom;
 import com.bigproject.backend.domain.academicoperations.domain.ManagerAssignment;
 import com.bigproject.backend.domain.academicoperations.infrastructure.ClassroomRepository;
 import com.bigproject.backend.domain.academicoperations.infrastructure.ManagerAssignmentRepository;
@@ -23,10 +24,10 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * MG-08 팀 편성. {@link com.bigproject.backend.domain.projectexecution.domain.TeamStatus}에는
@@ -110,15 +111,51 @@ public class TeamService {
     }
 
     /**
-     * 여러 팀의 현재 유효 인원 수를 한 번에 센다. 목록 화면에서 팀마다 count 쿼리를
-     * 따로 부르면 팀 수만큼 쿼리가 늘어나므로, 목록 조회 시 이 메서드로 한 번에 가져온다.
+     * 목록 화면(MG-08 팀 탭)이 쓰는 팀 목록이며 <b>담당 반으로 좁혀</b> 준다(30차 R3).
+     *
+     * <p>이 조회는 매니저 전용이라 오퍼레이터 갈래가 없다 — 언제나 좁힌다. 좁히지 않던 때는
+     * 기수 전체 48팀이 나왔고, 팀 번호가 반마다 1부터 다시 시작해 목록에 `1팀`이 여덟 번
+     * 나타났다. 같은 화면의 제출 현황 탭은 담당 반 6팀만 보여 주고 있었다.
      */
-    public Map<UUID, Long> countMembersByTeamIds(List<UUID> teamIds) {
-        Map<UUID, Long> counts = new HashMap<>();
-        for (UUID teamId : teamIds) {
-            counts.put(teamId, teamMembershipRepository.countByTeamIdAndToAtIsNull(teamId));
+    public List<Team> findManagedTeams(UUID projectId, UUID orgId, UUID managerUserId) {
+        List<UUID> managedClassIds = managedClassIds(orgId, managerUserId);
+        if (managedClassIds.isEmpty()) {
+            return List.of();
         }
-        return counts;
+        return teamRepository.findByProjectIdAndOrgId(projectId, orgId).stream()
+                .filter(team -> managedClassIds.contains(team.getClassId()))
+                .toList();
+    }
+
+    /** 지금 담당 중인 반. 네이티브 SQL 쪽 판정과 같게 {@code status}와 해제 시각을 함께 본다. */
+    private List<UUID> managedClassIds(UUID orgId, UUID managerUserId) {
+        return managerAssignmentRepository
+                .findByManagerUserIdAndOrgIdAndStatusAndUnassignedAtIsNull(managerUserId, orgId, "ACTIVE")
+                .stream()
+                .map(ManagerAssignment::getClassId)
+                .distinct()
+                .toList();
+    }
+
+    /**
+     * 여러 팀의 현재 구성원을 팀 ID별로 <b>한 번에</b> 읽는다(30차 R4).
+     *
+     * <p>종전 {@code countMembersByTeamIds}는 주석이 "한 번에 가져온다"였는데 구현은 팀마다
+     * count 질의를 돌리는 루프였다 — 48팀이면 48번이다. 인원 수는 이 목록의 길이로 세므로
+     * 세기 전용 질의가 필요 없다.
+     */
+    public Map<UUID, List<ProjectMembershipQueryRepository.TeamMember>> findMembersByTeamIds(List<UUID> teamIds) {
+        return projectMembershipQueryRepository.findMembersByTeamIds(teamIds).stream()
+                .collect(Collectors.groupingBy(ProjectMembershipQueryRepository.TeamMember::teamId));
+    }
+
+    /** 팀이 속한 반 이름. 팀 번호가 반마다 1부터 다시 시작해 이름 없이는 팀을 구분할 수 없다(30차 R4). */
+    public Map<UUID, String> findClassNames(List<UUID> classIds, UUID orgId) {
+        if (classIds.isEmpty()) {
+            return Map.of();
+        }
+        return classroomRepository.findByClassIdInAndOrgIdAndDeletedAtIsNull(classIds, orgId).stream()
+                .collect(Collectors.toMap(Classroom::getClassId, Classroom::getName));
     }
 
     @Transactional

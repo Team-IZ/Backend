@@ -20,6 +20,9 @@ public interface ClassroomRepository extends JpaRepository<Classroom, UUID> {
     // 특정 기수에 속한 반 목록, 이름순으로 정렬
     List<Classroom> findByCohortIdAndOrgIdAndDeletedAtIsNullOrderByNameAsc(UUID cohortId, UUID orgId);
 
+    // 여러 반을 한 번에. 팀 목록이 팀마다 반 이름을 부르지 않도록 쓴다(30차 R4).
+    List<Classroom> findByClassIdInAndOrgIdAndDeletedAtIsNull(List<UUID> classIds, UUID orgId);
+
     // 같은 기수 안에 같은 이름의 반이 이미 있는지 확인(반 이름 중복 방지용)
     boolean existsByCohortIdAndNameAndDeletedAtIsNull(UUID cohortId, String name);
 

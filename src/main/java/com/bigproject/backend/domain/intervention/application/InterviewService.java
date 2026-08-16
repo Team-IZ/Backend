@@ -98,7 +98,9 @@ public interface InterviewService {
 	 * 케이스 한 건.
 	 *
 	 * @param riskSummary   위험 판정 근거 문구. {@code interview_candidate_reason.reason_summary}를
-	 *                      그대로 쓴다 — 시드 실측값이 화면 문구 그대로다("2단 이하 1 → 2")
+	 *                      그대로 쓴다 — 판정 배치가 수치를 박아 만든 완성된 문장이며 화면 문구가
+	 *                      곧 이 값이다("평균 도달 단계 2.33 → 1.67. 2단 미만 2개."). 대괄호 태그는
+	 *                      붙지 않는다(30차 R8 — 태그가 섞인 값은 정책 v1 이전 더미 시드였다)
 	 * @param briefState    {@code NONE} / {@code FAILED} / {@code DRAFT} / {@code CONFIRMED}.
 	 *                      화면의 버튼 문구를 가른다(브리프 생성 / 다시 생성 / 브리프 열기 / 브리프 수정)
 	 * @param attemptId     무효 확인 API 호출에 필요하다. 화면은 이 값을 모른 채

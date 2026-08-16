@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.UUID;
 
 @Service
@@ -204,15 +205,39 @@ public class CohortService {
                             .findByCohortMemberIdAndOrgIdAndUnassignedAtIsNull(member.getCohortMemberId(), orgId)
                             .map(classMembership -> classroomRepository
                                     .findByClassIdAndOrgIdAndDeletedAtIsNull(classMembership.getClassId(), orgId)
-                                    .map(classroom -> new EnrollmentView(
-                                            cohort.getCohortId(), cohort.getName(),
-                                            classroom.getClassId(), classroom.getName()))
-                                    .orElse(new EnrollmentView(cohort.getCohortId(), cohort.getName(), null, null)))
-                            .orElse(new EnrollmentView(cohort.getCohortId(), cohort.getName(), null, null));
+                                    .map(classroom -> enrollmentView(cohort, classroom.getClassId(), classroom.getName()))
+                                    .orElseGet(() -> enrollmentView(cohort, null, null)))
+                            .orElseGet(() -> enrollmentView(cohort, null, null));
                 })
+                .sorted(ENROLLMENT_ORDER)
                 .toList();
     }
 
-    public record EnrollmentView(UUID cohortId, String cohortName, UUID classId, String className) {
+    private EnrollmentView enrollmentView(Cohort cohort, UUID classId, String className) {
+        return new EnrollmentView(cohort.getCohortId(), cohort.getName(), cohort.getStatus(),
+                cohort.getStartDate(), classId, className);
+    }
+
+    /**
+     * 담당·소속 기수가 둘 이상일 때 <b>화면이 기본으로 열 기수</b>를 정하는 순서다(30차 R9).
+     *
+     * <p>종전에는 {@code cohort_member} 조회 순서 그대로였고 그 순서는 정의된 적이 없다. 진행 중인
+     * 기수와 막 끝난 기수를 함께 맡은 매니저가 생기면 화면은 목록 첫 항목을 고를 수밖에 없는데,
+     * 그 첫 항목이 무엇인지 아무도 약속하지 않은 상태였다.
+     *
+     * <p>진행 중을 먼저 놓고, 같은 상태 안에서는 최근 시작한 것을 먼저 놓는다 — 오퍼레이터 화면이
+     * 「진행 중을 고른다」로 쓰는 규칙과 같다. 화면은 첫 원소를 그대로 열면 된다.
+     */
+    private static final Comparator<EnrollmentView> ENROLLMENT_ORDER = Comparator
+            .comparingInt((EnrollmentView view) -> switch (view.status()) {
+                case RUNNING -> 0;
+                case PLANNED -> 1;
+                case CLOSED -> 2;
+            })
+            .thenComparing(EnrollmentView::startDate, Comparator.reverseOrder())
+            .thenComparing(EnrollmentView::cohortName);
+
+    public record EnrollmentView(UUID cohortId, String cohortName, CohortStatus status,
+                                 LocalDate startDate, UUID classId, String className) {
     }
 }

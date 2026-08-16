@@ -43,6 +43,21 @@ public interface TraineeRosterRepository {
 	int countCohortTotal(UUID cohortId, UUID orgId, UUID scopedManagerId);
 
 	/**
+	 * 계정 상태별 인원(30차 R7). 화면 머리글의 `활성 24 · 초대 대기 1 · 비활성 1`이다.
+	 *
+	 * <p>{@link #countCohortTotal}과 <b>같은 모집단</b>이며 필터를 적용하지 않는다 — 세 숫자는
+	 * 검색어나 반 필터를 바꿔도 변하지 않는 모집단 내역이라 그래야 총원과 합이 맞는다.
+	 *
+	 * <p>목록에서 셀 수 없어 따로 센다. 한 쪽에 20명씩 오므로 화면이 가진 것은 한 페이지뿐이고,
+	 * {@code accountStatus}를 바꿔 세 번 더 부르면 필터를 바꿀 때마다 3콜이 따라붙는다.
+	 */
+	AccountStatusCounts countByAccountStatus(UUID cohortId, UUID orgId, UUID scopedManagerId);
+
+	/** 셋을 더하면 {@link #countCohortTotal}과 같다. */
+	record AccountStatusCounts(int activeCount, int invitedCount, int inactiveCount) {
+	}
+
+	/**
 	 * 화면의 `회차 · 미프 N차` 드롭다운에 넣을 기수의 평가 회차 전부. <b>차수 오름차순</b>이다.
 	 *
 	 * <p>기본 회차를 여기서 정하지 않는다 -- 「이번 회차」 판정은 projectexecution의
@@ -170,7 +185,7 @@ public interface TraineeRosterRepository {
 			UUID attemptId,
 			String roundResultStatus,
 			String conceptResultItems,
-			/** 2단 이하 개수의 분모. 사람마다 할당 문제 수가 다르므로 화면이 '1/2'를 그리려면 함께 필요하다. */
+			/** 2단 미만 개수의 분모. 사람마다 할당 문제 수가 다르므로 화면이 '1/2'를 그리려면 함께 필요하다. */
 			Integer expectedConceptCount,
 			Integer lowStageConceptCount,
 			Integer excellentOccurrenceCount,
@@ -180,7 +195,14 @@ public interface TraineeRosterRepository {
 			 * 최신 차수부터 내림차순이며, 우수 근거가 없으면 빈 배열이다.
 			 */
 			int[] excellentAssessmentSequenceNos,
-			String matchedRiskTypeCodes,
+			/**
+			 * 그 회차에 걸린 위험 유형 전부다. 원장 컬럼이 {@code text[]}라 <b>배열 그대로</b> 읽는다
+			 * (30차 R6 — 종전에는 {@code ::text} 캐스팅 탓에 PostgreSQL 배열 리터럴 문자열이 나갔다).
+			 * 교육생 상세와 같은 타입이다.
+			 *
+			 * <p>{@code null}(그 행에 회차 지표가 없다)과 빈 배열(걸린 위험이 없다)은 뜻이 다르다.
+			 */
+			List<String> matchedRiskTypeCodes,
 			/**
 			 * 배지 한 칸에 넣을 <b>단일</b> 코드다. 정책 문서 §7의 2층 구조를 그대로 담는다 —
 			 * 1층 응시상태(NOT_ATTENDED·SESSION_INCOMPLETE·INVALID_ATTEMPT)가 있으면 2층 위험 유형은

@@ -96,7 +96,7 @@ public class TraineeTimelineController {
 					답한 문항이 없으면 `REVIEW`가, 창이 아직 열려 있으면 `REVIEW_CLOSED`가 생기지 않는다.
 
 					💡 **`reviewTargetCount`의 기준은 2단 미만(0~1단)이다.** 정책상 재시험 대상이며
-					명단(MG-05)의 `2단 이하` 분자와 같은 산식이다 — 2단은 게이트 밖이라 세지 않는다.
+					명단(MG-05) `lowStageConceptCount`와 같은 산식이다 — 2단은 게이트 밖이라 세지 않는다.
 
 					💡 **커서는 회차 차수다.** 손으로 만들지 말고 응답의 `nextCursor`를 그대로 돌려준다.
 					"""

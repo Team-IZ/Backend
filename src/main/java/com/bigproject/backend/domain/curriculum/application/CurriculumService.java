@@ -48,6 +48,34 @@ public interface CurriculumService {
             int teachesCount) {
     }
 
+    /**
+     * 이 기수의 회차들이 <b>실제로 연결한</b> 교안 목록(30차 Q2). 매니저 교안 화면이 쓰는 읽기 전용
+     * 목록이며 등록·재분석 같은 쓰기 액션은 없다.
+     *
+     * <p>{@link #findLinkableCurriculaForCohort}와 이름이 비슷하지만 <b>정반대의 값</b>이다 —
+     * 그쪽은 오퍼레이터가 회차에 <b>붙일 수 있는 후보</b>라 기관 전체이고, 이쪽은 이미 <b>붙어 있는
+     * 것</b>이라 기수 범위다. 그 조회의 경로에 {@code cohortId}가 있는데 목록을 좁히지 않는 것이
+     * 오해를 샀다.
+     *
+     * <p>한 교안이 여러 회차에 걸리면 <b>한 번만</b> 나오고 {@code linkedProjects}에 그 회차들이
+     * 모두 담긴다. 그 목록이 없으면 기관 전체 목록과 구분되지 않는다 — 「이 교안이 3차에 쓰였다」가
+     * 이 화면의 유일한 맥락이다.
+     */
+    List<LinkedCurriculum> findLinkedCurriculaForCohort(UUID cohortId, UUID orgId);
+
+    /**
+     * 기수에 연결된 교안 한 줄.
+     *
+     * @param linkedProjects 이 교안을 쓴 회차들이며 차수 오름차순이다. <b>비어 있지 않다</b> —
+     *                       연결이 있어야 이 목록에 들어온다
+     */
+    record LinkedCurriculum(
+            CurriculumVersion version,
+            com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus analysisStatus,
+            int teachesCount,
+            List<ProjectService.CohortCurriculumLink> linkedProjects) {
+    }
+
     CurriculumVersion getLinkableCurriculum(UUID versionId, UUID orgId);
 
     List<SectionItemView> findSectionItems(UUID sectionId, UUID orgId);

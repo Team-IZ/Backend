@@ -958,7 +958,7 @@ public class ProjectController {
 
 					| 필드 | 타입 | 설명 |
 					|---|---|---|
-					| `targetTraineeCount` | long | 이번 회차 수행 대상 교육생 수(기수 총원). 제출률의 분모 |
+					| `targetTraineeCount` | long | 이번 회차 수행 대상 교육생 수. 제출률의 분모. **오퍼레이터는 기수 총원, 매니저는 담당 반 총원**(30차 R3) |
 					| `submittedCount` | long | 제출을 마친 교육생 수 |
 					| `analysisTargetCount` | long | 분석 대상 교육생 수. `submittedCount`와 값이 같습니다 — 단계별 분모를 필드 이름으로도 드러내려고 따로 둡니다 |
 					| `analysisSucceededCount` | long | 분석이 성공한 교육생 수 |
@@ -1019,6 +1019,27 @@ public class ProjectController {
 					그때 만들어져 회차가 없는 프로젝트는 **`PROJECT_ROUND_NOT_CREATED`(404)** 로 답한다.
 					`PROJECT_ROUND_NOT_FOUND`와 나눈 이유는 화면이 할 일이 다르기 때문이다 —
 					이쪽은 「회차 준비 중」이고, 그쪽은 없는 번호를 물은 것이라 드롭다운을 되돌려야 한다.
+
+					## 🔴 30차 R3 — 매니저는 담당 반만 본다
+
+					**역할이 모집단을 가른다.** 명단(`findTraineeRoster`)·반 목록과 같은 규칙이다.
+
+					| 역할 | `summary` · `classes[]` · `conceptMatches[]` · `failedTeams[]` |
+					|---|---|
+					| 오퍼레이터 | 기수 전체 |
+					| 매니저 | **담당 반만** |
+
+					네 값이 **모두 같은 모집단**이다. `summary`만 기수 전체로 두면 같은 응답 안에서
+					합계와 반 행이 다른 것을 세게 된다.
+
+					⚠️ **매니저가 담당 반이 하나도 없는 기수의 프로젝트를 열면 `MANAGER_SCOPE_NOT_FOUND`(404)**
+					다. 좁히기만 하면 그 화면은 `반 0개 · 인원 0명`이 되어, 권한이 없다는 사실이
+					「아직 데이터가 없다」로 보인다. 제출 현황(`findProjectSubmissionStatus`)·명단·상세가
+					같은 자리에서 같은 코드를 쓴다.
+
+					💡 30차까지는 이 조회가 역할을 보지 않아 매니저에게도 기수 전체가 나갔다.
+					프로젝트 상세 한 화면 위에서 「제출 현황」 탭은 담당 반 26명인데 「반별 진행」 탭은
+					208명이었고, `managerNames[]`에 다른 매니저 이름까지 실려 나갔다.
 					"""
 	)
 	@PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
@@ -1027,7 +1048,7 @@ public class ProjectController {
 			@ApiResponse(responseCode = "400", description = "ROUND_NO_INVALID 회차 번호가 1 미만"),
 			@ApiResponse(responseCode = "401", description = "ANALYTICS_VIEWER_NOT_FOUND 토큰은 유효하지만 계정을 찾을 수 없음"),
 			@ApiResponse(responseCode = "403", description = "ANALYTICS_VIEWER_NOT_ACTIVE 활성 계정 아님 · ANALYTICS_ORGANIZATION_NOT_ACTIVE 소속 기관이 활성 아님 · ANALYTICS_ROLE_NOT_ALLOWED 오퍼레이터·매니저가 아님 · PROJECT_CROSS_ORGANIZATION 다른 기관의 프로젝트"),
-			@ApiResponse(responseCode = "404", description = "PROJECT_ROUND_NOT_FOUND 그 프로젝트에 그 번호의 회차가 없음 · PROJECT_ROUND_NOT_CREATED 회차가 아직 하나도 없음(22차 R6)")
+			@ApiResponse(responseCode = "404", description = "PROJECT_ROUND_NOT_FOUND 그 프로젝트에 그 번호의 회차가 없음 · PROJECT_ROUND_NOT_CREATED 회차가 아직 하나도 없음(22차 R6) · MANAGER_SCOPE_NOT_FOUND 매니저가 이 기수에서 담당하는 반이 없음(30차 R3)")
 	})
 	@GetMapping(value = "/projects/{projectId}/class-progress", produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<ClassProgressResponse> findClassProgress(
