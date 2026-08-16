@@ -36,6 +36,21 @@ import java.util.UUID;
  * <p>{@code question_} · {@code first_hint_} · {@code second_hint_}로 접두어만 갈리므로 SQL을 세 벌
  * 쓰지 않고 {@link AnswerSlot#columnPrefix()}로 조립한다. 접두어는 enum이 만든 값이라 외부 입력이
  * 섞이지 않는다.
+ *
+ * <h2>🔴 Reporting 통지 의무 (2026-08-10 합의 · 2026-08-16 확대)</h2>
+ *
+ * <p>아래 컬럼을 <b>폐기하거나 의미를 바꿀 때는 Reporting에 먼저 알린다.</b> 리포트 대상 선별
+ * SQL이 조건으로 쓰고 있어, 말없이 바꾸면 오류 없이 <b>발행이 조용히 0건</b>이 된다. 실제로
+ * 회차 응시 창({@code project_assessment_round.assessment_due_at}) 폐기가 통지 없이 넘어가
+ * 그 사고가 났다(28차 R1 §2).
+ *
+ * <ul>
+ *   <li>{@code problem_stage.status} — 값 집합과 각 값의 의미</li>
+ *   <li>{@code problem_stage.problem_closed_at} · {@code problem_close_reason_code} —
+ *       <b>리포트 생성의 트리거</b>다. 여기가 안 찍히면 리포트가 만들어지지 않는다</li>
+ *   <li>{@code assessment_session.status} · {@code end_reason_code}</li>
+ *   <li>{@code measurement_attempt.assessment_close_at} · {@code validity_review_status}</li>
+ * </ul>
  */
 @Repository
 @RequiredArgsConstructor
@@ -43,6 +58,22 @@ public class JdbcSessionRepository {
 
 	/** 세션이 아직 살아 있는 상태. 이 셋 밖이면 끝난 세션이라 쓰기를 받지 않는다. */
 	private static final String LIVE_STATUSES = "('READY', 'IN_PROGRESS', 'PAUSED')";
+
+	/**
+	 * 문제 종료 사유. {@code ck_problem_stage_close_reason}이 이 넷만 허용하므로 값을 늘리려면
+	 * DDL을 먼저 고쳐야 한다 — 문자열을 새로 지어내면 종료 UPDATE가 CHECK 위반으로 터진다.
+	 */
+	/** 힌트 2개를 쓰고도 미달이라 문제를 접었다. */
+	public static final String CLOSE_HINTS_EXHAUSTED = "HINTS_EXHAUSTED";
+
+	/** AI 커서가 다른 문제로 옮겨 가 이전 문제가 끝났다. */
+	public static final String CLOSE_CURSOR_MOVED = "CURSOR_MOVED";
+
+	/** 문제별 제한 시간을 넘겨 접혔다. */
+	public static final String CLOSE_PROBLEM_TIME_LIMIT = "PROBLEM_TIME_LIMIT";
+
+	/** 세션 종료로 남은 문제가 한꺼번에 끝났다. */
+	public static final String CLOSE_SESSION_ENDED = "SESSION_ENDED";
 
 	/**
 	 * 교육생에게 내보내는 문제 번호. <b>{@code assessment_problem.problem_no}가 아니다</b> —
@@ -315,7 +346,7 @@ public class JdbcSessionRepository {
 	 * DB CHECK({@code ck_assessment_session_ended_axis_code})가 이를 허용한다.
 	 */
 	public void expireCurrentProblem(UUID sessionId, UUID currentProblemId, int currentProblemNo, boolean isReview) {
-		markNotReached(sessionId, currentProblemId);
+		closeProblem(sessionId, currentProblemId, CLOSE_PROBLEM_TIME_LIMIT);
 
 		SessionStage nextStage = findStages(sessionId).stream()
 				.filter(stage -> !stage.problemId().equals(currentProblemId))
@@ -331,11 +362,15 @@ public class JdbcSessionRepository {
 	}
 
 	/**
-	 * 세션을 닫는다. 답한 데까지는 그대로 두고 남은 단계만 {@code NOT_ANSWERED}로 표시한다 —
+	 * 세션을 닫는다. 답한 데까지는 그대로 두고 남은 단계는 종료 상태로 정리한다 —
 	 * 정의서 §6 "70분 초과는 지우지 않는다. 답한 문제까지는 그대로 결과에 들어간다".
 	 *
-	 * <p>손도 대지 않은 단계만 옮기는 이유는 {@code ck_problem_stage_status_2}다. NOT_ANSWERED는
-	 * 슬롯 아홉 개가 전부 NULL일 것을 요구하므로, 답이 하나라도 있는 단계는 IN_PROGRESS로 남긴다.
+	 * <p>정리가 두 갈래인 것은 {@code ck_problem_stage_status_2} 때문이다. {@code NOT_ANSWERED}는
+	 * 슬롯 아홉 개가 전부 NULL일 것을 요구하므로 <b>손도 대지 않은 단계</b>만 받고, 답이 들어간
+	 * 단계는 {@code NOT_PASSED}로 닫는다({@link #closeAnsweredStages}).
+	 *
+	 * <p>🔴 <b>남은 문제를 한꺼번에 끝내는 자리이므로 종료 표식도 여기서 찍는다.</b> 이미 닫힌
+	 * 문제는 {@code problem_closed_at}이 채워져 있어 건너뛴다.
 	 */
 	public void end(UUID sessionId, String endReasonCode, String endedAxisCode) {
 		jdbc.update("""
@@ -347,6 +382,8 @@ public class JdbcSessionRepository {
 				   AND first_hint_answer_text IS NULL
 				   AND second_hint_answer_text IS NULL
 				""", sessionId);
+		closeAnsweredStages(sessionId, null);
+		stampProblemClosed(sessionId, null, CLOSE_SESSION_ENDED);
 		jdbc.update("""
 				UPDATE assessment_session
 				   SET status = CASE WHEN ? = 'POLICY_TIME_LIMIT_EXCEEDED' THEN 'INTERRUPTED' ELSE 'COMPLETED' END,
@@ -422,16 +459,34 @@ public class JdbcSessionRepository {
 	}
 
 	/**
-	 * 문제가 접힐 때 <b>아직 손대지 않은</b> 축을 {@code NOT_REACHED}로 닫는다.
+	 * 문제 하나를 <b>종료로 확정한다.</b> 남은 축을 전부 닫고 종료 표식을 찍는다.
 	 *
-	 * <p>그냥 두면 그 축들이 {@code PREPARED}로 남아 리포트가 "도달했는데 못 풀었다"와 "여기까지
-	 * 오지도 못했다"를 구분하지 못한다({@code JdbcReportPayloadRepository}가 세 상태를 함께 읽는다).
+	 * <h2>왜 한 메서드인가</h2>
 	 *
-	 * <p>답이 하나라도 들어간 축은 건드리지 않는다 — {@code ck_problem_stage_status_2}의
-	 * {@code NOT_REACHED} 분기가 답변·점수·통과가 <b>모두</b> NULL일 것을 요구한다.
+	 * <p>종전에는 {@code markNotReached} 하나뿐이었고 <b>답이 들어간 축은 손대지 못했다.</b>
+	 * 질문에만 답하고 미달인 축은 힌트 둘이 NULL이라 {@code ck_problem_stage_status_2}의 어느
+	 * 종료 분기에도 들어가지 못해 {@code IN_PROGRESS}로 남았기 때문이다. 그 결과 리포트 대상
+	 * 선별("{@code PREPARED}·{@code IN_PROGRESS}가 없으면 끝난 것")이 그 문제를 <b>영영 집지
+	 * 못했다.</b> 2026-08-17 CHECK 완화로 그 축을 {@code NOT_PASSED}로 닫을 수 있게 됐고,
+	 * 세 UPDATE가 <b>항상 함께</b> 나가야 하므로 한 메서드로 묶는다.
+	 *
+	 * <ol>
+	 *   <li>ⓐ 손대지 않은 축 → {@code NOT_REACHED}. 그냥 두면 리포트가 "도달했는데 못 풀었다"와
+	 *       "여기까지 오지도 못했다"를 구분하지 못한다</li>
+	 *   <li>ⓑ 답이 들어갔지만 통과·소진 어느 쪽도 아닌 축 → {@code NOT_PASSED}</li>
+	 *   <li>ⓒ 그 문제의 전 축에 {@code problem_closed_at}·{@code problem_close_reason_code}</li>
+	 * </ol>
+	 *
+	 * <p>ⓒ가 <b>리포트 생성의 유일한 트리거</b>다. 순서가 중요하다 — ⓒ를 먼저 찍으면 아직 안 닫힌
+	 * 축이 있는 상태로 대상이 되어, 리포트가 "아직 진행 중"인 단계를 그대로 서술한다.
+	 *
+	 * @param reasonCode {@link #CLOSE_HINTS_EXHAUSTED} · {@link #CLOSE_CURSOR_MOVED} ·
+	 *                   {@link #CLOSE_PROBLEM_TIME_LIMIT} · {@link #CLOSE_SESSION_ENDED} 중 하나.
+	 *                   값 집합은 {@code ck_problem_stage_close_reason}이 강제한다
+	 * @return 이번 호출이 닫은 축 수(ⓐ + ⓑ). 표식만 찍힌 경우 0이다
 	 */
-	public int markNotReached(UUID sessionId, UUID problemId) {
-		return jdbc.update("""
+	public int closeProblem(UUID sessionId, UUID problemId, String reasonCode) {
+		int closed = jdbc.update("""
 				UPDATE problem_stage
 				   SET status = 'NOT_REACHED', updated_at = now(), row_version = row_version + 1
 				 WHERE session_id = ? AND problem_id = ?
@@ -440,6 +495,55 @@ public class JdbcSessionRepository {
 				   AND first_hint_answer_text IS NULL
 				   AND second_hint_answer_text IS NULL
 				""", sessionId, problemId);
+		closed += closeAnsweredStages(sessionId, problemId);
+		stampProblemClosed(sessionId, problemId, reasonCode);
+		return closed;
+	}
+
+	/**
+	 * 답이 들어간 채 열려 있는 축을 {@code NOT_PASSED}로 닫는다.
+	 *
+	 * <p>이런 축이 생기는 경로는 <b>정상 흐름</b>이다 — 질문에 미달했는데 AI 커서가 다른 자리로
+	 * 옮겨 가면({@code SessionTurnStore.autoHint}가 "AI가 이 질문은 여기까지라고 판정한 것"으로
+	 * 다루는 경우) 힌트를 열지 않은 채 그 축이 남는다.
+	 *
+	 * <p>🔴 {@code IS NOT TRUE} 세 조건은 방어다. {@code applyAnswer}가 통과한 축을
+	 * {@code PASSED}로 이미 옮기므로 실제로는 걸릴 행이 없지만, 하나라도 TRUE인 행을 잡으면
+	 * 완화된 CHECK가 그 UPDATE를 거절해 <b>답변 저장 트랜잭션 전체가 롤백된다.</b>
+	 *
+	 * @param problemId {@code null}이면 세션 전체를 대상으로 한다({@link #end} 경로)
+	 */
+	private int closeAnsweredStages(UUID sessionId, UUID problemId) {
+		return jdbc.update("""
+				UPDATE problem_stage
+				   SET status = 'NOT_PASSED', updated_at = now(), row_version = row_version + 1
+				 WHERE session_id = ?
+				   AND (?::uuid IS NULL OR problem_id = ?::uuid)
+				   AND status IN ('PREPARED', 'IN_PROGRESS')
+				   AND question_answer_text IS NOT NULL
+				   AND question_passed    IS NOT TRUE
+				   AND first_hint_passed  IS NOT TRUE
+				   AND second_hint_passed IS NOT TRUE
+				""", sessionId, problemId, problemId);
+	}
+
+	/**
+	 * 종료 표식을 찍는다. <b>이미 찍힌 행은 건드리지 않아 멱등이다</b> — 같은 문제에 두 번 불려도
+	 * 첫 종료 시각이 유지된다.
+	 *
+	 * <p>표식은 축 행에 있지만 <b>의미는 문제 단위</b>다. 한 UPDATE로 그 문제의 네 축에 같은 값을
+	 * 찍으므로 "일부 축만 닫힌" 중간 상태가 생기지 않는다.
+	 *
+	 * @param problemId {@code null}이면 세션의 남은 문제 전부({@link #end} 경로)
+	 */
+	private void stampProblemClosed(UUID sessionId, UUID problemId, String reasonCode) {
+		jdbc.update("""
+				UPDATE problem_stage
+				   SET problem_closed_at = now(), problem_close_reason_code = ?, updated_at = now()
+				 WHERE session_id = ?
+				   AND (?::uuid IS NULL OR problem_id = ?::uuid)
+				   AND problem_closed_at IS NULL
+				""", reasonCode, sessionId, problemId, problemId);
 	}
 
 	/**
