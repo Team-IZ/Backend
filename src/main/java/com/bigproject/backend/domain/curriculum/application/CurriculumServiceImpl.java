@@ -124,6 +124,56 @@ public class CurriculumServiceImpl implements CurriculumService {
                 .toList();
     }
 
+    /**
+     * 30차 Q2. 연결 링크를 한 번에 읽고, 거기 나온 버전들만 대상으로 상태·개념 수를 한 번씩 더 읽는다 —
+     * {@link #findLinkableCurriculaWithStatus}와 같은 방식이라 조회 수가 교안 수에 비례하지 않는다.
+     */
+    @Override
+    public List<LinkedCurriculum> findLinkedCurriculaForCohort(UUID cohortId, UUID orgId) {
+        if (!catalogRepository.cohortExists(cohortId, orgId)) {
+            throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND);
+        }
+
+        List<ProjectService.CohortCurriculumLink> links =
+                projectService.findCurriculumLinksInCohort(cohortId, orgId);
+        if (links.isEmpty()) {
+            return List.of();
+        }
+
+        // 한 교안이 여러 회차에 걸리므로 버전 단위로 접는다. 링크가 이미 차수 오름차순이라
+        // LinkedHashMap이 그 순서를 그대로 유지한다.
+        Map<UUID, List<ProjectService.CohortCurriculumLink>> linksByVersion = links.stream()
+                .collect(Collectors.groupingBy(ProjectService.CohortCurriculumLink::versionId,
+                        LinkedHashMap::new, Collectors.toList()));
+        List<UUID> versionIds = List.copyOf(linksByVersion.keySet());
+
+        Map<UUID, CurriculumAnalysisStatus> statusByVersion = new HashMap<>();
+        for (CurriculumAnalysis analysis : analysisRepository
+                .findAllByVersionIdInOrderByRequestedAtDesc(versionIds)) {
+            statusByVersion.putIfAbsent(analysis.getVersionId(), analysis.getStatus());
+        }
+
+        Map<UUID, Long> teachesByVersion = new HashMap<>();
+        for (Object[] row : mappingRepository.countActiveCandidatesByVersionIds(
+                versionIds, orgId, MappingStatus.ACTIVE)) {
+            teachesByVersion.put((UUID) row[0], ((Number) row[1]).longValue());
+        }
+
+        Map<UUID, CurriculumVersion> versionById = curriculumVersionRepository.findAllById(versionIds).stream()
+                .collect(Collectors.toMap(CurriculumVersion::getVersionId, version -> version));
+
+        return linksByVersion.entrySet().stream()
+                // 연결은 남아 있는데 버전이 사라진 경우는 건너뛴다. 링크 FK가 RESTRICT라 정상적으로는
+                // 생기지 않지만, 여기서 터지면 화면 전체가 500이 된다.
+                .filter(entry -> versionById.containsKey(entry.getKey()))
+                .map(entry -> new LinkedCurriculum(
+                        versionById.get(entry.getKey()),
+                        statusByVersion.get(entry.getKey()),
+                        Math.toIntExact(teachesByVersion.getOrDefault(entry.getKey(), 0L)),
+                        entry.getValue()))
+                .toList();
+    }
+
     @Override
     public CurriculumVersion getLinkableCurriculum(UUID versionId, UUID orgId) {
         return curriculumVersionRepository.findByVersionIdAndOrgId(versionId, orgId)

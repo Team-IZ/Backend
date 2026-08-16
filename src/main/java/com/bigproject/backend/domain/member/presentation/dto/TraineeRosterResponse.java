@@ -26,6 +26,27 @@ public record TraineeRosterResponse(
 				""", example = "393")
 		int cohortTotal,
 
+		// 30차 R7 — 화면 머리글의 `활성 24 · 초대 대기 1 · 비활성 1`을 만들 수가 없었다. 목록이
+		// 페이지네이션돼 있어(한 쪽 20명) 화면이 셀 수 없고, accountStatus를 바꿔 세 번 더 부르면
+		// 필터를 바꿀 때마다 3콜이 따라붙는다 — 이 값은 필터와 무관한 모집단 기준이기 때문이다.
+		@Schema(description = """
+				계정 상태가 **활성**인 교육생 수입니다. `cohortTotal`과 같은 모집단이며
+				**필터를 적용하지 않습니다** — 검색어·반 필터를 바꿔도 변하지 않습니다.
+
+				`activeCount + invitedCount + inactiveCount = cohortTotal`입니다.
+				""", example = "24")
+		int activeCount,
+		@Schema(description = """
+				**초대만 받고 아직 들어오지 않은** 교육생 수입니다(계정 상태 `INVITED`).
+				`cohortTotal`과 같은 모집단이며 필터를 적용하지 않습니다.
+				""", example = "1")
+		int invitedCount,
+		@Schema(description = """
+				계정 상태가 **비활성**인 교육생 수입니다. `cohortTotal`과 같은 모집단이며
+				필터를 적용하지 않습니다.
+				""", example = "1")
+		int inactiveCount,
+
 		@Schema(description = """
 				**매니저 교육생 목록(MG-05)** 의 '회차 · 미프 N차' 드롭다운에 그대로 넣는 이 기수의
 				평가 회차 전부입니다(22차 Q1).
@@ -205,14 +226,22 @@ public record TraineeRosterResponse(
 					""", nullable = true)
 			String conceptResultItems,
 			@Schema(description = """
-					`2단 이하` 칸의 **분모**이며 그 회차에 이 교육생에게 실제로 만들어진 문항 수입니다.
+					`2단 미만` 칸의 **분모**이며 그 회차에 이 교육생에게 실제로 만들어진 문항 수입니다.
 					사람마다 다릅니다 — 코드에 근거가 없어 문항이 생성되지 않은(`NOT_GENERATED`) 개념은
 					검증 세션에서도 물을 수 없어 분모에서 빠집니다. 화면의 `1/2`가 이 값입니다.
 					지표가 붙지 않은 행은 null입니다.
 					""", example = "2", nullable = true)
 			Integer expectedConceptCount,
-			@Schema(description = "도달 단계 0~2단(저단계)인 문항 수입니다. 응답한 문항이 하나도 없으면 null이며 화면은 그때 `—`를 그립니다.",
-					example = "1", nullable = true)
+			// 30차 R5 — 여기가 `0~2단`이라 적혀 있었다. 원장은 `reach_level <= 1`이라 실제로는
+			// 2단 미만만 센다. 교육생 상세(TraineeDetailResponse)의 같은 이름 필드는 처음부터
+			// `2단 미만(0~1단)`이었고, 두 문서가 서로 다른 말을 하고 있었다.
+			@Schema(description = """
+					도달 단계 **2단 미만(0~1단)** 인 문항 수입니다. 2단(설계 논리)이 합격선이라
+					다시 보기 대상 판정(`Concept.retryTarget`)과 같은 기준입니다.
+
+					응답한 문항이 하나도 없으면 null이며 화면은 그때 `—`를 그립니다 — 전부 통과한
+					`0`과 구분해야 합니다.
+					""", example = "1", nullable = true)
 			Integer lowStageConceptCount,
 			@Schema(description = "이 교육생이 우수로 발견된 누적 횟수입니다. 지표가 붙지 않은 행은 null입니다.",
 					example = "3", nullable = true)
@@ -224,14 +253,23 @@ public record TraineeRosterResponse(
 					최신 차수부터 내림차순이며, 근거가 없으면 빈 배열입니다. `우수 3회 · 1·2·3차`가 이 값입니다.
 					""", example = "[3, 2, 1]")
 			int[] excellentAssessmentSequenceNos,
+			// 30차 R6 — 이 필드는 문자열이었다. 원장이 text[]인데 SQL에서 ::text로 캐스팅해
+			// getString으로 받은 탓에 "{}"·"{PERSISTENT_LOW}" 같은 PostgreSQL 배열 리터럴이
+			// 나갔다. 문서는 "문자열로 직렬화됨"이라 적었지만 그것은 JSON이 아니라서
+			// JSON.parse("{}")가 빈 객체가 된다 — 읽는 쪽이 조용히 틀린다. 교육생 상세가 처음부터
+			// 쓰던 배열로 맞췄다.
 			@Schema(description = """
 					이번 회차에 걸린 위험 유형 **전부**입니다(원장: InterviewCandidateReason).
 					`STAGE_DECLINE`(단계 하락) · `PERSISTENT_LOW`(지속 저점) · `INVALID_ATTEMPT`(무효 응시) ·
 					`CONTRIBUTION_UNDERSTANDING_GAP`(기여·이해도 괴리) · `LOW_PARTICIPATION`(저기여) 5종이며
 					동시에 여러 개가 걸릴 수 있습니다. 해소(`RESOLVED`)된 사유는 들어오지 않습니다.
-					지표가 붙지 않은 행은 null입니다 — 위험이 없다는 뜻의 빈 배열과 다릅니다.
-					""", example = "{INVALID_ATTEMPT}", nullable = true)
-			String matchedRiskTypeCodes,
+
+					교육생 상세(`.../trainees/{traineeId}`)의 `rounds[].matchedRiskTypeCodes`와
+					**같은 타입·같은 값**입니다.
+
+					⚠️ 지표가 붙지 않은 행은 null입니다 — 위험이 없다는 뜻의 빈 배열과 다릅니다.
+					""", example = "[\"INVALID_ATTEMPT\"]", nullable = true)
+			List<String> matchedRiskTypeCodes,
 			@Schema(description = """
 					배지 한 칸에 넣을 **단일** 코드입니다. 정책 문서 §7의 2층 구조를 그대로 담습니다 —
 					1층 응시상태(`NOT_ATTENDED` 미응시 → `SESSION_INCOMPLETE` 응시 중단 →

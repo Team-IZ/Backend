@@ -16,6 +16,12 @@ import java.util.UUID;
  *
  * 제출은 team_id + assessment_round_id 단위 원장이지만 이 화면은 인원 기준으로 환산한다.
  * manager_project_submission_view는 팀 카운트만 주므로 쓸 수 없다.
+ *
+ * <p><b>{@code scopedManagerId}는 담당 반으로 좁힐 매니저다</b>(30차 R3). 오퍼레이터가 부르면
+ * {@code null}이라 기수 전체를 본다 — 명단({@code findTraineeRoster})·반 목록과 같은 규칙이다.
+ * 30차까지 이 조회는 역할을 보지 않아, 매니저가 프로젝트 상세를 열면 「제출 현황」 탭은 담당 반
+ * 6팀·26명인데 「반별 진행」 탭은 기수 전체 8반·208명이 되고 다른 매니저 이름까지 함께 나갔다.
+ * 한 화면 안에서 탭마다 모집단이 달라지면 화면이 그릴 수 있는 숫자가 없다.
  */
 public interface ClassProgressQueryRepository {
 
@@ -32,22 +38,26 @@ public interface ClassProgressQueryRepository {
 	 */
 	boolean hasAnyRound(UUID projectId);
 
-	List<ClassProgressRow> findClassProgress(UUID assessmentRoundId, UUID organizationId);
+	List<ClassProgressRow> findClassProgress(UUID assessmentRoundId, UUID organizationId, UUID scopedManagerId);
 
 	/**
 	 * 반별 합산이 아니라 회차 전체를 대상으로 직접 집계한다.
 	 * classes[]는 화면 필터·정렬에 따라 달라질 수 있어 카드 요약은 이 값을 따로 쓴다.
+	 *
+	 * <p><b>{@code scopedManagerId}를 여기에도 거는 이유</b> — 걸지 않으면 같은 응답 안에서
+	 * {@code summary}가 기수 전체(208명)를, {@code classes[]}가 담당 반(26명)을 말하게 된다.
+	 * 탭 사이의 불일치를 응답 안으로 옮기는 것일 뿐이다.
 	 */
-	RoundSummaryRow findRoundSummary(UUID assessmentRoundId, UUID organizationId);
+	RoundSummaryRow findRoundSummary(UUID assessmentRoundId, UUID organizationId, UUID scopedManagerId);
 
-	List<ConceptMatchRow> findConceptMatches(UUID assessmentRoundId, UUID organizationId);
+	List<ConceptMatchRow> findConceptMatches(UUID assessmentRoundId, UUID organizationId, UUID scopedManagerId);
 
 	/**
 	 * 팀별 최신 제출·최신 분석 시도가 FAILED인 팀만 반환한다.
 	 * 대표자는 submission.submitted_by이며, 재시도가 있을 수 있어 팀·회차별 최신 제출과
 	 * 그 제출에 매인 최신 analysis_job만 본다 — assessment_round_attendance 뷰와 같은 선택 기준이다.
 	 */
-	List<FailedTeamRow> findFailedTeams(UUID assessmentRoundId, UUID organizationId);
+	List<FailedTeamRow> findFailedTeams(UUID assessmentRoundId, UUID organizationId, UUID scopedManagerId);
 
 	record RoundScope(
 			UUID assessmentRoundId,
@@ -56,6 +66,8 @@ public interface ClassProgressQueryRepository {
 			int roundNo,
 			String roundName,
 			UUID organizationId,
+			/** 담당 기수 판정에 쓴다. 매니저가 이 기수에서 반을 하나도 맡지 않았으면 404다(30차 R3). */
+			UUID cohortId,
 			Instant submissionDueAt,
 			String reportPublishMode,
 			boolean reportPublished,

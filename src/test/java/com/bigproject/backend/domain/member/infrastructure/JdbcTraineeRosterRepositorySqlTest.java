@@ -83,6 +83,28 @@ class JdbcTraineeRosterRepositorySqlTest {
 				.isLessThanOrEqualTo(repository.countCohortTotal(cohortId, organizationId, null));
 	}
 
+	/**
+	 * 30차 R7 — 계정 상태별 집계는 담당 반 조건이 붙고 안 붙고에 따라 <b>서로 다른 문장</b>이 된다
+	 * (조각을 문자열로 이어 붙인다). 매니저 쪽을 돌려 보지 않으면 그 문장의 문법 오류나 바인딩
+	 * 어긋남을 전혀 보지 못한다.
+	 *
+	 * <p>합이 총원과 같은지도 같은 데이터에서 확인한다 — 두 질의의 WHERE가 갈리면 화면 머리글의
+	 * `활성 24 · 초대 대기 1 · 비활성 1`이 총원과 맞지 않게 되고, 그 어긋남은 화면에서만 보인다.
+	 */
+	@Test
+	void accountStatusCountsParseForBothRolesAndAddUpToTheTotal() {
+		JdbcTraineeRosterRepository repository = repositoryOrSkip();
+		UUID managerUserId = UUID.randomUUID();
+
+		assertThatCode(() -> repository.countByAccountStatus(cohortId, organizationId, managerUserId))
+				.doesNotThrowAnyException();
+
+		TraineeRosterRepository.AccountStatusCounts counts =
+				repository.countByAccountStatus(cohortId, organizationId, null);
+		assertThat(counts.activeCount() + counts.invitedCount() + counts.inactiveCount())
+				.isEqualTo(repository.countCohortTotal(cohortId, organizationId, null));
+	}
+
 	private JdbcTraineeRosterRepository repositoryOrSkip() {
 		DriverManagerDataSource dataSource = new DriverManagerDataSource(URL, "postgres", "devcheck");
 		dataSource.setDriverClassName("org.postgresql.Driver");

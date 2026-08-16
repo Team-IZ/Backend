@@ -1,14 +1,18 @@
 package com.bigproject.backend.global.config;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -525,7 +529,9 @@ class OpenApiDocumentTest {
 	 */
 	@Test
 	void letsTheTeamRowSayThereIsNoSubmissionOrAnalysisYet() throws Exception {
-		JsonNode team = spec().path("components").path("schemas").path("Team");
+		// 30차 R2① — 이 스키마는 `Team`이었다. 히트맵의 같은 이름 record와 부딪혀 있던 것을
+		// `SubmissionStatusTeam`으로 갈랐다(schemaNamesAreUniqueAcrossPresentationDtos).
+		JsonNode team = spec().path("components").path("schemas").path("SubmissionStatusTeam");
 
 		// 키는 항상 나간다. required에서 빼면 화면이 "키가 없을 수도 있다"로 읽어 옵셔널 체이닝이 는다.
 		assertThat(team.path("required").toString()).contains("submission", "analysis");
@@ -918,6 +924,124 @@ class OpenApiDocumentTest {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * <b>스키마 이름은 스펙 전체에서 유일해야 한다</b>(30차 R2①②).
+	 *
+	 * <p>springdoc은 중첩 record를 <b>단순 이름</b>으로 컴포넌트에 등록한다. 같은 이름이 둘이면
+	 * 예외도 경고도 없이 <b>나중 것이 앞의 것을 덮어쓰고</b>, 밀려난 쪽을 참조하던 응답은 남의 정의를
+	 * 가리키게 된다. 스펙은 문법적으로 멀쩡하고 CI도 통과하므로 <b>읽어서는 보이지 않는다</b> —
+	 * 30차에는 {@code Summary}(3중복)·{@code Concept}·{@code Classroom}·{@code Team}·
+	 * {@code RequirementResult}·{@code Trainee} 여섯 이름이 겹쳐 있었고, 프론트가 히트맵을 화면에
+	 * 붙이다가 열 이름이 생성 타입에 없다는 것을 발견하고서야 드러났다.
+	 *
+	 * <p>스펙 결과물만 봐서는 검사할 수 없다 — 밀려난 스키마는 <b>흔적 없이 사라지므로</b> 스펙에
+	 * 남는 것은 정상적인 스키마 하나뿐이다. 그래서 등록 <b>전</b>인 타입 쪽을 센다.
+	 *
+	 * <p>{@code ..presentation..}만 보는 이유는 이 프로젝트에서 응답·요청 DTO가 그 아래에만 있기
+	 * 때문이다. 그 밖(application·domain·infrastructure)의 record는 컴포넌트로 등록되지 않으므로
+	 * 같은 이름을 써도 부딪히지 않는다.
+	 */
+	@Test
+	void schemaNamesAreUniqueAcrossPresentationDtos() {
+		ClassPathScanningCandidateComponentProvider scanner =
+				new ClassPathScanningCandidateComponentProvider(false);
+		scanner.addIncludeFilter((reader, factory) -> true);
+
+		Map<String, List<String>> bySchemaName = new LinkedHashMap<>();
+		for (BeanDefinition definition : scanner.findCandidateComponents("com.bigproject.backend")) {
+			String className = definition.getBeanClassName();
+			if (className == null || !className.contains(".presentation.")) {
+				continue;
+			}
+			Class<?> type;
+			try {
+				type = Class.forName(className);
+			} catch (ClassNotFoundException | NoClassDefFoundError ignored) {
+				continue;
+			}
+			if (!type.isRecord() && !type.isEnum()) {
+				continue;
+			}
+			bySchemaName.computeIfAbsent(schemaNameOf(type), name -> new ArrayList<>())
+					.add(type.getName());
+		}
+
+		// 스캐너가 아무것도 못 찾으면 위 단언은 공허하게 통과한다. 실제로 세고 있는지부터 확인한다.
+		assertThat(bySchemaName).hasSizeGreaterThan(100);
+
+		List<String> collisions = bySchemaName.entrySet().stream()
+				.filter(entry -> entry.getValue().size() > 1)
+				.map(entry -> entry.getKey() + " ← " + String.join(" · ", entry.getValue()))
+				.toList();
+
+		assertThat(collisions)
+				.as("스키마 이름이 겹치면 한쪽이 스펙에서 조용히 사라진다. @Schema(name = \"...\")로 갈라라")
+				.isEmpty();
+	}
+
+	/** springdoc이 이 타입을 등록할 이름. {@code @Schema(name)}을 적었으면 그것이 이긴다. */
+	private static String schemaNameOf(Class<?> type) {
+		Schema schema = type.getAnnotation(Schema.class);
+		return schema == null || schema.name().isEmpty() ? type.getSimpleName() : schema.name();
+	}
+
+	/**
+	 * 33차 R1 — <b>스펙이 요구하는 요청 헤더는 CORS 허용 목록에도 있어야 한다.</b>
+	 *
+	 * <h2>이 자리는 서버 쪽 테스트로 잡히지 않는다</h2>
+	 *
+	 * <p>사전 확인(preflight)은 <b>브라우저만</b> 보낸다. curl·스웨거·Postman에서는 그 단계가 없어
+	 * 요청이 그대로 도착하고 정상 응답이 온다 — 그래서 목록에서 헤더가 빠져도 서버 쪽에서는
+	 * 아무 증상이 없고, 브라우저에서만 <b>본 요청이 아예 나가지 않는다.</b> 로그도 남지 않는다.
+	 *
+	 * <p>실제로 {@code Idempotency-Key}가 그 상태였다. 스펙은 필수로 요구하는데 목록에 없어서,
+	 * 헤더를 빼면 400이고 넣으면 브라우저가 막는 <b>프론트에 선택지가 없는</b> 상태로 제출 API가
+	 * 통째로 잠겨 있었다. 제출이 막히면 분석·응시·리포트가 전부 막힌다.
+	 *
+	 * <p>헤더를 새로 읽는 오퍼레이션이 생겨도 CORS 목록은 사람이 따로 고쳐야 한다. 그 둘을
+	 * 이어 두지 않으면 같은 사고가 반복되므로, <b>스펙에 선언된 헤더</b>를 모아 대조한다.
+	 * {@link SecurityConfig#ALLOWED_HEADERS}를 직접 읽는다 — 목록을 여기 한 벌 더 적으면
+	 * 두 벌이 갈라져, 정작 서버가 쓰는 쪽이 틀린 채로 검사만 통과한다.
+	 */
+	@Test
+	void letsTheBrowserSendEveryHeaderTheSpecAsksFor() throws Exception {
+		List<String> allowed = SecurityConfig.ALLOWED_HEADERS.stream()
+				.map(header -> header.toLowerCase(java.util.Locale.ROOT))
+				.toList();
+
+		Map<String, String> blockedByCors = new LinkedHashMap<>();
+		List<String> declared = new ArrayList<>();
+		forEachOperation(spec(), (operationId, operation) ->
+				operation.path("parameters").forEach(parameter -> {
+					if (!"header".equals(parameter.path("in").asString(null))) {
+						return;
+					}
+					String name = parameter.path("name").asString("");
+					if (name.isEmpty()) {
+						return;
+					}
+					declared.add(name);
+					if (allowed.contains(name.toLowerCase(java.util.Locale.ROOT))) {
+						return;
+					}
+					// 같은 헤더가 여러 오퍼레이션에 있으면 처음 하나만 남긴다 — 목록이 아니라
+					// "어느 헤더가 빠졌나"가 읽어야 할 정보다.
+					blockedByCors.putIfAbsent(name, operationId);
+				}));
+
+		// 스펙에서 헤더 파라미터를 하나도 못 읽으면 아래 단언은 공허하게 통과한다.
+		// 33차의 그 헤더가 실제로 걸리는지부터 확인한다.
+		assertThat(declared)
+				.as("헤더 파라미터를 읽지 못하고 있다 — 검사가 아무것도 보지 않는다")
+				.contains("Idempotency-Key");
+
+		assertThat(blockedByCors)
+				.as("CORS 허용 목록에 없는 헤더는 브라우저가 본 요청을 보내기 전에 막는다 "
+						+ "— curl·스웨거로는 재현되지 않으므로 여기서 잡아야 한다. "
+						+ "SecurityConfig.ALLOWED_HEADERS에 추가할 것")
+				.isEmpty();
 	}
 
 	private interface ResponseVisitor {

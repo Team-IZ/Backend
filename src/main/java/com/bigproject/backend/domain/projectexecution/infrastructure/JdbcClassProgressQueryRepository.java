@@ -10,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -20,6 +21,69 @@ import java.util.UUID;
 public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepository {
 
 	private final JdbcTemplate jdbcTemplate;
+
+	/**
+	 * 담당 반 제한(30차 R3). {@code scopedManagerId}가 없으면 빈 문자열이라 SQL이 그대로 남는다.
+	 *
+	 * <p><b>조인이 아니라 {@code EXISTS}로 건다.</b> {@code manager_assignment}는 배정·해제 이력이
+	 * 쌓이는 표라 같은 (매니저, 반)에 행이 여럿일 수 있고, 조인하면 그 수만큼 출석 행이 복제돼
+	 * <b>인원 집계가 부풀려진다</b> — 제출 현황({@code JdbcSubmissionStatusQueryRepository})이 같은
+	 * 이유로 같은 모양을 쓴다. 두 탭이 같은 조건을 써야 같은 모집단을 말한다.
+	 *
+	 * <p>파라미터는 매니저 ID 하나이고, 호출부의 인자 순서가 이 조각의 위치와 맞아야 한다.
+	 */
+	private static String managedClassFilter(UUID scopedManagerId, String classColumn) {
+		if (scopedManagerId == null) {
+			return "";
+		}
+		return """
+					AND EXISTS (
+						SELECT 1
+						FROM manager_assignment ma_scope
+						WHERE ma_scope.class_id = %s
+							AND ma_scope.manager_user_id = ?
+							AND ma_scope.status = 'ACTIVE'
+							AND ma_scope.unassigned_at IS NULL
+					)
+				""".formatted(classColumn);
+	}
+
+	/**
+	 * 반이 아니라 <b>팀</b>으로 좁힌다. 개념 매칭은 팀 단위 판정이라 반 컬럼이 없다.
+	 *
+	 * <p>{@code team} 조인을 FROM에 더하지 않고 {@code EXISTS} 안에 가두는 이유는, 오퍼레이터가
+	 * 부를 때의 질의를 <b>한 글자도 바꾸지 않기 위해서</b>다. 조인을 밖에 두면 삭제된 팀이
+	 * 결과에서 빠지는 등 좁히는 것과 무관한 변화가 따라붙는다.
+	 */
+	private static String managedTeamFilter(UUID scopedManagerId, String teamColumn) {
+		if (scopedManagerId == null) {
+			return "";
+		}
+		return """
+					AND EXISTS (
+						SELECT 1
+						FROM team t_scope
+						JOIN manager_assignment ma_scope ON ma_scope.class_id = t_scope.class_id
+						WHERE t_scope.team_id = %s
+							AND ma_scope.manager_user_id = ?
+							AND ma_scope.status = 'ACTIVE'
+							AND ma_scope.unassigned_at IS NULL
+					)
+				""".formatted(teamColumn);
+	}
+
+	/**
+	 * 조건이 SQL에 없으면 인자도 없어야 한다. 매니저 ID는 <b>조각이 놓인 자리</b>에 들어가므로
+	 * 질의마다 앞뒤 인자를 나눠 넘긴다 — 조각이 WHERE 끝에 오지 않는 질의가 있다.
+	 */
+	private static Object[] argsAround(List<Object> before, UUID scopedManagerId, Object... after) {
+		List<Object> all = new ArrayList<>(before);
+		if (scopedManagerId != null) {
+			all.add(scopedManagerId);
+		}
+		all.addAll(Arrays.asList(after));
+		return all.toArray();
+	}
 
 	@Override
 	public Optional<RoundScope> findRound(UUID projectId, int roundNo) {
@@ -32,6 +96,7 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 					r.round_no,
 					r.round_name,
 					p.org_id,
+					p.cohort_id,
 					r.submission_due_at,
 					r.report_publish_mode,
 					EXISTS (
@@ -60,6 +125,7 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 						rs.getInt("round_no"),
 						rs.getString("round_name"),
 						rs.getObject("org_id", UUID.class),
+						rs.getObject("cohort_id", UUID.class),
 						instant(rs, "submission_due_at"),
 						rs.getString("report_publish_mode"),
 						rs.getBoolean("report_published"),
@@ -85,7 +151,8 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 	 * 한 반에 매니저가 여럿이면 그냥 조인할 때 반 행이 매니저 수만큼 불어나 인원 집계가 부풀려진다.
 	 */
 	@Override
-	public List<ClassProgressRow> findClassProgress(UUID assessmentRoundId, UUID organizationId) {
+	public List<ClassProgressRow> findClassProgress(
+			UUID assessmentRoundId, UUID organizationId, UUID scopedManagerId) {
 		return jdbcTemplate.query(
 				"""
 				SELECT
@@ -117,6 +184,7 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 				) mgr ON TRUE
 				WHERE a.assessment_round_id = ?
 					AND a.org_id = ?
+				""" + managedClassFilter(scopedManagerId, "a.class_id") + """
 				GROUP BY a.class_id, c.name, mgr.manager_names
 				ORDER BY c.name, a.class_id
 				""",
@@ -135,8 +203,7 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 						rs.getLong("invalid_attempt_count"),
 						textArray(rs, "manager_names")
 				),
-				assessmentRoundId,
-				organizationId
+				argsAround(List.of(assessmentRoundId, organizationId), scopedManagerId)
 		);
 	}
 
@@ -145,7 +212,8 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 	 * 화면 카드가 classes[]의 필터·정렬에 얽매이지 않도록 별도 질의로 낸다.
 	 */
 	@Override
-	public RoundSummaryRow findRoundSummary(UUID assessmentRoundId, UUID organizationId) {
+	public RoundSummaryRow findRoundSummary(
+			UUID assessmentRoundId, UUID organizationId, UUID scopedManagerId) {
 		return jdbcTemplate.queryForObject(
 				"""
 				SELECT
@@ -156,7 +224,7 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 				FROM assessment_round_attendance a
 				WHERE a.assessment_round_id = ?
 					AND a.org_id = ?
-				""",
+				""" + managedClassFilter(scopedManagerId, "a.class_id"),
 				(rs, rowNum) -> {
 					long submittedCount = rs.getLong("submitted_count");
 					long analysisSucceededCount = rs.getLong("analysis_succeeded_count");
@@ -169,13 +237,13 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 							rs.getLong("assessed_count")
 					);
 				},
-				assessmentRoundId,
-				organizationId
+				argsAround(List.of(assessmentRoundId, organizationId), scopedManagerId)
 		);
 	}
 
 	@Override
-	public List<ConceptMatchRow> findConceptMatches(UUID assessmentRoundId, UUID organizationId) {
+	public List<ConceptMatchRow> findConceptMatches(
+			UUID assessmentRoundId, UUID organizationId, UUID scopedManagerId) {
 		return jdbcTemplate.query(
 				"""
 				WITH analysed_member AS (
@@ -184,6 +252,7 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 					WHERE a.assessment_round_id = ?
 						AND a.org_id = ?
 						AND a.analysis_status = 'SUCCEEDED'
+				""" + managedClassFilter(scopedManagerId, "a.class_id") + """
 				),
 				team_concept AS (
 					SELECT
@@ -196,6 +265,7 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 						ON pvc.project_concept_id = ap.project_verification_concept_id
 					WHERE ap.problem_scope = 'TEAM_SHARED_PROBLEM'
 						AND ca.assessment_round_id = ?
+				""" + managedTeamFilter(scopedManagerId, "ca.team_id") + """
 					GROUP BY ca.team_id, pvc.teaches_id
 				)
 				SELECT
@@ -217,10 +287,24 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 						rs.getLong("matched_trainee_count"),
 						rs.getLong("unmatched_team_count")
 				),
-				assessmentRoundId,
-				organizationId,
-				assessmentRoundId
+				// 조각이 두 CTE에 하나씩 들어가므로 매니저 ID도 두 번, 각 조각의 자리에 실린다.
+				conceptMatchArgs(assessmentRoundId, organizationId, scopedManagerId)
 		);
+	}
+
+	private static Object[] conceptMatchArgs(
+			UUID assessmentRoundId, UUID organizationId, UUID scopedManagerId) {
+		List<Object> args = new ArrayList<>();
+		args.add(assessmentRoundId);   // analysed_member
+		args.add(organizationId);      // analysed_member
+		if (scopedManagerId != null) {
+			args.add(scopedManagerId); // analysed_member의 담당 반 조각
+		}
+		args.add(assessmentRoundId);   // team_concept
+		if (scopedManagerId != null) {
+			args.add(scopedManagerId); // team_concept의 담당 팀 조각
+		}
+		return args.toArray();
 	}
 
 	/**
@@ -229,7 +313,8 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 	 * 고르는 것과 같은 기준이라 classes[].analysisFailedCount와 팀 목록이 어긋나지 않는다.
 	 */
 	@Override
-	public List<FailedTeamRow> findFailedTeams(UUID assessmentRoundId, UUID organizationId) {
+	public List<FailedTeamRow> findFailedTeams(
+			UUID assessmentRoundId, UUID organizationId, UUID scopedManagerId) {
 		return jdbcTemplate.query(
 				"""
 				SELECT
@@ -255,6 +340,7 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 				WHERE t.org_id = ?
 					AND t.deleted_at IS NULL
 					AND aj.status = 'FAILED'
+				""" + managedClassFilter(scopedManagerId, "t.class_id") + """
 				ORDER BY t.name
 				""",
 				(rs, rowNum) -> new FailedTeamRow(
@@ -265,9 +351,7 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 						rs.getString("representative_name"),
 						rs.getString("failure_reason")
 				),
-				assessmentRoundId,
-				assessmentRoundId,
-				organizationId
+				argsAround(List.of(assessmentRoundId, assessmentRoundId, organizationId), scopedManagerId)
 		);
 	}
 

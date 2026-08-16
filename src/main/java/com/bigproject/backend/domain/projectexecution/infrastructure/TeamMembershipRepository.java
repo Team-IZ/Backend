@@ -27,6 +27,7 @@ public interface TeamMembershipRepository extends JpaRepository<TeamMembership, 
     // 팀 하나의 현재 유효 인원 조회 (toAt이 null인 것만)
     List<TeamMembership> findByTeamIdAndOrgIdAndToAtIsNull(UUID teamId, UUID orgId);
 
-    // 팀 하나의 현재 유효 인원 수만 필요할 때 (목록 화면에서 카드마다 부르면 N+1이라 위 배치 버전도 같이 둔다)
-    long countByTeamIdAndToAtIsNull(UUID teamId);
+    // countByTeamIdAndToAtIsNull은 30차 R4에서 지웠다. 유일한 호출부가 팀마다 이 질의를 도는
+    // 루프였고, 목록이 이제 구성원을 한 번에 읽어 인원 수를 그 길이로 센다
+    // (ProjectMembershipQueryRepository.findMembersByTeamIds).
 }

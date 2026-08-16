@@ -50,12 +50,30 @@ public class EnrollmentController {
 					**응답 (200)**
 					- enrollments[].cohortId: 기수 ID
 					- enrollments[].cohortName: 기수명
+					- enrollments[].status: 기수 상태 `PLANNED` / `RUNNING` / `CLOSED`
 					- enrollments[].classroom: 현재 배정된 반. 아직 배정 전이면 null
 					- enrollments[].classroom.classroomId / name: 반 ID·이름
 
-					**아직 채워지지 않는 값** — 반 배정 전이면 classroom은 null이다. 오퍼레이터가
-					`PATCH /cohorts/{cohortId}/classrooms/trainee-assignments`를 실행하기 전 구간에서
-					정상적으로 발생하는 상태다.
+					## 🔴 30차 R9 — 순서가 정의돼 있다
+
+					**진행 중(`RUNNING`) → 개설 예정(`PLANNED`) → 종료(`CLOSED`)** 순이고, 같은 상태
+					안에서는 **최근 시작한 기수가 먼저**다. 화면은 `enrollments[0]`을 그대로 열면
+					오퍼레이터 화면과 같은 규칙(*진행 중을 고른다*)이 된다.
+
+					종전에는 정렬이 없어 `cohort_member` 조회 순서 그대로 나갔다. 담당 기수가 하나면
+					드러나지 않지만, 진행 중 기수와 막 끝난 기수를 함께 맡은 매니저가 생기면 화면이
+					무엇을 기본으로 열지 정할 근거가 없었다.
+
+					💡 **매니저는 이 조회를 쓰는 편이 낫다.** `GET /cohorts`는 기관의 기수를 전부 주므로
+					담당하지 않는 기수가 상단 스위처에 뜨고, 고르는 순간 하위 조회가 빈 결과가 된다.
+
+					⚠️ **매니저에게 `classroom`은 언제나 null이다.** 이 값의 원장은 교육생 배정
+					(`class_membership`)이고 매니저 배정은 `manager_assignment`라는 다른 원장이다.
+					매니저의 담당 반은 `GET /cohorts/{cohortId}/classrooms`가 담당 반만 돌려준다.
+
+					**아직 채워지지 않는 값** — 교육생도 반 배정 전이면 classroom은 null이다.
+					오퍼레이터가 `PATCH /cohorts/{cohortId}/classrooms/trainee-assignments`를 실행하기
+					전 구간에서 정상적으로 발생하는 상태다.
 					"""
     )
     @ApiResponses({

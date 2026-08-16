@@ -23,7 +23,10 @@ public record InterviewBriefResponse(
 		@Schema(description = "위험 유형. 목록과 같은 값이다", example = "DECLINE")
 		String riskType,
 
-		@Schema(description = "판정 근거 문구", example = "2단 이하 1 → 2")
+		@Schema(description = """
+				판정 근거 문구이며 그대로 표시한다.
+				**대괄호 태그(`[SEVERE]` 등)는 붙지 않는다**(30차 R8).
+				""", example = "평균 도달 단계 2.33 → 1.67. 2단 미만 2개.")
 		String riskSummary,
 
 		@Schema(description = """
@@ -38,10 +41,18 @@ public record InterviewBriefResponse(
 		@Schema(description = "브리프 상태 `NONE` / `FAILED` / `DRAFT` / `CONFIRMED`", example = "DRAFT")
 		String briefState,
 
+		// 30차 R2③ — briefState가 FAILED면 생성된 것이 없어 null이다. 29차 R2로 priorInterview·
+		// savedRecord·voidEvidence에 nullable을 붙일 때 이 필드만 빠졌다. 표기가 없으면 화면이
+		// FAILED 분기를 컴파일러에게 검사받지 못하고, string 타입인데 런타임에 undefined가 된다.
 		@Schema(description = """
 				**★ AI가 생성한 여는 말.** 화면 ①칸에 그대로 표시한다.
 				1~3문장 구어체이고 점수·단계·위험 유형을 직접 언급하지 않는다.
-				""", example = "지난 회차엔 3개 중 1개만 막혔었는데, 이번엔 2개나 막혔더라고요. 편하게 무슨 일이 있었는지 들어보고 싶어서 불렀어요.")
+
+				⚠️ **`briefState`가 `FAILED`·`NONE`이면 `null`이다** — 생성에 실패했거나 아직
+				만들지 않은 브리프다. 그때는 `items`도 빈 배열이므로 `briefState`로 먼저 갈라
+				"브리프를 만들지 못했습니다"를 그리면 된다.
+				""", example = "지난 회차엔 3개 중 1개만 막혔었는데, 이번엔 2개나 막혔더라고요. 편하게 무슨 일이 있었는지 들어보고 싶어서 불렀어요.",
+				nullable = true)
 		String openingRemark,
 
 		@Schema(description = """

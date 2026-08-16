@@ -111,16 +111,49 @@ class SessionTurnStoreTest {
 		verify(repository).moveCursor(eq(SESSION_ID), eq(OTHER_PROBLEM_ID), any());
 	}
 
-	/** 접힌 문제의 남은 축은 NOT_REACHED로 닫는다 — PREPARED로 두면 리포트가 미도달을 못 그린다. */
+	/**
+	 * 접힌 문제는 남은 축을 닫고 <b>종료 표식까지</b> 찍는다. 남은 축을 두면 리포트가 미도달을
+	 * 못 그리고, 표식이 없으면 리포트 자체가 만들어지지 않는다.
+	 */
 	@Test
-	void 문제를_접으면_남은_축을_NOT_REACHED로_닫는다() {
+	void 문제를_접으면_종료로_확정한다() {
 		when(repository.findStages(SESSION_ID)).thenReturn(List.of(stage(), nextProblemStage()));
 		GradingInput input = new GradingInput(head("IN_PROGRESS", "INITIAL", null), List.of(problem()),
 				stageWithHints(2), AnswerSlot.SECOND_HINT);
 
 		store.applyGrading(input, result(1, false, cursorAt("L2")), "답변");
 
-		verify(repository).markNotReached(SESSION_ID, PROBLEM_ID);
+		verify(repository).closeProblem(SESSION_ID, PROBLEM_ID, JdbcSessionRepository.CLOSE_HINTS_EXHAUSTED);
+	}
+
+	/**
+	 * <b>AI 커서가 다른 문제로 옮겨 가는 것도 문제 종료다.</b> 이 경로를 빠뜨리면 질문에만 답하고
+	 * 미달인 축이 {@code IN_PROGRESS}로 남아 그 문제의 리포트가 영영 만들어지지 않는다 —
+	 * 2026-08-17 전환 이전에 실제로 그랬다.
+	 */
+	@Test
+	void 커서가_다른_문제로_가면_이전_문제를_종료로_확정한다() {
+		when(repository.findStages(SESSION_ID)).thenReturn(List.of(stage(), nextProblemStage()));
+		GradingInput input = new GradingInput(head("IN_PROGRESS", "INITIAL", null), List.of(problem()),
+				stage(), AnswerSlot.QUESTION);
+
+		store.applyGrading(input, result(1, false, new Cursor(OTHER_PROBLEM_ID, "L1", 0, null)), "답변");
+
+		verify(repository).closeProblem(SESSION_ID, PROBLEM_ID, JdbcSessionRepository.CLOSE_CURSOR_MOVED);
+	}
+
+	/**
+	 * 같은 문제의 다른 축으로 옮기는 것은 종료가 아니다. 여기서 닫으면 <b>진행 중인 문제가 접혀</b>
+	 * 학생이 남은 축을 받지 못하고, 리포트도 도달하지 않은 축을 도달로 적는다.
+	 */
+	@Test
+	void 같은_문제의_다른_축으로_옮기면_종료하지_않는다() {
+		GradingInput input = new GradingInput(head("IN_PROGRESS", "INITIAL", null), List.of(problem()),
+				stage(), AnswerSlot.QUESTION);
+
+		store.applyGrading(input, result(1, false, cursorAt("L2")), "답변");
+
+		verify(repository, never()).closeProblem(any(), any(), anyString());
 	}
 
 	/** 마지막 문제에서 접히면 갈 곳이 없다 — 세션을 닫는다. */

@@ -449,6 +449,19 @@ public class AssessmentSessionController {
 			description = """
 					왼쪽 코드 패널과 오른쪽 대화가 이 한 번의 조회로 채워진다.
 
+					## 🔴 교육생 본인 전용이다 (30차 Q1)
+
+					**매니저는 부를 수 없다.** 두 겹으로 막혀 있다 — 컨트롤러 전체가 `TRAINEE` 역할을
+					요구하고(403), 통과하더라도 서비스가 **세션 소유자 본인**인지 확인한다.
+					`사용 가능` 표시는 "교육생 화면에서 쓸 수 있다"는 뜻이었고 역할을 적지 않은 것은
+					누락이다.
+
+					💡 **매니저가 「개념별 근거 한 줄」을 찾고 있다면 다른 조회에 이미 있다** —
+					`GET /projects/{projectId}/evaluations/{userId}`(`findTraineeEvaluationDetail`,
+					매니저 전용)의 `concepts[].steps[].note`가 축(L1~L4)별 채점 근거다.
+					교육생 한 명당 **1콜**이며 문항 수만큼 부를 필요가 없다.
+					`note`는 회차 리포트 발행 전에는 `null`이다(`reportPublished`로 분기).
+
 					## 요청 (경로 파라미터)
 
 					| 파라미터 | 필수 | 타입 | 설명 |
