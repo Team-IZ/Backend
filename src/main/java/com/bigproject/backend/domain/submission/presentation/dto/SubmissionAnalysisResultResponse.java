@@ -69,6 +69,7 @@ public record SubmissionAnalysisResultResponse(
 	) {
 	}
 
+	@Schema(name = "AnalysisRequirementResult")
 	public record RequirementResult(
 			String requirementKey,
 			String title,

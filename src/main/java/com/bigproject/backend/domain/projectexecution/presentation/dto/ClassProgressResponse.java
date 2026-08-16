@@ -38,7 +38,11 @@ public record ClassProgressResponse(
 		List<ConceptMatch> conceptMatches
 ) {
 
-	@Schema(description = """
+	// 30차 R2① — 이름을 명시하지 않으면 springdoc이 `Summary`로 등록한다. 같은 이름의 중첩
+	// record가 셋(제출 현황·채점 요약·여기)이라 마지막 하나만 살아남고, 실제로 이 record가
+	// 밀려나 스펙이 `class-progress.summary`를 팀 기준 4필드로 잘못 선언했다. 서버는 처음부터
+	// 아래 6필드를 보내고 있었고 스펙만 다른 DTO를 가리키고 있었다.
+	@Schema(name = "ClassProgressSummary", description = """
 			회차 전체 합계.
 
 			analysisTargetCount는 submittedCount와, assessmentTargetCount는 analysisSucceededCount와

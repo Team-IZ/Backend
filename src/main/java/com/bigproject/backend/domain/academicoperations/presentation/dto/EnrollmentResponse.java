@@ -20,7 +20,7 @@ public record EnrollmentResponse(
         return new EnrollmentResponse(view.cohortId(), view.cohortName(), classroom);
     }
 
-    @Schema(description = "현재 반 정보")
+    @Schema(name = "EnrollmentClassroom", description = "현재 반 정보")
     public record Classroom(
             @Schema(description = "반 ID") UUID classroomId,
             @Schema(description = "반 이름", example = "1반") String name
