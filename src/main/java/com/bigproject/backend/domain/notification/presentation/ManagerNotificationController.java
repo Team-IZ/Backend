@@ -126,76 +126,14 @@ public class ManagerNotificationController {
 
 	@Operation(
 			operationId = "sendManagerReminder",
-			summary = "매니저 단건 독촉 발송 | ✅ 사용 가능",
+			summary = "매니저 단건 독촉 발송 | ⚠️ 사용 불가",
 			description = """
-					인박스의 조치 필요 항목 하나에 대해 독촉을 발송한다. **팀 또는 교육생 중 정확히 하나**를
-					대상으로 하며, 같은 요청을 실수로 두 번 보내도 중복 발송되지 않도록 멱등키로 보호한다.
+                ⚠️ **이 기능은 폐기되었습니다.** 응시 독촉 기능 자체가 제품에서 제거되기로
+                결정되어 프론트엔드에서 이 API를 호출하면 안 됩니다.
 
-					## 요청 (경로 파라미터)
-
-					| 파라미터 | 필수 | 타입 | 설명 |
-					|---|---|---|---|
-					| `cohortId` | **필수** | UUID | 대상 기수 |
-
-					## 요청 (헤더)
-
-					| 헤더 | 필수 | 설명 |
-					|---|---|---|
-					| `Idempotency-Key` | **필수** | 이 요청의 고유 키. **같은 키로 다시 보내면 새로 발송하지 않고 이전 결과를 그대로 돌려준다** |
-
-					## 요청 (본문)
-
-					| 필드 | 필수 | 타입 | 설명 |
-					|---|---|---|---|
-					| `assessmentRoundId` | **필수** | UUID | 대상 회차 |
-					| `teamId` | 조건부 | UUID | 팀 단위 독촉일 때 지정. `traineeId`와 **정확히 하나만** 보낸다 |
-					| `traineeId` | 조건부 | UUID | 개인 단위 독촉일 때 지정. `teamId`와 **정확히 하나만** 보낸다 |
-					| `reasonCode` | **필수** | enum | `TEAM_SUBMISSION_MISSING` · `TEAM_ANALYSIS_FAILED` · `INDIVIDUAL_ASSESSMENT_NOT_STARTED` |
-
-					⚠️ **`reasonCode`와 대상 종류가 짝을 이뤄야 한다.** `INDIVIDUAL_ASSESSMENT_NOT_STARTED`는
-					`traineeId`(개인)여야 하고, 나머지 둘(`TEAM_SUBMISSION_MISSING`·`TEAM_ANALYSIS_FAILED`)은
-					`teamId`(팀)여야 한다. 어긋나면 400 `REMINDER_REASON_INVALID`다.
-
-					## 응답 (200)
-
-					| 필드 | 타입 | 설명 |
-					|---|---|---|
-					| `dispatchBatchId` | UUID | 이번 발송 배치 ID |
-					| `dispatches[]` | array | 실제로 발송 대상이 된 개인별 결과 |
-
-					### dispatches[] 각 항목
-
-					| 필드 | 타입 | 설명 |
-					|---|---|---|
-					| `dispatchId` | UUID | 개별 발송 건 ID |
-					| `traineeId` | UUID | 수신 교육생 |
-					| `status` | string | 발송 상태. 생성 직후는 `PENDING` |
-
-					**팀을 대상으로 하면 `dispatches[]`에 팀원 전원이 담긴다** — `teamId`로 보내도 실제
-					발송은 개인 단위(`reminder_dispatch` 행)로 기록되기 때문이다.
-
-					## 멱등성 — 같은 키로 다시 보내면?
-
-					| 상황 | 결과 |
-					|---|---|
-					| 처음 보낸 키 | 정상 발송, 새 배치 생성 |
-					| 같은 키 + **같은 내용**으로 재요청 | 재발송하지 않고 **이전 배치를 그대로 반환**(200) |
-					| 같은 키 + **다른 내용**으로 재요청 | 409 `IDEMPOTENCY_KEY_REUSED` — 키를 재사용했다는 뜻이라 요청을 거부한다 |
-
-					"같은 내용"인지는 `assessmentRoundId`·`teamId`·`traineeId`·`reasonCode`를 합쳐 만든
-					지문(fingerprint)으로 판정한다. 매니저·기관·멱등키 조합에 트랜잭션 락을 걸어, 같은 키로
-					동시에 두 요청이 들어와도 경쟁 상태 없이 하나만 처리된다.
-
-					## 오류
-
-					| 상태 | 언제 |
-					|---|---|
-					| 400 | `REMINDER_TARGET_INVALID` — `teamId`·`traineeId` 둘 다 없거나 둘 다 있음 · `REMINDER_REASON_INVALID` — 사유와 대상 종류가 안 맞음 |
-					| 409 | `REMINDER_TARGET_NOT_ELIGIBLE` — 지금 상태에서 독촉 대상이 아님(이미 제출했거나 이미 마감이 지남 등) · `IDEMPOTENCY_KEY_REUSED` — 같은 키를 다른 내용으로 재사용 |
-
-					💡 **`reminder_dispatch.dedupe_key`에 DB 레벨 UNIQUE 제약도 걸려 있다.** 서비스의 멱등키
-					검증을 우회해도 DB가 한 번 더 막아준다 — 이중 방어다.
-					"""
+                로직은 당분간 코드에 남아있지만 곧 완전히 제거될 예정입니다. 신규 연동을
+                추가하지 마세요.
+                """
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "독촉 발송 성공(또는 같은 멱등키로 이전 결과 재반환)"),
