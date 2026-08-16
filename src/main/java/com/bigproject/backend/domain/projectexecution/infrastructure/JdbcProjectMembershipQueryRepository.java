@@ -35,6 +35,33 @@ public class JdbcProjectMembershipQueryRepository implements ProjectMembershipQu
                 projectId, orgId);
     }
 
+    /**
+     * {@code to_at IS NULL}이 지금 유효한 소속이다. team_membership은 이동 이력이 쌓이는 표라
+     * 이 조건을 빼면 옮겨 간 사람이 옛 팀에도 남는다.
+     */
+    @Override
+    public List<TeamMember> findMembersByTeamIds(List<UUID> teamIds) {
+        if (teamIds.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = String.join(", ", java.util.Collections.nCopies(teamIds.size(), "?"));
+        return jdbcTemplate.query("""
+					SELECT tm.team_id, pm.project_membership_id, pm.user_id, u.name
+					FROM team_membership tm
+					JOIN project_membership pm ON pm.project_membership_id = tm.project_membership_id
+					JOIN app_user u ON u.user_id = pm.user_id
+					WHERE tm.to_at IS NULL
+					  AND tm.team_id IN (%s)
+					ORDER BY u.name
+					""".formatted(placeholders),
+                (rs, i) -> new TeamMember(
+                        UUID.fromString(rs.getString("team_id")),
+                        UUID.fromString(rs.getString("project_membership_id")),
+                        UUID.fromString(rs.getString("user_id")),
+                        rs.getString("name")),
+                teamIds.toArray());
+    }
+
     @Override
     public boolean belongsToProject(UUID projectMembershipId, UUID projectId, UUID orgId) {
         Integer count = jdbcTemplate.queryForObject("""

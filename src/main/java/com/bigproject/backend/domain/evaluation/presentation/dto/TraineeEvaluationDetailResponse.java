@@ -34,6 +34,11 @@ public record TraineeEvaluationDetailResponse(
 		List<Concept> concepts
 ) {
 
+	// 30차 R2② — 이름을 명시하지 않으면 springdoc이 `Concept`으로 등록하고, 같은 이름을 쓰는
+	// 히트맵의 열 머리(ManagerHeatmapResponse.Concept)와 부딪혀 <b>한쪽이 스펙에서 사라진다.</b>
+	// 실제로 이 record가 이겨서, 히트맵을 붙이려던 화면이 있지도 않은 reachLevel·steps[]를
+	// 반·팀 계층 응답에서 찾게 됐다.
+	@Schema(name = "TraineeEvaluationConcept")
 	public record Concept(
 			UUID conceptId,
 			String concept,
@@ -52,7 +57,7 @@ public record TraineeEvaluationDetailResponse(
 	) {
 	}
 
-	@Schema(description = """
+	@Schema(name = "TraineeEvaluationStep", description = """
 			축 한 단계의 판정.
 
 			`passed`와 `helpCount`를 **따로** 읽어야 합니다. 힌트를 2회까지 받고도 통과할 수 있고,

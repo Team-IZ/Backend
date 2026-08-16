@@ -67,7 +67,7 @@ public class TraineeDetailController {
 					| `classroomId`·`className` | | 현재 소속 반. 배정이 없으면 `null` |
 					| `inactivatedReasonCode`·`inactivatedReason`·`inactivatedAt` | | 비활성 사유·일자. 활성이면 `null` |
 					| `riskTypeCode` | string? | 헤더 위험 배지. **가장 최근에 응시한 회차** 하나의 판정 |
-					| `riskReasonSummary` | string? | 그 배지의 판정식(`2단 이하 0 → 2`) |
+					| `riskReasonSummary` | string? | 그 배지의 판정식이며 그대로 표시하는 완성된 문장이다(`평균 도달 단계 2.33 → 1.67. 2단 미만 2개.`). **대괄호 태그는 붙지 않는다**(30차 R8) |
 					| `excellentOccurrenceCount`·`excellentAssessmentSequenceNos` | | 우수 누적 |
 					| `rounds[]` | array | 회차별 도달 단계 격자. **차수 오름차순** |
 
@@ -84,7 +84,7 @@ public class TraineeDetailController {
 					| `matchedRiskTypeCodes` | array | 그 회차에 걸린 위험 유형 전부 |
 					| `riskReasonSummary` | string? | 그 회차 판정식 |
 					| `terminalAt` | date-time? | `세션 중단 · 07-14`의 일자 |
-					| `expectedConceptCount`·`lowStageConceptCount` | | `2단 이하` 칸의 분모·분자 |
+					| `expectedConceptCount`·`lowStageConceptCount` | | `2단 미만` 칸의 분모·분자 |
 					| `excellent` | boolean | 이번 회차도 우수인가 |
 					| `teamId` | UUID? | 회차 당시 팀 |
 					| `concepts[]` | array | 격자 한 줄의 칸들. **문항 번호 오름차순** |
