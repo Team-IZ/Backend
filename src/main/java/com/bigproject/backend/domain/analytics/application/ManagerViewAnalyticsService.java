@@ -72,7 +72,7 @@ public class ManagerViewAnalyticsService {
 			return new ManagerHeatmapResponse.Scope(classroomId, className, null, null);
 		}
 		String teamName = repository.findParticipatingTeams(
-				managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
+						managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
 				.filter(team -> team.teamId().equals(teamId))
 				.map(ManagerAnalyticsRepository.TeamParticipant::teamName)
 				.findFirst().orElse(null);
@@ -158,7 +158,7 @@ public class ManagerViewAnalyticsService {
 					(map, classroom) -> map.put(classroom.classroomId(), classroom.memberCount()),
 					LinkedHashMap::putAll);
 			case TEAM -> repository.findParticipatingTeams(
-					managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
+							managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
 					.collect(LinkedHashMap::new,
 							(map, team) -> map.put(team.teamId(), team.memberCount()),
 							LinkedHashMap::putAll);
@@ -215,25 +215,11 @@ public class ManagerViewAnalyticsService {
 			return new ManagerHeatmapResponse.Navigation(classroomOptions, List.of());
 		}
 		var teamOptions = repository.findParticipatingTeams(
-				managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
+						managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
 				.map(team -> new ManagerHeatmapResponse.Team(
 						team.teamId(), team.teamName(), team.memberCount()))
 				.toList();
 		return new ManagerHeatmapResponse.Navigation(classroomOptions, teamOptions);
-	}
-
-	public RiskSignalResponse findRiskSignals(
-			String email, UUID cohortId, UUID assessmentRoundId, UUID classroomId,
-			UUID traineeId, String reasonCode) {
-		var actor = scopeGuard.requireCohort(email, cohortId);
-		var signals = repository.findRiskSignals(actor.userId(), cohortId, assessmentRoundId,
-				classroomId, traineeId, reasonCode).stream()
-				.map(signal -> new RiskSignalResponse.Signal(
-						signal.signalId(), signal.reasonCode(), signal.assessmentRoundId(),
-						signal.classroomId(), signal.teamId(), signal.traineeId(), signal.traineeName(),
-						signal.summary(), signal.status(), signal.policyVersion(), signal.detectedAt()))
-				.toList();
-		return new RiskSignalResponse(cohortId, signals);
 	}
 
 	public ConceptScopeResponse findConceptScope(
@@ -263,5 +249,24 @@ public class ManagerViewAnalyticsService {
 		if (invalid) {
 			throw new ApiException(AnalyticsErrorCode.HEATMAP_SCOPE_INVALID);
 		}
+	}
+
+	// =========================================================
+	// MG-01 인박스 행 근거 위험 신호 조회 (구 findRiskSignals와 통합, 5번 정리)
+	// assessmentRoundId·reasonCode는 구 /risk-signals가 갖고 있던 필터를 그대로 흡수한 것 —
+	// 지금 화면들은 안 쓰지만 나중에 회차별 필터가 필요해질 때 대비해 남겨둔다.
+	// =========================================================
+	public RiskSignalResponse getRiskSignalsForInbox(
+			String email, UUID cohortId, UUID classId, UUID traineeId,
+			UUID assessmentRoundId, String reasonCode) {
+		var actor = scopeGuard.requireCohort(email, cohortId);
+		var signals = repository.findRiskSignals(actor.userId(), cohortId, assessmentRoundId,
+						classId, traineeId, reasonCode).stream()
+				.map(signal -> new RiskSignalResponse.Signal(
+						signal.signalId(), signal.reasonCode(), signal.assessmentRoundId(),
+						signal.classroomId(), signal.teamId(), signal.traineeId(), signal.traineeName(),
+						signal.summary(), signal.status(), signal.policyVersion(), signal.detectedAt()))
+				.toList();
+		return new RiskSignalResponse(cohortId, signals);
 	}
 }

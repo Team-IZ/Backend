@@ -247,7 +247,6 @@ public class ProjectController {
 		return ResponseEntity.ok(new ProjectListResponse(
 				enriched, response.total(), response.counts(), response.readinessCounts()));
 	}
-
 	/**
 	 * MG-07 목록 한 행에 '진행'·'조치'를 덧붙인다(반별 제출 진행률 조회, Submission 도메인 위임).
 	 *
@@ -285,7 +284,6 @@ public class ProjectController {
 						item.classId(), item.className(), item.type(), item.teamCount()))
 				.toList();
 	}
-
 	/**
 	 * @deprecated {@code GET /projects?classId=&status=RUNNING&sort=DUE_SOON}로 대체(19차).
 	 */

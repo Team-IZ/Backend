@@ -1,6 +1,8 @@
 package com.bigproject.backend.domain.analytics.application;
 
 import com.bigproject.backend.domain.academicoperations.domain.AcademicOperationsErrorCode;
+import com.bigproject.backend.domain.academicoperations.domain.Classroom;
+import com.bigproject.backend.domain.academicoperations.infrastructure.ClassroomRepository;
 import com.bigproject.backend.domain.analytics.domain.AnalyticsErrorCode;
 import com.bigproject.backend.domain.analytics.domain.OperationalActionQueryRepository;
 import com.bigproject.backend.domain.analytics.domain.RiskTraineeQueryRepository;
@@ -28,10 +30,12 @@ class ActionRequiredAnalyticsServiceTest {
 	private final RiskTraineeQueryRepository riskTraineeQueryRepository = mock(RiskTraineeQueryRepository.class);
 	private final OperationalActionQueryRepository operationalActionQueryRepository =
 			mock(OperationalActionQueryRepository.class);
+	private final ClassroomRepository classroomRepository = mock(ClassroomRepository.class);
 	private final ActionRequiredAnalyticsService service = new ActionRequiredAnalyticsService(
 			new AnalyticsActorGuard(authUserRepository),
 			riskTraineeQueryRepository,
-			operationalActionQueryRepository
+			operationalActionQueryRepository,
+			classroomRepository
 	);
 
 	private final UUID organizationId = UUID.randomUUID();
@@ -188,5 +192,51 @@ class ActionRequiredAnalyticsServiceTest {
 		assertThatThrownBy(() -> service.findActionsRequired(cohortId, ACTOR_EMAIL))
 				.isInstanceOfSatisfying(ApiException.class, exception ->
 						assertThat(exception.errorCode()).isEqualTo(AcademicOperationsErrorCode.COHORT_NOT_FOUND));
+	}
+
+	// =========================================================================
+	// getActionRequiredProjects (MG-07, classId 기준) — 신규 테스트
+	// =========================================================================
+
+	@Test
+	void getActionRequiredProjects_returnsCohortIdFromTheResolvedClassroom() {
+		Classroom classroom = mock(Classroom.class);
+		when(classroom.getCohortId()).thenReturn(cohortId);
+		when(classroomRepository.findByClassIdAndOrgIdAndDeletedAtIsNull(classId, organizationId))
+				.thenReturn(Optional.of(classroom));
+
+		ActionRequiredResponse response = service.getActionRequiredProjects(classId, ACTOR_EMAIL);
+
+		assertThat(response.cohortId()).isEqualTo(cohortId);
+		assertThat(response.actionCount()).isZero();
+	}
+
+	@Test
+	void getActionRequiredProjects_rejectsClassroomFromAnotherOrganization() {
+		// 다른 기관 소속이면 classId+orgId 조합 쿼리가 빈 값을 돌려준다.
+		when(classroomRepository.findByClassIdAndOrgIdAndDeletedAtIsNull(classId, organizationId))
+				.thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> service.getActionRequiredProjects(classId, ACTOR_EMAIL))
+				.isInstanceOfSatisfying(ApiException.class, exception ->
+						assertThat(exception.errorCode()).isEqualTo(AcademicOperationsErrorCode.CLASSROOM_NOT_FOUND));
+	}
+
+	@Test
+	void getActionRequiredProjects_countsAlertsScopedToTheGivenClass() {
+		Classroom classroom = mock(Classroom.class);
+		when(classroom.getCohortId()).thenReturn(cohortId);
+		when(classroomRepository.findByClassIdAndOrgIdAndDeletedAtIsNull(classId, organizationId))
+				.thenReturn(Optional.of(classroom));
+		when(operationalActionQueryRepository.findUnassignedClassesByClassId(classId))
+				.thenReturn(List.of(new OperationalActionQueryRepository.UnassignedClassRow(classId, "F반", 25)));
+		when(operationalActionQueryRepository.findConceptGapsByClassId(classId)).thenReturn(List.of());
+		when(operationalActionQueryRepository.findGroupGapsByClassId(classId)).thenReturn(List.of());
+		when(operationalActionQueryRepository.findInterviewBacklogsByClassId(classId)).thenReturn(List.of());
+
+		ActionRequiredResponse response = service.getActionRequiredProjects(classId, ACTOR_EMAIL);
+
+		assertThat(response.actionCount()).isEqualTo(1);
+		assertThat(response.managerUnassigned()).isNotNull();
 	}
 }

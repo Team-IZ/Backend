@@ -38,6 +38,17 @@ public interface OperationalActionQueryRepository {
 	 */
 	List<InterviewBacklogRow> findInterviewBacklogs(UUID cohortId, UUID organizationId);
 
+	// =========================================================
+	// 신규 추가: 특정 반(classId) 기준의 조치 필요 항목 조회용
+	// =========================================================
+	List<UnassignedClassRow> findUnassignedClassesByClassId(UUID classId);
+
+	List<ConceptGapRow> findConceptGapsByClassId(UUID classId);
+
+	List<GroupGapRow> findGroupGapsByClassId(UUID classId);
+
+	List<InterviewBacklogRow> findInterviewBacklogsByClassId(UUID classId);
+
 	record RoundRef(
 			UUID assessmentRoundId,
 			int roundNo,
