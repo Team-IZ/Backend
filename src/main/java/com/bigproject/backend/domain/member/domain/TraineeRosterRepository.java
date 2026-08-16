@@ -170,7 +170,7 @@ public interface TraineeRosterRepository {
 			UUID attemptId,
 			String roundResultStatus,
 			String conceptResultItems,
-			/** 2단 이하 개수의 분모. 사람마다 할당 문제 수가 다르므로 화면이 '1/2'를 그리려면 함께 필요하다. */
+			/** 2단 미만 개수의 분모. 사람마다 할당 문제 수가 다르므로 화면이 '1/2'를 그리려면 함께 필요하다. */
 			Integer expectedConceptCount,
 			Integer lowStageConceptCount,
 			Integer excellentOccurrenceCount,
@@ -180,7 +180,14 @@ public interface TraineeRosterRepository {
 			 * 최신 차수부터 내림차순이며, 우수 근거가 없으면 빈 배열이다.
 			 */
 			int[] excellentAssessmentSequenceNos,
-			String matchedRiskTypeCodes,
+			/**
+			 * 그 회차에 걸린 위험 유형 전부다. 원장 컬럼이 {@code text[]}라 <b>배열 그대로</b> 읽는다
+			 * (30차 R6 — 종전에는 {@code ::text} 캐스팅 탓에 PostgreSQL 배열 리터럴 문자열이 나갔다).
+			 * 교육생 상세와 같은 타입이다.
+			 *
+			 * <p>{@code null}(그 행에 회차 지표가 없다)과 빈 배열(걸린 위험이 없다)은 뜻이 다르다.
+			 */
+			List<String> matchedRiskTypeCodes,
 			/**
 			 * 배지 한 칸에 넣을 <b>단일</b> 코드다. 정책 문서 §7의 2층 구조를 그대로 담는다 —
 			 * 1층 응시상태(NOT_ATTENDED·SESSION_INCOMPLETE·INVALID_ATTEMPT)가 있으면 2층 위험 유형은

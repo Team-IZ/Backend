@@ -514,10 +514,10 @@ public class TraineeController {
 					| `roundResultStatus` | enum? | 응시 시도 상태. `NOT_STARTED`(미시작) · `SUBMITTED` · `ANALYZING` · `SESSION_READY` · `SESSION_IN_PROGRESS` · `COMPLETED`(완료) · `FAILED` · `EXPIRED` |
 					| `conceptResultItems` | string? | 문항별 결과의 JSON 배열(문자열로 직렬화됨). 각 항목은 `problemId`·`problemNo`·`conceptId`·`generationStatus`·`reachLevel`(0~4단, 미생성·무응답이면 `null`)을 가진다 |
 					| `expectedConceptCount` | int? | `저단계 개수`의 분모. 실제로 생성된(`generationStatus='GENERATED'`) 문항 수이며 사람마다 다르다 |
-					| `lowStageConceptCount` | int? | 도달 단계 0~2단(저단계)인 문항 수. 응답한 문항이 하나도 없으면 `null`(화면의 `—`) |
+					| `lowStageConceptCount` | int? | 도달 단계 **2단 미만(0~1단)** 인 문항 수. 응답한 문항이 하나도 없으면 `null`(화면의 `—`) |
 					| `excellentOccurrenceCount` | int? | 이 교육생이 우수로 발견된 누적 횟수 |
 					| `excellentAssessmentSequenceNos` | int[] | 우수로 발견된 프로젝트 차수(`analysis_sequence_no`) 전부. **조회 회차를 포함**하므로 이 배열에 조회 차수가 있으면 이번 회차도 우수다. 최신 차수부터 내림차순, 근거 없으면 빈 배열 |
-					| `matchedRiskTypeCodes` | string? | 이번 회차에 걸린 위험 유형 코드 배열(문자열로 직렬화됨). `STAGE_DECLINE`(단계 하락) · `PERSISTENT_LOW`(지속 저점) · `INVALID_ATTEMPT`(무효 응시) · `CONTRIBUTION_UNDERSTANDING_GAP`(기여·이해도 괴리) · `LOW_PARTICIPATION`(저기여) 중 동시에 여러 개가 걸릴 수 있다. 해소(`RESOLVED`)된 사유는 들어오지 않는다 |
+					| `matchedRiskTypeCodes` | string[]? | 이번 회차에 걸린 위험 유형 코드 **배열**. `STAGE_DECLINE`(단계 하락) · `PERSISTENT_LOW`(지속 저점) · `INVALID_ATTEMPT`(무효 응시) · `CONTRIBUTION_UNDERSTANDING_GAP`(기여·이해도 괴리) · `LOW_PARTICIPATION`(저기여) 중 동시에 여러 개가 걸릴 수 있다. 해소(`RESOLVED`)된 사유는 들어오지 않는다. **`null`(지표 없음)과 `[]`(위험 없음)은 뜻이 다르다.** 30차 R6까지는 `"{}"` 같은 PostgreSQL 배열 리터럴 문자열이었다 |
 					| `roundPrimaryStatusCode` | enum? | 배지 한 칸에 넣을 **단일** 코드. 1층 응시상태(`NOT_ATTENDED` 미응시 → `SESSION_INCOMPLETE` 응시 중단 → `INVALID_ATTEMPT` 무효 응시)가 있으면 2층 위험 유형(`LOW_PARTICIPATION` → `CONTRIBUTION_UNDERSTANDING_GAP` → `STAGE_DECLINE` → `PERSISTENT_LOW`)은 보지 않는다. 걸린 것이 없으면 `null`(정상). 중도 이탈은 여기 들어오지 않는다 — 계정 상태의 비활성화 사유로 이미 드러난다 |
 					| `roundTerminalAt` | date-time? | `roundPrimaryStatusCode`가 `NOT_ATTENDED`·`SESSION_INCOMPLETE`일 때만 값이 있는 시각. 화면이 `우수 누적` 칸에 정상 결과 대신 `세션 중단 · 07-14`처럼 사유·일자를 그릴 때 쓴다 |
 					| `rowAggregationStatus` | string? | 이 행의 지표 집계 상태. 현재는 항상 `COMPLETE`다 |
