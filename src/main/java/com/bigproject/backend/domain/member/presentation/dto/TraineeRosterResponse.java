@@ -26,6 +26,27 @@ public record TraineeRosterResponse(
 				""", example = "393")
 		int cohortTotal,
 
+		// 30차 R7 — 화면 머리글의 `활성 24 · 초대 대기 1 · 비활성 1`을 만들 수가 없었다. 목록이
+		// 페이지네이션돼 있어(한 쪽 20명) 화면이 셀 수 없고, accountStatus를 바꿔 세 번 더 부르면
+		// 필터를 바꿀 때마다 3콜이 따라붙는다 — 이 값은 필터와 무관한 모집단 기준이기 때문이다.
+		@Schema(description = """
+				계정 상태가 **활성**인 교육생 수입니다. `cohortTotal`과 같은 모집단이며
+				**필터를 적용하지 않습니다** — 검색어·반 필터를 바꿔도 변하지 않습니다.
+
+				`activeCount + invitedCount + inactiveCount = cohortTotal`입니다.
+				""", example = "24")
+		int activeCount,
+		@Schema(description = """
+				**초대만 받고 아직 들어오지 않은** 교육생 수입니다(계정 상태 `INVITED`).
+				`cohortTotal`과 같은 모집단이며 필터를 적용하지 않습니다.
+				""", example = "1")
+		int invitedCount,
+		@Schema(description = """
+				계정 상태가 **비활성**인 교육생 수입니다. `cohortTotal`과 같은 모집단이며
+				필터를 적용하지 않습니다.
+				""", example = "1")
+		int inactiveCount,
+
 		@Schema(description = """
 				**매니저 교육생 목록(MG-05)** 의 '회차 · 미프 N차' 드롭다운에 그대로 넣는 이 기수의
 				평가 회차 전부입니다(22차 Q1).

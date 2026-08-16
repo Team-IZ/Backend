@@ -464,6 +464,7 @@ public class TraineeController {
 					| `totalPages` | int | 전체 페이지 수 |
 					| `unassignedCount` | int | 반 배정이 없는 교육생 수. 화면 상단 `미배정 N` 배지. **매니저는 늘 `0`** |
 					| `cohortTotal` | int | 기수 전체 교육생 수. 화면 상단 `명단 393명` |
+					| `activeCount`·`invitedCount`·`inactiveCount` | int | 계정 상태별 인원. 화면 머리글의 `활성 24 · 초대 대기 1 · 비활성 1`. 셋을 더하면 `cohortTotal`이다(30차 R7) |
 					| `rounds[]` | array | **`회차 · 미프 N차` 드롭다운 선택지.** 차수 오름차순이라 마지막이 가장 최근 |
 					| `assessmentRoundId` | UUID? | **실제로 조회에 쓴 회차.** 드롭다운의 선택 상태를 이 값에 맞춘다. 회차가 없으면 `null` |
 
@@ -532,7 +533,7 @@ public class TraineeController {
 					| `SECURITY_ACTION` | 보안 조치 |
 					| `OTHER` | 기타 |
 
-					⚠️ **`unassignedCount`·`cohortTotal`은 필터와 무관한 기수 전체 기준**이라 `totalElements`와 다르다.
+					⚠️ **`unassignedCount`·`cohortTotal`·계정 상태별 3종은 필터와 무관한 기수 전체 기준**이라 `totalElements`와 다르다.
 					검색 결과가 없을 때의 `7기 393명에서 찾았습니다`도 `cohortTotal`이며, 두 값이 같은 모집단이라
 					`393명 중 미배정 12`가 그대로 성립한다.
 
@@ -613,6 +614,9 @@ public class TraineeController {
 				rosterPage.getTotalPages(),
 				result.unassignedCount(),
 				result.cohortTotal(),
+				result.statusCounts().activeCount(),
+				result.statusCounts().invitedCount(),
+				result.statusCounts().inactiveCount(),
 				result.rounds().stream().map(TraineeRosterResponse.RoundOption::from).toList(),
 				result.assessmentRoundId()
 		);

@@ -43,6 +43,21 @@ public interface TraineeRosterRepository {
 	int countCohortTotal(UUID cohortId, UUID orgId, UUID scopedManagerId);
 
 	/**
+	 * 계정 상태별 인원(30차 R7). 화면 머리글의 `활성 24 · 초대 대기 1 · 비활성 1`이다.
+	 *
+	 * <p>{@link #countCohortTotal}과 <b>같은 모집단</b>이며 필터를 적용하지 않는다 — 세 숫자는
+	 * 검색어나 반 필터를 바꿔도 변하지 않는 모집단 내역이라 그래야 총원과 합이 맞는다.
+	 *
+	 * <p>목록에서 셀 수 없어 따로 센다. 한 쪽에 20명씩 오므로 화면이 가진 것은 한 페이지뿐이고,
+	 * {@code accountStatus}를 바꿔 세 번 더 부르면 필터를 바꿀 때마다 3콜이 따라붙는다.
+	 */
+	AccountStatusCounts countByAccountStatus(UUID cohortId, UUID orgId, UUID scopedManagerId);
+
+	/** 셋을 더하면 {@link #countCohortTotal}과 같다. */
+	record AccountStatusCounts(int activeCount, int invitedCount, int inactiveCount) {
+	}
+
+	/**
 	 * 화면의 `회차 · 미프 N차` 드롭다운에 넣을 기수의 평가 회차 전부. <b>차수 오름차순</b>이다.
 	 *
 	 * <p>기본 회차를 여기서 정하지 않는다 -- 「이번 회차」 판정은 projectexecution의

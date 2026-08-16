@@ -262,6 +262,33 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 	}
 
 	/**
+	 * 계정 상태별 인원(30차 R7). {@link #countCohortTotal}과 <b>한 글자도 다르지 않은 WHERE</b>를 쓴다 —
+	 * 조건이 갈리면 세 숫자의 합이 총원과 어긋나고, 그 어긋남은 화면에서만 보인다.
+	 *
+	 * <p>상태를 세 번 나눠 세지 않고 {@code FILTER}로 한 번에 센다. 같은 모집단을 세 번 훑을 이유가
+	 * 없고, 세 질의 사이에 초대가 수락되면 합이 총원과 달라진다.
+	 */
+	@Override
+	public AccountStatusCounts countByAccountStatus(UUID cohortId, UUID orgId, UUID scopedManagerId) {
+		StringBuilder sql = new StringBuilder(ROSTER_CTE + """
+				SELECT COUNT(*) FILTER (WHERE r.account_status = 'ACTIVE') AS active_count,
+				       COUNT(*) FILTER (WHERE r.account_status = 'PENDING') AS invited_count,
+				       COUNT(*) FILTER (WHERE r.account_status = 'INACTIVE') AS inactive_count
+				""" + ROSTER_FROM + " WHERE r.cohort_id = ? AND r.org_id = ?");
+		List<Object> args = new ArrayList<>(List.of(cohortId, orgId));
+		if (scopedManagerId != null) {
+			sql.append(MANAGER_SCOPE_CONDITION);
+			args.add(scopedManagerId);
+		}
+		return jdbcTemplate.queryForObject(sql.toString(),
+				(rs, rowNum) -> new AccountStatusCounts(
+						rs.getInt("active_count"),
+						rs.getInt("invited_count"),
+						rs.getInt("inactive_count")),
+				args.toArray());
+	}
+
+	/**
 	 * 회차 드롭다운 목록. <b>차수 오름차순</b>이라 마지막 원소가 가장 최근 회차이며, 화면이
 	 * `미프 1차 · 2차 · 3차`를 위에서 아래로 그리는 순서와 같다.
 	 *
