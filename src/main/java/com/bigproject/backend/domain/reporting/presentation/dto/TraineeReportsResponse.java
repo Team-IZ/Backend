@@ -30,7 +30,11 @@ public record TraineeReportsResponse(
 	 * @param id             회차 식별자(assessmentRoundId). 뷰 명세상 회차 선택의 권위 키다.
 	 * @param hasPendingRetry 아직 안 한 다시 보기가 있다 — 레일에 점으로 표시된다.
 	 */
-	public record RoundListItem(String id, String label, boolean hasPendingRetry) {
+	public record RoundListItem(
+			String id,
+			String label,
+			@Schema(description = "아직 하지 않은 다시 보기가 있는가. 레일에 점으로 표시된다")
+			boolean hasPendingRetry) {
 	}
 
 	/**
@@ -184,6 +188,12 @@ public record TraineeReportsResponse(
 			 *
 			 * GET /reports/class-diagnosis 가 level0 과 unasked 를 엄격히 구분하는 것과 같은 규칙이다.
 			 */
+			@Schema(description = """
+					물었는가. **`false`면 그 학생 코드에 이 개념이 없어 문항 자체가 만들어지지 않았다** —
+					`level`을 포함한 아래 값들이 전부 빠진다.
+
+					🔴 `level=0`(물었는데 통과한 축이 없다)과 **합치면 안 된다.** 섞으면 화면이 학생에게
+					"못했다"고 말하게 되는데 사실은 묻지 않은 것이다.""")
 			boolean asked,
 
 			/** 도달 단계 0~4. {@code asked=false}면 키가 빠진다 — 물은 적이 없으므로 단계가 없다. */
@@ -207,6 +217,9 @@ public record TraineeReportsResponse(
 			Integer level,
 
 			@JsonInclude(JsonInclude.Include.NON_NULL) String said,
+			@Schema(description = """
+					다시 보기 대상인가. 대상은 **물었는데 2단 미만**인 개념이라
+					`asked=false`면 항상 `false`다 — 다시 볼 문항이 없다.""")
 			boolean isRetryTarget,
 			@JsonInclude(JsonInclude.Include.NON_NULL) CurriculumRefResponse curriculumRef,
 			@JsonInclude(JsonInclude.Include.NON_NULL) List<QaEntryResponse> qa,

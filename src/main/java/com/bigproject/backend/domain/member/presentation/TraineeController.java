@@ -9,6 +9,7 @@ import com.bigproject.backend.domain.member.domain.MemberErrorCode;
 import com.bigproject.backend.domain.member.domain.TraineeRosterRepository;
 import com.bigproject.backend.domain.member.domain.TraineeRosterSort;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesRequest;
+import com.bigproject.backend.domain.member.presentation.dto.PreviewTraineesResponse;
 import com.bigproject.backend.domain.member.presentation.dto.RegisterTraineesResponse;
 import com.bigproject.backend.domain.member.presentation.dto.ResendTraineeInvitationsRequest;
 import com.bigproject.backend.domain.member.presentation.dto.ResendTraineeInvitationsResponse;
@@ -76,15 +77,18 @@ public class TraineeController {
 					- cohortId (경로) · file: 첫 행에 `이름`·`이메일` 열이 있는 CSV
 					  (UTF-8·CP949 둘 다 되고 열 순서는 상관없다 — 등록 API와 같은 파서다, 25차 Q1)
 
-					**응답 (200)** — 등록 응답과 **같은 스키마**다(`RegisterTraineesResponse`).
-					화면이 미리보기와 등록 결과를 한 컴포넌트로 그릴 수 있다.
+					**응답 (200)** — 등록과 **다른 스키마**다(`PreviewTraineesResponse`, 31차 R2).
+					종전에는 등록 응답을 그대로 돌려줬는데, `registeredCount`라는 이름이 「등록됐다」로 읽혀
+					미리보기가 진짜 등록을 했는지 명단을 뒤지게 만들었다. **이 응답의 수는 전부 「그렇게 될 것」이다.**
 
-					| 필드 | 미리보기에서의 뜻 |
+					| 필드 | 뜻 |
 					|---|---|
 					| `requestedCount` | 검사한 행 수 |
-					| `registeredCount` | **등록될 수 있는** 행 수(= requestedCount − failures.length) |
-					| `invitationSentCount` | **항상 0** — 아무것도 보내지 않았다 |
+					| `registrableCount` | **등록될 수 있는** 행 수(= requestedCount − failures.length) |
 					| `failures[]` | 걸린 행. `row`·`email`·`status`는 등록과 같은 의미 |
+
+					`invitationSentCount`·`batchRequestId`는 **없다** — 보낸 메일도 폴링할 잡도 없어
+					각각 0·null로 고정돼 있던 자리다. 실패 목록(`Failure`)만 등록과 같은 형을 그대로 쓴다.
 
 					## 판정은 등록과 **같은 규칙**이다
 
@@ -103,14 +107,14 @@ public class TraineeController {
 	)
 	@PreAuthorize("hasRole('OPERATOR')")
 	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "사전 검증 완료; 등록될 수 있는 수와 걸린 행을 응답(아무것도 만들지 않음)"),
+			@ApiResponse(responseCode = "200", description = "사전 검증 완료; 등록될 수 있는 수(registrableCount)와 걸린 행을 응답(아무것도 만들지 않음)"),
 			@ApiResponse(responseCode = "400", description = "CSV_FORMAT_INVALID CSV 파일·헤더·인코딩·열 구성 오류 · TRAINEE_NAME_INVALID 이름이 비었거나 200자 초과"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰 없음 · INVITER_NOT_FOUND 인증 사용자를 찾을 수 없음"),
 			@ApiResponse(responseCode = "403", description = "INVITE_ROLE_NOT_ALLOWED 오퍼레이터만 교육생을 초대할 수 있음 · INVITER_NOT_ACTIVE 활성 계정이 아님 · INVITE_CROSS_ORGANIZATION 다른 기관의 기수"),
 			@ApiResponse(responseCode = "404", description = "COHORT_NOT_INVITABLE 등록 가능한 기수를 찾을 수 없음")
 	})
 	@PostMapping(path = "/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-	public ResponseEntity<RegisterTraineesResponse> previewTraineesFromCsv(
+	public ResponseEntity<PreviewTraineesResponse> previewTraineesFromCsv(
 			@Parameter(description = "교육생을 등록할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
 			@PathVariable UUID cohortId,
 			@Parameter(description = "첫 행에 '이름'·'이메일' 열이 있는 CSV 파일(UTF-8 또는 CP949, 열 순서 무관)")
@@ -135,20 +139,20 @@ public class TraineeController {
 					**요청** (application/json) — 등록(`POST …/trainees/invitations`)과 같은 본문이다.
 					- trainees[] (필수, 1건 이상): name(필수, 최대 200자) · email
 
-					**응답 (200)** — `registeredCount`는 **등록될 수 있는 수**이고 `invitationSentCount`는 항상 0이다.
-					`failures[].row`는 1부터 시작하는 배열 순번이다(CSV와 달리 헤더가 없다).
+					**응답 (200)** — `PreviewTraineesResponse`. `registrableCount`는 **등록될 수 있는 수**이며
+					아직 등록되지 않았다. `failures[].row`는 1부터 시작하는 배열 순번이다(CSV와 달리 헤더가 없다).
 					"""
 	)
 	@PreAuthorize("hasRole('OPERATOR')")
 	@ApiResponses({
-			@ApiResponse(responseCode = "200", description = "사전 검증 완료; 등록될 수 있는 수와 걸린 행을 응답(아무것도 만들지 않음)"),
+			@ApiResponse(responseCode = "200", description = "사전 검증 완료; 등록될 수 있는 수(registrableCount)와 걸린 행을 응답(아무것도 만들지 않음)"),
 			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 교육생 목록이 비었음 · TRAINEE_NAME_INVALID 이름이 비었거나 200자 초과"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰 없음 · INVITER_NOT_FOUND 인증 사용자를 찾을 수 없음"),
 			@ApiResponse(responseCode = "403", description = "INVITE_ROLE_NOT_ALLOWED 오퍼레이터만 교육생을 초대할 수 있음 · INVITER_NOT_ACTIVE 활성 계정이 아님 · INVITE_CROSS_ORGANIZATION 다른 기관의 기수"),
 			@ApiResponse(responseCode = "404", description = "COHORT_NOT_INVITABLE 등록 가능한 기수를 찾을 수 없음")
 	})
 	@PostMapping(path = "/invitations/preview", consumes = MediaType.APPLICATION_JSON_VALUE)
-	public ResponseEntity<RegisterTraineesResponse> previewTrainees(
+	public ResponseEntity<PreviewTraineesResponse> previewTrainees(
 			@Parameter(description = "교육생을 등록할 기수 ID", example = "123e4567-e89b-12d3-a456-426614174000")
 			@PathVariable UUID cohortId,
 			@Valid @RequestBody RegisterTraineesRequest request,

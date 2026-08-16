@@ -27,11 +27,12 @@ public record UpcomingRoundResponse(
 				implementation = AssessmentRoundStatus.class) String roundStatus,
 		Instant submissionDueAt,
 		@Schema(description = """
-				이해도 확인 시작일자. **PLANNED 회차에서는 null일 수 있다** — \
-				ck_project_assessment_round_assessment_window_required가 PLANNED만 면제하기 때문이다.""",
+				🔴 **폐기된 필드. 언제나 `null`이다**(2026-08-16). \
+				회차 공통 응시 창은 더 이상 쓰지 않으며 응시 가능 여부는 개인 창이 정한다. \
+				계약은 화면이 깨지지 않도록 남겨 둔다.""",
 				nullable = true)
 		Instant roundAssessmentOpenAt,
-		@Schema(description = "이해도 확인 종료일자. 위와 같은 이유로 null 가능", nullable = true)
+		@Schema(description = "🔴 **폐기된 필드. 언제나 `null`이다**(2026-08-16). 위와 같다.", nullable = true)
 		Instant roundAssessmentDueAt
 ) {
 	public static UpcomingRoundResponse from(TraineeHomeRound round) {

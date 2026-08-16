@@ -119,11 +119,15 @@ class AnalysisJobTest {
 	}
 
 	@Test
-	void parsesOnlyTheFifteenAllowedFailureCodes() {
-		assertThat(AnalysisFailureCode.values()).hasSize(15);
+	void parsesOnlyTheTwelveAllowedFailureCodes() {
+		// 값 집합이 DB CHECK 와 같은지는 AnalysisFailureCodeContractTest 가 DDL 정본과 대조한다.
+		// 여기서는 parse 의 동작만 본다.
+		assertThat(AnalysisFailureCode.values()).hasSize(12);
 		assertThat(AnalysisFailureCode.parse("REPO_NOT_FOUND")).contains(AnalysisFailureCode.REPO_NOT_FOUND);
 		// 2026-08-07 에 값 집합에서 뺐다. 그대로 저장하면 CHECK 위반이 된다.
 		assertThat(AnalysisFailureCode.parse("EMPTY_CODE_EVIDENCE")).isEmpty();
+		// 2026-08-16 에 뺐다. 업로드가 400·413 으로 먼저 거절해 analysis_job 에 도달하지 않는다.
+		assertThat(AnalysisFailureCode.parse("ARCHIVE_INVALID")).isEmpty();
 		assertThat(AnalysisFailureCode.parse(null)).isEmpty();
 	}
 }

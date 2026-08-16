@@ -76,7 +76,13 @@ public record ReportDisclosureResponse(
 	 * @param qa            문답 원문. {@code [내 답변] 펼침}이 이 값으로 열린다
 	 */
 	@Schema(description = "공개 범위별 본문 필드 노출 여부")
-	public record VisibleFields(boolean said, boolean curriculumRef, boolean qa) {
+	public record VisibleFields(
+			@Schema(description = "축별 서술(`said`)이 학생에게 열리는가. SUMMARY 이상이면 true")
+			boolean said,
+			@Schema(description = "교안 위치(`chapter`·`pages`·`title`)가 열리는가. SUMMARY 이상이면 true")
+			boolean curriculumRef,
+			@Schema(description = "문답 원문이 열리는가 — `[내 답변] 펼침`이 이 값으로 열린다. FULL에서만 true")
+			boolean qa) {
 
 		private static final VisibleFields NONE = new VisibleFields(false, false, false);
 		private static final VisibleFields SUMMARY = new VisibleFields(true, true, false);

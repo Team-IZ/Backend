@@ -94,7 +94,7 @@ public class AnalysisJob {
 	@Column(name = "external_job_id", updatable = false)
 	private UUID externalJobId;
 
-	/** 15종. 분석 실행 5종 + 저장소 접근 5종(S-03) + ZIP 검증 5종(S-15). */
+	/** 12종. 분석 실행 5종 + 저장소 접근 5종(S-03) + ZIP 내용 검증 2종(S-15). */
 	@Enumerated(EnumType.STRING)
 	@Column(name = "failure_code", length = 100)
 	private AnalysisFailureCode failureCode;

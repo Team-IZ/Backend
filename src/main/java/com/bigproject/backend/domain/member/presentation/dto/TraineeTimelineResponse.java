@@ -39,6 +39,7 @@ public record TraineeTimelineResponse(
 				""")
 		List<Round> rounds,
 		@Schema(description = "다음 페이지 커서. 없으면 null", nullable = true) String nextCursor,
+		@Schema(description = "더 가져올 회차가 남았는가. `nextCursor`와 짝이며 페이저는 이 값으로만 다음 장을 판단한다")
 		boolean hasNext) {
 
 	/** 화면의 이벤트 필터 탭과 1:1이다. `다시 보기`는 REVIEW·REVIEW_CLOSED 둘을 함께 켠다. */

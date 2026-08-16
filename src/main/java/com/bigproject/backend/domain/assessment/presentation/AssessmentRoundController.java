@@ -124,7 +124,7 @@ public class AssessmentRoundController {
 					| --- | --- | --- |
 					| `analysisPhase` | enum | `NOT_SUBMITTED` · `ANALYZING` · `FAILED` · `COMPLETED` · `WAITING` |
 					| `analysisJobStatus` | enum? | `QUEUED` · `RUNNING` · `SUCCEEDED` · `PARTIAL` · `FAILED` |
-					| `analysisFailureCode` | string? | 분석 실패 사유. 15종. 상세는 Submission API 참고 |
+					| `analysisFailureCode` | string? | 실패했는가만 알린다. 값은 `ANALYSIS_FAILED` 하나. **사유는 TR-02에 있다** |
 
 					**이해도 확인·다시 보기**
 
@@ -156,10 +156,10 @@ public class AssessmentRoundController {
 					| 필드 | 타입 | 설명 |
 					| --- | --- | --- |
 					| `submissionDueAt` | datetime? | 제출 마감 |
-					| `roundAssessmentOpenAt` | datetime? | 회차 응시 창 시작. `OPEN` 회차면 DB가 non-null을 보장 |
-					| `roundAssessmentDueAt` | datetime? | 회차 응시 창 종료. 위와 같음 |
-					| `assessmentOpenAt` | datetime? | **개인** 응시 창 시작. 응시 생성 전이면 `null` |
-					| `assessmentCloseAt` | datetime? | **개인** 응시 창 종료. 응시 생성 전이면 `null` |
+					| `roundAssessmentOpenAt` | datetime? | 🔴 **폐기. 언제나 `null`**(2026-08-16) |
+					| `roundAssessmentDueAt` | datetime? | 🔴 **폐기. 언제나 `null`**(2026-08-16) |
+					| `assessmentOpenAt` | datetime? | **개인** 응시 창 시작. 응시 생성 전이면 `null`. **응시 가능 판정은 이것뿐** |
+					| `assessmentCloseAt` | datetime? | **개인** 응시 창 종료. 응시 생성 전이면 `null`. ⚠️ `min(…, roundAssessmentDueAt)` 금지 — JS에서 1970년이 된다 |
 					| `initialTerminalAt` | datetime? | 응시 종료 시각 |
 					| `reportPublishMode` | enum? | `ROUND_BATCH` |
 					| `reportPublishNotBeforeAt` | datetime? | 이 시각 이전에는 발행하지 않는다 |
