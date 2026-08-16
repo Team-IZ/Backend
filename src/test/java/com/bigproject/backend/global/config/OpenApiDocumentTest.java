@@ -987,6 +987,63 @@ class OpenApiDocumentTest {
 		return schema == null || schema.name().isEmpty() ? type.getSimpleName() : schema.name();
 	}
 
+	/**
+	 * 33차 R1 — <b>스펙이 요구하는 요청 헤더는 CORS 허용 목록에도 있어야 한다.</b>
+	 *
+	 * <h2>이 자리는 서버 쪽 테스트로 잡히지 않는다</h2>
+	 *
+	 * <p>사전 확인(preflight)은 <b>브라우저만</b> 보낸다. curl·스웨거·Postman에서는 그 단계가 없어
+	 * 요청이 그대로 도착하고 정상 응답이 온다 — 그래서 목록에서 헤더가 빠져도 서버 쪽에서는
+	 * 아무 증상이 없고, 브라우저에서만 <b>본 요청이 아예 나가지 않는다.</b> 로그도 남지 않는다.
+	 *
+	 * <p>실제로 {@code Idempotency-Key}가 그 상태였다. 스펙은 필수로 요구하는데 목록에 없어서,
+	 * 헤더를 빼면 400이고 넣으면 브라우저가 막는 <b>프론트에 선택지가 없는</b> 상태로 제출 API가
+	 * 통째로 잠겨 있었다. 제출이 막히면 분석·응시·리포트가 전부 막힌다.
+	 *
+	 * <p>헤더를 새로 읽는 오퍼레이션이 생겨도 CORS 목록은 사람이 따로 고쳐야 한다. 그 둘을
+	 * 이어 두지 않으면 같은 사고가 반복되므로, <b>스펙에 선언된 헤더</b>를 모아 대조한다.
+	 * {@link SecurityConfig#ALLOWED_HEADERS}를 직접 읽는다 — 목록을 여기 한 벌 더 적으면
+	 * 두 벌이 갈라져, 정작 서버가 쓰는 쪽이 틀린 채로 검사만 통과한다.
+	 */
+	@Test
+	void letsTheBrowserSendEveryHeaderTheSpecAsksFor() throws Exception {
+		List<String> allowed = SecurityConfig.ALLOWED_HEADERS.stream()
+				.map(header -> header.toLowerCase(java.util.Locale.ROOT))
+				.toList();
+
+		Map<String, String> blockedByCors = new LinkedHashMap<>();
+		List<String> declared = new ArrayList<>();
+		forEachOperation(spec(), (operationId, operation) ->
+				operation.path("parameters").forEach(parameter -> {
+					if (!"header".equals(parameter.path("in").asString(null))) {
+						return;
+					}
+					String name = parameter.path("name").asString("");
+					if (name.isEmpty()) {
+						return;
+					}
+					declared.add(name);
+					if (allowed.contains(name.toLowerCase(java.util.Locale.ROOT))) {
+						return;
+					}
+					// 같은 헤더가 여러 오퍼레이션에 있으면 처음 하나만 남긴다 — 목록이 아니라
+					// "어느 헤더가 빠졌나"가 읽어야 할 정보다.
+					blockedByCors.putIfAbsent(name, operationId);
+				}));
+
+		// 스펙에서 헤더 파라미터를 하나도 못 읽으면 아래 단언은 공허하게 통과한다.
+		// 33차의 그 헤더가 실제로 걸리는지부터 확인한다.
+		assertThat(declared)
+				.as("헤더 파라미터를 읽지 못하고 있다 — 검사가 아무것도 보지 않는다")
+				.contains("Idempotency-Key");
+
+		assertThat(blockedByCors)
+				.as("CORS 허용 목록에 없는 헤더는 브라우저가 본 요청을 보내기 전에 막는다 "
+						+ "— curl·스웨거로는 재현되지 않으므로 여기서 잡아야 한다. "
+						+ "SecurityConfig.ALLOWED_HEADERS에 추가할 것")
+				.isEmpty();
+	}
+
 	private interface ResponseVisitor {
 		void visit(String operationId, String status, JsonNode response);
 	}

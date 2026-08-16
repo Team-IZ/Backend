@@ -80,6 +80,32 @@ class LoginOriginPreflightTest {
 		preflight("https://evil.example.com").andExpect(status().isForbidden());
 	}
 
+	/**
+	 * 33차 R1 — <b>제출이 통째로 막혀 있던 자리를 그대로 재현한다.</b>
+	 *
+	 * <p>프론트가 보낸 {@code curl -X OPTIONS}와 같은 요청이다. 종전에는 허용 목록에
+	 * {@code Idempotency-Key}가 없어 응답의 {@code Access-Control-Allow-Headers}에 그 헤더가
+	 * 빠졌고, 브라우저는 <b>본 요청(POST)을 아예 보내지 않았다.</b>
+	 *
+	 * <p>스펙이 그 헤더를 필수로 요구하므로 빼면 400이고 넣으면 브라우저가 막아, 프론트에
+	 * 고를 수 있는 선택지가 없는 상태였다.
+	 *
+	 * <p><b>이 검사는 여기서만 가능하다.</b> 사전 확인은 브라우저만 보내므로 curl·스웨거로
+	 * 본 요청을 직접 던지면 언제나 정상으로 보인다.
+	 */
+	@Test
+	void 제출_사전확인이_Idempotency_Key를_허용한다() throws Exception {
+		mockMvc.perform(options("/api/v0/submissions/zip")
+						.header("Origin", "http://localhost:5173")
+						.header("Access-Control-Request-Method", "POST")
+						.header("Access-Control-Request-Headers", "authorization,idempotency-key"))
+				.andExpect(status().isOk())
+				.andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:5173"))
+				.andExpect(header().stringValues("Access-Control-Allow-Headers",
+						org.hamcrest.Matchers.hasItem(
+								org.hamcrest.Matchers.containsStringIgnoringCase("idempotency-key"))));
+	}
+
 	private org.springframework.test.web.servlet.ResultActions preflight(String origin) throws Exception {
 		return mockMvc.perform(options("/api/v0/auth/login")
 				.header("Origin", origin)

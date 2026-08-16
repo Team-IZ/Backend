@@ -39,7 +39,26 @@ public enum ReportErrorCode implements ApiErrorCode {
 
 	// ── OP-05 리포트 ──
 	/** 기수에 수업 진단 리포트가 아직 없다. 회차가 하나도 안 끝났을 때 정상적으로 발생한다. */
-	COHORT_REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "기수 리포트를 찾을 수 없습니다.");
+	COHORT_REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "기수 리포트를 찾을 수 없습니다."),
+
+	// ── 강제 생성(연동 시험 전용) ──
+	/** 그 {@code session_id}로 세션을 찾지 못했다. 강제 생성 경로는 이것 말고 거르는 조건이 없다. */
+	REPORT_SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "세션을 찾을 수 없습니다."),
+	/**
+	 * {@code problem_stage}에 문제가 하나도 없는 세션이다. 만들 리포트가 없다 —
+	 * run 행만 남기면 영원히 확정되지 않는 실행이 된다.
+	 */
+	REPORT_SESSION_HAS_NO_PROBLEM(HttpStatus.CONFLICT, "이 세션에는 채점된 문제가 없습니다."),
+	/**
+	 * 이미 진행 중인 수동 실행이 있다({@code uq_report_generation_run_active}).
+	 * 오류가 아니라 "이미 돌고 있다"이므로 폴링이 끝나기를 기다리면 된다.
+	 */
+	REPORT_GENERATION_ALREADY_RUNNING(HttpStatus.CONFLICT, "이미 진행 중인 리포트 생성이 있습니다."),
+	/**
+	 * {@code ai.report.model-code}가 가리키는 모델이 {@code ai_model}에 ACTIVE로 없다.
+	 * 설정 문제이지 요청 문제가 아니다.
+	 */
+	REPORT_MODEL_NOT_CONFIGURED(HttpStatus.INTERNAL_SERVER_ERROR, "리포트 생성 모델이 설정되지 않았습니다.");
 
 	private final HttpStatus status;
 	private final String defaultMessage;
