@@ -115,6 +115,23 @@ public class ReportBatchService {
 	private final Duration itemTimeout;
 
 	/**
+	 * 한 틱에 요청할 문제 수 상한.
+	 *
+	 * <p>없으면 조건에 맞는 것을 <b>전부</b> 순회한다. 반 전체가 비슷한 시각에 문제를 끝내면
+	 * 한 틱에 수십 건이 나가고, 순차 루프라 스케줄러 스레드가 그동안 묶인다. 전환 시점에는
+	 * 옛 데이터 9,795건이 한 번에 나갈 뻔했다(클래스 javadoc의 전환 컷오프 참고).
+	 */
+	private final int dispatchBatchSize;
+
+	/**
+	 * 이 시각 이전에 <b>시작된</b> 세션은 대상이 아니다. 전환기 임시 조건이다.
+	 *
+	 * <p>이유와 제거 시점은 {@link ReportDispatchRepository} 클래스 javadoc의
+	 * "전환 컷오프" 절에 있다.
+	 */
+	private final Instant transitionCutoffAt;
+
+	/**
 	 * 설정값을 필드 {@code @Value}가 아니라 생성자 인자로 받는다. 필드 주입이면 단위 테스트에서
 	 * 항상 기본값(null·0)이라 모델 조회와 상한이 조용히 빗나간다
 	 * ({@code AnalysisBatchService}와 같은 이유).
@@ -131,7 +148,9 @@ public class ReportBatchService {
 			ObjectMapper objectMapper,
 			@Value("${ai.report.model-code}") String modelCode,
 			@Value("${ai.report.max-attempts}") int maxAttempts,
-			@Value("${ai.report.item-timeout}") Duration itemTimeout) {
+			@Value("${ai.report.item-timeout}") Duration itemTimeout,
+			@Value("${ai.report.dispatch-batch-size}") int dispatchBatchSize,
+			@Value("${ai.report.transition-cutoff-at}") Instant transitionCutoffAt) {
 		this.dispatchRepository = dispatchRepository;
 		this.reportRepository = reportRepository;
 		this.runRepository = runRepository;
@@ -144,6 +163,8 @@ public class ReportBatchService {
 		this.modelCode = modelCode;
 		this.maxAttempts = maxAttempts;
 		this.itemTimeout = itemTimeout;
+		this.dispatchBatchSize = dispatchBatchSize;
+		this.transitionCutoffAt = transitionCutoffAt;
 	}
 
 	/**
@@ -156,7 +177,7 @@ public class ReportBatchService {
 	 * @return 요청을 보낸 세션 수
 	 */
 	public int dispatchDueSessions() {
-		List<ReportTarget> targets = dispatchRepository.findDueSessions(maxAttempts);
+		List<ReportTarget> targets = dispatchRepository.findDueSessions(maxAttempts, transitionCutoffAt, dispatchBatchSize);
 		warnAboutUnfinishedStages();
 		if (targets.isEmpty()) {
 			return 0;
@@ -214,7 +235,7 @@ public class ReportBatchService {
 	 * @return 요청을 보낸 문제 수
 	 */
 	public int dispatchDueProblems() {
-		List<ProblemDueTarget> targets = dispatchRepository.findDueProblems(maxAttempts);
+		List<ProblemDueTarget> targets = dispatchRepository.findDueProblems(maxAttempts, transitionCutoffAt, dispatchBatchSize);
 		if (targets.isEmpty()) {
 			return 0;
 		}

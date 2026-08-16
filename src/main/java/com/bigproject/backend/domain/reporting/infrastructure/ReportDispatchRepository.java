@@ -46,6 +46,29 @@ import java.util.UUID;
  * <p>판정이 <b>더 정확해진다</b> — "회차가 끝나기 전에 낸 응시"에서 "본인 응시 창 안에 낸 응시"로
  * 바뀐다. 개인 창은 분석이 끝나 세션이 열린 시각부터 24시간이라 사람마다 다르고, 마감 직전에
  * 제출해 분석이 늦게 끝난 학생이 회차 창 때문에 리포트를 못 받던 문제가 사라진다.
+ *
+ * <h2>🔴 전환 컷오프 — 임시 조건이다 (2026-08-16 합의 §2)</h2>
+ *
+ * <p>위 전환에는 아무도 의도하지 않은 부작용이 있었다. 회차 창을 보던 시절에는
+ * {@code assessment_due_at}이 과거 데이터를 자연히 걸러 냈는데, 개인 창으로 옮기자
+ * <b>옛 세션이 전부 조건을 통과한다</b> — 개인 창은 그 세션이 열린 시각 기준이라 언제 응시했든
+ * 참이기 때문이다. 실측 <b>3,271세션 · LLM 호출 9,795건</b>이 대상이 됐다.
+ *
+ * <p>{@code ai.report.dispatch-batch-size}만으로는 막지 못한다. 20건씩 1분마다면 8시간에 걸쳐
+ * <b>결국 전부 나간다</b> — 상한은 기울기를 낮출 뿐 총량을 줄이지 않는다.
+ *
+ * <p>그래서 {@code s.started_at >= :transitionCutoffAt}으로 끊는다. 스케줄러를 꺼 두는 방안도
+ * 있었지만 택하지 않았다 — 그러면 전환 기간의 <b>신규 응시도 리포트를 못 받고</b>, 미정리 세션
+ * 경고까지 함께 멈추며, 복귀를 사람의 기억에 맡기게 된다. "조용히 0건"은 이 전환을 시작하게
+ * 만든 바로 그 실패 형태다.
+ *
+ * <p>⚠️ <b>{@code s.ended_at}이 아니라 {@code s.started_at}이다.</b> 문제 단위 조회는 세션이
+ * 끝나기 전에 보내므로 {@code ended_at}이 NULL인 것이 정상이고, 그것으로 끊으면 즉시 생성이
+ * 통째로 죽는다.
+ *
+ * <p>{@code problem_stage.problem_closed_at} 전환이 끝나면 <b>이 조건을 지운다</b> — 그때는 옛
+ * 행이 그 컬럼 NULL이라 구조적으로 제외된다. 같은 상수를 백필과 미정리 경고도 쓰는데,
+ * 그 둘은 영구히 남는다.
  */
 public interface ReportDispatchRepository extends Repository<ReportGenerationRun, UUID> {
 
@@ -197,9 +220,14 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			   AND\s""" + NO_UNFINISHED_STAGE + """
 			   AND NOT\s""" + BLOCKING_RUN_EXISTS + """
 			   AND\s""" + UNDER_ATTEMPT_LIMIT + """
+			   AND s.started_at >= :transitionCutoffAt
 			 ORDER BY COALESCE(ma.assessment_close_at, r.assessment_due_at), ma.user_id
+			 LIMIT :batchSize
 			""", nativeQuery = true)
-	List<ReportTarget> findDueSessions(int maxAttempts);
+	List<ReportTarget> findDueSessions(
+			@Param("maxAttempts") int maxAttempts,
+			@Param("transitionCutoffAt") java.time.Instant transitionCutoffAt,
+			@Param("batchSize") int batchSize);
 
 	/**
 	 * 끝난 <b>문제</b>를 하나씩 집는다. 리포트 생성의 기본 경로다.
@@ -291,9 +319,14 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			          AND run.status <> 'FAILED'
 			   )
 			   AND\s""" + UNDER_ATTEMPT_LIMIT + """
+			   AND s.started_at >= :transitionCutoffAt
 			 ORDER BY ma.user_id, ap.problem_no
+			 LIMIT :batchSize
 			""", nativeQuery = true)
-	List<ProblemDueTarget> findDueProblems(int maxAttempts);
+	List<ProblemDueTarget> findDueProblems(
+			@Param("maxAttempts") int maxAttempts,
+			@Param("transitionCutoffAt") java.time.Instant transitionCutoffAt,
+			@Param("batchSize") int batchSize);
 
 	/**
 	 * 세션 1건의 맥락. <b>운영자 수동 재생성</b>이 쓴다.

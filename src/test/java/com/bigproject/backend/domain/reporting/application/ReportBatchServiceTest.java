@@ -66,6 +66,9 @@ class ReportBatchServiceTest {
 	private static final String PROVIDER_MODEL_CODE = "minimax-m3";
 	private static final int MAX_ATTEMPTS = 3;
 	private static final Duration ITEM_TIMEOUT = Duration.ofMinutes(10);
+	private static final int BATCH_SIZE = 20;
+	/** 전환 컷오프. 테스트 대상은 이 시각 이후에 시작한 것으로 본다. */
+	private static final Instant CUTOFF_AT = Instant.parse("2026-08-16T05:45:00Z");
 
 	private ReportDispatchRepository dispatchRepository;
 	private ReportRepository reportRepository;
@@ -90,7 +93,7 @@ class ReportBatchServiceTest {
 
 		service = new ReportBatchService(dispatchRepository, reportRepository, runRepository,
 				itemRepository, payloadRepository, aiClient, modelRepository, finalizer,
-				new ObjectMapper(), MODEL_CODE, MAX_ATTEMPTS, ITEM_TIMEOUT);
+				new ObjectMapper(), MODEL_CODE, MAX_ATTEMPTS, ITEM_TIMEOUT, BATCH_SIZE, CUTOFF_AT);
 
 		/*
 		 * 저장은 인자를 그대로 돌려주되 PK를 채워 준다.
@@ -111,7 +114,7 @@ class ReportBatchServiceTest {
 	void createsOneItemPerProblemAndCallsAiForEach() {
 		catalogHasTheConfiguredModel();
 		ReportTarget target = target();
-		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target));
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of(target));
 		when(dispatchRepository.findSessionProblems(target.getSessionId()))
 				.thenReturn(List.of(problem(1), problem(2), problem(3)));
 		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
@@ -139,7 +142,7 @@ class ReportBatchServiceTest {
 	void sendsTheRunIdAsScoreRunIdSoRegenerationGetsAFreshJob() {
 		catalogHasTheConfiguredModel();
 		ReportTarget target = target();
-		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target));
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of(target));
 		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of(problem(1)));
 		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
 		when(aiClient.requestGeneration(any(), any()))
@@ -173,7 +176,7 @@ class ReportBatchServiceTest {
 	void sendsThePrefixedModelCodeBecauseProviderModelCodeLacksIt() {
 		catalogHasTheConfiguredModel();
 		ReportTarget target = target();
-		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target));
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of(target));
 		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of(problem(1)));
 		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
 		when(aiClient.requestGeneration(any(), any()))
@@ -193,7 +196,7 @@ class ReportBatchServiceTest {
 	/** 모델을 못 찾으면 아무 행도 남기지 않는다. run을 만들면 설정을 고쳐도 재시도 상한만 깎인다. */
 	@Test
 	void writesNothingWhenTheConfiguredModelIsMissingFromTheCatalog() {
-		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target()));
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of(target()));
 		when(modelRepository.findActiveByModelCode(MODEL_CODE)).thenReturn(Optional.empty());
 
 		assertThat(service.dispatchDueSessions()).isZero();
@@ -205,7 +208,7 @@ class ReportBatchServiceTest {
 	@Test
 	void skipsSessionsThatHaveNoProblems() {
 		catalogHasTheConfiguredModel();
-		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target()));
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of(target()));
 		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of());
 
 		service.dispatchDueSessions();
@@ -217,7 +220,7 @@ class ReportBatchServiceTest {
 	@Test
 	void failsOnlyTheRejectedItemAndKeepsSendingTheRest() {
 		catalogHasTheConfiguredModel();
-		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target()));
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of(target()));
 		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of(problem(1), problem(2)));
 		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
 		when(aiClient.requestGeneration(any(), any()))
@@ -238,7 +241,7 @@ class ReportBatchServiceTest {
 	@Test
 	void failsTheItemWhenTheJobIdIsNotAUuid() {
 		catalogHasTheConfiguredModel();
-		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target()));
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of(target()));
 		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of(problem(1)));
 		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
 		when(aiClient.requestGeneration(any(), any()))
@@ -261,7 +264,7 @@ class ReportBatchServiceTest {
 		ReportTarget target = target();
 		Report existing = Report.forTrainee(target.getOrgId(), target.getCohortId(),
 				target.getUserId(), target.getAssessmentRoundId());
-		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target));
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of(target));
 		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of(problem(1)));
 		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of(existing));
 		when(aiClient.requestGeneration(any(), any()))
@@ -285,7 +288,7 @@ class ReportBatchServiceTest {
 	 */
 	@Test
 	void countsBlockedSessionsEvenWhenThereIsNothingToDispatch() {
-		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of());
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of());
 		when(dispatchRepository.countSessionsWithUnfinishedStages()).thenReturn(4L);
 
 		assertThat(service.dispatchDueSessions()).isZero();
@@ -298,7 +301,7 @@ class ReportBatchServiceTest {
 	void keepsDispatchingWhenTheBlockedSessionCountFails() {
 		catalogHasTheConfiguredModel();
 		ReportTarget target = target();
-		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS)).thenReturn(List.of(target));
+		when(dispatchRepository.findDueSessions(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE)).thenReturn(List.of(target));
 		when(dispatchRepository.countSessionsWithUnfinishedStages())
 				.thenThrow(new IllegalStateException("집계 실패"));
 		when(dispatchRepository.findSessionProblems(any())).thenReturn(List.of(problem(1)));
@@ -323,7 +326,7 @@ class ReportBatchServiceTest {
 	void keepsOneRunPerStudentEvenWhenSeveralProblemsFinishTogether() {
 		catalogHasTheConfiguredModel();
 		UUID sessionId = UUID.randomUUID();
-		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS))
+		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE))
 				.thenReturn(List.of(dueProblem(sessionId, 1), dueProblem(sessionId, 2)));
 		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
 		when(runRepository.findActiveByReportIdAndTriggerType(any(), any())).thenReturn(Optional.empty());
@@ -355,7 +358,7 @@ class ReportBatchServiceTest {
 				report.getReportId(), ReportGenerationTriggerType.SCHEDULED,
 				"key", 1, 1, "f".repeat(64)), "generationRunId");
 
-		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS))
+		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE))
 				.thenReturn(List.of(dueProblem(sessionId, 2)));
 		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of(report));
 		when(runRepository.findActiveByReportIdAndTriggerType(
@@ -377,7 +380,7 @@ class ReportBatchServiceTest {
 	@Test
 	void givesEachSessionItsOwnRun() {
 		catalogHasTheConfiguredModel();
-		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS))
+		when(dispatchRepository.findDueProblems(MAX_ATTEMPTS, CUTOFF_AT, BATCH_SIZE))
 				.thenReturn(List.of(dueProblem(UUID.randomUUID(), 1), dueProblem(UUID.randomUUID(), 1)));
 		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
 		when(runRepository.findActiveByReportIdAndTriggerType(any(), any())).thenReturn(Optional.empty());
@@ -417,7 +420,7 @@ class ReportBatchServiceTest {
 		Optional<UUID> runId = service.regenerateSession(target.getSessionId(), "operator@example.com");
 
 		assertThat(runId).isPresent();
-		verify(dispatchRepository, never()).findDueSessions(anyInt());
+		verify(dispatchRepository, never()).findDueSessions(anyInt(), any(), anyInt());
 		verify(aiClient, times(3)).requestGeneration(any(), any());
 
 		ArgumentCaptor<ReportGenerationRun> runs = ArgumentCaptor.forClass(ReportGenerationRun.class);
