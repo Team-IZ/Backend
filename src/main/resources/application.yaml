@@ -234,6 +234,17 @@ ai:
     # 않아 교육생 화면이 계속 `발행 전`이다.
     item-timeout: ${AI_REPORT_ITEM_TIMEOUT:PT10M}
 
+    force-endpoint:
+      # 🔴 기본 false. 켜면 POST /api/v0/reports/sessions/{sessionId}/generation 이 등록된다.
+      #
+      # 이 엔드포인트는 세션 유효성을 하나도 보지 않는다 — 세션·응시 완료, 종료 사유, 무효 확인,
+      # 단계 정리, 발행 예정 시각을 전부 건너뛰고 세션 ID만 맞으면 AI를 부른다. 회차 마감을
+      # 기다리거나 assessment_due_at 을 손대지 않고 8필드 조립과 AI 계약을 확인하려고 둔 경로다.
+      #
+      # 켜 두면 아무 세션에나 LLM 비용을 태울 수 있고 그 비용은 회수되지 않는다(무효 세션에도
+      # 요청은 나가지만 결과는 발행되지 않는다). 연동 시험이 끝나면 다시 끈다.
+      enabled: ${AI_REPORT_FORCE_ENDPOINT_ENABLED:false}
+
     scheduler:
       # 🔴 기본 false. 켜져 있으면 @SpringBootTest 컨텍스트가 뜰 때마다 실제 AI 서버로
       # 요청이 나가고, 로컬에서 앱을 띄워 둔 것만으로 종료된 회차에 LLM 비용이 발생한다.

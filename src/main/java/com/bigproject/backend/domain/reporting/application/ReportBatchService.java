@@ -7,6 +7,8 @@ import com.bigproject.backend.domain.reporting.domain.ReportGenerationItem;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationItemStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRun;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationTriggerType;
+import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
+import com.bigproject.backend.domain.reporting.domain.ReportException;
 import com.bigproject.backend.domain.reporting.domain.ReportLifecycleStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportType;
 import com.bigproject.backend.domain.reporting.infrastructure.JdbcReportPayloadRepository;
@@ -425,6 +427,71 @@ public class ReportBatchService {
 		runId.ifPresent(id -> log.info(
 				"운영자 재생성 요청: sessionId={}, userId={}, roundId={}, runId={}, requestedBy={}",
 				sessionId, target.getUserId(), target.getAssessmentRoundId(), id, requestedBy));
+		return runId;
+	}
+
+	/**
+	 * 세션 1건의 리포트를 <b>조건을 보지 않고 만든다.</b> 연동 시험 전용이다.
+	 *
+	 * <h2>{@link #regenerateSession}과 무엇이 다른가</h2>
+	 *
+	 * <table>
+	 *   <caption>세 경로의 조건</caption>
+	 *   <tr><th></th><th>배치</th><th>{@code regenerateSession}</th><th>이 메서드</th></tr>
+	 *   <tr><td>횟수 상한·중복 차단</td><td>✅ 본다</td><td>❌ 안 본다</td><td>❌ 안 본다</td></tr>
+	 *   <tr><td>세션·응시 완료</td><td>✅</td><td>✅</td><td><b>❌</b></td></tr>
+	 *   <tr><td>종료 사유 6종</td><td>✅</td><td>✅</td><td><b>❌</b></td></tr>
+	 *   <tr><td>무효 확인</td><td>✅</td><td>✅</td><td><b>❌</b></td></tr>
+	 *   <tr><td>단계 정리</td><td>✅</td><td>✅</td><td><b>❌</b></td></tr>
+	 *   <tr><td>발행 예정 시각</td><td>✅</td><td>✅</td><td><b>❌</b></td></tr>
+	 * </table>
+	 *
+	 * <p>즉 <b>세션 ID만 맞으면 무조건 AI를 부른다.</b> 8필드 조립과 AI 계약을 확인하는 것이
+	 * 목적이라, 회차 마감을 기다리거나 {@code assessment_due_at}을 손대는 대신 조건을 타지 않는
+	 * 경로를 따로 둔다.
+	 *
+	 * <h2>🔴 그래도 발행은 막힌다</h2>
+	 *
+	 * <p>여기서 만든 리포트가 학생에게 나가지는 않는다. {@link ReportRunFinalizer}가 확정 직전에
+	 * 세션 유효성과 발행 예정 시각을 <b>다시</b> 보고({@code findFinalizeContext}), 어긋나면
+	 * 스냅샷만 만들고 {@code published_at}을 비워 둔다. 생성 게이트를 푸는 것과 발행 게이트를 푸는
+	 * 것은 별개이고, 이 메서드는 앞의 것만 푼다.
+	 *
+	 * <p>⚠️ 그래서 <b>LLM 비용은 회수되지 않는다.</b> 무효 세션에도 요청이 나가고 결과는 발행되지
+	 * 않는다. 이 경로를 여는 엔드포인트가 {@code ai.report.force-endpoint.enabled}로 꺼져 있는 이유다.
+	 *
+	 * @param sessionId   {@code assessment_session.session_id}
+	 * @param requestedBy 누가 눌렀는지. 로그에만 쓴다
+	 * @return 만든 실행의 {@code generation_run_id}
+	 * @throws com.bigproject.backend.domain.reporting.domain.ReportException 세션이 없거나, 문제가
+	 *         없거나, 이미 진행 중인 수동 실행이 있거나, 모델 설정이 어긋났을 때
+	 */
+	public UUID forceGenerateSession(UUID sessionId, String requestedBy) {
+		ReportTarget target = dispatchRepository.findSessionContext(sessionId)
+				.orElseThrow(() -> new ReportException(ReportErrorCode.REPORT_SESSION_NOT_FOUND));
+
+		AnalysisModel model = modelRepository.findActiveByModelCode(modelCode).orElse(null);
+		if (model == null) {
+			log.error("ai.report.model-code 가 가리키는 ACTIVE 모델이 ai_model 에 없다: modelCode={}", modelCode);
+			throw new ReportException(ReportErrorCode.REPORT_MODEL_NOT_CONFIGURED);
+		}
+
+		log.warn("🔴 강제 리포트 생성: sessionId={}, userId={}, roundId={}, requestedBy={} "
+						+ "— 세션 유효성·발행 시각을 보지 않는 경로다",
+				sessionId, target.getUserId(), target.getAssessmentRoundId(), requestedBy);
+
+		UUID runId;
+		try {
+			runId = dispatchOne(target, model, Instant.now(), ReportGenerationTriggerType.USER_REQUESTED)
+					.orElseThrow(() -> new ReportException(ReportErrorCode.REPORT_SESSION_HAS_NO_PROBLEM));
+		} catch (DataIntegrityViolationException exception) {
+			// uq_report_generation_run_active 는 (report_id, trigger_type) 부분 유니크다.
+			// 앞의 수동 실행이 아직 QUEUED/RUNNING/RETRYING 이라는 뜻이다.
+			throw new ReportException(ReportErrorCode.REPORT_GENERATION_ALREADY_RUNNING);
+		}
+
+		log.info("강제 리포트 생성 요청 완료: sessionId={}, runId={}, requestedBy={}",
+				sessionId, runId, requestedBy);
 		return runId;
 	}
 

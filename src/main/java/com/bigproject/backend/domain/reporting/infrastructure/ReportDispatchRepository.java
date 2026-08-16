@@ -339,6 +339,52 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 	java.util.Optional<ReportTarget> findTargetBySession(UUID sessionId);
 
 	/**
+	 * 세션 1건의 맥락을 <b>아무 조건 없이</b> 읽는다. 강제 생성 경로 전용이다.
+	 *
+	 * <h2>🔴 이 질의에는 유효성 규칙이 하나도 없다</h2>
+	 *
+	 * <p>{@link #findTargetBySession}이 "조절기 둘만 빼고 유효성은 그대로 둔다"였다면 이쪽은
+	 * <b>전부 뺀다.</b> 세션·응시 완료도, 종료 사유도, 무효 확인도, 단계 정리도, 발행 예정 시각도,
+	 * 회차 {@code deleted_at}도 보지 않는다. 오직 세션 ID로 축을 찾을 뿐이다.
+	 *
+	 * <p>그래서 <b>이 경로로 만든 리포트는 발행되지 않을 수 있다.</b> 생성과 발행의 판정이 갈라져
+	 * 있어서다 — {@code ReportRunFinalizer}가 확정 직전에
+	 * {@link #findFinalizeContext}로 세션 유효성과 발행 시각을 다시 보고, 어긋나면 스냅샷만 만들고
+	 * {@code published_at}을 비워 둔다. 즉 <b>이 질의가 푸는 것은 "요청을 보낼 수 있는가"뿐이고
+	 * "학생에게 나가는가"는 그대로 지켜진다.</b>
+	 *
+	 * <h2>왜 조건을 푸는 별도 질의를 두는가</h2>
+	 *
+	 * <p>연동 시험 때문이다. AI 계약이 바뀌었거나 8필드 조립이 맞는지 확인해야 할 때, 회차 마감을
+	 * 기다리거나 {@code assessment_due_at}을 손대는 것은 <b>확인하려는 것과 무관한 데이터를
+	 * 망가뜨린다.</b> 조건을 SQL에서 푸는 대신 <b>이 질의를 타지 않는 경로를 따로 두는</b> 원칙은
+	 * {@link #findTargetBySession}과 같다.
+	 *
+	 * <p>⚠️ 이것을 쓰는 엔드포인트는 {@code ai.report.force-endpoint.enabled}로 꺼 둔다.
+	 * 켜져 있으면 아무 세션에나 LLM 비용을 태울 수 있다.
+	 *
+	 * @return 세션이 아예 없을 때만 빈 값
+	 */
+	@Query(value = """
+			SELECT s.session_id           AS sessionId,
+			       ma.attempt_id          AS attemptId,
+			       ma.user_id             AS userId,
+			       ma.org_id              AS orgId,
+			       ma.cohort_id           AS cohortId,
+			       ma.project_id          AS projectId,
+			       ma.assessment_round_id AS assessmentRoundId,
+			       ma.code_analysis_id    AS codeAnalysisId,
+			       r.report_publish_not_before_at AS reportPublishNotBeforeAt
+			  FROM assessment_session s
+			  JOIN measurement_attempt ma
+			    ON ma.attempt_id = s.attempt_id
+			  JOIN project_assessment_round r
+			    ON r.assessment_round_id = ma.assessment_round_id
+			 WHERE s.session_id = :sessionId
+			""", nativeQuery = true)
+	java.util.Optional<ReportTarget> findSessionContext(@Param("sessionId") UUID sessionId);
+
+	/**
 	 * 정리되지 않은 stage 때문에 대상에서 빠진 세션 수. 경고에만 쓴다.
 	 *
 	 * <p>{@link #NO_UNFINISHED_STAGE}가 조용히 걸러 버리면 "리포트가 왜 안 생기지"를 되짚을
