@@ -40,10 +40,30 @@ public record ProjectSubmissionStatusResponse(
 				""", example = "CONFIRMED")
 		String teamFormationStage,
 		@Schema(description = """
-				제출이 열렸는지 여부입니다. `teamFormationStage`가 `CONFIRMED`·`CLOSED`일 때 true입니다.
+				**제출 현황을 그릴 것이 있는지** 여부입니다.
 
 				**화면은 이 값만 보고 표를 그릴지 빈 상태를 보여줄지 정합니다.** 단계 이름으로 다시
 				판정하면 같은 규칙이 서버와 화면 두 곳에 생깁니다.
+
+				🔴 **32차 R11 — 기준이 「팀 확정」에서 「제출 수령」으로 바뀌었습니다.**
+				종전에는 `teamFormationStage`가 `CONFIRMED`·`CLOSED`일 때만 true였는데,
+				**서버는 제출을 받을 때 팀 상태를 보지 않습니다**(회차가 열려 있는지와 마감만 봅니다).
+				그래서 팀이 전부 `DRAFT`인 회차에도 제출이 정상적으로 들어오고, 그때 이 값이
+				`false`라 화면이 제출·분석·응시를 통째로 가렸습니다.
+
+				지금 기준은 이렇습니다.
+
+				| 상황 | 값 |
+				|---|---|
+				| 프로젝트가 `PLANNED`(시작 전) | `false` — 제출이 있을 수 없습니다 |
+				| 팀이 0개 | `false` — 그릴 행이 없습니다 |
+				| 그 밖 | `true` — 제출을 받았거나 받는 중입니다 |
+
+				「지금 이 순간 제출을 받고 있는가」가 아닙니다. 그렇게 두면 **마감 뒤에 표가 다시
+				사라지는데**, 매니저가 제출 현황을 보는 시점은 대개 마감 후입니다.
+				지금 제출이 가능한지는 `submissionDueAt`으로 판단하세요.
+
+				편성이 어디까지 됐는지는 `teamFormationStage`가 그대로 답합니다.
 				""")
 		boolean submissionOpened,
 		@Schema(description = "종료된 회차입니다. 독촉·팀 이동 등 편성 액션을 잠급니다.")

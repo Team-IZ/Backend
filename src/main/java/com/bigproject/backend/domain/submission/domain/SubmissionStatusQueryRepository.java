@@ -73,8 +73,12 @@ public interface SubmissionStatusQueryRepository {
 			UUID assessmentRoundId, UUID organizationId, UUID managerUserId, UUID classId);
 
 	/**
-	 * 팀에 배정되지 않은 활성 인원 수. 팀 편성 단계를 FORMING으로 가르는 유일한 근거이며,
-	 * 이 값이 0이 아니면 제출 자체가 열리지 않는다.
+	 * 팀에 배정되지 않은 활성 인원 수. 팀 편성 단계를 FORMING으로 가르는 유일한 근거다.
+	 *
+	 * <p>🔴 <b>제출을 막지는 않는다</b>(32차 R11에서 정정). 종전 주석은 "이 값이 0이 아니면 제출
+	 * 자체가 열리지 않는다"고 적었는데 사실이 아니다 — {@code SubmissionService}가 제출을 받을 때
+	 * 보는 것은 회차 상태와 마감뿐이고, 이미 팀에 있는 사람은 남의 미배정과 무관하게 제출한다.
+	 * 미배정인 사람 본인만 팀 컨텍스트가 없어 제출할 수 없다.
 	 *
 	 * <p>담당 반 기준이다 — 남의 반에 미배정 인원이 남아 있다고 이 매니저의 화면이 잠기면 안 된다.
 	 */

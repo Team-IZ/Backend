@@ -82,7 +82,7 @@ public class ManagerViewAnalyticsController {
 	)
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "격자 조회 성공"),
-			@ApiResponse(responseCode = "400", description = "HEATMAP_SCOPE_INVALID 계층과 classroomId·teamId 조합이 맞지 않음 · HEATMAP_REVIEW_TRAINEE_REQUIRED REVIEW는 TRAINEE 계층만 허용"),
+			@ApiResponse(responseCode = "400", description = "HEATMAP_SCOPE_INVALID 계층과 classroomId·teamId 조합이 맞지 않거나 **teamId가 이 회차의 팀이 아님**(32차 R13) · HEATMAP_REVIEW_TRAINEE_REQUIRED REVIEW는 TRAINEE 계층만 허용"),
 			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 만료됨"),
 			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED 매니저 권한이 아님"),
 			@ApiResponse(responseCode = "404", description = "MANAGER_SCOPE_NOT_FOUND 담당 범위 밖의 기수이거나 존재하지 않음")

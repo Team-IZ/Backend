@@ -73,12 +73,17 @@ public interface InterviewService {
 	/** 담당 기수의 회차 목록. 화면 드롭다운을 채운다. */
 	List<RoundOptionView> findRoundOptions(UUID managerUserId, UUID orgId);
 
-	record RoundOptionView(UUID assessmentRoundId, String label, int roundNo, String status) {
+	/**
+	 * @param projectId 그 회차가 속한 프로젝트. 32차 R10 — 히트맵(MG-02)이 회차와 <b>짝으로</b>
+	 *                  필요로 한다. 조회는 이미 이 값을 읽고 있어 왕복도 계산도 늘지 않는다
+	 */
+	record RoundOptionView(UUID assessmentRoundId, UUID projectId, String label, int roundNo, String status) {
 	}
 
 	/**
 	 * @param resultStatus  {@code PENDING}이면 화면이 "이 회차는 아직 결과가 없어요"를 그린다.
-	 *                      리포트 발행 전이라 위험 판정 자체가 없는 상태다
+	 *                      <b>위험 판정</b>이 기준이며 리포트 발행과는 독립이다(32차 R1) —
+	 *                      근거는 {@code InterviewRoundRepository.RoundMeta#resultStatus()}에 있다
 	 * @param firstRound    1차. 비교할 직전 회차가 없어 위험 유형이 붙지 않는다(9-5)
 	 * @param publishedAt   리포트 발행 시각 = 위험 판정 등재 시각
 	 * @param daysSincePublish 발행 후 경과일. 상단 경고줄("N일째 안 끝났습니다")에 쓴다.

@@ -240,9 +240,40 @@ public class TeamService {
         membership.unassign(now);
     }
 
+    /**
+     * 팀 해체(32차 R14①).
+     *
+     * <p>화면에 있는데 부를 자리가 없던 셋 중 하나다. 도메인 동작은 이미 있었고 엔드포인트만
+     * 없었다 — 그래서 <b>인원 0명짜리 팀이 남아도 지울 방법이 없었고</b>, 그 팀이 제출 현황에서
+     * 「미제출 ⚠」로 잡혀 조치가 필요한 것처럼 보였다.
+     *
+     * <h2>팀원은 미배정으로 되돌린다</h2>
+     *
+     * <p>팀 행만 지우면 그 사람들이 <b>해체된 팀에 속한 채</b> 남아 어디에도 안 보인다.
+     * 배정 종료 시각을 찍어 미배정으로 돌려놓으면 자동 배분·수동 배정의 대상이 된다 —
+     * 프론트가 요청한 흐름이 그것이다.
+     *
+     * <p>지우지 않고 종료 시각만 찍는 것은 {@link #removeMember}와 같다. 과거에 이 팀
+     * 소속이었다는 사실이 남아야 그 회차의 제출·결과 귀속이 유지된다.
+     *
+     * <h2>제출한 팀은 막는다</h2>
+     *
+     * <p>배정·제외와 같은 이유다. 정상 접수된 제출이 있는 팀을 해체하면 그 제출이 팀 없이
+     * 뜬다. {@code TEAM_SUBMISSION_LOCKED}로 끊고 화면이 이유를 말하게 한다.
+     */
     @Transactional
     public void disbandTeam(UUID teamId, UUID orgId) {
-        findTeam(teamId, orgId).disband();
+        Team team = findTeam(teamId, orgId);
+
+        if (submissionQueryRepository.hasAcceptedSubmission(teamId, orgId)) {
+            throw new ApiException(ProjectExecutionErrorCode.TEAM_SUBMISSION_LOCKED);
+        }
+
+        OffsetDateTime now = OffsetDateTime.now();
+        teamMembershipRepository.findByTeamIdAndOrgIdAndToAtIsNull(teamId, orgId)
+                .forEach(membership -> membership.unassign(now));
+
+        team.disband();
     }
 
     /**

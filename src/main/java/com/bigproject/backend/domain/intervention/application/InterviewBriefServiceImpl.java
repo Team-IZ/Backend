@@ -226,9 +226,14 @@ public class InterviewBriefServiceImpl implements InterviewBriefService {
 			throw new ApiException(InterventionErrorCode.INTERVIEW_BRIEF_NOT_CREATED);
 		}
 
+		// 32차 R6 — 근거를 매니저가 읽는 말로 바꿔 내보낸다.
+		//
+		// 저장 시점이 아니라 읽기 시점에 하는 이유: 실서버에 이미 쌓인 브리프도 함께 고쳐진다.
+		// 저장 쪽만 고치면 지금 있는 브리프는 계속 interviewSourceId를 달고 나온다.
 		List<BriefItemView> items = briefRepository.findItems(header.briefId()).stream()
 				.map(item -> new BriefItemView(
-						item.briefItemId(), item.questionText(), item.questionRationale(), item.suggestedOrder()))
+						item.briefItemId(), item.questionText(),
+						BriefRationaleText.humanize(item.questionRationale()), item.suggestedOrder()))
 				.toList();
 
 		return new BriefView(
@@ -237,7 +242,9 @@ public class InterviewBriefServiceImpl implements InterviewBriefService {
 				summary.traineeName(),
 				summary.className(),
 				summary.riskType(),
-				summary.riskSummary(),
+				// 32차 R4 — 시드에 남은 [SEVERE]·[WARN]을 걷어낸다(면담 목록·상세와 같은 처리).
+				com.bigproject.backend.domain.intervention.domain.RiskSummaryText
+						.stripSeverityTag(summary.riskSummary()),
 				"INVALID_ATTEMPT".equals(header.briefType()),
 				header.firstInterview(),
 				briefState(header),

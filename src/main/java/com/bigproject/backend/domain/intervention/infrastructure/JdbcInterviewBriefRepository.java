@@ -93,7 +93,11 @@ public class JdbcInterviewBriefRepository implements InterviewBriefRepository {
 	@Override
 	public Optional<ManagerRecord> findLatestRecord(UUID interviewId) {
 		List<ManagerRecord> rows = jdbcTemplate.query("""
-				SELECT content, next_action, occurred_at
+				-- 32차 R8 — 안 쓴 사유는 null로 돌려준다.
+				-- content가 NOT NULL이라 저장 쪽이 빈 문자열을 넣고(JdbcInterviewCompletionRepository)
+				-- 여기서 되돌린다. 그래야 화면이 다시 열었을 때 입력칸이 비어 있고, 「안 쓴 것」과
+				-- 「그렇게 쓴 것」이 구분된다.
+				SELECT NULLIF(content, '') AS content, next_action, occurred_at
 				FROM interview_activity
 				WHERE interview_id = ?
 				ORDER BY occurred_at DESC, activity_id DESC

@@ -75,13 +75,22 @@ public class InterviewController {
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "조회 성공. 대상이 없으면 items가 빈 배열"),
 			@ApiResponse(responseCode = "403", description = "매니저 권한이 없음"),
+			@ApiResponse(responseCode = "404", description = "MANAGER_SCOPE_NOT_FOUND 담당 범위 밖의 회차이거나 존재하지 않음(32차 R3)"),
 			@ApiResponse(responseCode = "500", description = "ORGANIZATION_CONTEXT_MISSING 인증 정보에서 organizationId를 확인할 수 없음")
 	})
 	@GetMapping
 	public ResponseEntity<InterviewListResponse> findInterviews(
-			@Parameter(description = "조회할 회차 ID", required = true,
-					example = "123e4567-e89b-12d3-a456-426614174000")
-			@RequestParam UUID assessmentRoundId,
+			@Parameter(description = """
+					조회할 회차 ID. **생략하면 서버가 「이번 회차」를 고릅니다**(32차 R2).
+
+					고른 회차는 응답의 `round.assessmentRoundId`로 나가므로 드롭다운을 그 값에
+					맞추면 됩니다. 판정은 명부(`GET /cohorts/{id}/trainees`)와 **같은 규칙**이라
+					두 화면이 같은 차수를 가리킵니다.
+
+                    담당 범위 밖의 회차 ID를 주면 **404**입니다 — 빈 목록으로 답하면 「권한이 없다」와
+                    「대상이 없다」가 구분되지 않습니다(32차 R3).
+					""", example = "123e4567-e89b-12d3-a456-426614174000")
+			@RequestParam(required = false) UUID assessmentRoundId,
 
 			@Parameter(description = "교육생 이름 부분 일치. 공백이면 무시한다", example = "김민준")
 			@RequestParam(required = false) String search,
@@ -124,6 +133,20 @@ public class InterviewController {
 
 			`round_no`가 **프로젝트 안에서만 유일**하기 때문입니다. 안 붙이면 서로 다른 프로젝트의
 			1차가 드롭다운에 똑같이 두 번 보입니다.
+
+			### 히트맵(MG-02)도 이 조회를 씁니다 (32차 R10)
+
+			이름은 면담이지만 내용은 **담당 기수의 회차 목록**이라, 회차를 골라야 그릴 수 있는
+			화면이면 어디든 맞습니다. `projectId`를 함께 실어 **`(projectId, assessmentRoundId)`
+			짝**을 이 한 번의 조회로 얻을 수 있습니다.
+
+			종전에는 그 짝을 주는 조회가 `GET /cohorts/{id}/trainees`(교육생 명부)뿐이라, 히트맵이
+			**격자와 무관한 명부를 먼저 받아야** 했습니다. 그쪽은 행마다 지표를 붙이는 무거운
+			조회라 `size=1`로 줄여도 시간이 줄지 않습니다 — 그것이 히트맵 첫 진입 시간이
+			되고 있었습니다.
+
+			별도 엔드포인트를 새로 열지 않은 이유는 **같은 질의**이기 때문입니다. 하나 더 만들면
+			담당 반 스코프 규칙이 두 곳에 생기고, 한쪽만 고쳐지는 날 두 화면의 회차 목록이 갈립니다.
 			""")
 	@ApiResponses({
 			@ApiResponse(responseCode = "200", description = "조회 성공. 담당 기수에 회차가 없으면 빈 배열"),

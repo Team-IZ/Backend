@@ -40,20 +40,18 @@ public class TraineeTimelineService {
 		var actor = scopeGuard.requireCohort(email, cohortId);
 		String eventType = type == null ? null : type.name();
 
-		int totalElements = repository.countEvents(actor.userId(), cohortId, traineeId, eventType);
+		// 32차 R9② — 전체 건수·회차 차수·이벤트를 한 번에 받는다. 셋이 같은 뷰를 훑던 것을
+		// 합친 것이라 왕복도 뷰 계산도 1회다(근거는 TraineeTimelineRepository#findPage).
+		TraineeTimelineRepository.TimelinePage page = repository.findPage(
+				actor.userId(), cohortId, traineeId, eventType, decode(cursor), size);
 
-		// 회차를 한 개 더 읽어 다음 페이지가 있는지 본다. 페이지 단위가 회차라 이벤트를 세지 않는다.
-		List<Integer> sequenceNos = repository.findRoundSequenceNos(
-				actor.userId(), cohortId, traineeId, eventType, decode(cursor), size + 1);
-		boolean hasNext = sequenceNos.size() > size;
-		List<Integer> page = hasNext ? sequenceNos.subList(0, size) : sequenceNos;
-
-		List<TraineeTimelineRepository.EventRow> rows =
-				repository.findEvents(actor.userId(), cohortId, traineeId, eventType, page);
-
-		String next = hasNext && !page.isEmpty() ? encode(page.get(page.size() - 1)) : null;
+		List<TraineeTimelineResponse.Round> rounds = toRounds(page.rows());
+		// 커서는 이 페이지 마지막 회차의 차수다. 다음 요청이 그 미만부터 읽는다.
+		String next = page.hasNext() && !rounds.isEmpty()
+				? encode(rounds.get(rounds.size() - 1).cohortRoundNo())
+				: null;
 		return new TraineeTimelineResponse(
-				cohortId, traineeId, totalElements, toRounds(rows), next, hasNext);
+				cohortId, traineeId, page.totalElements(), rounds, next, page.hasNext());
 	}
 
 	/**

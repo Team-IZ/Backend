@@ -73,7 +73,10 @@ public class SubmissionStatusService {
 				projectId, orgId, managerUserId, classId);
 
 		// 팀에 배정되지 않은 사람은 팀 그룹 아래에 그릴 자리가 없어 버린다.
-		// 미배정이 남아 있으면 애초에 이 탭이 열리지 않으므로 표에서 사라져 보이는 일도 없다.
+		//
+		// 32차 R11로 FORMING에서도 표가 열리므로 "탭이 안 열려서 안 보인다"는 근거는 더 이상
+		// 성립하지 않는다. 대신 그 인원은 unassignedMemberCount로 따로 나가므로 화면에서
+		// 사라지지 않는다 — 팀 행 아래가 아니라 별도 자리에 세는 것이 맞다.
 		Map<UUID, List<SubmissionStatusQueryRepository.MemberRow>> membersByTeam = memberRows.stream()
 				.filter(member -> member.teamId() != null)
 				.collect(Collectors.groupingBy(SubmissionStatusQueryRepository.MemberRow::teamId));
@@ -92,7 +95,7 @@ public class SubmissionStatusService {
 				round.roundName(),
 				round.submissionDueAt(),
 				stage,
-				"CONFIRMED".equals(stage) || "CLOSED".equals(stage),
+				submissionOpened(round.projectLifecycleStatus(), teamRows),
 				closed,
 				unassignedMemberCount,
 				summarize(teamRows),
@@ -105,6 +108,41 @@ public class SubmissionStatusService {
 						.map(team -> toTeam(team, membersByTeam, resultsByTeam, now))
 						.toList()
 		);
+	}
+
+	/**
+	 * 제출 현황을 그릴 수 있는가.
+	 *
+	 * <h2>🔴 32차 R11 — 팀 확정이 아니라 <b>제출 수령 여부</b>가 기준이다</h2>
+	 *
+	 * <p>종전에는 {@code stage}가 {@code CONFIRMED}·{@code CLOSED}일 때만 참이었다. 즉 이름은
+	 * "제출이 열렸는가"인데 실제로 답한 것은 <b>"팀 편성이 확정됐는가"</b>였다.
+	 *
+	 * <p><b>그 둘은 서버에서 이어져 있지 않다.</b> {@code SubmissionService.requireSubmittableRound}가
+	 * 제출을 받을지 정할 때 보는 것은 <b>회차가 열려 있는지와 마감뿐</b>이고 팀 상태는 보지 않는다.
+	 * 그래서 팀이 전부 {@code DRAFT}인 회차에도 제출이 정상적으로 들어온다.
+	 *
+	 * <p>실제로 32차에서 팀 7개가 전부 {@code DRAFT}(→ {@code READY_TO_CONFIRM} → {@code false})인데
+	 * <b>5팀이 이미 제출하고 분석까지 끝났고 리포트도 발행된</b> 회차가 관측됐다. 화면은 스펙대로
+	 * 이 값만 보고 판정했으므로 제출 5건·분석 5건·응시 18명을 통째로 가렸다.
+	 *
+	 * <p>그래서 기준을 <b>그릴 것이 있는가</b>로 맞춘다.
+	 * <ul>
+	 *   <li>{@code PLANNED} — 아직 시작 전이라 제출이 있을 수 없다. 빈 상태가 맞다</li>
+	 *   <li>팀 0개 — 그릴 행이 없다. 빈 상태가 맞다({@code NOT_STARTED}와 같은 조건)</li>
+	 *   <li>그 밖 — 제출을 받았거나 받는 중이다. 표를 그린다</li>
+	 * </ul>
+	 *
+	 * <p>"지금 이 순간 제출을 받고 있는가"로 정의하지 않은 이유는 <b>마감 뒤에 다시 숨기 때문</b>이다.
+	 * 매니저가 제출 현황을 보는 시점은 대개 마감 후다 — 그때 표가 사라지면 같은 사고가 반복된다.
+	 *
+	 * <p>편성 진행 상황은 {@code teamFormationStage}가 그대로 답한다. 두 값을 분리해 두면 화면이
+	 * "표를 그릴까"와 "편성이 어디까지 됐나"를 각각 읽을 수 있다.
+	 */
+	private boolean submissionOpened(
+			String lifecycleStatus,
+			List<SubmissionStatusQueryRepository.TeamRow> teams) {
+		return !"PLANNED".equals(lifecycleStatus) && !teams.isEmpty();
 	}
 
 	/**

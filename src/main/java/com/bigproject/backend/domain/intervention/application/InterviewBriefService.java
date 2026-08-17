@@ -21,7 +21,7 @@ public interface InterviewBriefService {
 	BriefView findBrief(UUID managerUserId, UUID orgId, UUID caseId);
 
 	/**
-	 * 브리프를 만든다. <b>AI를 호출하므로 수 초~수십 초 걸린다.</b>
+	 * 브리프를 만든다. <b>AI를 호출하므로 보통 20~30초 걸린다(32차 R7 실측 24초).</b>
 	 *
 	 * <p>이미 완성된 브리프가 있으면 재생성하지 않고 그대로 돌려준다 — 재생성은
 	 * 별도 경로(IV-07)가 갖는다. 매니저가 열 때마다 여는 말이 달라지면 안 되고,

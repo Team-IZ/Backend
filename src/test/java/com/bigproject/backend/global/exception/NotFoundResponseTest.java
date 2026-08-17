@@ -79,12 +79,34 @@ class NotFoundResponseTest {
 				.andExpect(jsonPath("$.code").value("CLASSROOM_NOT_FOUND"));
 	}
 
+	/**
+	 * 32차 R12 — 교안 상세도 같은 자리다.
+	 *
+	 * <p>프론트가 없는 {@code materialId}로 65초까지 무응답을 관측했는데, 형식이 틀린 id에는
+	 * 400이 정상적으로 돌아왔다. 앱은 {@code CURRICULUM_MATERIAL_NOT_FOUND}를 완결된 404로
+	 * 내보내며 그 경로에 DB 조회 한 번 말고는 아무것도 없다 —
+	 * <b>33차 R1(404만 앞단에서 막힘)과 같은 층</b>이라는 뜻이다.
+	 */
+	@Test
+	void 교안_404도_같은_봉투로_나간다() throws Exception {
+		mockMvc.perform(get("/probe/curriculum-not-found"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("CURRICULUM_MATERIAL_NOT_FOUND"));
+	}
+
 	@RestController
 	static class ProbeController {
 
 		@GetMapping("/probe/cohort-not-found")
 		void cohortNotFound() {
 			throw new ApiException(AcademicOperationsErrorCode.COHORT_NOT_FOUND);
+		}
+
+		@GetMapping("/probe/curriculum-not-found")
+		void curriculumNotFound() {
+			throw new com.bigproject.backend.domain.curriculum.domain.CurriculumException(
+					com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode
+							.CURRICULUM_MATERIAL_NOT_FOUND);
 		}
 
 		@GetMapping("/probe/classroom-not-found")

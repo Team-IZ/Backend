@@ -342,4 +342,51 @@ public class TeamController {
         teamService.removeMember(teamId, orgId, projectId, traineeId);
         return ResponseEntity.noContent().build();
     }
+
+    @Operation(
+            operationId = "disbandTeam",
+            summary = "팀 해체 | ✅ 사용 가능",
+            description = """
+					팀을 해체한다(32차 R14①).
+
+					**요청**
+					- projectId (경로): 기준 프로젝트 ID
+					- teamId (경로): 해체할 팀 ID
+
+					**응답 (204)** — 본문 없음
+
+					## 팀원은 미배정으로 돌아간다
+
+					팀 행만 지우면 그 사람들이 **해체된 팀에 속한 채** 남아 어디에도 안 보입니다.
+					배정 종료 시각을 찍어 미배정으로 돌려놓으므로 자동 배분·수동 배정의 대상이 됩니다.
+
+					팀원이 0명인 팀도 그대로 해체됩니다 — 인원 없는 팀이 제출 현황에서
+					「미제출 ⚠」로 잡혀 조치가 필요한 것처럼 보이던 자리입니다.
+
+					## 지우지 않고 종료 시각만 찍는다
+
+					팀원 제외(`DELETE …/members/{traineeId}`)와 같습니다. 과거에 이 팀 소속이었다는
+					사실이 남아야 그 회차의 제출·결과 귀속이 유지됩니다.
+
+					⚠️ **정상 접수된 제출이 있는 팀은 해체할 수 없습니다**(`409 TEAM_SUBMISSION_LOCKED`).
+					해체하면 그 제출이 팀 없이 뜹니다. 배정·제외와 같은 규칙입니다.
+					"""
+    )
+    @PreAuthorize("hasAnyRole('MANAGER')")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "팀 해체 성공(본문 없음)"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "403", description = "ACCESS_DENIED 매니저가 아님"),
+            @ApiResponse(responseCode = "404", description = "TEAM_NOT_FOUND 팀을 찾을 수 없음"),
+            @ApiResponse(responseCode = "409", description = "TEAM_SUBMISSION_LOCKED 정상 접수된 제출이 있는 팀은 해체할 수 없음"),
+    })
+    @DeleteMapping("/projects/{projectId}/teams/{teamId}")
+    public ResponseEntity<Void> disbandTeam(
+            @Parameter(description = "프로젝트 ID") @PathVariable UUID projectId,
+            @Parameter(description = "해체할 팀 ID") @PathVariable UUID teamId
+    ) {
+        UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
+        teamService.disbandTeam(teamId, orgId);
+        return ResponseEntity.noContent().build();
+    }
 }

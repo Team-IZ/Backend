@@ -17,8 +17,25 @@ import java.util.UUID;
 		회차에 붙일 수 있는 기관 전체 목록이고, 이쪽은 이미 붙어 있는 것만입니다.
 		""")
 public record CohortCurriculumResponse(
-        @Schema(description = "curriculum_version_id — 교안 상세로 갈 때 쓰는 ID") UUID versionId,
-        @Schema(description = "교안 원장 ID. 「쓰인 회차」 조회가 이 축을 받습니다") UUID materialId,
+        @Schema(description = """
+				`curriculum_version_id` — **이 기수가 실제로 연결한 버전**입니다.
+
+				🔴 **상세로 갈 때 쓰는 ID가 아닙니다**(32차 Q3에서 정정). 종전 설명이 그렇게 적고
+				있었는데 **`versionId`를 받는 오퍼레이션은 스펙 전체에 하나도 없습니다.** 그 설명을
+				따르면 13차 R1이 그대로 재현됩니다 — 그때도 화면이 교안 축에 버전 ID를 넣어 늘 빈
+				배열을 받았고, 목록은 「24개 회차에서 사용 중」인데 상세는 「쓰는 회차가 없습니다」로
+				답했습니다.
+
+				**상세로 갈 때는 `materialId`를 쓰세요.** 이 값은 화면에 버전 번호(`versionNo`)를
+				표시하거나, 회차가 어느 버전을 물고 있는지 대조할 때 씁니다.
+				""")
+        UUID versionId,
+        @Schema(description = """
+				교안 원장 ID. **상세 셋과 「쓰인 회차」 조회가 모두 이 축을 받습니다.**
+
+				`GET /curricula/{materialId}` · `/sections` · `/projects`
+				""")
+        UUID materialId,
         @Schema(description = "버전 번호", example = "2") Integer versionNo,
         @Schema(description = "원본 파일명", example = "AI_LLMOps_v2.pdf") String originalFileName,
         @Schema(description = "페이지 수. 분석 전이거나 확정되지 않았으면 null", example = "84", nullable = true)

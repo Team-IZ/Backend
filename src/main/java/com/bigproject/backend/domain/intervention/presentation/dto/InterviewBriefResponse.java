@@ -128,8 +128,17 @@ public record InterviewBriefResponse(
 			@Schema(description = "매니저가 그대로 읽는 구어체 질문", example = "이번에 어떤 역할을 맡았어요?")
 			String questionText,
 
-			@Schema(description = "**매니저만 보는 근거.** 어떤 데이터에서 나온 질문인지",
-					example = "Deployment 롤링 업데이트 관련 확인")
+			@Schema(description = """
+					**매니저만 보는 근거.** 어떤 데이터에서 나온 질문인지.
+
+					**내부 식별자·코드는 실리지 않습니다**(32차 R6). 서버가 내보내기 전에
+					`interviewSourceId` 같은 값을 걷어내고, 위험 사유 코드와 축 코드를 화면이 쓰는
+					말로 바꿉니다 — `PERSISTENT_LOW` → `지속 저점`, `L3` → `대안 비교`,
+					`문제 1` → `1번 문항`.
+
+					그대로 그리면 됩니다.
+					""",
+					example = "1번 문항 대안 비교 인터뷰 기반 Q&A 질문")
 			String questionRationale,
 
 			@Schema(description = "제안 순서. 1부터 중복 없는 연속 정수", example = "2")
@@ -149,10 +158,19 @@ public record InterviewBriefResponse(
 					""", example = "[\"CONCEPT_GAP\"]")
 			List<String> causes,
 
-			@Schema(description = "상세 사유(매니저가 타이핑)")
+			@Schema(description = """
+					상세 사유(매니저가 타이핑). **안 썼으면 `null`입니다.**
+
+					🔴 **32차 R8 — 더 이상 `(기록 없음)`으로 치환하지 않습니다.** 종전에는 빈 값을
+					그 문구로 바꿔 저장해서, 다시 열면 입력칸에 그 글자가 들어 있었고 그대로 저장하면
+					진짜 타이핑한 서술로 남았습니다. 지금은 안 쓴 것과 쓴 것이 구분됩니다.
+
+					⚠️ 이 회신 전에 저장된 브리프에는 그 문구가 그대로 남아 있습니다 — 일괄 정리가
+					필요하면 말씀해 주세요.
+					""", nullable = true)
 			String why,
 
-			@Schema(description = "추후 계획(매니저가 타이핑)")
+			@Schema(description = "추후 계획(매니저가 타이핑). 안 썼으면 `null`입니다", nullable = true)
 			String nextAction) {
 	}
 

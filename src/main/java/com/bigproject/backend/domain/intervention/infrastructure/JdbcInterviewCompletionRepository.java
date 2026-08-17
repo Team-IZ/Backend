@@ -36,8 +36,24 @@ public class JdbcInterviewCompletionRepository implements InterviewCompletionRep
 	/**
 	 * 매니저 기록.
 	 *
-	 * <p>{@code content}가 NOT NULL이라 상세 사유가 비면 빈 문자열이 아니라 최소 문구를 넣는다 —
-	 * 화면이 사유를 비워 두고 저장하는 것을 막지 않기 때문이다(추후 계획만 적는 경우가 있다).
+	 * <h2>🔴 32차 R8 — 빈 사유를 문구로 바꾸지 않는다</h2>
+	 *
+	 * <p>{@code content}가 NOT NULL이라 종전에는 상세 사유가 비면 {@code "(기록 없음)"}을 넣었다.
+	 * 그러면 셋이 어긋난다.
+	 *
+	 * <ul>
+	 *   <li><b>화면 문구를 서버가 만든다.</b> 「없음」을 무엇이라 쓸지는 화면이 정해 온 것이고,
+	 *       다른 자리에서는 프론트가 {@code —}로 그린다</li>
+	 *   <li><b>다시 열면 입력칸에 그 글자가 들어 있다.</b> 매니저가 이어서 쓰려면 먼저 지워야 한다</li>
+	 *   <li>그 상태로 저장하면 <b>{@code (기록 없음)}이 진짜 타이핑한 서술로 남아</b>
+	 *       「안 쓴 것」과 「그렇게 쓴 것」이 구분되지 않는다</li>
+	 * </ul>
+	 *
+	 * <p>대신 <b>빈 문자열</b>을 넣는다. NOT NULL을 만족하면서도 문구가 아니고, 읽는 쪽이
+	 * {@code NULLIF}로 되돌려 API는 {@code null}을 준다 — 25차 R9(매니저 이름)에서 같은 제약을
+	 * 같은 방법으로 풀었다. {@code content}에는 길이 CHECK가 없어 빈 문자열이 들어간다.
+	 *
+	 * <p>{@code nextAction}은 애초에 치환이 없었다. 두 필드가 이제 같은 규칙이다.
 	 */
 	@Override
 	public void appendActivity(UUID interviewId, String why, String nextAction, UUID actorUserId) {
@@ -47,7 +63,7 @@ public class JdbcInterviewCompletionRepository implements InterviewCompletionRep
 				VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
 				""",
 				interviewId, actorUserId, ACTIVITY_TYPE_NOTE,
-				(why == null || why.isBlank()) ? "(기록 없음)" : why,
+				(why == null || why.isBlank()) ? "" : why,
 				(nextAction == null || nextAction.isBlank()) ? null : nextAction);
 	}
 
