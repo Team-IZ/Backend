@@ -6,6 +6,7 @@ import com.bigproject.backend.domain.intervention.domain.InterviewListRepository
 import com.bigproject.backend.domain.intervention.domain.InterviewListRepository.InterviewCountRow;
 import com.bigproject.backend.domain.intervention.domain.InterviewListRepository.InterviewListRow;
 import com.bigproject.backend.domain.intervention.domain.InterviewRoundRepository;
+import com.bigproject.backend.domain.intervention.domain.RiskSummaryText;
 // 32차 R2 — 「이번 회차」 판정을 빌려 온다. 규칙은 projectexecution이 갖는다(15차 R1) —
 // 여기서 다시 쓰면 명부와 면담이 서로 다른 회차를 말하게 된다.
 import com.bigproject.backend.domain.projectexecution.application.ProjectService;
@@ -266,20 +267,23 @@ public class InterviewServiceImpl implements InterviewService {
 	 * 그린다. 여러 줄을 이어 붙이면 열 폭을 넘겨 표가 깨진다.
 	 */
 	private static String firstSummary(InterviewListRow row) {
-		return row.reasonSummaries().isEmpty() ? null : row.reasonSummaries().get(0);
+		// 32차 R4 — 시드에 남은 [SEVERE]·[WARN]을 걷어낸다. 생성 코드는 30차 R8에서 이미
+		// 고쳤고, 이미 적재된 문장만 남아 있다.
+		return row.reasonSummaries().isEmpty() ? null
+				: RiskSummaryText.stripSeverityTag(row.reasonSummaries().get(0));
 	}
 
 	/**
 	 * 브리프 상태 4종. 화면 버튼 문구가 여기서 갈린다.
 	 *
 	 * <pre>
-	 * NONE       브리프 생성   POST  → AI 호출, 수 초 대기
+	 * NONE       브리프 생성   POST  → AI 호출, 20~30초 대기
 	 * FAILED     다시 생성     POST  재시도(같은 멱등키)
 	 * DRAFT      브리프 열기   GET   즉시
 	 * CONFIRMED  브리프 수정   GET   즉시
 	 * </pre>
 	 *
-	 * <p>첫 클릭만 동기 LLM 호출이라 수 초 걸리고 그다음부터는 즉시 뜬다. 문구를 하나로 두면
+	 * <p>첫 클릭만 동기 LLM 호출이라 20~30초 걸리고 그다음부터는 즉시 뜬다. 문구를 하나로 두면
 	 * 매니저가 앱이 멈췄다고 느낀다.
 	 *
 	 * <p>{@code FAILED}는 생성이 503으로 끊긴 자리다 — 행을 지우지 않는 이유는 태운 토큰을

@@ -62,18 +62,40 @@ public record ProjectDetailResponse(
          * 운영자에게 필요한 것은 회차의 창이다(프론트가 요청서에서 직접 빼도 된다고 했다).
          */
         @Schema(description = """
-                회차 응시 창이 **열리는** 시각이다. 개인별 응시 창이 아니라 회차 단위 값이다.
+                🔴 **폐기된 필드. 언제나 `null`이다**(2026-08-16).
 
-                회차가 열리기 전에는 `null`이다 — 응시 창은 코드 분석이 끝나야 정해진다.
-                DB CHECK도 `PLANNED` 회차에서는 이 값이 비어 있는 것을 허용한다.""",
-                example = "2026-08-22T00:00:00Z", nullable = true)
+                회차 공통 응시 창 시작이었다. 컬럼이 폐기돼 `project_assessment_round`의 전 행이
+                `null`이며 다시 채우는 코드 경로도 없다. 계약은 화면이 깨지지 않도록 남겨 둔다.
+
+                32차 R5 — `UpcomingRoundResponse`·`CurrentRoundResponse`에만 이 표시가 붙고
+                여기는 빠져 있었다. 같은 값을 주는 자리라 표시도 같아야 한다.""",
+                nullable = true)
         Instant roundAssessmentOpenAt,
 
         @Schema(description = """
-                회차 응시 창이 **닫히는** 시각이다. 개요 타임라인의 `응시 창`이 이 값으로 그려진다.
+                🔴 **폐기된 필드. 언제나 `null`이다**(2026-08-16). `roundAssessmentOpenAt`과 같다.
 
-                회차가 열리기 전에는 `null`이다.""",
-                example = "2026-08-23T00:00:00Z", nullable = true)
+                ⚠️ 종전 설명이 *"개요 타임라인의 `응시 창`이 이 값으로 그려진다"* 라고 적고 있었는데,
+                그 지시를 따르면 **영원히 그릴 수 없다.** 32차 R5로 정정한다.
+
+                ## 회차 단위 응시 창은 이제 없다
+
+                응시 창은 **개인별**이다. 팀 분석이 끝난 시각부터 사람마다 따로 열리므로
+                (`measurement_attempt.assessment_open_at` · `assessment_close_at`), 회차 하나를
+                가리키는 구간이 존재하지 않는다.
+
+                개요 타임라인에는 회차 단위로 확정된 값들만 쓰면 된다.
+
+                | 구간 | 값 |
+                |---|---|
+                | 제출 마감 | `submissionDueAt` |
+                | 리포트 발행 하한 | `reportPublishNotBeforeAt` |
+
+                「응시 창」 구간이 꼭 필요하면 그 회차 수행들의 **실제** 창 범위
+                (`MIN(assessment_open_at)` ~ `MAX(assessment_close_at)`)가 유일한 근거다.
+                사후적이지만 진행 상황을 그리는 자리라면 맞는 값이다 — **필요하다고 하시면
+                회차 단위로 접어 내려보내겠다.** 지금은 쓰는 화면이 없어 넣지 않았다.""",
+                nullable = true)
         Instant roundAssessmentDueAt,
 
         @Schema(description = """

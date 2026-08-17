@@ -242,7 +242,9 @@ public class InterviewBriefServiceImpl implements InterviewBriefService {
 				summary.traineeName(),
 				summary.className(),
 				summary.riskType(),
-				summary.riskSummary(),
+				// 32차 R4 — 시드에 남은 [SEVERE]·[WARN]을 걷어낸다(면담 목록·상세와 같은 처리).
+				com.bigproject.backend.domain.intervention.domain.RiskSummaryText
+						.stripSeverityTag(summary.riskSummary()),
 				"INVALID_ATTEMPT".equals(header.briefType()),
 				header.firstInterview(),
 				briefState(header),

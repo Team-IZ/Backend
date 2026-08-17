@@ -66,7 +66,10 @@ public class TraineeDetailService {
 				profile.inactivatedReason(),
 				profile.inactivatedAt(),
 				headerRound == null ? null : headerRound.primaryStatusCode(),
-				headerRound == null ? null : headerRound.riskReasonSummary(),
+				// 32차 R4 — 시드에 남은 [SEVERE]·[WARN]을 걷어낸다(면담 목록·브리프와 같은 처리).
+				headerRound == null ? null
+						: com.bigproject.backend.domain.intervention.domain.RiskSummaryText
+								.stripSeverityTag(headerRound.riskReasonSummary()),
 				profile.excellentOccurrenceCount() == null ? 0 : profile.excellentOccurrenceCount(),
 				excellentSequenceNos,
 				List.copyOf(rounds));
@@ -103,7 +106,8 @@ public class TraineeDetailService {
 				row.roundResultStatus(),
 				row.primaryStatusCode(),
 				row.matchedRiskTypeCodes(),
-				row.riskReasonSummary(),
+				com.bigproject.backend.domain.intervention.domain.RiskSummaryText
+						.stripSeverityTag(row.riskReasonSummary()),
 				row.roundTerminalAt(),
 				row.expectedConceptCount() == null ? 0 : row.expectedConceptCount(),
 				row.lowStageConceptCount(),

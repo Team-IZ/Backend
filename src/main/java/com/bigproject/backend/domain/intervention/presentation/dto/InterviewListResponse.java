@@ -171,7 +171,7 @@ public record InterviewListResponse(
 
 					| 값 | 버튼 | 동작 |
 					|---|---|---|
-					| `NONE` | 브리프 생성 | `POST .../brief` — AI 생성, 수 초 대기 |
+					| `NONE` | 브리프 생성 | `POST .../brief` — AI 생성, **20~30초**(32차 R7 실측 24초) |
 					| `FAILED` | 다시 생성 | `POST .../brief` 재시도 |
 					| `DRAFT` | 브리프 열기 | `GET .../brief` — 즉시 |
 					| `CONFIRMED` | 브리프 수정 | `GET .../brief` — 즉시 |
