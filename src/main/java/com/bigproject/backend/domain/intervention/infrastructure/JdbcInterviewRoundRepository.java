@@ -30,6 +30,7 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 				SELECT DISTINCT
 				       r.assessment_round_id,
 				       r.project_id,
+				       r.cohort_id,
 				       p.name        AS project_name,
 				       r.round_no,
 				       r.round_name,
@@ -53,6 +54,7 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 				(rs, rowNum) -> new RoundOption(
 						rs.getObject("assessment_round_id", UUID.class),
 						rs.getObject("project_id", UUID.class),
+						rs.getObject("cohort_id", UUID.class),
 						rs.getString("project_name"),
 						rs.getInt("round_no"),
 						rs.getString("round_name"),

@@ -6,6 +6,11 @@ import com.bigproject.backend.domain.intervention.domain.InterviewListRepository
 import com.bigproject.backend.domain.intervention.domain.InterviewListRepository.InterviewCountRow;
 import com.bigproject.backend.domain.intervention.domain.InterviewListRepository.InterviewListRow;
 import com.bigproject.backend.domain.intervention.domain.InterviewRoundRepository;
+// 32차 R2 — 「이번 회차」 판정을 빌려 온다. 규칙은 projectexecution이 갖는다(15차 R1) —
+// 여기서 다시 쓰면 명부와 면담이 서로 다른 회차를 말하게 된다.
+import com.bigproject.backend.domain.projectexecution.application.ProjectService;
+// 32차 R3 — 담당 밖 접근의 공용 코드. class-progress·evaluations가 쓰는 것과 같다.
+import com.bigproject.backend.global.security.ManagerViewAccessErrorCode;
 import com.bigproject.backend.global.exception.ApiException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -43,31 +48,44 @@ public class InterviewServiceImpl implements InterviewService {
 	private final InterviewListRepository interviewListRepository;
 	private final InterviewExclusionRepository exclusionRepository;
 	private final InterviewRoundRepository roundRepository;
+	/** 「이번 회차」 판정을 빌려 온다(32차 R2). 명부가 같은 것을 쓴다. */
+	private final ProjectService projectService;
 
 	@Override
 	@Transactional(readOnly = true)
 	public InterviewListResult findCases(InterviewListCriteria criteria) {
-		List<InterviewListRow> rows = interviewListRepository.findCases(
+		UUID roundId = resolveRound(criteria);
+
+		// 32차 R3 — 담당 밖 회차는 404다.
+		//
+		// 종전에는 200 + 빈 목록 + round: null이었다. 그러면 "권한이 없다"와 "대상이 없다"가
+		// 같은 응답이 되어, 화면이 「이번 회차 면담 대상이 없습니다」라는 사실 아닌 안내를 그렸다.
+		// 매니저는 기다리면 채워진다고 읽는다.
+		//
+		// 30차 R3에서 class-progress에 넣어 둔 것과 같은 판정·같은 코드다.
+		// 회차를 아예 고를 수 없는 경우(담당 기수에 회차가 없다)는 그 아래에서 빈 결과로 답한다.
+		RoundView round = null;
+		if (roundId != null) {
+			round = roundRepository
+					.findRoundMeta(criteria.managerUserId(), criteria.orgId(), roundId)
+					.map(InterviewServiceImpl::toRoundView)
+					.orElseThrow(() -> new ApiException(ManagerViewAccessErrorCode.MANAGER_SCOPE_NOT_FOUND));
+		}
+
+		List<InterviewListRow> rows = roundId == null ? List.of() : interviewListRepository.findCases(
 				new InterviewListRepository.InterviewListQuery(
 						criteria.managerUserId(),
 						criteria.orgId(),
-						criteria.assessmentRoundId(),
+						roundId,
 						criteria.search(),
 						criteria.status(),
 						criteria.riskType(),
 						criteria.classId()));
 
-		List<InterviewCountRow> countRows = interviewListRepository.countByRound(
-				criteria.managerUserId(), criteria.orgId(), criteria.assessmentRoundId());
+		List<InterviewCountRow> countRows = roundId == null ? List.of()
+				: interviewListRepository.countByRound(criteria.managerUserId(), criteria.orgId(), roundId);
 
 		List<InterviewCaseView> items = rows.stream().map(InterviewServiceImpl::toView).toList();
-
-		// 회차를 못 찾는 경우는 담당 밖 회차 ID를 넣어 호출한 것이다. 목록은 이미 뷰가 걸러
-		// 비어 있으므로 404를 내지 않고 round만 null로 둔다 — 화면이 빈 목록을 그리면 된다.
-		RoundView round = roundRepository
-				.findRoundMeta(criteria.managerUserId(), criteria.orgId(), criteria.assessmentRoundId())
-				.map(InterviewServiceImpl::toRoundView)
-				.orElse(null);
 
 		List<ClassOptionView> classes = interviewListRepository
 				.findManagedClasses(criteria.managerUserId(), criteria.orgId()).stream()
@@ -76,6 +94,45 @@ public class InterviewServiceImpl implements InterviewService {
 
 		return new InterviewListResult(
 				items, items.size(), toCounts(countRows), toRiskCounts(countRows), classes, round);
+	}
+
+	/**
+	 * 32차 R2 — 회차를 생략하면 서버가 「이번 회차」를 고른다.
+	 *
+	 * <p>종전에는 {@code assessmentRoundId}가 필수라 화면이 회차 목록을 먼저 받아야 면담 목록을
+	 * 부를 수 있었다. 첫 진입이 <b>직렬 2왕복</b>(실측 2.5~3.1초)이 되는데, 명부
+	 * ({@code GET /cohorts/{id}/trainees})는 이미 생략을 허용하고 응답에 고른 회차를 실어 준다.
+	 * 같은 자리에서 두 API가 다른 규칙인 것이 걸린다는 지적이 맞다.
+	 *
+	 * <p><b>판정은 명부와 같은 것을 쓴다.</b> 회차 목록의 마지막 기수를 잡아
+	 * {@code ProjectService.resolveCurrentProject}에 넘긴다 — 규칙을 여기서 다시 쓰면 두 화면이
+	 * 서로 다른 「이번 회차」를 말하게 된다(15차 R1이 그 규칙을 projectexecution에 둔 이유다).
+	 *
+	 * <p>고른 회차는 응답의 {@code round.assessmentRoundId}로 나가므로 화면이 드롭다운을 맞출 수 있다.
+	 *
+	 * @return 담당 기수에 회차가 하나도 없으면 {@code null}. 그때는 빈 목록으로 답한다
+	 */
+	private UUID resolveRound(InterviewListCriteria criteria) {
+		if (criteria.assessmentRoundId() != null) {
+			return criteria.assessmentRoundId();
+		}
+
+		List<InterviewRoundRepository.RoundOption> options =
+				roundRepository.findRoundOptions(criteria.managerUserId(), criteria.orgId());
+		if (options.isEmpty()) {
+			return null;
+		}
+
+		// 목록은 프로젝트 순서·회차 번호 오름차순이라 마지막이 가장 최근이다.
+		InterviewRoundRepository.RoundOption last = options.get(options.size() - 1);
+		return projectService.resolveCurrentProject(last.cohortId(), criteria.orgId())
+				.map(project -> options.stream()
+						.filter(option -> option.projectId().equals(project.getProjectId()))
+						.reduce((first, second) -> second)
+						.map(InterviewRoundRepository.RoundOption::assessmentRoundId)
+						.orElse(last.assessmentRoundId()))
+				// 이번 회차 프로젝트를 못 고르면 목록의 마지막으로 물러선다 — 명부와 같은 처리다.
+				.orElse(last.assessmentRoundId());
 	}
 
 	@Override

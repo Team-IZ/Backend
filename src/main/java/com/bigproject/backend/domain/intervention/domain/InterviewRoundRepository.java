@@ -40,6 +40,8 @@ public interface InterviewRoundRepository {
 	record RoundOption(
 			UUID assessmentRoundId,
 			UUID projectId,
+			/** 32차 R2 — 회차를 생략했을 때 「이번 회차」를 고르는 판정에 넘긴다. */
+			UUID cohortId,
 			String projectName,
 			int roundNo,
 			String roundName,
