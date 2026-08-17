@@ -128,8 +128,17 @@ public record InterviewBriefResponse(
 			@Schema(description = "매니저가 그대로 읽는 구어체 질문", example = "이번에 어떤 역할을 맡았어요?")
 			String questionText,
 
-			@Schema(description = "**매니저만 보는 근거.** 어떤 데이터에서 나온 질문인지",
-					example = "Deployment 롤링 업데이트 관련 확인")
+			@Schema(description = """
+					**매니저만 보는 근거.** 어떤 데이터에서 나온 질문인지.
+
+					**내부 식별자·코드는 실리지 않습니다**(32차 R6). 서버가 내보내기 전에
+					`interviewSourceId` 같은 값을 걷어내고, 위험 사유 코드와 축 코드를 화면이 쓰는
+					말로 바꿉니다 — `PERSISTENT_LOW` → `지속 저점`, `L3` → `대안 비교`,
+					`문제 1` → `1번 문항`.
+
+					그대로 그리면 됩니다.
+					""",
+					example = "1번 문항 대안 비교 인터뷰 기반 Q&A 질문")
 			String questionRationale,
 
 			@Schema(description = "제안 순서. 1부터 중복 없는 연속 정수", example = "2")
