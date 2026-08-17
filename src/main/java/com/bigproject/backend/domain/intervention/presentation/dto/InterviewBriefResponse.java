@@ -158,10 +158,19 @@ public record InterviewBriefResponse(
 					""", example = "[\"CONCEPT_GAP\"]")
 			List<String> causes,
 
-			@Schema(description = "상세 사유(매니저가 타이핑)")
+			@Schema(description = """
+					상세 사유(매니저가 타이핑). **안 썼으면 `null`입니다.**
+
+					🔴 **32차 R8 — 더 이상 `(기록 없음)`으로 치환하지 않습니다.** 종전에는 빈 값을
+					그 문구로 바꿔 저장해서, 다시 열면 입력칸에 그 글자가 들어 있었고 그대로 저장하면
+					진짜 타이핑한 서술로 남았습니다. 지금은 안 쓴 것과 쓴 것이 구분됩니다.
+
+					⚠️ 이 회신 전에 저장된 브리프에는 그 문구가 그대로 남아 있습니다 — 일괄 정리가
+					필요하면 말씀해 주세요.
+					""", nullable = true)
 			String why,
 
-			@Schema(description = "추후 계획(매니저가 타이핑)")
+			@Schema(description = "추후 계획(매니저가 타이핑). 안 썼으면 `null`입니다", nullable = true)
 			String nextAction) {
 	}
 
