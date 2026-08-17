@@ -71,11 +71,23 @@ public class ManagerViewAnalyticsService {
 		if (level == ManagerHeatmapResponse.Level.TEAM) {
 			return new ManagerHeatmapResponse.Scope(classroomId, className, null, null);
 		}
+		/*
+		 * 32차 R13 — 이 회차에 없는 팀이면 400이다.
+		 *
+		 * 팀은 프로젝트에 매인 값이라 회차가 바뀌면 뜻을 잃는다. 종전에는 다른 회차의 teamId를
+		 * 줘도 200이 나갔고, rows가 비고 scope.teamName만 null이었다. 그러면 응답만 보고는
+		 * 「그 팀에 결과가 없다」와 「그 팀이 이 회차에 없다」가 구분되지 않아, 화면이 앞의 뜻으로
+		 * 읽고 "이 범위에는 아직 결과가 없습니다"라는 사실 아닌 안내를 그린다.
+		 *
+		 * validateHeatmap은 null 조합만 보므로 여기서 막는다 — 이 조회가 그 회차의 참여 팀
+		 * 목록이라 존재 여부를 아는 유일한 자리다. 팀 없이 보낼 때와 같은 코드를 쓴다.
+		 */
 		String teamName = repository.findParticipatingTeams(
 						managerId, cohortId, projectId, assessmentRoundId, classroomId).stream()
 				.filter(team -> team.teamId().equals(teamId))
 				.map(ManagerAnalyticsRepository.TeamParticipant::teamName)
-				.findFirst().orElse(null);
+				.findFirst()
+				.orElseThrow(() -> new ApiException(AnalyticsErrorCode.HEATMAP_SCOPE_INVALID));
 		return new ManagerHeatmapResponse.Scope(classroomId, className, teamId, teamName);
 	}
 
