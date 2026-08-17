@@ -72,9 +72,9 @@ public class ManagerSubmissionStatusController {
 					| 필드 | 설명 |
 					|---|---|
 					| `teamFormationStage` | `NOT_STARTED` · `FORMING` · `READY_TO_CONFIRM` · `CONFIRMED` · `CLOSED` |
-					| `submissionOpened` | 제출이 열렸는가. **화면은 이 값만 보고 표/빈 상태를 정한다** |
+					| `submissionOpened` | **제출 현황을 그릴 것이 있는가.** 화면은 이 값만 보고 표/빈 상태를 정한다 — 32차 R11로 기준이 「팀 확정」에서 「제출 수령」으로 바뀌었다(필드 설명 참고) |
 					| `locked` | 종료된 회차 |
-					| `unassignedMemberCount` | 미배정 인원. 0이 아니면 제출이 열리지 않는다 |
+					| `unassignedMemberCount` | 팀에 배정되지 않은 인원. **제출을 막지는 않는다** — 배정된 팀은 그대로 제출한다 |
 					| `summary` | `teamCount` · `submittedTeamCount` · `unsubmittedTeamCount` · `analysisFailedTeamCount` |
 					| `requirements[]` | 프로젝트가 정의한 요구사항. **팀이 아니라 프로젝트에 달린 값이라 최상위에 한 번만 싣는다** |
 					| `teams[]` | 팀 행. `submission` · `analysis` · `requirementResults[]` · `members[]` |

@@ -83,7 +83,8 @@ public class InterviewServiceImpl implements InterviewService {
 	public List<RoundOptionView> findRoundOptions(UUID managerUserId, UUID orgId) {
 		return roundRepository.findRoundOptions(managerUserId, orgId).stream()
 				.map(option -> new RoundOptionView(
-						option.assessmentRoundId(), option.label(), option.roundNo(), option.status()))
+						option.assessmentRoundId(), option.projectId(), option.label(),
+						option.roundNo(), option.status()))
 				.toList();
 	}
 

@@ -73,6 +73,19 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 	 * <p>{@code MAX}로 접는 이유: 회차 리포트는 교육생마다 한 건씩이라 회차 하나에 여러 행이
 	 * 있다. 일괄 발행이라 값이 모두 같지만, 개별 재발행이 섞이면 가장 최근 것이 그 회차의
 	 * 발행 시각으로 보이는 편이 화면 문구("N일째 안 끝났습니다")와 맞는다.
+	 *
+	 * <h2>32차 R1 — 판정 시각을 함께 읽는다</h2>
+	 *
+	 * <p>{@code resultStatus}가 <b>발행이 아니라 판정</b>을 봐야 해서 {@code outcome_judged_at}을
+	 * 함께 가져온다({@link RoundMeta#resultStatus()}의 근거 참고). 두 시각은 독립이라 한쪽으로
+	 * 다른 쪽을 유추할 수 없다.
+	 *
+	 * <p>이쪽은 {@code MIN}이다. 판정은 회차 단위 배치가 한 트랜잭션으로 찍으므로 값이 사실상
+	 * 같지만, 무효 확인이 늦게 끝난 수행이 뒤늦게 판정되면 행마다 시각이 갈린다. 화면에 필요한
+	 * 것은 "이 회차 판정이 <b>시작된</b> 시점"이라 가장 이른 값이 맞다 — {@code MAX}로 잡으면
+	 * 늦게 붙은 한 건 때문에 회차 전체가 방금 판정된 것처럼 보인다.
+	 *
+	 * <p>{@code RETRY}는 제외한다. 재시험은 판정 뒤에 열리는 것이라 판정 시작 시각을 뒤로 민다.
 	 */
 	@Override
 	public Optional<RoundMeta> findRoundMeta(UUID managerUserId, UUID orgId, UUID assessmentRoundId) {
@@ -82,7 +95,8 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 				       p.sequence_no,
 				       p.name AS project_name,
 				       r.round_name,
-				       rpt.published_at
+				       rpt.published_at,
+				       judged.outcome_judged_at
 				FROM project_assessment_round r
 				JOIN project p
 				       ON p.project_id = r.project_id
@@ -101,6 +115,13 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 				      AND x.report_type         = 'CHECKPOINT'
 				      AND x.lifecycle_status    = 'ACTIVE'
 				) rpt ON TRUE
+				LEFT JOIN LATERAL (
+				    SELECT MIN(x.outcome_judged_at) AS outcome_judged_at
+				    FROM measurement_attempt x
+				    WHERE x.assessment_round_id = r.assessment_round_id
+				      AND x.attempt_type        = 'INITIAL'
+				      AND x.outcome_judged_at IS NOT NULL
+				) judged ON TRUE
 				WHERE r.assessment_round_id = ?
 				  AND r.deleted_at IS NULL
 				LIMIT 1
@@ -111,6 +132,7 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 
 	private RoundMeta mapMeta(ResultSet rs, int rowNum) throws SQLException {
 		Timestamp publishedAt = rs.getTimestamp("published_at");
+		Timestamp outcomeJudgedAt = rs.getTimestamp("outcome_judged_at");
 		return new RoundMeta(
 				rs.getObject("assessment_round_id", UUID.class),
 				rs.getInt("round_no"),
@@ -120,7 +142,8 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 				// "1차는 위험 유형이 붙지 않습니다" 배너가 영영 뜬다.
 				// 화면의 1차·2차는 기수 안의 프로젝트 순서다.
 				rs.getInt("sequence_no") == 1,
-				publishedAt == null ? null : publishedAt.toInstant());
+				publishedAt == null ? null : publishedAt.toInstant(),
+				outcomeJudgedAt == null ? null : outcomeJudgedAt.toInstant());
 	}
 
 	/**

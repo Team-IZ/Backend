@@ -71,21 +71,40 @@ public record InterviewListResponse(
 			String label,
 
 			@Schema(description = """
-					`PENDING`이면 화면이 **"이 회차는 아직 결과가 없어요"** 를 그린다.
-					리포트 발행 전이라 위험 판정 자체가 없는 상태다.
+					**위험 판정이 끝났는가.** `PENDING`이면 화면이 **"이 회차는 아직 결과가 없어요"** 를
+					그린다 — 그때는 `items`도 비어 있다.
+
+					🔴 **32차 R1 — 기준이 리포트 발행에서 위험 판정으로 바뀌었다.**
+					종전에는 `publishedAt`으로 판정해서, 운영자가 발행을 미루면 **판정은 끝났는데
+					`PENDING`**이 나갔다. 그 상태에서 위험 유형이 붙은 `items`가 함께 나가
+					한 응답이 서로 다른 말을 했다.
+
+					두 축은 의도적으로 독립이다 — 판정은 「마지막 응시 마감 + 1시간 1분」에 돌고
+					발행 시각은 운영자가 정한다. 지금은 `items`가 있는데 `PENDING`인 조합이
+					**구조적으로 나올 수 없다**(후보 등재 조건이 곧 판정 완료다).
+
+					발행 쪽 값은 `publishedAt`·`daysSincePublish`가 그대로 답한다.
 					""", example = "READY")
 			String resultStatus,
 
 			@Schema(description = "1차인가. true면 **위험 유형이 붙지 않는다** — 비교할 직전 회차가 없다(9-5)")
 			boolean firstRound,
 
-			@Schema(description = "리포트 발행 시각. **위험 판정 등재 시각이기도 하다**")
+			@Schema(description = """
+					리포트 발행 시각. **발행 전이면 `null`이다.**
+
+					⚠️ **위험 판정 등재 시각이 아니다**(32차 R1에서 정정). 판정은 「마지막 응시 마감 +
+					1시간 1분」에 돌고 발행은 운영자가 정하는 별개 시점이라, 발행이 미뤄지면 이 값만
+					비어 있고 판정은 이미 끝나 있다. 판정 여부는 `resultStatus`가 답한다.
+					""", nullable = true)
 			Instant publishedAt,
 
 			@Schema(description = """
-					발행 후 경과일. 상단 경고줄(`N일째 안 끝났습니다`)에 쓴다.
+					발행 후 경과일. 상단 경고줄(`N일째 안 끝났습니다`)에 쓴다. **발행 전이면 `null`이며**
+					그때는 그 경고줄을 그리지 않는다(0으로 두면 「0일째」가 된다).
+
 					**대기는 개인별이 아니라 회차 경과다** — 리포트가 일괄 발행되므로 회차 안에서 모두 같은 값이다.
-					""", example = "6")
+					""", example = "6", nullable = true)
 			Integer daysSincePublish) {
 
 		public static RoundResponse from(InterviewService.RoundView view) {

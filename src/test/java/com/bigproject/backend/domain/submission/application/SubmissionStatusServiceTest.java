@@ -131,16 +131,47 @@ class SubmissionStatusServiceTest {
 		assertThat(response.teams().get(1).analysis()).isNull();
 	}
 
+	/**
+	 * 32차 R11 — <b>편성이 끝나지 않아도 들어온 제출은 보여준다.</b>
+	 *
+	 * <p>종전에는 이 자리가 {@code submissionOpened=false}였다. 그런데 서버는 제출을 받을 때
+	 * 팀 상태를 보지 않으므로({@code SubmissionService.requireSubmittableRound}) 편성 중에도
+	 * 제출이 들어오고, 그때 화면이 스펙대로 이 값만 보고 표를 가려 <b>제출·분석·응시가 통째로
+	 * 사라졌다</b>. 편성 진행 상황은 {@code teamFormationStage}가 따로 답한다.
+	 */
 	@Test
-	void keepsSubmissionClosedWhileMembersAreStillUnassigned() {
+	void showsSubmissionsThatArrivedWhileMembersAreStillUnassigned() {
 		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
 		when(repository.countUnassignedMembers(any(), any(), any(), any())).thenReturn(3L);
 
 		var response = service.findSubmissionStatus(EMAIL, PROJECT_ID, 1, null);
 
 		assertThat(response.teamFormationStage()).isEqualTo("FORMING");
-		assertThat(response.submissionOpened()).isFalse();
+		assertThat(response.submissionOpened()).isTrue();
+		assertThat(response.summary().submittedTeamCount()).isEqualTo(1);
+		// 미배정 인원은 팀 행 아래가 아니라 이 값으로 나간다 — 화면에서 사라지지 않는다.
 		assertThat(response.unassignedMemberCount()).isEqualTo(3L);
+	}
+
+	/**
+	 * 32차 R11 — 그릴 것이 없을 때는 그대로 빈 상태다. 기준을 넓힌 것이지 없앤 것이 아니다.
+	 */
+	@Test
+	void keepsTheEmptyStateWhenThereIsNothingToDraw() {
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of());
+
+		var noTeams = service.findSubmissionStatus(EMAIL, PROJECT_ID, 1, null);
+
+		assertThat(noTeams.teamFormationStage()).isEqualTo("NOT_STARTED");
+		assertThat(noTeams.submissionOpened()).isFalse();
+
+		// 시작 전 회차는 팀이 있어도 제출이 있을 수 없다.
+		when(repository.findRound(PROJECT_ID, 1)).thenReturn(Optional.of(round("PLANNED")));
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
+
+		var notStarted = service.findSubmissionStatus(EMAIL, PROJECT_ID, 1, null);
+
+		assertThat(notStarted.submissionOpened()).isFalse();
 	}
 
 	@Test

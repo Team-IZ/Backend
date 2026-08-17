@@ -22,55 +22,93 @@ public class JdbcTraineeTimelineRepository implements TraineeTimelineRepository 
 
 	private final JdbcTemplate jdbcTemplate;
 
+	/**
+	 * 32차 R9② — <b>뷰를 한 번만 훑는다.</b>
+	 *
+	 * <p>종전에는 전체 건수·회차 차수·이벤트를 각각 물었고 셋 다 같은 뷰를 바깥 {@code WHERE}로만
+	 * 걸렀다. 뷰가 그 조건을 안으로 밀어 넣지 못하면 <b>같은 계산이 세 번</b> 일어난다.
+	 * 프론트 실측에서 {@code size=1}로 줄여도 11.7초가 그대로였던 것이 그 고정 비용이다.
+	 *
+	 * <h2>{@code AS MATERIALIZED}가 핵심이다</h2>
+	 *
+	 * <p>PostgreSQL 12부터 CTE는 기본이 인라인이라, 그냥 {@code WITH}로 묶으면 참조하는 자리마다
+	 * 뷰가 다시 펼쳐져 <b>합친 의미가 없어진다.</b> {@code MATERIALIZED}를 명시해야 한 번 계산한
+	 * 결과를 세 곳이 공유한다.
+	 *
+	 * <h2>페이지 경계</h2>
+	 *
+	 * <p>{@code page}가 회차 차수를 {@code size + 1}개까지 읽어 다음 페이지 유무를 함께 판정한다.
+	 * 본문은 <b>앞에서 {@code size}개</b>만 조인하므로, 더 읽은 한 건이 결과에 섞이지 않는다.
+	 *
+	 * <p>{@code total_elements}는 {@code scoped} 전체를 센다 — 페이지와 무관한 값이라
+	 * {@code page} 조인 밖에서 스칼라로 뽑는다.
+	 */
 	@Override
-	public int countEvents(UUID managerId, UUID cohortId, UUID traineeId, String eventType) {
+	public TimelinePage findPage(UUID managerId, UUID cohortId, UUID traineeId,
+			String eventType, Integer cursorSequenceNo, int size) {
+
+		List<Object> args = new ArrayList<>(List.of(managerId, cohortId, traineeId));
+		StringBuilder scoped = new StringBuilder(
+				"SELECT * FROM manager_trainee_detail_timeline_view" + SCOPE);
+		appendTypeFilter(scoped, args, eventType);
+
+		StringBuilder page = new StringBuilder(
+				"SELECT DISTINCT analysis_sequence_no FROM scoped");
+		// 커서는 차수 하나다. 회차 정렬 키가 차수이므로 복합 키가 필요 없다.
+		if (cursorSequenceNo != null) {
+			page.append(" WHERE analysis_sequence_no < ?");
+			args.add(cursorSequenceNo);
+		}
+		page.append(" ORDER BY analysis_sequence_no DESC LIMIT ?");
+		args.add(size + 1);
+
+		String sql = "WITH scoped AS MATERIALIZED (" + scoped + "),\n"
+				+ "page AS (" + page + "),\n"
+				+ """
+				kept AS (SELECT analysis_sequence_no FROM page ORDER BY analysis_sequence_no DESC LIMIT ?)
+				SELECT (SELECT COUNT(*) FROM scoped)                         AS total_elements,
+				       (SELECT COUNT(*) FROM page) > (SELECT COUNT(*) FROM kept) AS has_next,
+				       s.assessment_round_id, s.project_id, s.analysis_sequence_no,
+				       s.round_name, s.project_name,
+				       s.team_id_at_round, s.team_name_at_round,
+				       s.round_activity_start_at, s.round_activity_end_at,
+				       s.event_id, s.event_type, s.occurred_at,
+				       s.source_entity_type, s.source_entity_id,
+				       s.source_status, s.session_id, s.is_expandable, s.detail_action_code,
+				       s.payload::text AS payload,
+				       s.row_aggregation_status, s.is_stale, s.as_of_at
+				FROM scoped s
+				JOIN kept k ON k.analysis_sequence_no = s.analysis_sequence_no
+				ORDER BY s.analysis_sequence_no DESC, s.occurred_at, s.event_type_order, s.event_id
+				""";
+		args.add(size);
+
+		List<EventRow> rows = new ArrayList<>();
+		// 집계 둘은 모든 행에 같은 값으로 실려 온다. 행이 하나도 없으면 별도로 세어야 한다.
+		int[] totalElements = {-1};
+		boolean[] hasNext = {false};
+		jdbcTemplate.query(sql, rs -> {
+			totalElements[0] = rs.getInt("total_elements");
+			hasNext[0] = rs.getBoolean("has_next");
+			rows.add(mapRow(rs, rows.size()));
+		}, args.toArray());
+
+		if (totalElements[0] >= 0) {
+			return new TimelinePage(totalElements[0], List.copyOf(rows), hasNext[0]);
+		}
+		// 이 페이지에 그릴 회차가 없다. 그래도 머리글의 전체 건수는 필요하다 —
+		// 필터가 이번 페이지만 비게 했을 수 있어서 0으로 단정하면 안 된다.
+		return new TimelinePage(countEvents(managerId, cohortId, traineeId, eventType), List.of(), false);
+	}
+
+	/** 페이지가 비었을 때만 쓴다. 정상 경로는 {@link #findPage}가 한 번에 가져온다. */
+	private int countEvents(UUID managerId, UUID cohortId, UUID traineeId, String eventType) {
 		List<Object> args = new ArrayList<>(List.of(managerId, cohortId, traineeId));
 		StringBuilder sql = new StringBuilder(
 				"SELECT COUNT(*) FROM manager_trainee_detail_timeline_view" + SCOPE);
 		appendTypeFilter(sql, args, eventType);
 		Integer count = jdbcTemplate.queryForObject(sql.toString(), Integer.class, args.toArray());
 		return count == null ? 0 : count;
-	}
-
-	@Override
-	public List<Integer> findRoundSequenceNos(UUID managerId, UUID cohortId, UUID traineeId,
-			String eventType, Integer cursorSequenceNo, int limit) {
-		List<Object> args = new ArrayList<>(List.of(managerId, cohortId, traineeId));
-		StringBuilder sql = new StringBuilder(
-				"SELECT DISTINCT analysis_sequence_no FROM manager_trainee_detail_timeline_view" + SCOPE);
-		appendTypeFilter(sql, args, eventType);
-		// 커서는 차수 하나다. 회차 정렬 키가 차수이므로 복합 키가 필요 없다.
-		if (cursorSequenceNo != null) {
-			sql.append(" AND analysis_sequence_no < ?");
-			args.add(cursorSequenceNo);
-		}
-		sql.append(" ORDER BY analysis_sequence_no DESC LIMIT ?");
-		args.add(limit);
-		return jdbcTemplate.queryForList(sql.toString(), Integer.class, args.toArray());
-	}
-
-	@Override
-	public List<EventRow> findEvents(UUID managerId, UUID cohortId, UUID traineeId,
-			String eventType, List<Integer> sequenceNos) {
-		if (sequenceNos.isEmpty()) {
-			return List.of();
-		}
-		List<Object> args = new ArrayList<>(List.of(managerId, cohortId, traineeId));
-		StringBuilder sql = new StringBuilder("""
-				SELECT assessment_round_id, project_id, analysis_sequence_no, round_name, project_name,
-				  team_id_at_round, team_name_at_round, round_activity_start_at, round_activity_end_at,
-				  event_id, event_type, occurred_at, source_entity_type, source_entity_id,
-				  source_status, session_id, is_expandable, detail_action_code, payload::text,
-				  row_aggregation_status, is_stale, as_of_at
-				FROM manager_trainee_detail_timeline_view""" + SCOPE);
-		appendTypeFilter(sql, args, eventType);
-		sql.append(" AND analysis_sequence_no IN (")
-				.append("?, ".repeat(sequenceNos.size() - 1))
-				.append("?)");
-		args.addAll(sequenceNos);
-		// 회차는 최신 차수부터, 회차 안에서는 일어난 순서대로다.
-		sql.append(" ORDER BY analysis_sequence_no DESC, occurred_at, event_type_order, event_id");
-		return jdbcTemplate.query(sql.toString(), this::mapRow, args.toArray());
 	}
 
 	private void appendTypeFilter(StringBuilder sql, List<Object> args, String eventType) {

@@ -201,19 +201,106 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 						+ where,
 				Long.class, args.toArray());
 
+		String order = orderBy(criteria.sort());
 		List<Object> pageArgs = new ArrayList<>();
-		pageArgs.add(criteria.managerId());
-		pageArgs.add(criteria.assessmentRoundId());
-		pageArgs.addAll(args);
-		pageArgs.add(pageable.getPageSize());
-		pageArgs.add(pageable.getOffset());
+		String sql;
+
+		if (sortsByMetrics(criteria.sort())) {
+			// 지표로 정렬하므로 전량에 붙여야 순서가 정해진다. 종전 그대로다.
+			pageArgs.add(criteria.managerId());
+			pageArgs.add(criteria.assessmentRoundId());
+			pageArgs.addAll(args);
+			pageArgs.add(pageable.getPageSize());
+			pageArgs.add(pageable.getOffset());
+			sql = ROSTER_SELECT + where + order + " LIMIT ? OFFSET ?";
+		} else {
+			// 32차 R9① — 한 페이지를 먼저 확정하고 그 행에만 지표를 붙인다.
+			pageArgs.addAll(args);
+			pageArgs.add(pageable.getPageSize());
+			pageArgs.add(pageable.getOffset());
+			pageArgs.add(criteria.managerId());
+			pageArgs.add(criteria.assessmentRoundId());
+			sql = pagedRosterSql(where.toString(), order);
+		}
 
 		List<RosterRow> content = jdbcTemplate.query(
-				ROSTER_SELECT + where + orderBy(criteria.sort()) + " LIMIT ? OFFSET ?",
-				(ResultSet rs, int rowNum) -> mapRow(rs),
-				pageArgs.toArray());
+				sql, (ResultSet rs, int rowNum) -> mapRow(rs), pageArgs.toArray());
 
 		return new PageImpl<>(content, pageable, total == null ? 0 : total);
+	}
+
+	/**
+	 * 정렬 기준이 {@code manager_trainee_roster_view}의 값인가.
+	 *
+	 * <p>그렇다면 <b>전량에 지표를 붙여야 순서가 정해진다</b> — 20명만 뽑아 놓고 위험순으로 정렬하면
+	 * 그 20명 안에서의 순서일 뿐이라 명단이 통째로 달라진다.
+	 */
+	private static boolean sortsByMetrics(TraineeRosterSort sort) {
+		return sort == TraineeRosterSort.RISK || sort == TraineeRosterSort.EXCELLENCE;
+	}
+
+	/**
+	 * 32차 R9① — <b>한 페이지를 먼저 확정하고 그 행에만 지표를 붙인다.</b>
+	 *
+	 * <h2>왜 {@code size}로 시간이 줄지 않았나</h2>
+	 *
+	 * <p>{@code manager_trainee_roster_view}는 행 단위가
+	 * {@code (manager_user_id, cohort_id, user_id, assessment_round_id)}이고 <b>회차를 접지 않고 전부
+	 * 낸다</b>(뷰 주석). 게다가 그 안쪽 {@code scope} CTE는 매니저로 좁히지 않아, 좁히는 일이 전부
+	 * 바깥 조인 조건({@code mv.manager_user_id = ?})에 맡겨져 있다.
+	 *
+	 * <p>종전 질의는 그 조인을 <b>{@code LIMIT}보다 먼저</b> 수행했다. 그래서 {@code size=1}을 줘도
+	 * 지표는 26명분이 계산된 뒤 1행만 남았다 — 프론트 실측이 정확히 그 모양이다.
+	 *
+	 * <pre>
+	 * size=20  7774ms  29450B      size=1   7865ms  2922B     ← 자르는 양과 무관
+	 * query로 1명으로 좁히면 2621ms                              ← 모집단이 줄면 준다
+	 * </pre>
+	 *
+	 * <p>고정 비용 약 2.4초에 행당 약 0.2초가 붙는 모양이라, 26명이면 7.6초로 실측과 맞는다.
+	 *
+	 * <h2>무엇이 달라지나</h2>
+	 *
+	 * <p>{@code page}가 필터·정렬·자르기를 끝낸 뒤 그 결과에만 뷰를 조인한다. 지표 계산이
+	 * <b>모집단 크기가 아니라 페이지 크기에 비례</b>하게 된다.
+	 *
+	 * <p>담당 반 26명에서는 26 → 20이라 개선이 크지 않지만, <b>기수 전체를 보는 오퍼레이터
+	 * (208명)에서는 208 → 20</b>이다. 프론트가 "행에 비례한다면 그쪽이 더 무거울 수 있다"고
+	 * 짚은 자리가 이쪽이다.
+	 *
+	 * <p>결과는 종전과 같다 — 같은 행, 같은 순서다. 정렬이 지표를 쓰지 않을 때만 이 경로를 탄다
+	 * ({@link #sortsByMetrics}).
+	 *
+	 * <p>바깥에서 {@code FROM page r}로 받는 것은 {@link #orderBy}가 {@code r.} 접두사를 쓰기
+	 * 때문이다 — 같은 정렬 문자열을 안팎에서 그대로 쓸 수 있다.
+	 */
+	private static String pagedRosterSql(String where, String order) {
+		return ROSTER_CTE + """
+				, page AS (
+				    SELECT r.*,
+				           c.class_id AS classroom_id,
+				           c.name     AS class_name,
+				           actor.name AS inactivated_by_name
+				""" + ROSTER_FROM + where + order + """
+				    LIMIT ? OFFSET ?
+				)
+				SELECT r.user_id AS trainee_id, r.name, r.email, r.account_status,
+				       r.classroom_id, r.class_name,
+				       r.joined_at, r.left_at,
+				       r.inactivated_reason_code, r.inactivated_reason, r.inactivated_at,
+				       r.inactivated_by AS inactivated_by_id, r.inactivated_by_name,
+				       r.pending_invitation_token_id, r.invitation_delivery_failed,
+				       mv.assessment_round_id, mv.attempt_id, mv.row_result_status,
+				       mv.concept_result_items::text AS concept_result_items,
+				       mv.expected_concept_count,
+				       mv.low_stage_concept_count, mv.excellent_occurrence_count,
+				       mv.excellent_assessment_sequence_nos,
+				       mv.current_round_matched_risk_type_codes AS matched_risk_type_codes,
+				       mv.current_round_primary_status_code,
+				       mv.round_terminal_at,
+				       mv.row_aggregation_status
+				FROM page r
+				""" + ROSTER_MANAGER_METRICS_JOIN + order;
 	}
 
 	/**
