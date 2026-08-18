@@ -747,7 +747,25 @@ public class ProjectServiceImpl implements ProjectService {
         return summaries;
     }
 
-    /** 연결된 교안 버전의 파일명을 한 번에. 화면의 `교안` 열이 이 값을 그린다. */
+    /**
+     * 연결된 교안 버전의 표시명을 한 번에. 화면의 `교안` 열이 이 값을 그린다.
+     *
+     * <h2>34차 R7② — 파일명 뒤에 버전을 붙인다</h2>
+     *
+     * <p>종전에는 {@code original_file_name}만 실었다. 그러면 <b>같은 교안의 v1·v2가 한 기수에
+     * 섞일 때 표에서 구분되지 않는다</b> — 두 행의 「교안」 열이 같은 글자가 된다.
+     *
+     * <p>화면은 이미 {@code spring_backend_v1.pdf v1} 형태를 그리도록 만들어져 있었는데, 서버 값에
+     * 버전이 없어 <b>지어내지 않고 파일명만</b> 그리고 있었다. 원장에는 있는 값이라
+     * ({@code curriculum_version.version_no} NOT NULL) 서버가 붙여 주는 것이 맞다.
+     *
+     * <p>필드를 새로 내지 않고 기존 배열의 값에 붙이는 이유는 <b>화면이 고칠 것이 없기 때문</b>이다.
+     * 목록 어댑터가 이미 이 배열을 그대로 그리므로, 값이 바뀌면 그날로 버전이 보인다.
+     *
+     * <p>파일명 자체에 {@code _v1}이 들어 있어 {@code spring_backend_v1.pdf v1}처럼 겹쳐 보일 수
+     * 있는데, <b>둘은 다른 축</b>이다 — 앞은 업로더가 붙인 글자이고 뒤는 원장의 판번호다. 파일명을
+     * 파싱해 지우면 {@code v10}·{@code _v2_final} 같은 이름에서 틀린다.
+     */
     private Map<UUID, String> curriculumNamesByVersion(
             Map<UUID, List<ProjectCurriculum>> linksByProject) {
 
@@ -760,9 +778,22 @@ public class ProjectServiceImpl implements ProjectService {
         }
         Map<UUID, String> names = new HashMap<>();
         for (CurriculumVersion version : curriculumVersionRepository.findAllById(versionIds)) {
-            names.put(version.getVersionId(), version.getOriginalFileName());
+            names.put(version.getVersionId(), displayName(version));
         }
         return names;
+    }
+
+    /**
+     * 교안 한 건의 표시명 — {@code 파일명 v판번호}.
+     *
+     * <p>{@code version_no}는 NOT NULL이지만 엔티티 필드가 박싱 타입이라 방어한다. 값이 없으면
+     * 파일명만 돌려준다 — 목록의 표시용 값이라 여기서 터뜨리면 목록 전체가 안 열린다.
+     */
+    private String displayName(CurriculumVersion version) {
+        Integer versionNo = version.getVersionNo();
+        return versionNo == null
+                ? version.getOriginalFileName()
+                : version.getOriginalFileName() + " v" + versionNo;
     }
 
     /**

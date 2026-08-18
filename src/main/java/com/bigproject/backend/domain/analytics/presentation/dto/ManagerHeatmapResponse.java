@@ -103,6 +103,20 @@ public record ManagerHeatmapResponse(
 			int problemNo, BigDecimal value, String status,
 			Integer validCount, Integer notAttendedCount, Integer invalidCount, Integer interruptedCount,
 			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = """
+					**명부에는 있는데 이 회차 격자에 자리가 없는 인원**이다(34차 R2). 합계 행에만 채운다.
+
+					```
+					memberCount = validCount + notAttendedCount + invalidCount
+					            + interruptedCount + notInRoundCount
+					```
+
+					종전에는 이 자리가 없어 `memberCount 5`인데 세 카운터의 합이 4인 상태가 나왔고,
+					화면이 차이를 설명할 근거가 없었다. 회차 중간 합류·이탈처럼 **수행 자체가
+					만들어지지 않은** 사람이 여기 잡힌다 — 사유를 화면이 지어내지 않아도 되도록
+					자리만 낸 것이고, 0이면 명부와 격자가 완전히 맞는다는 뜻이다.""")
+			Integer notInRoundCount,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
 			@Schema(description = "반 행에만 채운다. 그 외에는 키가 빠진다") Boolean groupShortfall,
 			@JsonInclude(JsonInclude.Include.NON_NULL)
 			@Schema(description = "REVIEW 전용. INITIAL 응답에서는 키가 빠진다") Integer initialLevel,
