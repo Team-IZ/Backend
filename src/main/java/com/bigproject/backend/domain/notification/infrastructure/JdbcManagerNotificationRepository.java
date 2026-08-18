@@ -22,6 +22,11 @@ public class JdbcManagerNotificationRepository implements ManagerNotificationRep
 	@Override
 	public List<InboxRow> findInbox(UUID managerId, UUID cohortId) {
 		String sql = """
+				                                WITH assigned AS (
+				                                  SELECT ma.class_id
+				                                  FROM manager_assignment ma JOIN class c ON c.class_id = ma.class_id
+				                                  WHERE ma.manager_user_id = ? AND ma.status = 'ACTIVE' AND ma.unassigned_at IS NULL
+				                                    AND c.cohort_id = ?
 				                                ), attendance AS (
                                       SELECT 'ATTENDANCE:' || a.assessment_round_id || ':' || a.user_id AS item_id,
                                         CASE
