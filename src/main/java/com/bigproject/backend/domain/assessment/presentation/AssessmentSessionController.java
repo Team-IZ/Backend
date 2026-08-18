@@ -4,6 +4,7 @@ import com.bigproject.backend.domain.assessment.application.AssessmentReviewServ
 import com.bigproject.backend.domain.assessment.application.AssessmentSessionService;
 import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitRequest;
 import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitResponse;
+import com.bigproject.backend.domain.assessment.presentation.dto.SessionActivityEventRequest;
 import com.bigproject.backend.domain.assessment.presentation.dto.SessionActivityRequest;
 import com.bigproject.backend.domain.assessment.presentation.dto.HintResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.ProblemActivityResponse;
@@ -1120,6 +1121,64 @@ public class AssessmentSessionController {
 			@Valid @RequestBody SessionActivityRequest request) {
 		UUID userId = currentUserResolver.resolveCurrentMemberId();
 		sessionService.recordActivity(userId, sessionId, request);
+		return ResponseEntity.noContent().build();
+	}
+
+	@Operation(
+			operationId = "recordSessionActivityEvent",
+			summary = "관찰 신호 이벤트 1건 기록 | ✅ 사용 가능",
+			description = """
+					창 이탈·연결 끊김·첫 타이핑 지연을 **발생 건 하나씩** 남긴다. `POST /activity`와 달리
+					**발생 시작 시각을 클라이언트가 직접 싣는다** — 서버가 지속 시간으로 거꾸로 근사하지 않는다.
+					카운터(문제·세션 누적)는 `POST /activity`와 같은 값을 같은 방식으로 올린다.
+
+					## 요청
+
+					| 파라미터 | 필수 | 타입 | 설명 |
+					|---|---|---|---|
+					| `sessionId` | 필수 | UUID | 경로 파라미터 |
+
+					**본문** — 셋 다 필수, 이벤트 1건.
+
+					| 필드 | 타입 | 범위 | 설명 |
+					|---|---|---|---|
+					| `eventType` | string | `WINDOW_LEAVE`·`CONNECTION_LOSS`·`FIRST_KEYSTROKE_DELAY` | 이벤트 종류 |
+					| `occurredAt` | Instant | | 이 이벤트가 시작된 시각(클라이언트 실측) |
+					| `durationMs` | int | `0`~`86400000` | 지속 시간(ms) |
+
+					어느 문제의 어느 질문에 붙는지는 **싣지 않는다** — `POST /activity`와 같은 이유로 진행
+					위치는 서버 커서가 정본이다.
+
+					⚠️ `WINDOW_LEAVE`·`CONNECTION_LOSS`는 **부를 때마다 횟수가 1씩 올라간다.** `FIRST_KEYSTROKE_DELAY`는
+					슬롯당 첫 값만 남으므로 중복 전송이 안전하다.
+
+					## 응답
+
+					`204 No Content`. 본문이 없다.""")
+	@ApiResponses({
+			@ApiResponse(responseCode = "204",
+					description = "기록됨. **본문이 없다** — 진행 상태는 바뀌지 않는다",
+					content = @Content),
+			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "401", description = "UNAUTHENTICATED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "403", description = "ACCESS_DENIED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "404", description = "SESSION_NOT_ACCESSIBLE",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "409",
+					description = """
+							SESSION_NOT_STARTED · SESSION_TIMEOUT · SESSION_ALREADY_ENDED — \
+							**끝난 세션의 409는 무시하면 된다.** 재전송할 값이 아니다""",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+	})
+	@PostMapping(value = "/{sessionId}/activity-events", consumes = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<Void> recordActivityEvent(
+			@PathVariable UUID sessionId,
+			@Valid @RequestBody SessionActivityEventRequest request) {
+		UUID userId = currentUserResolver.resolveCurrentMemberId();
+		sessionService.recordActivityEvent(userId, sessionId, request);
 		return ResponseEntity.noContent().build();
 	}
 }

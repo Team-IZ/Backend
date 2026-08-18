@@ -102,11 +102,17 @@ public interface InterviewBriefRepository {
 	Optional<VoidEvidence> findVoidEvidence(UUID candidateId);
 
 	/**
-	 * @param unanswered     <b>문제 단위</b> 무응답 수. 그 문제의 단계가 전부 답 없이 끝난 경우다
-	 * @param totalQuestions 그 회차 문제 수(최대 3)
-	 * @param copied         답변이 질문 문장과 같은 단계가 하나라도 있는가
-	 * @param durationMin    세션 시작~종료 분
+	 * @param unanswered            <b>문제 단위</b> 무응답 수. 그 문제의 단계가 전부 답 없이 끝난 경우다
+	 * @param totalQuestions        그 회차 문제 수(최대 3)
+	 * @param copied                답변이 질문 문장과 같은 단계가 하나라도 있는가
+	 * @param durationMin           세션 시작~종료 분
+	 * @param windowLeaveCount      창을 떠난 횟수({@code assessment_session.window_leave_count})
+	 * @param connectionLossCount   연결이 끊긴 횟수({@code assessment_session.connection_loss_count})
+	 * @param firstKeystrokeDelayMs 문제·힌트 단계 중 가장 빠른(=가장 의심스러운) 첫 타이핑 지연.
+	 *                              기록된 지연이 하나도 없으면 null
 	 */
-	record VoidEvidence(int unanswered, int totalQuestions, boolean copied, int durationMin) {
+	record VoidEvidence(
+			int unanswered, int totalQuestions, boolean copied, int durationMin,
+			int windowLeaveCount, int connectionLossCount, Integer firstKeystrokeDelayMs) {
 	}
 }

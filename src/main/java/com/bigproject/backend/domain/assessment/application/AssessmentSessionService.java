@@ -14,6 +14,7 @@ import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitReq
 import com.bigproject.backend.domain.assessment.presentation.dto.AnswerSubmitResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.HintResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.ProblemActivityResponse;
+import com.bigproject.backend.domain.assessment.presentation.dto.SessionActivityEventRequest;
 import com.bigproject.backend.domain.assessment.presentation.dto.SessionActivityRequest;
 import com.bigproject.backend.domain.assessment.presentation.dto.SessionResponse;
 import com.bigproject.backend.global.ai.AsyncAiProxyWarmUp;
@@ -222,6 +223,35 @@ public class AssessmentSessionService {
 		if (request.firstKeystrokeDelayMs() != null) {
 			repository.recordFirstKeystroke(sessionId, stage.problemStageId(), slot, request.firstKeystrokeDelayMs());
 		}
+	}
+
+	/**
+	 * 관찰 신호 이벤트 1건을 발생 시작 시각과 함께 남긴다. {@link #recordActivity}와 귀속 규칙
+	 * (서버 커서)은 같지만, 이벤트마다 호출 1회로 {@code occurredAt}을 실측값 그대로 싣는다 — 서버가
+	 * {@code now() - duration}으로 근사하지 않는다.
+	 *
+	 * <p>카운터(문제·세션 누적)는 {@link #recordActivity}가 갱신하는 것과 같은 컬럼을 같은 방식으로
+	 * 올린다 — 어느 경로로 들어오든 무효 응시 판정·매니저 브리프가 읽는 숫자가 어긋나지 않아야 한다.
+	 */
+	@Transactional
+	public void recordActivityEvent(UUID userId, UUID sessionId, SessionActivityEventRequest request) {
+		SessionHead head = guard.running(userId, sessionId);
+		SessionStage stage = guard.currentStage(head);
+		AnswerSlot slot = stage.nextSlot();
+
+		switch (request.eventType()) {
+			case WINDOW_LEAVE -> repository.recordAway(sessionId, stage.problemStageId(), slot,
+					toSeconds(request.durationMs()), request.occurredAt());
+			case CONNECTION_LOSS -> repository.recordConnectionLoss(sessionId, stage.problemStageId(),
+					toSeconds(request.durationMs()), request.occurredAt());
+			case FIRST_KEYSTROKE_DELAY -> repository.recordFirstKeystroke(sessionId, stage.problemStageId(), slot,
+					request.durationMs(), request.occurredAt());
+		}
+	}
+
+	/** {@code assessment_session}·{@code problem_stage}의 이탈·연결 끊김 카운터는 초 단위 컬럼이다. */
+	private static int toSeconds(int durationMs) {
+		return Math.round(durationMs / 1000f);
 	}
 
 	/**

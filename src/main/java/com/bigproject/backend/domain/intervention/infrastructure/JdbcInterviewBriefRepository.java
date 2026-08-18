@@ -146,7 +146,8 @@ public class JdbcInterviewBriefRepository implements InterviewBriefRepository {
 	}
 
 	/**
-	 * 무효 응시 근거 3종을 한 번에 센다.
+	 * 무효 응시 근거를 한 번에 센다 — 문제 단위 신호(무응답·복사·소요 시간)와
+	 * 세션 관찰 신호(창 이탈·연결 끊김·첫 타이핑 지연, 39차 R2)를 함께 담는다.
 	 *
 	 * <h2>문제 단위로 센다</h2>
 	 *
@@ -186,29 +187,40 @@ public class JdbcInterviewBriefRepository implements InterviewBriefRepository {
 				           BOOL_AND(ps.status = 'NOT_ANSWERED') AS all_unanswered,
 				           BOOL_OR(ps.question_answer_text IS NOT NULL
 				                   AND REGEXP_REPLACE(LOWER(ps.question_answer_text), '\\s+', '', 'g')
-				                     = REGEXP_REPLACE(LOWER(ps.question_text),        '\\s+', '', 'g')) AS copied
+				                     = REGEXP_REPLACE(LOWER(ps.question_text),        '\\s+', '', 'g')) AS copied,
+				           MIN(LEAST(ps.question_first_keystroke_delay_ms,
+				                     ps.first_hint_first_keystroke_delay_ms,
+				                     ps.second_hint_first_keystroke_delay_ms)) AS min_first_keystroke_delay_ms
 				    FROM attempt a
 				    JOIN assessment_session s ON s.attempt_id = a.attempt_id
 				    JOIN problem_stage ps     ON ps.session_id = s.session_id
 				    GROUP BY ps.problem_id
 				),
-				duration AS (
+				session_signals AS (
 				    SELECT COALESCE(
-				               EXTRACT(EPOCH FROM (s.ended_at - s.started_at)) / 60, 0) AS minutes
+				               EXTRACT(EPOCH FROM (s.ended_at - s.started_at)) / 60, 0) AS minutes,
+				           s.window_leave_count,
+				           s.connection_loss_count
 				    FROM attempt a
 				    JOIN assessment_session s ON s.attempt_id = a.attempt_id
 				)
 				SELECT COUNT(*)::int                                        AS total_questions,
 				       COUNT(*) FILTER (WHERE all_unanswered)::int          AS unanswered,
 				       COALESCE(BOOL_OR(copied), FALSE)                     AS copied,
-				       COALESCE((SELECT ROUND(minutes)::int FROM duration), 0) AS duration_min
+				       COALESCE((SELECT ROUND(minutes)::int FROM session_signals), 0) AS duration_min,
+				       COALESCE((SELECT window_leave_count FROM session_signals), 0) AS window_leave_count,
+				       COALESCE((SELECT connection_loss_count FROM session_signals), 0) AS connection_loss_count,
+				       MIN(min_first_keystroke_delay_ms)                    AS first_keystroke_delay_ms
 				FROM per_problem
 				""",
 				(rs, rowNum) -> new VoidEvidence(
 						rs.getInt("unanswered"),
 						rs.getInt("total_questions"),
 						rs.getBoolean("copied"),
-						rs.getInt("duration_min")),
+						rs.getInt("duration_min"),
+						rs.getInt("window_leave_count"),
+						rs.getInt("connection_loss_count"),
+						(Integer) rs.getObject("first_keystroke_delay_ms")),
 				candidateId);
 
 		// 문제가 하나도 없으면(미응시로 세션 자체가 안 열린 경우) 보여줄 관찰이 없다.

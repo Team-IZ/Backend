@@ -93,7 +93,13 @@ public interface InterviewBriefService {
 	record ConceptView(String name, String curriculumRef, String groupIssueClassLabel) {
 	}
 
-	/** ⚠️ 미구현 — "질문 문장 그대로 복사" 판정 규칙이 DB 회신 대기(제안서 B-2). */
-	record VoidEvidenceView(int unanswered, int totalQuestions, boolean copied, int durationMin) {
+	/**
+	 * @param windowLeaveCount      창을 떠난 횟수(39차 R2)
+	 * @param connectionLossCount   연결이 끊긴 횟수(39차 R2)
+	 * @param firstKeystrokeDelayMs 문제·힌트 단계 중 가장 빠른 첫 타이핑 지연. 기록이 없으면 null
+	 */
+	record VoidEvidenceView(
+			int unanswered, int totalQuestions, boolean copied, int durationMin,
+			int windowLeaveCount, int connectionLossCount, Integer firstKeystrokeDelayMs) {
 	}
 }

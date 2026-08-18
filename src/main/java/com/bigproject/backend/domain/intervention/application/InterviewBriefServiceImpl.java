@@ -265,7 +265,9 @@ public class InterviewBriefServiceImpl implements InterviewBriefService {
 						? briefRepository.findVoidEvidence(caseId)
 								.map(evidence -> new VoidEvidenceView(
 										evidence.unanswered(), evidence.totalQuestions(),
-										evidence.copied(), evidence.durationMin()))
+										evidence.copied(), evidence.durationMin(),
+										evidence.windowLeaveCount(), evidence.connectionLossCount(),
+										evidence.firstKeystrokeDelayMs()))
 								.orElse(null)
 						: null);
 	}

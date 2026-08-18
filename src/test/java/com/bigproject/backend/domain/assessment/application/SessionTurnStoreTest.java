@@ -471,7 +471,7 @@ class SessionTurnStoreTest {
 		return new SessionProblem(PROBLEM_ID, 1, "Optional 처리", "DESIGN_CHOICE", null, null, null,
 				"snippet-3", "java", "handler.java", 20, 32, "hash3", 1, lines(4), "content-hash-3",
 				List.of(new SessionProblemReference("QUESTION_HIGHLIGHT", 1, "handler.java", 21, 24, "L2",
-						null, "h3")),
+						null, "h3", null, null)),
 				List.of(stage(), nextStage()));
 	}
 
@@ -584,8 +584,8 @@ class SessionTurnStoreTest {
 	private static SessionProblem problem() {
 		return new SessionProblem(PROBLEM_ID, 1, "Graph 구성", "DESIGN_CHOICE", null, null, null,
 				"snippet-1", "python", "graph.py", 1, 60, "hash", 1, SIXTY_LINE_SNIPPET, "content-hash",
-				List.of(new SessionProblemReference("QUESTION_HIGHLIGHT", 1, "graph.py", 5, 8, "L1", null, "h1"),
-						new SessionProblemReference("QUESTION_HIGHLIGHT", 2, "graph.py", 39, 41, "L2", null, "h2")),
+				List.of(new SessionProblemReference("QUESTION_HIGHLIGHT", 1, "graph.py", 5, 8, "L1", null, "h1", null, null),
+						new SessionProblemReference("QUESTION_HIGHLIGHT", 2, "graph.py", 39, 41, "L2", null, "h2", null, null)),
 				List.of(stage(), nextStage()));
 	}
 

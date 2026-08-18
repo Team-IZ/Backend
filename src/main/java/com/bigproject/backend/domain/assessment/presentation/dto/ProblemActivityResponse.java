@@ -65,10 +65,13 @@ public record ProblemActivityResponse(
 	public record Reference(
 			@Schema(description = "PRIMARY_BLOCK · QUESTION_HIGHLIGHT · CALLER · RELATED_CONTEXT · CURRICULUM_EVIDENCE")
 			String type,
+			@Schema(description = "CURRICULUM_EVIDENCE에서는 항상 null이다. 대신 teachLabel/sourcePages를 쓴다", nullable = true)
 			String path,
 			Integer lineStart,
 			Integer lineEnd,
-			@Schema(description = "이 근거가 붙는 축. QUESTION_HIGHLIGHT에서만 채워진다") String axisCode
+			@Schema(description = "이 근거가 붙는 축. QUESTION_HIGHLIGHT에서만 채워진다") String axisCode,
+			@Schema(description = "교안 개념 라벨. CURRICULUM_EVIDENCE에서만 채워진다(39차 R4)") String teachLabel,
+			@Schema(description = "교안 근거 페이지. CURRICULUM_EVIDENCE에서만 채워진다(39차 R4)") List<Integer> sourcePages
 	) {
 	}
 
@@ -266,7 +269,8 @@ public record ProblemActivityResponse(
 				.filter(reference -> !"PRIMARY_BLOCK".equals(reference.referenceType())
 						&& !"QUESTION_HIGHLIGHT".equals(reference.referenceType()))
 				.map(reference -> new Reference(reference.referenceType(), reference.sourcePath(),
-						reference.lineStart(), reference.lineEnd(), reference.axisCode()))
+						reference.lineStart(), reference.lineEnd(), reference.axisCode(),
+						reference.teachLabel(), reference.sourcePages()))
 				.toList();
 		Integer lastLine = snippetLastLine(problem);
 		return new Code(problem.sourcePath(), problem.codeLanguage(), problem.codeSnippet(),
