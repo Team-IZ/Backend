@@ -66,6 +66,20 @@ public enum AuthErrorCode implements ApiErrorCode {
 	/** 허용되지 않은 Origin에서 온 요청이다. 계정 문제와 구분돼야 화면이 엉뚱한 안내를 하지 않는다. */
 	LOGIN_ORIGIN_NOT_ALLOWED(HttpStatus.FORBIDDEN, "허용되지 않은 요청 출처입니다."),
 
+	/**
+	 * 비밀번호를 마지막으로 바꾼 지 유효기간이 지났다({@code auth.password.max-age-days}).
+	 *
+	 * <p><b>기본값은 0(비활성)이라 평소에는 나가지 않는다.</b> 변경 주기는 운영이 정하는 값이고,
+	 * 정해지기 전에 켜 두면 어느 날 갑자기 계정이 잠긴다. 정책이 확정되면 환경변수로 켠다.
+	 *
+	 * <p>화면이 할 일은 정지({@link #LOGIN_ACCOUNT_INACTIVE})나 일시 차단
+	 * ({@link #LOGIN_TEMPORARILY_BLOCKED})과 다르다 — 사용자가 <b>지금 스스로 풀 수 있는</b>
+	 * 상태이므로 비밀번호 재설정 화면으로 보내야 한다. 그래서 코드를 갈라 둔다.
+	 *
+	 * <p>비밀번호가 맞은 다음에만 나가므로 계정 열거로 이어지지 않는다.
+	 */
+	PASSWORD_EXPIRED(HttpStatus.FORBIDDEN, "비밀번호 유효기간이 지났습니다. 비밀번호를 재설정해 주세요."),
+
 	// ── 토큰 재발급 ──
 
 	/** 리프레시 토큰이 없거나 만료·위조됐다. 화면은 조용히 로그인 화면으로 보낸다. */
