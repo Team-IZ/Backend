@@ -16,6 +16,7 @@ import com.bigproject.backend.domain.assessment.presentation.dto.HintResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.ProblemActivityResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.SessionActivityRequest;
 import com.bigproject.backend.domain.assessment.presentation.dto.SessionResponse;
+import com.bigproject.backend.global.ai.AsyncAiProxyWarmUp;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -62,10 +63,15 @@ public class AssessmentSessionService {
 	private final SessionGuard guard;
 	private final SessionTurnStore turnStore;
 	private final SessionAnswerGrader grader;
+	private final AsyncAiProxyWarmUp asyncWarmUp;
 
 	/** 정책 시간 상한(분). 정의서 §2의 하드 상한 60분이 기본값이다. */
 	@Value("${session.time-limit-minutes:60}")
 	private int timeLimitMinutes;
+
+	/** 문제별 상한(분). {@link ProblemActivityResponse}의 카운트다운 기산에 쓴다. */
+	@Value("${session.problem-time-limit-minutes:20}")
+	private int problemTimeLimitMinutes;
 
 	/**
 	 * 지금 이어서 할 세션. 없으면 비어 있다 — 화면은 "진행 중인 회차 없음"으로 그린다.
@@ -119,6 +125,10 @@ public class AssessmentSessionService {
 		if (!"IN_PROGRESS".equals(started.status())) {
 			throw new SessionException(SessionErrorCode.STAGE_NOT_FOUND);
 		}
+
+		// 학생이 인트로를 읽고 첫 답을 쓰기까지 몇 분이 남아 있다. 그 사이에 AI를 깨워 두면 첫 채점이
+		// 잠든 원본을 깨우느라 멈추지 않는다(37차 R1). 응답을 늦추지 않도록 뒤에서 돈다.
+		asyncWarmUp.wakeInBackground("session-start");
 		return SessionResponse.of(started, repository.findStages(sessionId));
 	}
 
@@ -142,7 +152,7 @@ public class AssessmentSessionService {
 		if (!isCurrent && !head.isEnded()) {
 			throw new SessionException(SessionErrorCode.PROBLEM_ALREADY_CLOSED);
 		}
-		return ProblemActivityResponse.of(head, problem, problems.size());
+		return ProblemActivityResponse.of(head, problem, problems.size(), problemTimeLimitMinutes);
 	}
 
 	/**
@@ -155,10 +165,6 @@ public class AssessmentSessionService {
 	@Transactional
 	public HintResponse openHint(UUID userId, UUID sessionId) {
 		SessionHead head = guard.running(userId, sessionId);
-		if (head.isReview()) {
-			// 정의서 §6+ — "이번에는 다시 설명해 드리지 않아요. 지난번과 같은 질문이라 이미 한 번 들었어요."
-			throw new SessionException(SessionErrorCode.HINT_NOT_AVAILABLE);
-		}
 		SessionStage stage = guard.currentStage(head);
 
 		int hintsUsed = stage.hintsUsed();
@@ -211,10 +217,10 @@ public class AssessmentSessionService {
 			repository.recordAway(sessionId, stage.problemStageId(), slot, request.awaySeconds());
 		}
 		if (request.disconnectedSeconds() != null) {
-			repository.recordConnectionLoss(sessionId, request.disconnectedSeconds());
+			repository.recordConnectionLoss(sessionId, stage.problemStageId(), request.disconnectedSeconds());
 		}
 		if (request.firstKeystrokeDelayMs() != null) {
-			repository.recordFirstKeystroke(stage.problemStageId(), slot, request.firstKeystrokeDelayMs());
+			repository.recordFirstKeystroke(sessionId, stage.problemStageId(), slot, request.firstKeystrokeDelayMs());
 		}
 	}
 
