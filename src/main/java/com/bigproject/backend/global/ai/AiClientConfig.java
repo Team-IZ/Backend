@@ -56,6 +56,12 @@ public class AiClientConfig {
 	/** 교안·코드 제출 분석이 주입받는 {@link AiClient}. */
 	public static final String AI_ORIGIN_CLIENT = "aiOriginClient";
 
+	/** 세션 채점 전용 {@link RestClient}. 프록시와 같은 곳으로 나가되 상한이 짧다. */
+	public static final String AI_SESSION_REST_CLIENT = "aiSessionRestClient";
+
+	/** 답변 채점이 주입받는 {@link AiClient}. */
+	public static final String AI_SESSION_CLIENT = "aiSessionClient";
+
 	@Bean(AI_PROXY_REST_CLIENT)
 	public RestClient aiProxyRestClient(
 			@Value("${ai.proxy-base-url:http://localhost:8000}") String baseUrl,
@@ -78,8 +84,42 @@ public class AiClientConfig {
 		return build(baseUrl, internalKey, connectTimeout, readTimeout, logPayloads);
 	}
 
+	/**
+	 * 세션 채점만 <b>다른 상한</b>을 쓴다. 나가는 곳은 프록시로 같다.
+	 *
+	 * <h2>왜 갈랐나</h2>
+	 *
+	 * <p>{@code ai.read-timeout}(150초)은 <b>사람이 기다리지 않는</b> 호출을 위한 값이다 — 코드 분석과
+	 * 리포트 생성은 배치·비동기라 2분을 기다려도 잃는 것이 없다. 답변 채점만 학생이 화면 앞에서
+	 * 기다리는데, 같은 값을 쓰면 <b>응답이 나갈 무렵에는 이미 연결이 끊겨 있다</b>(37차 R1 — 90초에
+	 * 끊겼다). 그 뒤에 우리가 아무리 정확히 채점해도 학생에게 닿지 않는다.
+	 *
+	 * <p>그래서 짧게 잡는다. 짧게 잡아도 손해가 없는 이유는 <b>재전송이 공짜</b>이기 때문이다 —
+	 * 멱등키가 {@code session:stage:axis:hintsUsed}로 결정론적이라({@code SessionAnswerGrader}) 같은
+	 * 답을 다시 보내면 AI가 처음 응답을 그대로 돌려주고 LLM 비용이 늘지 않는다.
+	 *
+	 * <p>기본 55초는 <b>웜업이 요청 밖으로 빠진 것을 전제로 한</b> 값이다({@code AsyncAiProxyWarmUp}).
+	 * 깨어 있는 서버의 채점은 4.5~7.7초라 55초는 여유가 크다. 이 값을 다시 늘려야 한다면 늘리기 전에
+	 * "무엇이 55초를 넘겼는가"를 로그로 확인해야 한다 — 늘리는 것으로 해결되는 종류의 문제가 아니다.
+	 */
+	@Bean(AI_SESSION_REST_CLIENT)
+	public RestClient aiSessionRestClient(
+			@Value("${ai.proxy-base-url:http://localhost:8000}") String baseUrl,
+			@Value("${ai.internal-key:}") String internalKey,
+			@Value("${ai.connect-timeout:PT5S}") Duration connectTimeout,
+			@Value("${ai.session.read-timeout:PT55S}") Duration readTimeout,
+			@Value("${ai.log-payloads:true}") boolean logPayloads
+	) {
+		return build(baseUrl, internalKey, connectTimeout, readTimeout, logPayloads);
+	}
+
 	@Bean(AI_PROXY_CLIENT)
 	public AiClient aiProxyClient(@Qualifier(AI_PROXY_REST_CLIENT) RestClient restClient) {
+		return new AiClient(restClient);
+	}
+
+	@Bean(AI_SESSION_CLIENT)
+	public AiClient aiSessionClient(@Qualifier(AI_SESSION_REST_CLIENT) RestClient restClient) {
 		return new AiClient(restClient);
 	}
 

@@ -6,6 +6,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadPoolExecutor;
 
 /**
  * 제출 직후 코드 분석 트리거를 위한 비동기 실행기.
@@ -46,6 +47,30 @@ public class AsyncConfig {
 	 * 잡아 등록 자체는 성공으로 응답한다 — 자리는 이미 커밋됐고, 발송되지 않은 행은 원장에 PENDING으로
 	 * 남아 안전망 스케줄러가 이어받기 때문이다.
 	 */
+	/**
+	 * AI 프록시 사전 웜업 풀({@code AsyncAiProxyWarmUp}).
+	 *
+	 * <p><b>풀도 큐도 아주 작다.</b> 하는 일이 헬스체크 하나이고, 그것도 최근에 깨웠으면 건너뛴다.
+	 * 여러 학생이 동시에 세션을 시작해도 실제로 나가는 호출은 사실상 하나다 — 큐를 늘려 봐야 같은
+	 * 신호가 쌓이기만 한다.
+	 *
+	 * <p>큐가 차면 <b>버린다</b>({@code DiscardPolicy}). 기본 정책({@code AbortPolicy})은
+	 * {@code TaskRejectedException}을 <b>요청 스레드로</b> 올리는데, 이건 학생이 요청한 일이 아니라
+	 * 뒤에서 해 두는 준비라서 그것 때문에 세션 시작이 실패하면 앞뒤가 뒤바뀐다. 버려도 손해가 없다 —
+	 * 이미 같은 신호가 큐에 있다는 뜻이다.
+	 */
+	@Bean(name = "aiWarmUpExecutor")
+	public Executor aiWarmUpExecutor() {
+		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+		executor.setCorePoolSize(1);
+		executor.setMaxPoolSize(2);
+		executor.setQueueCapacity(10);
+		executor.setThreadNamePrefix("ai-warmup-");
+		executor.setRejectedExecutionHandler(new ThreadPoolExecutor.DiscardPolicy());
+		executor.initialize();
+		return executor;
+	}
+
 	@Bean(name = "traineeInvitationMailExecutor")
 	public Executor traineeInvitationMailExecutor() {
 		ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
