@@ -55,6 +55,15 @@ public enum SessionErrorCode implements ApiErrorCode {
 	PROBLEM_ALREADY_CLOSED(HttpStatus.CONFLICT, "이미 끝난 문제는 다시 열 수 없습니다."),
 	/** 커서가 가리키는 단계가 없다. 세션 준비가 깨졌다는 뜻이라 조용히 넘기지 않는다. */
 	STAGE_NOT_FOUND(HttpStatus.CONFLICT, "진행할 단계를 찾을 수 없습니다."),
+	/**
+	 * 단계는 있는데 세션이 시작 가능한 상태가 아니다.
+	 *
+	 * <p>{@code STAGE_NOT_FOUND}에서 갈라낸 코드다(37차 R5). 종전에는 {@code POST /start}가 실패하면
+	 * 이유와 무관하게 전부 "단계를 못 찾았다"로 나갔고, 실제 원인이 <b>상태</b>일 때 화면도 로그도
+	 * 데이터가 깨진 것처럼 읽혔다 — 원인을 찾는 데 사람이 붙었다. 물어볼 질문이 없는 것(준비 실패)과
+	 * 물어볼 수는 있는데 지금은 열 수 없는 것(상태)은 조치가 다르므로 코드를 가른다.
+	 */
+	SESSION_NOT_STARTABLE(HttpStatus.CONFLICT, "지금은 세션을 시작할 수 없습니다."),
 
 	// ── 답변 ──
 	ANSWER_TEXT_REQUIRED(HttpStatus.BAD_REQUEST, "답변 내용이 필요합니다."),
