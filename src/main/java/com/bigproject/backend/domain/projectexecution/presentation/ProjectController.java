@@ -293,7 +293,10 @@ public class ProjectController {
 			List<SubmissionStatusService.ManagerProjectProgress.ActionItem> items) {
 		return items.stream()
 				.map(item -> new ProjectResponse.ActionItem(
-						item.classId(), item.className(), item.type(), item.teamCount()))
+						item.classId(), item.className(), item.type(), item.teamCount(),
+						item.teams().stream()
+								.map(team -> new ProjectResponse.TeamRef(team.teamId(), team.teamName()))
+								.toList()))
 				.toList();
 	}
 	/**

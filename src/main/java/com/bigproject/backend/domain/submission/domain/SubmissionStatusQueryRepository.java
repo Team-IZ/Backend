@@ -83,6 +83,11 @@ public interface SubmissionStatusQueryRepository {
 	 * <p><b>팀에 배정되지 않은 사람은 빠진다.</b> 팀을 통해서만 어느 반인지 알 수 있고, 목록의
 	 * 분모도 팀이 있는 사람 기준이다 — 서비스가 하던 {@code team == null → continue}와 같다.
 	 *
+	 * <p><b>행 grain은 팀이다</b>(36차 R2 — teamCount만으로는 어느 팀인지 알 수 없어서 팀 목록을
+	 * 붙였다). 반 집계값({@code assessedCount}·{@code targetCount}·{@code interviewBacklogCount})은
+	 * 그 반에 속한 모든 팀 행에 같은 값이 반복해서 담긴다 — 서비스가 반 단위로 다시 묶는다. GROUP BY로
+	 * 반 단위까지 접으면 팀 목록이 사라지므로 접지 않는다.
+	 *
 	 * @param assessmentRoundIds 비어 있으면 조회하지 않고 빈 목록이다
 	 * @param classId            담당 반 중 하나로 좁힐 때만 지정한다. null이면 담당 반 전체
 	 */
@@ -90,23 +95,26 @@ public interface SubmissionStatusQueryRepository {
 			Collection<UUID> assessmentRoundIds, UUID organizationId, UUID managerUserId, UUID classId);
 
 	/**
-	 * 회차 × 반 하나의 집계다.
+	 * 회차 × 반 × 팀 한 줄이다. 반 집계는 그 반의 팀 행마다 반복해서 담긴다.
 	 *
-	 * @param assessedCount 응시를 마친 인원. 화면 `응시 58/71`의 분자
-	 * @param targetCount   그 반에서 팀에 배정된 인원. 분모
+	 * @param assessedCount         그 반에서 응시를 마친 인원(반 전체 값, 팀마다 반복). 화면 `응시 58/71`의 분자
+	 * @param targetCount           그 반에서 팀에 배정된 인원(반 전체 값, 팀마다 반복). 분모
+	 * @param submittedAt           이 팀의 최신 제출 시각. null이면 미제출
+	 * @param analysisStatus        이 팀의 최신 제출에 매인 분석 상태. {@code FAILED}면 분석 실패
+	 * @param interviewBacklogCount 면담 대기·진행 인원(34차 R7①, 반 전체 값, 팀마다 반복). <b>팀 수가
+	 *                              아니라 사람 수</b>다. 판정 기준은 MG-03 면담 목록과 같다 — 제외된
+	 *                              후보와 끝난 면담은 뺀다.
 	 */
 	record ManagerProgressAggregate(
 			UUID assessmentRoundId,
 			UUID classId,
 			String className,
+			UUID teamId,
+			String teamName,
+			Instant submittedAt,
+			String analysisStatus,
 			long assessedCount,
 			long targetCount,
-			int unsubmittedTeamCount,
-			int analysisFailedTeamCount,
-			/**
-			 * 면담 대기·진행 인원(34차 R7①). <b>팀 수가 아니라 사람 수</b>다.
-			 * 판정 기준은 MG-03 면담 목록과 같다 — 제외된 후보와 끝난 면담은 뺀다.
-			 */
 			int interviewBacklogCount
 	) {
 	}

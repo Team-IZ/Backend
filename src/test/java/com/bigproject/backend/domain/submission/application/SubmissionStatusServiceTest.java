@@ -244,6 +244,53 @@ class SubmissionStatusServiceTest {
 		verify(repository).countUnassignedMembers(PROJECT_ID, ORG_ID, MANAGER_ID, null);
 	}
 
+	/**
+	 * 36차 R2 — actionItems[]가 teamCount만 주면 어느 팀인지 화면이 알 수 없다.
+	 * ANALYSIS_FAILED_TEAMS와 같은 모양으로 UNSUBMITTED_TEAMS도 팀 이름을 실어야 한다.
+	 */
+	@Test
+	void actionItemsCarryTheNamesOfTheTeamsTheyCount() {
+		UUID unsubmittedTeamId = UUID.randomUUID();
+		UUID failedTeamId = UUID.randomUUID();
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(
+				new TeamRow(unsubmittedTeamId, CLASS_ID, "A반", "1", "1팀", "CONFIRMED",
+						null, null, null, null, null, null, null,
+						null, null, null, null),
+				new TeamRow(failedTeamId, CLASS_ID, "A반", "2", "2팀", "CONFIRMED",
+						UUID.randomUUID(), Instant.parse("2026-07-13T14:55:00Z"),
+						"https://github.com/team-a/mif3-2", UUID.randomUUID(), "김민준",
+						"GITHUB_URL", "ACCEPTED",
+						UUID.randomUUID(), "FAILED", "BUILD_FAILED", "빌드 실패")));
+		when(repository.findMembers(any(), any(), any(), any())).thenReturn(List.of(
+				member(UUID.randomUUID(), "가", "COMPLETED", "COMPLETED",
+						Instant.now().plus(1, ChronoUnit.DAYS), Instant.now())));
+
+		var result = service.findManagerProjectProgress(EMAIL, PROJECT_ID, null);
+
+		assertThat(result.actionItems()).extracting(
+						SubmissionStatusService.ManagerProjectProgress.ActionItem::type,
+						SubmissionStatusService.ManagerProjectProgress.ActionItem::teamCount)
+				.containsExactlyInAnyOrder(
+						tuple(SubmissionStatusService.ManagerProjectProgress.ActionItem.UNSUBMITTED_TEAMS, 1),
+						tuple(SubmissionStatusService.ManagerProjectProgress.ActionItem.ANALYSIS_FAILED_TEAMS, 1));
+
+		var unsubmittedItem = result.actionItems().stream()
+				.filter(item -> item.type().equals(SubmissionStatusService.ManagerProjectProgress.ActionItem.UNSUBMITTED_TEAMS))
+				.findFirst().orElseThrow();
+		assertThat(unsubmittedItem.teams())
+				.extracting(SubmissionStatusService.ManagerProjectProgress.TeamRef::teamId,
+						SubmissionStatusService.ManagerProjectProgress.TeamRef::teamName)
+				.containsExactly(tuple(unsubmittedTeamId, "1팀"));
+
+		var failedItem = result.actionItems().stream()
+				.filter(item -> item.type().equals(SubmissionStatusService.ManagerProjectProgress.ActionItem.ANALYSIS_FAILED_TEAMS))
+				.findFirst().orElseThrow();
+		assertThat(failedItem.teams())
+				.extracting(SubmissionStatusService.ManagerProjectProgress.TeamRef::teamId,
+						SubmissionStatusService.ManagerProjectProgress.TeamRef::teamName)
+				.containsExactly(tuple(failedTeamId, "2팀"));
+	}
+
 	private RoundScope round(String lifecycleStatus) {
 		return new RoundScope(ROUND_ID, PROJECT_ID, ORG_ID, COHORT_ID, "미프 3차", 1, "3차",
 				Instant.parse("2026-07-14T14:59:00Z"), lifecycleStatus);

@@ -276,7 +276,9 @@ public class SubmissionStatusService {
 				UUID classId,
 				String className,
 				String type,
-				int teamCount) {
+				int teamCount,
+				/** 걸린 팀 목록. 36차 R2 — teamCount만으로는 어느 팀인지 알 수 없어서 붙였다. */
+				List<TeamRef> teams) {
 
 			/** 제출 마감이 지났는데 아직 안 낸 팀. */
 			public static final String UNSUBMITTED_TEAMS = "UNSUBMITTED_TEAMS";
@@ -294,6 +296,10 @@ public class SubmissionStatusService {
 			 * 상태라 표의 5/6이 「—」였다.
 			 */
 			public static final String INTERVIEW_BACKLOG = "INTERVIEW_BACKLOG";
+		}
+
+		/** actionItems[].teams[] 한 건. */
+		public record TeamRef(UUID teamId, String teamName) {
 		}
 	}
 
@@ -367,27 +373,39 @@ public class SubmissionStatusService {
 				if (rows == null || rows.isEmpty()) {
 					continue;
 				}
+				// 행 grain은 팀이다 — 반 하나로 다시 묶어야 반 단위 합계·조치를 만들 수 있다.
+				var byClass = rows.stream().collect(Collectors.groupingBy(
+						SubmissionStatusQueryRepository.ManagerProgressAggregate::classId,
+						LinkedHashMap::new, Collectors.toList()));
 				result.put(round.projectId(),
-						new ManagerProjectProgress(progressOf(rows), actionItemsOf(rows)));
+						new ManagerProjectProgress(progressOf(byClass), actionItemsOf(byClass)));
 			}
 		});
 		return result;
 	}
 
-	/** 집계 행에서 합계와 <b>가장 뒤처진 반</b>을 만든다. 기준은 {@link #calculateProgress}와 같다. */
+	/**
+	 * 반별 팀 행에서 합계와 <b>가장 뒤처진 반</b>을 만든다. 기준은 {@link #calculateProgress}와 같다.
+	 *
+	 * <p>{@code assessedCount}·{@code targetCount}는 반 전체 값이 그 반의 팀 행마다 반복돼 있으므로
+	 * 반마다 첫 행 하나만 읽는다.
+	 */
 	private ManagerProjectProgress.Progress progressOf(
-			List<SubmissionStatusQueryRepository.ManagerProgressAggregate> rows) {
+			Map<UUID, List<SubmissionStatusQueryRepository.ManagerProgressAggregate>> byClass) {
 		long assessed = 0;
 		long target = 0;
-		for (var row : rows) {
-			assessed += row.assessedCount();
-			target += row.targetCount();
+		List<SubmissionStatusQueryRepository.ManagerProgressAggregate> classTotals = new ArrayList<>();
+		for (var rows : byClass.values()) {
+			var first = rows.get(0);
+			assessed += first.assessedCount();
+			target += first.targetCount();
+			classTotals.add(first);
 		}
 		if (target == 0) {
 			return null;
 		}
 		// 담당 반이 하나뿐이면 합계가 곧 그 반이라 따로 집어 봐야 의미가 없다.
-		var withMembers = rows.stream().filter(row -> row.targetCount() > 0).toList();
+		var withMembers = classTotals.stream().filter(row -> row.targetCount() > 0).toList();
 		ManagerProjectProgress.LaggingClass lagging = withMembers.size() < 2 ? null : withMembers.stream()
 				.min(Comparator.comparingDouble(
 						row -> (double) row.assessedCount() / row.targetCount()))
@@ -397,24 +415,37 @@ public class SubmissionStatusService {
 		return new ManagerProjectProgress.Progress(assessed, target, lagging);
 	}
 
-	/** 0건인 반은 항목을 만들지 않는다 — 조치 열이 비는 것이 정상이며 화면은 그때 —를 그린다. */
+	/** 0건인 반·유형은 항목을 만들지 않는다 — 조치 열이 비는 것이 정상이며 화면은 그때 —를 그린다. */
 	private List<ManagerProjectProgress.ActionItem> actionItemsOf(
-			List<SubmissionStatusQueryRepository.ManagerProgressAggregate> rows) {
+			Map<UUID, List<SubmissionStatusQueryRepository.ManagerProgressAggregate>> byClass) {
 		List<ManagerProjectProgress.ActionItem> items = new ArrayList<>();
-		for (var row : rows) {
-			if (row.unsubmittedTeamCount() > 0) {
-				items.add(new ManagerProjectProgress.ActionItem(row.classId(), row.className(),
-						ManagerProjectProgress.ActionItem.UNSUBMITTED_TEAMS, row.unsubmittedTeamCount()));
+		byClass.forEach((classId, rows) -> {
+			String className = rows.get(0).className();
+			var unsubmittedTeams = rows.stream()
+					.filter(row -> row.submittedAt() == null)
+					.map(row -> new ManagerProjectProgress.TeamRef(row.teamId(), row.teamName()))
+					.toList();
+			if (!unsubmittedTeams.isEmpty()) {
+				items.add(new ManagerProjectProgress.ActionItem(classId, className,
+						ManagerProjectProgress.ActionItem.UNSUBMITTED_TEAMS,
+						unsubmittedTeams.size(), unsubmittedTeams));
 			}
-			if (row.analysisFailedTeamCount() > 0) {
-				items.add(new ManagerProjectProgress.ActionItem(row.classId(), row.className(),
-						ManagerProjectProgress.ActionItem.ANALYSIS_FAILED_TEAMS, row.analysisFailedTeamCount()));
+			var analysisFailedTeams = rows.stream()
+					.filter(row -> "FAILED".equals(row.analysisStatus()))
+					.map(row -> new ManagerProjectProgress.TeamRef(row.teamId(), row.teamName()))
+					.toList();
+			if (!analysisFailedTeams.isEmpty()) {
+				items.add(new ManagerProjectProgress.ActionItem(classId, className,
+						ManagerProjectProgress.ActionItem.ANALYSIS_FAILED_TEAMS,
+						analysisFailedTeams.size(), analysisFailedTeams));
 			}
-			if (row.interviewBacklogCount() > 0) {
-				items.add(new ManagerProjectProgress.ActionItem(row.classId(), row.className(),
-						ManagerProjectProgress.ActionItem.INTERVIEW_BACKLOG, row.interviewBacklogCount()));
+			// 면담 대기는 사람 단위라 팀 목록이 없다 — teamCount 자리에도 사람 수가 들어간다.
+			int interviewBacklogCount = rows.get(0).interviewBacklogCount();
+			if (interviewBacklogCount > 0) {
+				items.add(new ManagerProjectProgress.ActionItem(classId, className,
+						ManagerProjectProgress.ActionItem.INTERVIEW_BACKLOG, interviewBacklogCount, List.of()));
 			}
-		}
+		});
 		return items;
 	}
 
@@ -520,16 +551,21 @@ public class SubmissionStatusService {
 		List<ManagerProjectProgress.ActionItem> items = new ArrayList<>();
 		byClass.forEach((classId, classTeams) -> {
 			String className = classTeams.get(0).className();
-			long unsubmitted = classTeams.stream().filter(team -> team.submittedAt() == null).count();
-			if (unsubmitted > 0) {
+			List<ManagerProjectProgress.TeamRef> unsubmittedTeams = classTeams.stream()
+					.filter(team -> team.submittedAt() == null)
+					.map(team -> new ManagerProjectProgress.TeamRef(team.teamId(), team.teamName()))
+					.toList();
+			if (!unsubmittedTeams.isEmpty()) {
 				items.add(new ManagerProjectProgress.ActionItem(classId, className,
-						ManagerProjectProgress.ActionItem.UNSUBMITTED_TEAMS, Math.toIntExact(unsubmitted)));
+						ManagerProjectProgress.ActionItem.UNSUBMITTED_TEAMS, unsubmittedTeams.size(), unsubmittedTeams));
 			}
-			long analysisFailed = classTeams.stream()
-					.filter(team -> "FAILED".equals(team.analysisStatus())).count();
-			if (analysisFailed > 0) {
+			List<ManagerProjectProgress.TeamRef> analysisFailedTeams = classTeams.stream()
+					.filter(team -> "FAILED".equals(team.analysisStatus()))
+					.map(team -> new ManagerProjectProgress.TeamRef(team.teamId(), team.teamName()))
+					.toList();
+			if (!analysisFailedTeams.isEmpty()) {
 				items.add(new ManagerProjectProgress.ActionItem(classId, className,
-						ManagerProjectProgress.ActionItem.ANALYSIS_FAILED_TEAMS, Math.toIntExact(analysisFailed)));
+						ManagerProjectProgress.ActionItem.ANALYSIS_FAILED_TEAMS, analysisFailedTeams.size(), analysisFailedTeams));
 			}
 		});
 		return items;

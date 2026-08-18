@@ -182,6 +182,13 @@ public record ProjectResponse(
 
                     앞의 둘은 팀 단위 조치이고 면담은 사람 단위인데, 화면이 이미 이 자리를
                     「숫자 + 단위」로 그리고 있어 필드를 새로 내지 않고 같은 자리를 씁니다.
-                    **단위는 `type`으로 갈라 주세요.**""") int teamCount) {
+                    **단위는 `type`으로 갈라 주세요.**""") int teamCount,
+            @Schema(description = "해당 유형에 걸린 팀 목록. 36차 R2 — teamCount만으로는 어느 팀인지 알 수 없어서 붙였다.")
+            List<TeamRef> teams) {
+    }
+
+    /** actionItems[].teams[] 한 건. */
+    @Schema(description = "조치가 필요한 팀 한 건")
+    public record TeamRef(UUID teamId, String teamName) {
     }
 }
