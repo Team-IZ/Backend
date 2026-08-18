@@ -458,6 +458,15 @@ public class JdbcSessionRepository {
 
 	/** 답변 단위 이탈·첫 타이핑 지연을 누적한다. 세션 합계도 같은 트랜잭션에서 함께 올린다. */
 	public void recordAway(UUID sessionId, UUID problemStageId, AnswerSlot slot, int awaySeconds) {
+		recordAway(sessionId, problemStageId, slot, awaySeconds, null);
+	}
+
+	/**
+	 * {@code occurredAt}이 있으면(39차 R2 이후 신설된 이벤트 로그 저장 API) 그 값을
+	 * {@code problem_stage_activity_log.started_at}에 그대로 쓴다. null이면 기존처럼
+	 * {@code now() - duration}으로 근사한다.
+	 */
+	public void recordAway(UUID sessionId, UUID problemStageId, AnswerSlot slot, int awaySeconds, Instant occurredAt) {
 		String prefix = slot.columnPrefix();
 		jdbc.update("""
 				UPDATE problem_stage
@@ -473,7 +482,7 @@ public class JdbcSessionRepository {
 				       last_window_returned_at = now(), updated_at = now()
 				 WHERE session_id = ?
 				""", awaySeconds, awaySeconds, sessionId);
-		insertActivityLog(sessionId, problemStageId, "WINDOW_LEAVE", awaySeconds * 1000);
+		insertActivityLog(sessionId, problemStageId, "WINDOW_LEAVE", awaySeconds * 1000, occurredAt);
 	}
 
 	/**
@@ -481,16 +490,20 @@ public class JdbcSessionRepository {
 	 * {@code problem_stage}의 누적 컬럼은 무효 응시 판정이 그대로 읽으므로 손대지 않고, 이 로그는
 	 * 매니저가 "언제 몇 초씩 몇 번" 벌어졌는지 재구성하기 위한 상세 이력으로 나란히 쌓는다.
 	 *
-	 * <p>{@code startedAt}은 실측이 아니라 근사치다 — 클라이언트가 복귀·재연결 시점에 지속 시간만
-	 * 보내므로 {@code now() - duration}으로 역산한다({@code last_window_left_at}과 같은 방식).
-	 * {@code duration_ms}는 세 이벤트 유형의 단위(초 vs ms)를 밀리초 하나로 맞춘다.
+	 * <p>{@code occurredAt}이 null이면 {@code startedAt}은 실측이 아니라 근사치다 — 클라이언트가
+	 * 복귀·재연결 시점에 지속 시간만 보내므로 {@code now() - duration}으로 역산한다
+	 * ({@code last_window_left_at}과 같은 방식). {@code occurredAt}이 있으면(이벤트 로그 저장 API)
+	 * 클라이언트 실측값을 그대로 쓴다. {@code duration_ms}는 세 이벤트 유형의 단위(초 vs ms)를
+	 * 밀리초 하나로 맞춘다.
 	 */
-	private void insertActivityLog(UUID sessionId, UUID problemStageId, String eventType, int durationMs) {
+	private void insertActivityLog(UUID sessionId, UUID problemStageId, String eventType, int durationMs,
+			Instant occurredAt) {
 		jdbc.update("""
 				INSERT INTO problem_stage_activity_log
 				       (problem_stage_id, session_id, event_type, started_at, duration_ms)
-				VALUES (?, ?, ?, now() - make_interval(secs => ?::numeric / 1000), ?)
-				""", problemStageId, sessionId, eventType, durationMs, durationMs);
+				VALUES (?, ?, ?, COALESCE(?, now() - make_interval(secs => ?::numeric / 1000)), ?)
+				""", problemStageId, sessionId, eventType,
+				occurredAt == null ? null : Timestamp.from(occurredAt), durationMs, durationMs);
 	}
 
 	/**
@@ -592,6 +605,11 @@ public class JdbcSessionRepository {
 	 * 넘어간다 — "그 순간 어떤 질문을 보고 있었는지"를 매니저 로그 조회의 맥락으로 남기기 위해서다.
 	 */
 	public void recordConnectionLoss(UUID sessionId, UUID problemStageId, int disconnectedSeconds) {
+		recordConnectionLoss(sessionId, problemStageId, disconnectedSeconds, null);
+	}
+
+	/** @see #recordAway(UUID, UUID, AnswerSlot, int, Instant) — {@code occurredAt}의 의미가 같다 */
+	public void recordConnectionLoss(UUID sessionId, UUID problemStageId, int disconnectedSeconds, Instant occurredAt) {
 		jdbc.update("""
 				UPDATE assessment_session
 				   SET connection_loss_count = connection_loss_count + 1,
@@ -599,7 +617,7 @@ public class JdbcSessionRepository {
 				       updated_at = now()
 				 WHERE session_id = ?
 				""", disconnectedSeconds, sessionId);
-		insertActivityLog(sessionId, problemStageId, "CONNECTION_LOSS", disconnectedSeconds * 1000);
+		insertActivityLog(sessionId, problemStageId, "CONNECTION_LOSS", disconnectedSeconds * 1000, occurredAt);
 	}
 
 	/**
@@ -610,6 +628,12 @@ public class JdbcSessionRepository {
 	 * 부르지 않는다 — 로그도 "중복 전송이 안전하다"는 계약을 그대로 따라야 한다.
 	 */
 	public void recordFirstKeystroke(UUID sessionId, UUID problemStageId, AnswerSlot slot, int delayMs) {
+		recordFirstKeystroke(sessionId, problemStageId, slot, delayMs, null);
+	}
+
+	/** @see #recordAway(UUID, UUID, AnswerSlot, int, Instant) — {@code occurredAt}의 의미가 같다 */
+	public void recordFirstKeystroke(UUID sessionId, UUID problemStageId, AnswerSlot slot, int delayMs,
+			Instant occurredAt) {
 		String column = slot.columnPrefix() + "_first_keystroke_delay_ms";
 		int updated = jdbc.update("""
 				UPDATE problem_stage
