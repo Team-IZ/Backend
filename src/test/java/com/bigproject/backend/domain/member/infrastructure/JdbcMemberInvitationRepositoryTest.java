@@ -89,10 +89,9 @@ class JdbcMemberInvitationRepositoryTest {
 				eq(organizationId)
 		);
 		assertThat(sql.getValue())
-				.contains("JOIN \"role\"")
 				.contains("JOIN organization")
 				.contains("u.org_id = ?")
-				.contains("r.code = 'TRAINEE'");
+				.contains("u.role_code = 'TRAINEE'");
 	}
 
 	@Test

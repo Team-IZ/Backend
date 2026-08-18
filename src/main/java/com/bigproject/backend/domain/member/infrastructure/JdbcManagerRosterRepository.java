@@ -123,7 +123,6 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 			         ORDER BY t.issued_at DESC
 			         LIMIT 1) AS pending_invitation_token_id
 			FROM app_user u
-			JOIN "role" r ON r.role_id = u.role_id AND r.code = 'MANAGER'
 			""";
 
 	/**
@@ -155,7 +154,6 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 		String sql = """
 				SELECT u.status AS account_status, COUNT(*) AS member_count
 				FROM app_user u
-				JOIN "role" r ON r.role_id = u.role_id AND r.code = 'MANAGER'
 				"""
 				+ filter.where()
 				+ " GROUP BY u.status";
@@ -173,7 +171,7 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 		filter.addQuery(criteria.query());
 
 		Long total = jdbcTemplate.queryForObject(
-				"SELECT COUNT(*) FROM app_user u JOIN \"role\" r ON r.role_id = u.role_id AND r.code = 'MANAGER'"
+				"SELECT COUNT(*) FROM app_user u"
 						+ filter.where(),
 				Long.class, filter.args().toArray());
 
@@ -202,7 +200,7 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 		args.add(managerId);
 
 		List<ManagerRosterRow> found = jdbcTemplate.query(
-				MANAGER_SELECT + " WHERE u.deleted_at IS NULL AND u.org_id = ? AND u.user_id = ?",
+				MANAGER_SELECT + " WHERE u.deleted_at IS NULL AND u.org_id = ? AND u.role_code = 'MANAGER' AND u.user_id = ?",
 				(ResultSet rs, int rowNum) -> mapRow(rs),
 				args.toArray());
 		return found.stream().findFirst();
@@ -213,8 +211,7 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 		String sql = """
 				SELECT COUNT(*)
 				FROM app_user u
-				JOIN "role" r ON r.role_id = u.role_id AND r.code = 'MANAGER'
-				WHERE u.deleted_at IS NULL AND u.org_id = ? AND u.status = 'ACTIVE'
+				WHERE u.deleted_at IS NULL AND u.org_id = ? AND u.role_code = 'MANAGER' AND u.status = 'ACTIVE'
 				""";
 		Integer count = jdbcTemplate.queryForObject(sql, Integer.class, orgId);
 		return count == null ? 0 : count;
@@ -243,7 +240,7 @@ public class JdbcManagerRosterRepository implements ManagerRosterRepository {
 	 * 두 쿼리의 조건이 서로 어긋날 수 없다.
 	 */
 	private static final class Filter {
-		private final StringBuilder where = new StringBuilder(" WHERE u.deleted_at IS NULL AND u.org_id = ?");
+		private final StringBuilder where = new StringBuilder(" WHERE u.deleted_at IS NULL AND u.org_id = ? AND u.role_code = 'MANAGER'");
 		private final List<Object> args = new ArrayList<>();
 
 		private Filter(UUID orgId, UUID cohortId) {

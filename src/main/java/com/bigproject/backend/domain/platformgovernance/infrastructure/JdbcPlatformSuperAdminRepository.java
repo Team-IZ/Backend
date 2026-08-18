@@ -30,9 +30,8 @@ public class JdbcPlatformSuperAdminRepository implements PlatformSuperAdminRepos
 	private static final String SELECT_SUPER_ADMINS = """
 			SELECT u.user_id, u.name, u.email, u.status, u.last_login_at, u.created_at
 			FROM app_user u
-			JOIN "role" r ON r.role_id = u.role_id
 			WHERE u.deleted_at IS NULL
-				AND r.code = ?
+				AND u.role_code = ?
 			""";
 
 	private final JdbcTemplate jdbcTemplate;
@@ -60,10 +59,9 @@ public class JdbcPlatformSuperAdminRepository implements PlatformSuperAdminRepos
 		String sql = """
 				SELECT COUNT(*)
 				FROM app_user u
-				JOIN "role" r ON r.role_id = u.role_id
 				WHERE u.deleted_at IS NULL
 					AND u.status = 'ACTIVE'
-					AND r.code = ?
+					AND u.role_code = ?
 				""";
 		Integer count = jdbcTemplate.queryForObject(sql, Integer.class, SUPER_ADMIN_ROLE_CODE);
 		return count == null ? 0 : count;

@@ -26,10 +26,9 @@ public class JdbcManagerAccountRepository implements ManagerAccountRepository {
 		String sql = """
 				SELECT u.user_id, u.status
 				FROM app_user u
-				JOIN "role" r ON r.role_id = u.role_id
 				WHERE u.deleted_at IS NULL
 					AND u.org_id = ?
-					AND r.code = ?
+					AND u.role_code = ?
 					AND u.user_id = ?
 				""";
 		List<ManagerAccount> found = jdbcTemplate.query(
@@ -102,11 +101,10 @@ public class JdbcManagerAccountRepository implements ManagerAccountRepository {
 				SELECT t.token_id, t.user_id, t.invitation_id, t.target_email
 				FROM one_time_token t
 				JOIN app_user u ON u.user_id = t.user_id
-				JOIN "role" r ON r.role_id = u.role_id
 				WHERE t.token_id = ?
 					AND t.org_id = ?
 					AND t.purpose = ?
-					AND r.code = ?
+					AND u.role_code = ?
 					AND t.used_at IS NULL
 					AND t.invalidated_at IS NULL
 				""";

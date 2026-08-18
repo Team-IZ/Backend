@@ -77,10 +77,9 @@ public class JdbcOrganizationStatsRepository implements OrganizationStatsReposit
 		String sql = """
 				SELECT u.org_id, u.user_id, u.name, u.email
 				FROM app_user u
-				JOIN "role" r ON r.role_id = u.role_id
 				WHERE u.deleted_at IS NULL
 					AND u.status = 'ACTIVE'
-					AND r.code = ?
+					AND u.role_code = ?
 					AND u.org_id IN (%s)
 				ORDER BY u.name
 				""".formatted(placeholders(organizationIds));
@@ -111,16 +110,15 @@ public class JdbcOrganizationStatsRepository implements OrganizationStatsReposit
 		if (organizationIds.isEmpty()) {
 			return Map.of();
 		}
-		// cohort_member는 "기수 소속 교육생" 전용 테이블이지만, 다른 도메인 쿼리와 동일하게 r.code = 'TRAINEE'로 한 번 더 방어한다.
+		// cohort_member는 "기수 소속 교육생" 전용 테이블이지만, 다른 도메인 쿼리와 동일하게 u.role_code = 'TRAINEE'로 한 번 더 방어한다.
 		// left_at이 채워진(기수를 이미 나간) 교육생은 "현재" 소속 인원이 아니므로 제외한다.
 		String sql = """
 				SELECT cm.org_id, COUNT(*) AS cnt
 				FROM cohort_member cm
 				JOIN app_user u ON u.user_id = cm.user_id
-				JOIN "role" r ON r.role_id = u.role_id
 				WHERE u.deleted_at IS NULL
 					AND u.status = 'ACTIVE'
-					AND r.code = 'TRAINEE'
+					AND u.role_code = 'TRAINEE'
 					AND cm.left_at IS NULL
 					AND cm.org_id IN (%s)
 				GROUP BY cm.org_id
@@ -199,10 +197,9 @@ public class JdbcOrganizationStatsRepository implements OrganizationStatsReposit
 				SELECT COUNT(*) AS cnt
 				FROM cohort_member cm
 				JOIN app_user u ON u.user_id = cm.user_id
-				JOIN "role" r ON r.role_id = u.role_id
 				WHERE u.deleted_at IS NULL
 					AND u.status = 'ACTIVE'
-					AND r.code = 'TRAINEE'
+					AND u.role_code = 'TRAINEE'
 					AND cm.left_at IS NULL
 				""";
 		Integer count = jdbcTemplate.queryForObject(sql, Integer.class);
