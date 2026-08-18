@@ -60,9 +60,28 @@ class SessionTurnStoreTest {
 		repository = mock(JdbcSessionRepository.class);
 		store = new SessionTurnStore(repository, new SessionGuard(repository, new SessionExpirer(repository)));
 		when(repository.applyAnswer(any(), any(), anyString(), org.mockito.ArgumentMatchers.anyInt(),
-				org.mockito.ArgumentMatchers.anyBoolean(), anyString(), anyLong())).thenReturn(1);
+				org.mockito.ArgumentMatchers.anyBoolean(), anyString(), any(), anyLong())).thenReturn(1);
 		// AI가 준 커서(문제 + 축)를 단계 ID로 되돌릴 때 쓰인다. 비워 두면 커서 이동이 STAGE_NOT_FOUND로 죽는다.
 		when(repository.findStages(SESSION_ID)).thenReturn(List.of(stage(), nextStage()));
+	}
+
+	/**
+	 * 채점에 쓴 멱등키를 <b>판정과 같은 UPDATE로</b> 남긴다(37차 R1 후속).
+	 *
+	 * <p>이 값이 없으면 "이 점수가 어느 AI 호출에서 나왔나"에 답할 근거가 DB에 없다. 답변이
+	 * 접수되지 않는다는 신고를 받았을 때 서버 로그·AI 로그·DB 행을 잇는 유일한 열쇠라,
+	 * 저장 자체가 목적이다. 키는 결정론적이므로 채점 때 보낸 값과 정확히 같아야 한다.
+	 */
+	@Test
+	void 채점에_쓴_멱등키를_답변과_함께_남긴다() {
+		GradingInput input = input(AnswerSlot.QUESTION);
+
+		store.applyGrading(input, result(5, true, cursorAt("L2")), "답변");
+
+		UUID expected = SessionAnswerGrader.idempotencyKey(SESSION_ID, stage(), AnswerSlot.QUESTION);
+		verify(repository).applyAnswer(eq(STAGE_ID), eq(AnswerSlot.QUESTION), anyString(),
+				org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(),
+				anyString(), eq(expected), anyLong());
 	}
 
 	@Test
@@ -72,7 +91,7 @@ class SessionTurnStoreTest {
 		store.applyGrading(input, result(5, true, cursorAt("L2")), "답변");
 
 		verify(repository).applyAnswer(eq(STAGE_ID), eq(AnswerSlot.QUESTION), eq("답변"), eq(5), eq(true),
-				eq("PASSED"), anyLong());
+				eq("PASSED"), any(), anyLong());
 	}
 
 	/**
@@ -86,7 +105,7 @@ class SessionTurnStoreTest {
 		store.applyGrading(input, result(1, false, cursorAt("L1")), "답변");
 
 		verify(repository).applyAnswer(any(), any(), anyString(), org.mockito.ArgumentMatchers.anyInt(),
-				eq(false), eq("IN_PROGRESS"), anyLong());
+				eq(false), eq("IN_PROGRESS"), any(), anyLong());
 	}
 
 	/**
@@ -176,7 +195,7 @@ class SessionTurnStoreTest {
 		store.applyGrading(input, result(2, false, cursorAt("L2")), "답변");
 
 		verify(repository).applyAnswer(any(), eq(AnswerSlot.SECOND_HINT), anyString(),
-				org.mockito.ArgumentMatchers.anyInt(), eq(false), eq("NOT_PASSED"), anyLong());
+				org.mockito.ArgumentMatchers.anyInt(), eq(false), eq("NOT_PASSED"), any(), anyLong());
 	}
 
 	/**
@@ -236,15 +255,23 @@ class SessionTurnStoreTest {
 		assertThat(response.outcome()).isEqualTo("NEXT_TURN");
 	}
 
-	/** 다시 보기는 힌트가 없다(정의서 §6+). 미달이어도 자동으로 열리지 않는다. */
+	/**
+	 * 다시 보기에서도 미달이면 힌트가 자동으로 열린다(37차 R2).
+	 *
+	 * <p>이 경로가 막혀 있던 것이 교착의 원인이었다 — 힌트가 안 열리면 다음 슬롯이 열리지 않아
+	 * 그 축에서 빠져나갈 길이 없었다. 1차와 같은 경로를 그대로 쓴다.
+	 */
 	@Test
-	void 다시_보기에서는_자동_힌트도_열리지_않는다() {
+	void 다시_보기에서도_미달이면_자동으로_힌트가_열린다() {
+		when(repository.openHint(any(), any(), anyLong())).thenReturn(1);
 		GradingInput input = input(AnswerSlot.QUESTION, "REVIEW");
 
 		AnswerSubmitResponse response = store.applyGrading(input, result(1, false, cursorAt("L1")), "답변");
 
-		verify(repository, never()).openHint(any(), any(), anyLong());
-		assertThat(response.hint()).isNull();
+		// row_version은 방금의 applyAnswer가 1 올렸다 — 1차와 같은 경로라 같은 값을 쓴다.
+		verify(repository).openHint(STAGE_ID, AnswerSlot.FIRST_HINT, 4L);
+		assertThat(response.hint()).isNotNull();
+		assertThat(response.hint().hintsLeft()).isEqualTo(1);
 	}
 
 	/** 임계값 경계. 3점은 통과다 — DB CHECK의 {@code score >= 3}과 같은 값이어야 한다. */
@@ -252,14 +279,14 @@ class SessionTurnStoreTest {
 	void 삼점이면_통과다() {
 		store.applyGrading(input(AnswerSlot.QUESTION), result(3, true, cursorAt("L2")), "답변");
 
-		verify(repository).applyAnswer(any(), any(), anyString(), eq(3), eq(true), eq("PASSED"), anyLong());
+		verify(repository).applyAnswer(any(), any(), anyString(), eq(3), eq(true), eq("PASSED"), any(), anyLong());
 	}
 
 	@Test
 	void 삼점_미만이면_실패다() {
 		store.applyGrading(input(AnswerSlot.QUESTION), result(2, false, cursorAt("L1")), "답변");
 
-		verify(repository).applyAnswer(any(), any(), anyString(), eq(2), eq(false), eq("IN_PROGRESS"),
+		verify(repository).applyAnswer(any(), any(), anyString(), eq(2), eq(false), eq("IN_PROGRESS"), any(),
 				anyLong());
 	}
 
@@ -271,7 +298,7 @@ class SessionTurnStoreTest {
 	void AI의_통과_판정이_점수와_어긋나면_점수를_따른다() {
 		store.applyGrading(input(AnswerSlot.QUESTION), result(2, true, cursorAt("L1")), "답변");
 
-		verify(repository).applyAnswer(any(), any(), anyString(), eq(2), eq(false), eq("IN_PROGRESS"),
+		verify(repository).applyAnswer(any(), any(), anyString(), eq(2), eq(false), eq("IN_PROGRESS"), any(),
 				anyLong());
 	}
 
@@ -285,7 +312,7 @@ class SessionTurnStoreTest {
 				.extracting(exception -> ((SessionException) exception).getErrorCode())
 				.isEqualTo(SessionErrorCode.GRADING_FAILED);
 		verify(repository, never()).applyAnswer(any(), any(), anyString(),
-				org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(), anyString(),
+				org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(), anyString(), any(),
 				anyLong());
 	}
 
@@ -304,7 +331,7 @@ class SessionTurnStoreTest {
 				.extracting(exception -> ((SessionException) exception).getErrorCode())
 				.isEqualTo(SessionErrorCode.GRADING_FAILED);
 		verify(repository, never()).applyAnswer(any(), any(), anyString(),
-				org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(), anyString(),
+				org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(), anyString(), any(),
 				anyLong());
 	}
 
@@ -340,7 +367,7 @@ class SessionTurnStoreTest {
 	@Test
 	void 낙관적_잠금이_어긋나면_거절한다() {
 		when(repository.applyAnswer(any(), any(), anyString(), org.mockito.ArgumentMatchers.anyInt(),
-				org.mockito.ArgumentMatchers.anyBoolean(), anyString(), anyLong())).thenReturn(0);
+				org.mockito.ArgumentMatchers.anyBoolean(), anyString(), any(), anyLong())).thenReturn(0);
 		GradingInput input = input(AnswerSlot.QUESTION);
 
 		assertThatThrownBy(() -> store.applyGrading(input, result(5, true, cursorAt("L2")), "답변"))
@@ -415,6 +442,37 @@ class SessionTurnStoreTest {
 		assertThat(response.next().axisCode()).isEqualTo("L2");
 		assertThat(response.next().highlight())
 				.isEqualTo(new ProblemActivityResponse.Highlight("graph.py", 39, 41));
+	}
+
+	/**
+	 * 하이라이트가 스니펫보다 길게 적혀 있으면 <b>스니펫 마지막 줄로 잘라</b> 내려보낸다(37차 R4).
+	 *
+	 * <p>좌표와 본문이 다른 곳에서 오고 일치를 강제하는 제약이 없어, 실제로 4줄짜리 본문에 21~24줄을
+	 * 강조하라는 값이 나갔다. 화면은 없는 줄을 못 칠하므로 <b>강조가 소리 없이 절반만</b> 전달된다 —
+	 * 응답이 스스로 앞뒤가 맞으면 그 조용한 절단이 사라진다.
+	 */
+	@Test
+	void 하이라이트가_스니펫_밖으로_나가면_잘라서_준다() {
+		GradingInput input = new GradingInput(head("IN_PROGRESS", "INITIAL", null),
+				List.of(shortSnippetProblem()), stage(), AnswerSlot.QUESTION);
+
+		AnswerSubmitResponse response = store.applyGrading(input,
+				new AnswerResult(SESSION_ID, "IN_PROGRESS", turn(5, true), cursorAt("L2"),
+						new Question(PROBLEM_ID, "L2", 2, "질문2", null, 0), null, null, null, List.of()),
+				"답변");
+
+		// 저장된 값은 20~32인데 본문은 20~23까지뿐이다.
+		assertThat(response.next().highlight())
+				.isEqualTo(new ProblemActivityResponse.Highlight("handler.java", 21, 23));
+	}
+
+	/** 좌표가 본문보다 길게 적힌 문제. AI 응답이 어긋난 실측 사례를 그대로 옮겼다. */
+	private static SessionProblem shortSnippetProblem() {
+		return new SessionProblem(PROBLEM_ID, 1, "Optional 처리", "DESIGN_CHOICE", null, null, null,
+				"snippet-3", "java", "handler.java", 20, 32, "hash3", 1, lines(4), "content-hash-3",
+				List.of(new SessionProblemReference("QUESTION_HIGHLIGHT", 1, "handler.java", 21, 24, "L2",
+						null, "h3")),
+				List.of(stage(), nextStage()));
 	}
 
 	/** 그 축에 하이라이트가 없으면 문제의 대표 구간으로 떨어진다 — 강조가 사라지지는 않는다. */
@@ -508,9 +566,24 @@ class SessionTurnStoreTest {
 	}
 
 	/** 축별 하이라이트 두 벌을 단 문제. L4에는 일부러 없다. */
+	/**
+	 * 좌표({@code lineStart}~{@code lineEnd})와 실제 줄 수가 맞는 본문.
+	 *
+	 * <p>종전 픽스처는 {@code "코드 전체"} 한 줄이면서 1~60줄이라고 주장했다. 응답이 하이라이트를
+	 * 스니펫 안으로 자르게 되면서(37차 R4) 그 불일치가 시험에 드러났다 — 고칠 곳은 응답이 아니라
+	 * 픽스처다. 실제 응답의 {@code snippet}은 파일 전체이고 좌표와 맞는다.
+	 */
+	private static final String SIXTY_LINE_SNIPPET = lines(60);
+
+	private static String lines(int count) {
+		return java.util.stream.IntStream.rangeClosed(1, count)
+				.mapToObj(no -> "line " + no)
+				.collect(java.util.stream.Collectors.joining("\n"));
+	}
+
 	private static SessionProblem problem() {
 		return new SessionProblem(PROBLEM_ID, 1, "Graph 구성", "DESIGN_CHOICE", null, null, null,
-				"snippet-1", "python", "graph.py", 1, 60, "hash", 1, "코드 전체", "content-hash",
+				"snippet-1", "python", "graph.py", 1, 60, "hash", 1, SIXTY_LINE_SNIPPET, "content-hash",
 				List.of(new SessionProblemReference("QUESTION_HIGHLIGHT", 1, "graph.py", 5, 8, "L1", null, "h1"),
 						new SessionProblemReference("QUESTION_HIGHLIGHT", 2, "graph.py", 39, 41, "L2", null, "h2")),
 				List.of(stage(), nextStage()));
@@ -522,7 +595,7 @@ class SessionTurnStoreTest {
 	 */
 	private static SessionProblem secondProblem() {
 		return new SessionProblem(OTHER_PROBLEM_ID, 2, "Loader 구성", "DESIGN_CHOICE", null, null, null,
-				"snippet-2", "python", "loader.py", 1, 40, "hash2", 1, "코드 전체", "content-hash-2",
+				"snippet-2", "python", "loader.py", 1, 40, "hash2", 1, lines(40), "content-hash-2",
 				List.of(), List.of(nextProblemStage()));
 	}
 

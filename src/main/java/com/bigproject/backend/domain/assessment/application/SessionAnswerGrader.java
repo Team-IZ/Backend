@@ -18,7 +18,7 @@ import com.bigproject.backend.domain.assessment.domain.SessionModels.SlotState;
 import com.bigproject.backend.global.ai.AiCallException;
 import com.bigproject.backend.global.ai.AiClient;
 import com.bigproject.backend.global.ai.AiClientConfig;
-import com.bigproject.backend.global.ai.AiProxyWarmUp;
+import com.bigproject.backend.global.ai.AsyncAiProxyWarmUp;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -53,12 +53,12 @@ public class SessionAnswerGrader {
 	private static final String ANSWERS_PATH_PREFIX = AiClient.API_V0 + "/sessions/";
 
 	private final AiClient aiClient;
-	private final AiProxyWarmUp proxyWarmUp;
+	private final AsyncAiProxyWarmUp asyncWarmUp;
 
-	public SessionAnswerGrader(@Qualifier(AiClientConfig.AI_PROXY_CLIENT) AiClient aiClient,
-			AiProxyWarmUp proxyWarmUp) {
+	public SessionAnswerGrader(@Qualifier(AiClientConfig.AI_SESSION_CLIENT) AiClient aiClient,
+			AsyncAiProxyWarmUp asyncWarmUp) {
 		this.aiClient = aiClient;
-		this.proxyWarmUp = proxyWarmUp;
+		this.asyncWarmUp = asyncWarmUp;
 	}
 
 	/** 채점 모델. 비우면 AI 서버 기본값을 쓴다 — 다른 경로(analyses·curricula)와 같은 규칙이다. */
@@ -84,29 +84,62 @@ public class SessionAnswerGrader {
 
 		String path = ANSWERS_PATH_PREFIX + head.sessionId() + "/answers";
 		try {
-			return post(path, body, traceId);
-		} catch (AiCallException firstFailure) {
-			AiCallException finalFailure = firstFailure;
-			if (isGatewayFailure(firstFailure) && proxyWarmUp.warmUp()) {
-				log.warn("AI 게이트웨이 복구 후 채점을 한 번 재시도합니다: sessionId={}, status={}",
-						head.sessionId(), firstFailure.status());
-				try {
-					return post(path, body, traceId);
-				} catch (AiCallException retryFailure) {
-					finalFailure = retryFailure;
-				}
+			return post(path, body, traceId, head, currentStage, slot);
+		} catch (AiCallException failure) {
+			if (isGatewayFailure(failure)) {
+				// 종전에는 여기서 프록시를 깨우고(최대 150초) 같은 요청 안에서 한 번 더 보냈다(다시 150초).
+				// 읽기 타임아웃도 status가 비어 이 분기를 타므로 한 번의 제출이 최악 450초까지 늘어났는데,
+				// 그 전에 학생 연결이 끊겨 있어 되살린 응답이 닿을 곳이 없었다(37차 R1).
+				//
+				// 그래서 요청 안에서 기다리지 않는다. 깨우기는 뒤로 넘기고 지금은 곧바로 실패시킨다 —
+				// 학생은 같은 답을 다시 내면 되고, 그때는 깨어 있는 서버가 받는다. 멱등키가 자리마다
+				// 고정이라 재전송해도 LLM 비용이 늘지 않는다.
+				asyncWarmUp.wakeInBackground("session-grading-failure");
 			}
 			log.warn("채점 실패: sessionId={}, stageId={}, slot={}, retryable={}",
-					head.sessionId(), currentStage.problemStageId(), slot, finalFailure.retryable(), finalFailure);
-			throw new SessionException(SessionErrorCode.GRADING_FAILED, finalFailure);
+					head.sessionId(), currentStage.problemStageId(), slot, failure.retryable(), failure);
+			throw new SessionException(SessionErrorCode.GRADING_FAILED, failure);
 		}
 	}
 
-	private AnswerResult post(String path, AnswerSubmit body, String traceId) {
-		return aiClient.post(path, body, AnswerResult.class, body.clientRequestId(), traceId);
+	/**
+	 * AI 왕복 한 번. <b>성공·실패 양쪽에 소요 시간을 남긴다.</b>
+	 *
+	 * <p>이 자리에 계측이 없으면 "답변이 접수되지 않는다"는 신고를 받았을 때 세 가지를 가를 수 없다 —
+	 * ① AI가 끝내 응답하지 않았다(읽기 타임아웃까지 갔다) ② AI는 곧바로 응답했는데 중간 구간이 학생
+	 * 연결을 끊었다 ③ 잠든 원본을 깨우느라 오래 걸렸다. 셋의 조치가 각각 AI팀·인프라·웜업으로 달라서,
+	 * 구분하지 못하면 고칠 곳을 고를 수 없다.
+	 *
+	 * <p>성공을 {@code info}로 남기는 것은 의도적이다. 답변 하나에 한 줄이라 양이 문제 되지 않고,
+	 * <b>정상일 때의 소요 시간</b>을 모르면 비정상을 판정할 기준선이 없다.
+	 */
+	private AnswerResult post(String path, AnswerSubmit body, String traceId, SessionHead head,
+			SessionStage stage, AnswerSlot slot) {
+		long startedNanos = System.nanoTime();
+		try {
+			AnswerResult result = aiClient.post(path, body, AnswerResult.class, body.clientRequestId(), traceId);
+			log.info("채점 AI 응답: sessionId={}, stageId={}, slot={}, 소요={}ms, traceId={}, clientRequestId={}",
+					head.sessionId(), stage.problemStageId(), slot, elapsedMillis(startedNanos),
+					traceId, body.clientRequestId());
+			return result;
+		} catch (AiCallException exception) {
+			// status가 비어 있으면 응답 자체가 오지 않은 것이다(연결 실패·읽기 타임아웃).
+			// 그때의 소요 시간이 곧 우리가 기다린 상한이라, 이 값이 원인 판정의 핵심이다.
+			log.warn("채점 AI 실패: sessionId={}, stageId={}, slot={}, 소요={}ms, status={}, retryable={}, traceId={}",
+					head.sessionId(), stage.problemStageId(), slot, elapsedMillis(startedNanos),
+					exception.status(), exception.retryable(), traceId);
+			throw exception;
+		}
 	}
 
-	/** 프록시·원본 사이의 일시 장애만 웜업 후 재시도한다. 요청 오류인 4xx는 그대로 실패시킨다. */
+	private static long elapsedMillis(long startedNanos) {
+		return (System.nanoTime() - startedNanos) / 1_000_000L;
+	}
+
+	/**
+	 * 프록시·원본 사이의 일시 장애인가. 이때만 뒤에서 깨워 둔다 — 다음 제출이 빨리 성공하도록.
+	 * 요청 오류인 4xx는 깨워도 달라지지 않으므로 그대로 실패시킨다.
+	 */
 	private static boolean isGatewayFailure(AiCallException exception) {
 		if (!exception.retryable()) {
 			return false;

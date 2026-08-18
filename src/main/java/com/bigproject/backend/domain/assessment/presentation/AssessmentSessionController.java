@@ -85,7 +85,7 @@ public class AssessmentSessionController {
 					| 필드 | 타입 | 설명 |
 					|---|---|---|
 					| `sessionId` | UUID | 이후 네 경로가 모두 이 값을 쓴다 |
-					| `mode` | enum | `FIRST`(1차) · `REVIEW`(다시 보기). REVIEW는 힌트가 없고 판정에 반영되지 않는다 |
+					| `mode` | enum | `FIRST`(1차) · `REVIEW`(다시 보기). REVIEW는 판정에 반영되지 않는다(힌트는 1차와 같다) |
 					| `status` | enum | `READY`(시작 전 안내) · `IN_PROGRESS`(진행 중) |
 					| `currentProblemNo` | int? | 지금 서 있는 문제 번호(1~`problemTotal`). 시작 전이면 `null` |
 					| `problemTotal` | int | 생성된 문제 수. 화면의 `문제 n/N`의 N |
@@ -278,8 +278,10 @@ public class AssessmentSessionController {
 					만든 다음은 1차와 똑같다 — 받은 `sessionId`로 `POST /{sessionId}/start`를 부르면 된다.
 					커서·인트로 동의·문제별 20분 시계는 그쪽이 세운다.
 
-					⚠️ **다시 보기에는 힌트가 없다.** `POST /{sessionId}/hints`는 409 `HINT_NOT_AVAILABLE`이다
-					("지난번과 같은 질문이라 이미 한 번 들었어요").
+					**힌트도 1차와 똑같다.** `POST /{sessionId}/hints`가 그대로 열리고 미달 시 자동 지급도 돈다
+					(2026-08-18 변경). 종전에는 409 `HINT_NOT_AVAILABLE`로 막았는데, 그러면 미달한 축에서
+					다음 슬롯이 열리지 않아 세션이 그 자리에 갇혔다. 다만 문답·힌트가 1차의 복사본이라
+					**1차에서 이미 본 힌트를 다시 보게 된다** — 새 힌트가 생기지는 않는다.
 
 					## 두 번 눌러도 안전하다
 
@@ -483,6 +485,13 @@ public class AssessmentSessionController {
 					| `code` | object | 코드 패널. 구조는 아래 |
 					| `turns[]` | array | 이 문제에서 지금까지 확정된 문답. 화면은 위에서 아래로 쌓는다 |
 					| `current` | object? | 지금 물어보는 질문. 문제가 끝났으면 `null` |
+					| `problemStartedAt` | date-time? | 이 문제의 기산점. **지금 문제일 때만** 값이 있다 |
+					| `problemTimeLimitAt` | date-time? | 이 문제의 제한 시각. 화면의 문제별 카운트다운은 여기서 잰다 |
+
+					⏱️ **문제별 카운트다운은 `problemTimeLimitAt`에서 잰다**(2026-08-18 추가). 세션 시작
+					시각(`startedAt`)에서 재면 두 번째 문제부터 전부 틀린다 — 문제마다 20분을 새로 세기
+					때문이다. 서버가 문제를 접는 판정도 같은 값을 쓰므로 화면과 판정이 갈리지 않는다.
+					이미 끝난 문제를 열어 볼 때는 두 키가 모두 빠진다.
 
 					**code**
 
@@ -491,7 +500,12 @@ public class AssessmentSessionController {
 					| `path` | string | 파일 경로 |
 					| `language` | string | `PYTHON` · `JAVA` … 모르는 확장자는 `UNKNOWN` |
 					| `snippet` | string | **문제를 낸 파일 전체.** 자를 위치는 화면이 정한다 |
-					| `lineStart` · `lineEnd` | int | 강조할 구간(파일 기준 절대 줄 번호) |
+					| `lineStart` | int | `snippet` 첫 줄의 파일 기준 절대 줄 번호. 화면은 여기서부터 번호를 매긴다 |
+					| `lineEnd` | int | `snippet` 마지막 줄의 절대 줄 번호. **`snippet`에서 도출한다** — `lineEnd - lineStart + 1`이 곧 줄 수다 |
+
+					⚠️ **`highlight`는 `snippet` 밖으로 나가지 않는다**(2026-08-18 보정). 저장된 좌표가
+					`snippet`보다 길게 적혀 있는 경우가 있어(37차 R4), 서버가 `snippet` 마지막 줄로 잘라
+					내려보낸다. 화면은 받은 값을 그대로 믿고 칠하면 된다.
 					| `references[]` | array | `{ type, path, lineStart, lineEnd, axisCode }`. 호출부·관련 문맥. 화면은 접어 두고 필요할 때 편다 |
 
 					**turns[] 각 항목**
@@ -513,7 +527,7 @@ public class AssessmentSessionController {
 					| `questionText` | string | 질문 원문 |
 					| `shownHints[]` | array | 이미 연 힌트 문구. 없으면 빈 배열 |
 					| `hintsUsed` | int | 지금까지 쓴 힌트 수(0~2) |
-					| `hintsLeft` | int | 남은 힌트 수. 다시 보기는 항상 `0` |
+					| `hintsLeft` | int | 남은 힌트 수. 다시 보기도 1차와 같다 |
 					| `highlight` | object | 강조 구간 |
 					| `lastTurnOfSession` | boolean | `true`면 버튼이 `답변 제출하고 마치기`로 바뀐다 |
 
@@ -959,7 +973,7 @@ public class AssessmentSessionController {
 					| 코드 | 상태 | 언제 |
 					|---|---|---|
 					| `HINT_EXHAUSTED` | 409 | 단계당 2회를 다 썼다 |
-					| `HINT_NOT_AVAILABLE` | 409 | 다시 보기이거나, 이미 답을 제출한 질문이다 |
+					| `HINT_NOT_AVAILABLE` | 409 | 이미 끝난 질문이다(통과했거나 NOT_PASSED로 닫혔다) |
 					| `SESSION_NOT_STARTED` | 409 | `POST /start`를 아직 부르지 않았다 |
 					| `ASSESSMENT_WINDOW_CLOSED` | 409 | 개인 응시 창이 닫혔다 |
 

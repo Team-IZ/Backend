@@ -8,6 +8,7 @@ import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionProb
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionStage;
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SlotState;
 import com.bigproject.backend.domain.assessment.infrastructure.JdbcSessionRepository;
+import com.bigproject.backend.global.ai.AsyncAiProxyWarmUp;
 import com.bigproject.backend.domain.assessment.presentation.dto.HintResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.ProblemActivityResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.SessionActivityRequest;
@@ -59,7 +60,9 @@ class AssessmentSessionServiceTest {
 		expirer = mock(SessionExpirer.class);
 		SessionGuard guard = new SessionGuard(repository, expirer);
 		ReflectionTestUtils.setField(guard, "problemTimeLimitMinutes", PROBLEM_TIME_LIMIT_MINUTES);
-		service = new AssessmentSessionService(repository, guard, new SessionTurnStore(repository, guard), grader);
+		service = new AssessmentSessionService(repository, guard, new SessionTurnStore(repository, guard), grader,
+				mock(AsyncAiProxyWarmUp.class));
+		ReflectionTestUtils.setField(service, "problemTimeLimitMinutes", PROBLEM_TIME_LIMIT_MINUTES);
 	}
 
 	/** 힌트는 동결된 문구를 꺼내는 것뿐이다 — AI를 부르면 비용이 나가고 응답이 매번 달라진다. */
@@ -148,15 +151,26 @@ class AssessmentSessionServiceTest {
 				.isEqualTo(SessionErrorCode.HINT_EXHAUSTED);
 	}
 
-	/** 정의서 §6+ — "지난번과 같은 질문이라 이미 한 번 들었어요". 화면 문구만으로는 URL을 막지 못한다. */
+	/**
+	 * 다시 보기도 1차와 <b>똑같이</b> 힌트를 준다(37차 R2).
+	 *
+	 * <p>막아 두면 {@code *_hint_presented_at}이 안 찍히고, 그러면 {@code hintsUsed()}가 항상 0이라
+	 * {@code nextSlot()}이 영원히 {@code QUESTION}에 머문다 — 미달한 축에서 재제출이
+	 * {@code ANSWER_ALREADY_SUBMITTED}로 막히고 축도 닫히지 않아 세션이 그 자리에 갇혔다.
+	 * 이 시험은 그 교착이 다시 생기지 않는지를 지킨다.
+	 */
 	@Test
-	void 다시_보기에서는_힌트를_열_수_없다() {
+	void 다시_보기에서도_힌트가_열린다() {
 		when(repository.findOwned(SESSION_ID, USER_ID)).thenReturn(Optional.of(head("REVIEW")));
+		when(repository.findStage(STAGE_ID)).thenReturn(Optional.of(stage(0)));
+		when(repository.openHint(any(), any(), anyLong())).thenReturn(1);
 
-		assertThatThrownBy(() -> service.openHint(USER_ID, SESSION_ID))
-				.isInstanceOf(SessionException.class)
-				.extracting(exception -> ((SessionException) exception).getErrorCode())
-				.isEqualTo(SessionErrorCode.HINT_NOT_AVAILABLE);
+		HintResponse response = service.openHint(USER_ID, SESSION_ID);
+
+		assertThat(response.hintText()).isEqualTo("힌트1");
+		assertThat(response.hintsUsed()).isEqualTo(1);
+		assertThat(response.hintsLeft()).isEqualTo(1);
+		verify(repository).openHint(STAGE_ID, AnswerSlot.FIRST_HINT, 3L);
 	}
 
 	/** 정의서 §3 — "끝난 문제는 다시 열 수 없다". 진행 중인 세션에서는 커서가 선 문제만 열린다. */
@@ -240,7 +254,7 @@ class AssessmentSessionServiceTest {
 		service.recordActivity(USER_ID, SESSION_ID, new SessionActivityRequest(42, null, 3500));
 
 		verify(repository).recordAway(SESSION_ID, STAGE_ID, AnswerSlot.FIRST_HINT, 42);
-		verify(repository).recordFirstKeystroke(STAGE_ID, AnswerSlot.FIRST_HINT, 3500);
+		verify(repository).recordFirstKeystroke(SESSION_ID, STAGE_ID, AnswerSlot.FIRST_HINT, 3500);
 	}
 
 	/** 네트워크 장애는 특정 답변에 귀속시킬 성질이 아니다(DDL v08 주석). 세션 합계에만 쌓는다. */
@@ -251,7 +265,7 @@ class AssessmentSessionServiceTest {
 
 		service.recordActivity(USER_ID, SESSION_ID, new SessionActivityRequest(null, 8, null));
 
-		verify(repository).recordConnectionLoss(SESSION_ID, 8);
+		verify(repository).recordConnectionLoss(SESSION_ID, STAGE_ID, 8);
 		verify(repository, never()).recordAway(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt());
 	}
 

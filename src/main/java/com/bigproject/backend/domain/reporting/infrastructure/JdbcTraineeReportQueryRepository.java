@@ -34,6 +34,21 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 		// 교육생이 속한 기수의 회차를 전부 세우고(cohort_member) 응시·리포트를 LEFT JOIN한다.
 		// INITIAL 응시만 본다 — REVIEW(다시 보기)는 rev 서브쿼리에서 따로 읽는다.
 		//
+		// 🔴 report는 LATERAL … LIMIT 1이다. 평범한 LEFT JOIN이면 회차가 행 수만큼 늘어나 화면 목록에
+		// 같은 회차가 두 줄로 보인다(보고된 증상: `미니프로젝트 6차`가 두 번).
+		//
+		// 유일성을 믿을 수 없는 자리다. uq_report_active_user는
+		// (assessment_round_id, user_id, report_type) 유일성을 <b>lifecycle_status='ACTIVE'에서만</b>
+		// 건다. 그런데 이 쿼리의 조건은 `<> 'SUPERSEDED'`라 DRAFT까지 포함하므로 두 경로로 겹친다 —
+		//   · 같은 회차에 DRAFT 하나와 ACTIVE 하나가 함께 있다(재생성 중이거나 발행 전)
+		//   · report_type이 다른 두 건이 있다(CHECKPOINT · TRAINEE_FINAL)
+		// 둘 다 인덱스가 막지 않는다. 조건을 ACTIVE로 좁히는 방법도 있지만 그러면 발행 전 회차의
+		// 상태가 통째로 사라지므로, 행을 하나로 고르는 쪽을 택했다.
+		//
+		// cohort_member·measurement_attempt는 평범한 조인으로 둔다 — 각각 uq_cohort_member_cohort_id_user_id와
+		// uq_measurement_attempt_initial이 1행을 보장한다. 보장되는 것까지 LATERAL로 감싸면 어디가
+		// 실제로 위험한 자리인지 읽는 사람이 알 수 없게 된다.
+		//
 		// 정렬은 `project.sequence_no`가 앞이고 `round_no`가 뒤다. round_no는
 		// uq_project_assessment_round_no_active가 (project_id, round_no)라 **프로젝트 안에서만**
 		// 유일하고, 정의서가 "MINI_PROJECT는 활성 회차 정확히 1건, round_no=1"을 요구하므로
@@ -70,14 +85,26 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				      AND r.deleted_at IS NULL
 				JOIN project p
 				       ON p.project_id = r.project_id
+				-- 1행이 보장된다: uq_measurement_attempt_initial이 (assessment_round_id, user_id)에
+				-- attempt_type='INITIAL' 부분 유니크를 건다. 그래서 여기는 평범한 조인으로 둔다.
 				LEFT JOIN measurement_attempt ma
 				       ON ma.assessment_round_id = r.assessment_round_id
 				      AND ma.user_id = cm.user_id
 				      AND ma.attempt_type = 'INITIAL'
-				LEFT JOIN report rpt
-				       ON rpt.assessment_round_id = r.assessment_round_id
-				      AND rpt.user_id = cm.user_id
-				      AND rpt.lifecycle_status <> 'SUPERSEDED'
+				LEFT JOIN LATERAL (
+				       SELECT x.report_id, x.trainee_release_status, x.trainee_disclosure_scope, x.published_at
+				       FROM report x
+				       WHERE x.assessment_round_id = r.assessment_round_id
+				         AND x.user_id = cm.user_id
+				         AND x.lifecycle_status <> 'SUPERSEDED'
+				       -- report에는 created_at이 없다. 학생이 실제로 볼 수 있는 것을 먼저 고르고
+				       -- (RELEASED), 그다음 최근 발행 순으로 본다. report_id는 동률을 끊어 같은 입력에
+				       -- 늘 같은 행이 나오게 하는 마지막 기준이다.
+				       ORDER BY (x.trainee_release_status = 'RELEASED') DESC,
+				                x.published_at DESC NULLS LAST,
+				                x.report_id DESC
+				       LIMIT 1
+				) rpt ON TRUE
 				LEFT JOIN report_snapshot rs
 				       ON rs.report_id = rpt.report_id
 				      AND rs.is_active
