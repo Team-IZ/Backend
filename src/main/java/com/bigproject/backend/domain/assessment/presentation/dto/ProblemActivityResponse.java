@@ -8,6 +8,7 @@ import com.bigproject.backend.domain.assessment.domain.SessionModels.SlotState;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.media.Schema;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,7 +38,13 @@ public record ProblemActivityResponse(
 		List<Turn> turns,
 		// 문제가 끝나면 물어볼 것이 없다. NON_NULL이라 그때는 키가 빠지므로 required가 아니다.
 		@Schema(description = "지금 물어보는 질문. 문제가 끝났으면 이 키가 없다")
-		CurrentQuestion current
+		CurrentQuestion current,
+		@Schema(description = "이 문제를 시작한 시각(문제별 상한의 기산점). 시작 전이거나 지금 문제가 "
+				+ "아니면 이 키가 없다")
+		Instant problemStartedAt,
+		@Schema(description = "이 문제의 제한 시각. 화면의 문제별 카운트다운은 이 값에서 잰다. "
+				+ "서버가 문제를 접는 판정도 같은 값을 쓴다")
+		Instant problemTimeLimitAt
 ) {
 
 	@Schema(description = "코드 패널. snippet은 파일 전체이며 자를 위치는 화면이 정한다")
@@ -45,8 +52,11 @@ public record ProblemActivityResponse(
 			String path,
 			String language,
 			@Schema(description = "문제를 낸 파일 전체") String snippet,
-			@Schema(description = "강조할 구간 시작(파일 기준 절대 줄 번호)") int lineStart,
-			@Schema(description = "강조할 구간 끝") int lineEnd,
+			@Schema(description = "snippet 첫 줄의 파일 기준 절대 줄 번호. 화면은 여기서부터 번호를 매긴다")
+			int lineStart,
+			@Schema(description = "snippet 마지막 줄의 절대 줄 번호. snippet에서 도출하므로 "
+					+ "lineEnd - lineStart + 1 이 곧 snippet 줄 수다")
+			int lineEnd,
 			@Schema(description = "호출부·관련 문맥. 화면은 접어 두고 필요할 때 편다") List<Reference> references
 	) {
 	}
@@ -87,7 +97,7 @@ public record ProblemActivityResponse(
 			List<String> shownHints,
 			@Schema(description = "지금까지 쓴 힌트 수(0~2)", requiredMode = Schema.RequiredMode.REQUIRED)
 			int hintsUsed,
-			@Schema(description = "남은 힌트 수. 다시 보기는 항상 0이다",
+			@Schema(description = "남은 힌트 수. 다시 보기도 1차와 같다(2회)",
 					requiredMode = Schema.RequiredMode.REQUIRED)
 			int hintsLeft,
 			@Schema(description = "강조할 구간", requiredMode = Schema.RequiredMode.REQUIRED)
@@ -101,7 +111,8 @@ public record ProblemActivityResponse(
 	public record Highlight(String path, Integer lineStart, Integer lineEnd) {
 	}
 
-	public static ProblemActivityResponse of(SessionHead head, SessionProblem problem, int problemTotal) {
+	public static ProblemActivityResponse of(SessionHead head, SessionProblem problem, int problemTotal,
+			int problemTimeLimitMinutes) {
 		List<Turn> turns = new ArrayList<>();
 		CurrentQuestion current = null;
 
@@ -111,11 +122,30 @@ public record ProblemActivityResponse(
 			addTurn(turns, stage, AnswerSlot.SECOND_HINT, stage.secondHintText(), problem);
 
 			if (current == null && stage.problemStageId().equals(head.currentProblemStageId())) {
-				current = toCurrent(head, problem, stage);
+				current = toCurrent(problem, stage);
 			}
 		}
+		Instant startedAt = problemStartedAt(head, problem);
 		return new ProblemActivityResponse(problem.problemNo(), problemTotal, problem.title(),
-				toCode(problem), turns, current);
+				toCode(problem), turns, current, startedAt,
+				startedAt == null ? null : startedAt.plus(Duration.ofMinutes(problemTimeLimitMinutes)));
+	}
+
+	/**
+	 * 이 문제의 기산점. <b>지금 문제일 때만 값이 있다.</b>
+	 *
+	 * <p>{@code assessment_session.current_problem_started_at}은 이름 그대로 <b>지금</b> 문제의 것이라,
+	 * 이미 닫힌 문제를 열어 볼 때(세션 종료 후) 그 값을 그대로 주면 남의 시각을 이 문제의 것처럼 말하게
+	 * 된다. 커서가 이 문제를 가리킬 때만 내려보낸다.
+	 *
+	 * <p>이 값을 내려보내는 이유는 <b>화면이 셀 근거가 없었기</b> 때문이다(37차 R3). 세션 시작 시각에서
+	 * 재면 두 번째 문제부터 전부 틀리고, 틀린 카운트다운은 없는 것만 못하다. 서버가 문제를 접을 때 쓰는
+	 * 기준({@code SessionGuard})과 같은 값을 주어야 화면과 판정이 갈리지 않는다.
+	 */
+	private static Instant problemStartedAt(SessionHead head, SessionProblem problem) {
+		boolean isCurrent = head.currentProblemId() != null
+				&& head.currentProblemId().equals(problem.problemId());
+		return isCurrent ? head.currentProblemStartedAt() : null;
 	}
 
 	/**
@@ -132,7 +162,7 @@ public record ProblemActivityResponse(
 				state.answerText(), state.answeredAt(), highlight(problem, stage)));
 	}
 
-	private static CurrentQuestion toCurrent(SessionHead head, SessionProblem problem, SessionStage stage) {
+	private static CurrentQuestion toCurrent(SessionProblem problem, SessionStage stage) {
 		int hintsUsed = stage.hintsUsed();
 		List<String> shown = new ArrayList<>();
 		if (hintsUsed >= 1) {
@@ -141,8 +171,9 @@ public record ProblemActivityResponse(
 		if (hintsUsed >= 2) {
 			shown.add(stage.secondHintText());
 		}
-		// 다시 보기는 힌트가 없다. 화면은 버튼 자리에 이유 문구를 그리므로 남은 수를 0으로 내려보낸다.
-		int hintsLeft = head.isReview() ? 0 : 2 - hintsUsed;
+		// 다시 보기도 1차와 같은 수를 준다(37차 R2). 종전에는 여기서 0으로 눌러 화면이 버튼 대신
+		// 이유 문구를 그리게 했는데, 힌트 자체를 열게 되면서 그 특례가 사라졌다.
+		int hintsLeft = 2 - hintsUsed;
 		boolean lastTurn = isLastStageOfSession(problem, stage);
 		return new CurrentQuestion(stage.questionSequenceNo(), stage.questionText(), shown, hintsUsed,
 				hintsLeft, highlight(problem, stage), lastTurn);
@@ -172,14 +203,63 @@ public record ProblemActivityResponse(
 	 * 두 벌로 두면 한쪽만 고쳐져 같은 질문이 화면마다 다른 줄을 가리키게 된다.
 	 */
 	public static Highlight highlightOf(SessionProblem problem, String axisCode) {
-		return problem.references().stream()
+		Highlight highlight = problem.references().stream()
 				.filter(reference -> "QUESTION_HIGHLIGHT".equals(reference.referenceType())
 						&& axisCode != null && axisCode.equals(reference.axisCode()))
 				.findFirst()
 				.map(reference -> new Highlight(reference.sourcePath(), reference.lineStart(), reference.lineEnd()))
 				.orElseGet(() -> new Highlight(problem.sourcePath(), problem.lineStart(), problem.lineEnd()));
+		return clampToSnippet(highlight, problem);
 	}
 
+	/**
+	 * 하이라이트를 <b>실제로 보낸 스니펫 안</b>으로 자른다.
+	 *
+	 * <h2>왜 필요한가 (37차 R4)</h2>
+	 *
+	 * <p>두 값이 서로 다른 곳에서 온다 — 스니펫 원문은 {@code submission.code_snippets}, 좌표는
+	 * {@code assessment_problem}·{@code assessment_problem_reference}이고, 둘의 일치를 강제하는 제약이
+	 * 없다. AI 응답이 어긋나면 실측처럼 <b>4줄짜리 스니펫에 21~24줄을 강조하라</b>는 값이 그대로 나간다.
+	 *
+	 * <p>화면은 스니펫이 만들어 낸 줄에만 색을 칠하므로 깨지지는 않는다. 대신 <b>강조가 소리 없이
+	 * 잘린다</b> — 학생에게는 "이 범위를 보라"는 신호가 절반만 전달되고, 화면은 자기가 무엇을 못 그렸는지
+	 * 모른다. 응답이 스스로 앞뒤가 맞으면 그 조용한 절단이 사라진다.
+	 *
+	 * <p>DB 값은 고치지 않는다. 여기서 하는 일은 <b>API가 거짓말을 하지 않게</b> 하는 것뿐이고, 어긋난
+	 * 원본을 바로잡는 것은 AI 계약 쪽 일이다.
+	 */
+	private static Highlight clampToSnippet(Highlight highlight, SessionProblem problem) {
+		Integer lastLine = snippetLastLine(problem);
+		if (lastLine == null || highlight.lineStart() == null || highlight.lineEnd() == null) {
+			return highlight;
+		}
+		// 시작부터 스니펫 밖이면 자를 것이 없다. 억지로 당기면 AI가 가리킨 곳과 다른 줄을 강조하게 되는데,
+		// 엉뚱한 줄을 확신에 차서 칠하는 것보다 원본을 그대로 두고 화면이 못 그리는 편이 정직하다.
+		if (highlight.lineStart() > lastLine || highlight.lineEnd() <= lastLine) {
+			return highlight;
+		}
+		return new Highlight(highlight.path(), highlight.lineStart(), lastLine);
+	}
+
+	/** 스니펫이 실제로 덮는 마지막 줄 번호. 스니펫이 비었으면 {@code null}. */
+	private static Integer snippetLastLine(SessionProblem problem) {
+		String snippet = problem.codeSnippet();
+		if (snippet == null || snippet.isEmpty()) {
+			return null;
+		}
+		// -1: split이 끝의 빈 조각을 버리지 않게 한다. 마지막 줄이 개행으로 끝나면 그 뒤의 빈 줄까지
+		// 세어야 화면이 그리는 줄 수와 같아진다(화면도 같은 방식으로 쪼갠다).
+		return problem.lineStart() + snippet.split("\n", -1).length - 1;
+	}
+
+	/**
+	 * 코드 패널.
+	 *
+	 * <p>{@code lineEnd}를 {@code assessment_problem.source_line_end}가 아니라 <b>스니펫에서 도출한다.</b>
+	 * 저장된 값이 스니펫보다 길게 적혀 있는 경우가 실제로 있었고(37차 R4 — 20~32라고 적혀 있는데 본문은
+	 * 4줄), 그 값을 믿고 계산하는 쪽은 전부 틀린다. 화면이 줄 번호를 붙이는 근거는 {@code lineStart}와
+	 * 스니펫뿐이므로, 끝 번호도 같은 근거에서 나와야 응답이 스스로 앞뒤가 맞는다.
+	 */
 	private static Code toCode(SessionProblem problem) {
 		List<Reference> references = problem.references().stream()
 				// 대표 블록과 하이라이트는 code·highlight로 이미 나가므로 패널 목록에서는 뺀다.
@@ -188,8 +268,9 @@ public record ProblemActivityResponse(
 				.map(reference -> new Reference(reference.referenceType(), reference.sourcePath(),
 						reference.lineStart(), reference.lineEnd(), reference.axisCode()))
 				.toList();
+		Integer lastLine = snippetLastLine(problem);
 		return new Code(problem.sourcePath(), problem.codeLanguage(), problem.codeSnippet(),
-				problem.lineStart(), problem.lineEnd(), references);
+				problem.lineStart(), lastLine == null ? problem.lineEnd() : lastLine, references);
 	}
 
 }
