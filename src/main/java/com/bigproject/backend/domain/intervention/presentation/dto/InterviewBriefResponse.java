@@ -118,7 +118,10 @@ public record InterviewBriefResponse(
 								view.voidEvidence().unanswered(),
 								view.voidEvidence().totalQuestions(),
 								view.voidEvidence().copied(),
-								view.voidEvidence().durationMin()));
+								view.voidEvidence().durationMin(),
+								view.voidEvidence().windowLeaveCount(),
+								view.voidEvidence().connectionLossCount(),
+								view.voidEvidence().firstKeystrokeDelayMs()));
 	}
 
 	@Schema(description = "질문 항목")
@@ -191,6 +194,16 @@ public record InterviewBriefResponse(
 			boolean copied,
 
 			@Schema(description = "세션 시작~종료 분", example = "4")
-			int durationMin) {
+			int durationMin,
+
+			@Schema(description = "창을 떠난 횟수(39차 R2)", example = "3")
+			int windowLeaveCount,
+
+			@Schema(description = "연결이 끊긴 횟수(39차 R2)", example = "1")
+			int connectionLossCount,
+
+			@Schema(description = "문제·힌트 단계 중 가장 빠른(=가장 의심스러운) 첫 타이핑 지연(ms). "
+					+ "기록된 지연이 하나도 없으면 `null`(39차 R2)", example = "450", nullable = true)
+			Integer firstKeystrokeDelayMs) {
 	}
 }

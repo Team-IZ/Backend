@@ -617,17 +617,35 @@ public class JdbcSessionRepository {
 				 WHERE problem_stage_id = ? AND %s IS NULL
 				""".formatted(column, column), delayMs, problemStageId);
 		if (updated > 0) {
-			insertActivityLog(sessionId, problemStageId, "FIRST_KEYSTROKE_DELAY", delayMs);
+			insertActivityLog(sessionId, problemStageId, "FIRST_KEYSTROKE_DELAY", delayMs, occurredAt);
 		}
 	}
 
+	/**
+	 * {@code CURRICULUM_EVIDENCE}는 DDL {@code ck_assessment_problem_reference_shape}가
+	 * {@code source_path}/{@code line_*}를 강제로 NULL로 두는 대신 {@code teaches_id}를 채운다
+	 * (39차 R4). 그 자리를 대신할 라벨·근거 페이지를 여기서 {@code teaches}·
+	 * {@code curriculum_teaches_mapping}까지 조인해 함께 가져온다 — 조인 패턴은
+	 * {@code JdbcReportPayloadRepository.findTeaches}(reporting 도메인)와 같다.
+	 */
 	private Map<UUID, List<SessionProblemReference>> findReferences(UUID sessionId) {
 		Map<UUID, List<SessionProblemReference>> byProblem = new LinkedHashMap<>();
 		jdbc.query("""
 				SELECT DISTINCT r.problem_id, r.reference_type, r.display_order, r.source_path,
-				       r.source_line_start, r.source_line_end, r.axis_code, r.teaches_id, r.evidence_hash
+				       r.source_line_start, r.source_line_end, r.axis_code, r.teaches_id, r.evidence_hash,
+				       t.canonical_name AS teach_label,
+				       m.source_pages
 				  FROM assessment_problem_reference r
 				  JOIN problem_stage ps ON ps.problem_id = r.problem_id AND ps.session_id = ?
+				  LEFT JOIN teaches t ON t.teaches_id = r.teaches_id
+				  LEFT JOIN LATERAL (
+				      SELECT ARRAY(SELECT jsonb_array_elements_text(x.source_pages)::int) AS source_pages
+				        FROM curriculum_teaches_mapping x
+				       WHERE x.teaches_id = t.teaches_id
+				         AND x.mapping_status = 'ACTIVE'
+				       ORDER BY x.sequence_no
+				       LIMIT 1
+				  ) m ON TRUE
 				 ORDER BY r.problem_id, r.display_order
 				""", rs -> {
 			UUID problemId = rs.getObject("problem_id", UUID.class);
@@ -640,9 +658,20 @@ public class JdbcSessionRepository {
 							(Integer) rs.getObject("source_line_end"),
 							rs.getString("axis_code"),
 							rs.getObject("teaches_id", UUID.class),
-							rs.getString("evidence_hash")));
+							rs.getString("evidence_hash"),
+							rs.getString("teach_label"),
+							nullableIntList(rs, "source_pages")));
 		}, sessionId);
 		return byProblem;
+	}
+
+	private static List<Integer> nullableIntList(ResultSet rs, String column) throws SQLException {
+		java.sql.Array array = rs.getArray(column);
+		if (array == null) {
+			return null;
+		}
+		Integer[] boxed = (Integer[]) array.getArray();
+		return java.util.Arrays.asList(boxed);
 	}
 
 	/**

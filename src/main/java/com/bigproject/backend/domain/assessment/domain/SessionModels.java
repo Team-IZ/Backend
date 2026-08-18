@@ -119,7 +119,13 @@ public final class SessionModels {
 	) {
 	}
 
-	/** {@code assessment_problem_reference} 한 행. 호출부·교안 증적·하이라이트가 여기 들어 있다. */
+	/**
+	 * {@code assessment_problem_reference} 한 행. 호출부·교안 증적·하이라이트가 여기 들어 있다.
+	 *
+	 * <p>{@code teachLabel}·{@code sourcePages}는 {@code CURRICULUM_EVIDENCE}에서만 채워진다
+	 * (39차 R4) — 그 타입은 DDL이 {@code sourcePath}/{@code lineStart}/{@code lineEnd}를
+	 * 강제로 NULL로 두는 대신 {@code teachId}를 갖기 때문이다.
+	 */
 	public record SessionProblemReference(
 			String referenceType,
 			int displayOrder,
@@ -128,7 +134,9 @@ public final class SessionModels {
 			Integer lineEnd,
 			String axisCode,
 			UUID teachId,
-			String evidenceHash
+			String evidenceHash,
+			String teachLabel,
+			List<Integer> sourcePages
 	) {
 	}
 
