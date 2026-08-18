@@ -441,11 +441,10 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 						cmb.class_id
 					FROM cohort_member cm
 					JOIN app_user u ON u.user_id = cm.user_id
-					JOIN "role" ro ON ro.role_id = u.role_id
 					JOIN class_membership cmb ON cmb.cohort_member_id = cm.cohort_member_id
 					WHERE cm.cohort_id = ?
 						AND cm.org_id = ?
-						AND ro.code = 'TRAINEE'
+						AND u.role_code = 'TRAINEE'
 					ORDER BY cm.cohort_member_id, cmb.assigned_at DESC, cmb.class_membership_id DESC
 				)
 				SELECT
@@ -501,10 +500,9 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 					COUNT(*) FILTER (WHERE cm.left_at IS NOT NULL) AS withdrawn_count
 				FROM cohort_member cm
 				JOIN app_user u ON u.user_id = cm.user_id
-				JOIN "role" ro ON ro.role_id = u.role_id
 				WHERE cm.cohort_id = ?
 					AND cm.org_id = ?
-					AND ro.code = 'TRAINEE'
+					AND u.role_code = 'TRAINEE'
 				""",
 				(rs, rowNum) -> new RosterCount(rs.getLong("trainee_count"), rs.getLong("withdrawn_count")),
 				cohortId,
