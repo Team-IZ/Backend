@@ -70,11 +70,21 @@ public record ProjectResponse(
         // 다른 교안으로 걸어 0건이 나왔을 때 "정말 없어서"인지 "필터가 안 먹어서"인지도 구분되지 않았다.
         // 개념도 같다 — `3건 확정`이 아니라 무엇을 확정했는지가 그 회차의 정체다.
         @Schema(description = """
-                연결된 교안 파일명. 순서는 연결 순서(`sequence_no`)다.
+                연결된 교안 표시명 — **`파일명 v판번호`**. 순서는 연결 순서(`sequence_no`)다.
 
                 `curriculumCount`와 길이가 <b>다를 수 있다</b> — 개수는 연결 행을 그대로 세지만
-                이름은 못 찾은 항목이 빠진다. 개수 표시에는 `curriculumCount`를 쓸 것.""",
-                example = "[\"spring_backend_v1.pdf\"]")
+                이름은 못 찾은 항목이 빠진다. 개수 표시에는 `curriculumCount`를 쓸 것.
+
+                ### 34차 R7② — 뒤의 `v1`이 판번호다
+
+                종전에는 파일명만 실었다. 그러면 **같은 교안의 v1·v2가 한 기수에 섞일 때 표에서
+                구분되지 않아** 두 행의 「교안」 열이 같은 글자가 됐다. `curriculum_version.version_no`를
+                뒤에 붙인다.
+
+                파일명 자체에 `_v1`이 들어 있어 `spring_backend_v1.pdf v1`처럼 겹쳐 보일 수 있는데
+                **둘은 다른 축**이다 — 앞은 업로더가 붙인 글자이고 뒤가 원장의 판번호다. 파일명을
+                파싱해 지우면 `v10`·`_v2_final` 같은 이름에서 틀리므로 서버는 지우지 않는다.""",
+                example = "[\"spring_backend_v1.pdf v1\"]")
         List<String> curriculumNames,
 
         @Schema(description = """
@@ -163,8 +173,15 @@ public record ProjectResponse(
     public record ActionItem(
             UUID classId,
             String className,
-            @Schema(description = "UNSUBMITTED_TEAMS(제출 마감 지남·미제출) · ANALYSIS_FAILED_TEAMS(제출했으나 분석 실패)",
+            @Schema(description = """
+                    `UNSUBMITTED_TEAMS` 제출 마감 지남·미제출 · `ANALYSIS_FAILED_TEAMS` 제출했으나 분석 실패 ·
+                    **`INTERVIEW_BACKLOG` 면담이 아직 안 끝난 인원**(34차 R7①)""",
                     example = "UNSUBMITTED_TEAMS") String type,
-            @Schema(description = "해당 유형에 걸린 팀 수") int teamCount) {
+            @Schema(description = """
+                    해당 유형에 걸린 **팀 수**. 단, `INTERVIEW_BACKLOG`는 **사람 수**다.
+
+                    앞의 둘은 팀 단위 조치이고 면담은 사람 단위인데, 화면이 이미 이 자리를
+                    「숫자 + 단위」로 그리고 있어 필드를 새로 내지 않고 같은 자리를 씁니다.
+                    **단위는 `type`으로 갈라 주세요.**""") int teamCount) {
     }
 }

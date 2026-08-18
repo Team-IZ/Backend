@@ -129,6 +129,48 @@ public class JdbcProjectDependencyRepository implements ProjectDependencyReposit
 		return counts;
 	}
 
+	@Override
+	public Map<UUID, CurriculumUsageStat> findCurriculumUsageStats(Collection<UUID> projectIds) {
+		if (projectIds.isEmpty()) {
+			return Map.of();
+		}
+		Map<UUID, CurriculumUsageStat> stats = new HashMap<>();
+		jdbcTemplate.query("""
+						WITH attendance AS (
+						  SELECT a.project_id,
+						    COUNT(DISTINCT a.user_id) AS eligible,
+						    COUNT(DISTINCT a.user_id) FILTER (WHERE a.primary_attempt_id IS NOT NULL) AS attended
+						  FROM assessment_round_attendance a
+						  WHERE a.project_id = ANY (?)
+						  GROUP BY a.project_id
+						), published AS (
+						  SELECT r.project_id, COUNT(rep.report_id) AS published_count
+						  FROM project_assessment_round r
+						  JOIN report rep ON rep.assessment_round_id = r.assessment_round_id
+						    AND rep.report_type = 'CHECKPOINT'
+						    AND rep.lifecycle_status = 'ACTIVE'
+						    AND rep.published_at IS NOT NULL
+						  WHERE r.project_id = ANY (?) AND r.deleted_at IS NULL
+						  GROUP BY r.project_id
+						)
+						SELECT COALESCE(a.project_id, p.project_id) AS project_id,
+						  COALESCE(a.eligible, 0) AS eligible,
+						  COALESCE(a.attended, 0) AS attended,
+						  COALESCE(p.published_count, 0) AS published_count
+						FROM attendance a
+						FULL OUTER JOIN published p ON p.project_id = a.project_id
+						""",
+				statement -> {
+					statement.setArray(1, uuidArray(statement.getConnection(), projectIds));
+					statement.setArray(2, uuidArray(statement.getConnection(), projectIds));
+				},
+				(ResultSet rs) -> {
+					stats.put(rs.getObject("project_id", UUID.class), new CurriculumUsageStat(
+							rs.getInt("eligible"), rs.getInt("attended"), rs.getInt("published_count")));
+				});
+		return stats;
+	}
+
 	/**
 	 * IN 절을 물음표로 펼치지 않고 배열 하나로 넘긴다 — 대상 수가 조회마다 달라지면
 	 * 매번 다른 SQL이 되어 실행 계획 캐시가 무의미해진다.

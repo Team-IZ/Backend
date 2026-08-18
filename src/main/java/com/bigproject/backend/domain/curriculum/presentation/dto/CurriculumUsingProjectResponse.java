@@ -38,6 +38,21 @@ public record CurriculumUsingProjectResponse(
                 이미 문항을 받은 학생이 있는 회차를 경고 없이 지나가게 된다.
                 """, example = "24") int attendedCount,
 
+        @Schema(description = """
+                **그 회차의 대상 인원.** 화면 `58 / 71`의 분모다(34차 R16③).
+
+                종전에는 이 값이 없어 화면이 분자만 적었다 — 「58명」이 몇 명 중 58명인지
+                말할 수 없었다. `attendedCount`와 **같은 질의**에서 오므로 분자가 분모보다
+                커지는 순간이 없다.
+                """, example = "71") int eligibleCount,
+
+        @Schema(description = """
+                **회차 리포트가 발행됐는지**(34차 R16④).
+
+                `true`면 재분석이 **이미 나간 리포트와 어긋난다** — 경고의 무게가 다르다.
+                `attendedCount`가 0이 아니어도 아직 발행 전이면 되돌릴 여지가 있다.
+                """, example = "true") boolean reportPublished,
+
         @Schema(description = "이 회차가 지금 쓰고 있는 확정 검증 개념 이름. 재분석하면 교안 위치가 "
                 + "어긋날 개념들이다. 확정 전이면 빈 배열") List<String> conceptNames
 ) {
@@ -49,6 +64,8 @@ public record CurriculumUsingProjectResponse(
                 project.cohortId(),
                 project.cohortName(),
                 project.attendedCount(),
+                project.eligibleCount(),
+                project.reportPublished(),
                 project.conceptNames());
     }
 }
