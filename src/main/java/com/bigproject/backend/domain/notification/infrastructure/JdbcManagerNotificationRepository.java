@@ -22,35 +22,41 @@ public class JdbcManagerNotificationRepository implements ManagerNotificationRep
 	@Override
 	public List<InboxRow> findInbox(UUID managerId, UUID cohortId) {
 		String sql = """
-				WITH assigned AS (
-				  SELECT ma.class_id
-				  FROM manager_assignment ma JOIN class c ON c.class_id = ma.class_id
-				  WHERE ma.manager_user_id = ? AND ma.status = 'ACTIVE' AND ma.unassigned_at IS NULL
-				    AND c.cohort_id = ?
-				), attendance AS (
-				  SELECT 'ATTENDANCE:' || a.assessment_round_id || ':' || a.user_id AS item_id,
-				    CASE a.nudge_reason_code
-				      WHEN 'TEAM_SUBMISSION_MISSING' THEN 'SUBMISSION_MISSING'
-				      WHEN 'TEAM_ANALYSIS_FAILED' THEN 'ANALYSIS_FAILED'
-				      WHEN 'INDIVIDUAL_ASSESSMENT_NOT_STARTED' THEN 'ASSESSMENT_NOT_STARTED'
-				      ELSE CASE WHEN a.latest_review_attempt_id IS NOT NULL THEN 'REVIEW' ELSE 'ASSESSMENT' END
-				    END AS item_type,
-				    a.project_id, a.assessment_round_id, a.class_id, a.team_id, a.user_id,
-				    COALESCE(u.name, t.name, a.user_id::text) AS subject,
-				    COALESCE(a.primary_attempt_status, a.analysis_status, a.submission_deadline_status) AS source_status,
-				    a.nudge_reason_code AS reason_code,
-				    CONCAT_WS(' · ', a.round_name, a.submission_deadline_status, a.analysis_status,
-				      a.primary_attempt_status, a.latest_review_status) AS evidence,
-				    CASE WHEN a.nudge_reason_code IN ('TEAM_SUBMISSION_MISSING','TEAM_ANALYSIS_FAILED')
-				      THEN a.submission_due_at ELSE a.primary_assessment_close_at END AS deadline_at,
-				    a.as_of_at AS occurred_at,
-				    NOT a.nudge_eligible AS resolved, a.nudge_eligible AS reminder_eligible
-				  FROM assessment_round_attendance a
-				  JOIN assigned sc ON sc.class_id = a.class_id
-				  LEFT JOIN app_user u ON u.user_id = a.user_id
-				  LEFT JOIN team t ON t.team_id = a.team_id
-				  WHERE a.nudge_reason_code IS NOT NULL OR a.latest_review_attempt_id IS NOT NULL
-				), invalid_attempt AS (
+				                                ), attendance AS (
+                                      SELECT 'ATTENDANCE:' || a.assessment_round_id || ':' || a.user_id AS item_id,
+                                        CASE
+                                          WHEN a.nudge_reason_code = 'TEAM_SUBMISSION_MISSING' THEN 'SUBMISSION_MISSING'
+                                          WHEN a.nudge_reason_code = 'TEAM_ANALYSIS_FAILED' THEN 'ANALYSIS_FAILED'
+                                          WHEN a.nudge_reason_code = 'INDIVIDUAL_ASSESSMENT_NOT_STARTED' THEN 'ASSESSMENT_NOT_STARTED'
+                                          WHEN a.primary_terminal_reason_code = 'NOT_ATTENDED' THEN 'ABSENT'
+                                          WHEN a.latest_review_attempt_id IS NOT NULL
+                                            AND a.latest_review_status NOT IN ('COMPLETED', 'EXPIRED') THEN 'REVIEW'
+                                          ELSE 'ASSESSMENT'
+                                        END AS item_type,
+                                        a.project_id, a.assessment_round_id, a.class_id, a.team_id, a.user_id,
+                                        COALESCE(u.name, t.name, a.user_id::text) AS subject,
+                                        COALESCE(a.primary_attempt_status, a.analysis_status, a.submission_deadline_status) AS source_status,
+                                        COALESCE(a.nudge_reason_code, a.primary_terminal_reason_code) AS reason_code,
+                                        CONCAT_WS(' · ', a.round_name, a.submission_deadline_status, a.analysis_status,
+                                          a.primary_attempt_status, a.latest_review_status) AS evidence,
+                                        CASE WHEN a.nudge_reason_code IN ('TEAM_SUBMISSION_MISSING','TEAM_ANALYSIS_FAILED')
+                                          THEN a.submission_due_at ELSE a.primary_assessment_close_at END AS deadline_at,
+                                        a.as_of_at AS occurred_at,
+                                        CASE
+                                          WHEN a.primary_terminal_reason_code = 'NOT_ATTENDED' THEN FALSE
+                                          WHEN a.latest_review_attempt_id IS NOT NULL
+                                            AND a.latest_review_status NOT IN ('COMPLETED', 'EXPIRED') THEN FALSE
+                                          ELSE NOT a.nudge_eligible
+                                        END AS resolved,
+                                        a.nudge_eligible AS reminder_eligible
+                                      FROM assessment_round_attendance a
+                                      JOIN assigned sc ON sc.class_id = a.class_id
+                                      LEFT JOIN app_user u ON u.user_id = a.user_id
+                                      LEFT JOIN team t ON t.team_id = a.team_id
+                                      WHERE a.nudge_reason_code IS NOT NULL
+                                         OR a.latest_review_attempt_id IS NOT NULL
+                                         OR a.primary_terminal_reason_code = 'NOT_ATTENDED'
+                                    ), invalid_attempt AS (
 				  SELECT 'INVALID:' || v.attempt_id, 'INVALID_ATTEMPT', v.project_id,
 				    v.assessment_round_id, v.class_id, v.team_id, v.target_user_id,
 				    v.target_user_name, v.validity_review_status, v.validity_trigger_reason_code,
