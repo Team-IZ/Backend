@@ -53,6 +53,24 @@ public interface RefreshTokenJpaRepository extends JpaRepository<RefreshTokenJpa
 			""", nativeQuery = true)
 	int revokeActiveByUser(@Param("userId") UUID userId, @Param("revokedAt") Instant revokedAt);
 
+	/**
+	 * 관리자 조치로 전부 폐기한다. 사유를 {@code ROTATED}와 갈라 두어야 감사에서 정상 로그인 회전과
+	 * 구분되고, {@code revoked_by}가 있어야 "누가 끊었는가"가 남는다
+	 * ({@code ck_refresh_token_revoked_reason}이 허용하는 값 중 하나가 {@code ADMIN_REVOKED}다).
+	 */
+	@Modifying(flushAutomatically = true)
+	@Query(value = """
+			UPDATE refresh_token
+			SET revoked_at = :revokedAt, revoked_reason = 'ADMIN_REVOKED', revoked_by = :revokedBy
+			WHERE user_id = :userId
+				AND revoked_at IS NULL
+			""", nativeQuery = true)
+	int revokeActiveByAdmin(
+			@Param("userId") UUID userId,
+			@Param("revokedBy") UUID revokedBy,
+			@Param("revokedAt") Instant revokedAt
+	);
+
 	@Modifying(flushAutomatically = true)
 	@Query(value = """
 			UPDATE refresh_token
