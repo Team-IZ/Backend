@@ -14,7 +14,7 @@ import java.util.UUID;
  * <p>{@code app_user}는 JPA 엔티티가 없고 auth·member 도메인이 소유한 테이블이라,
  * organization 도메인의 통계 포트와 같은 방식으로 <b>읽기·상태변경 SQL</b>로만 접근한다.
  *
- * <p>슈퍼어드민은 기관에 속하지 않으므로 {@code org_id IS NULL}이며 {@code role.code = 'SUPER_ADMIN'}이다.
+ * <p>슈퍼어드민은 기관에 속하지 않으므로 {@code org_id IS NULL}이며 {@code app_user.role_code = 'SUPER_ADMIN'}이다.
  */
 public interface PlatformSuperAdminRepository {
 
