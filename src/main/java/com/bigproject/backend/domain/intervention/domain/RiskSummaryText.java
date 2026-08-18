@@ -31,9 +31,19 @@ import java.util.regex.Pattern;
  */
 public final class RiskSummaryText {
 
-	/** 문장 맨 앞의 {@code [SEVERE]}·{@code [WARN]}·{@code [INFO]}와 뒤따르는 공백. */
+	/**
+	 * 문장 맨 앞의 {@code [SEVERE]}·{@code [WARN]}·{@code [RISK]}와 뒤따르는 공백.
+	 *
+	 * <p>34차 R5로 {@code RISK}를 더했다. 32차 R4 때 이 목록을 만들면서 실서버에서 관측된 두
+	 * 종류만 넣었는데, 시드에는 <b>세 번째가 있었다</b> — 원장 전수로 {@code [SEVERE]} 69건 ·
+	 * {@code [WARN]} 56건 · {@code [RISK]} 34건이다. 앞의 둘이 사라지자 남은 하나가 드러났다.
+	 *
+	 * <p>원장은 DB 담당이 159건을 모두 정리했다. 이 정제는 그래도 남긴다 — 옛 형식이 어디선가
+	 * 다시 들어와도 화면에는 새지 않게 하는 것이 이 함수의 목적이고, 정리된 문장에는 아무 일도
+	 * 일어나지 않는다.
+	 */
 	private static final Pattern LEADING_TAG =
-			Pattern.compile("^\\s*\\[(?:SEVERE|WARN|WARNING|INFO|CRITICAL)\\]\\s*");
+			Pattern.compile("^\\s*\\[(?:SEVERE|WARN|WARNING|INFO|CRITICAL|RISK)\\]\\s*");
 
 	private RiskSummaryText() {
 	}

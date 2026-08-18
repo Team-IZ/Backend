@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.submission.domain;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -58,6 +59,60 @@ public interface SubmissionStatusQueryRepository {
 	 */
 	List<MemberRow> findMembers(
 			UUID assessmentRoundId, UUID organizationId, UUID managerUserId, UUID classId);
+
+	/**
+	 * MG-07 목록의 진행·조치를 <b>여러 회차 몫을 한 번에</b> 집계한다(34차 R8).
+	 *
+	 * <h2>왜 따로 냈는가</h2>
+	 *
+	 * <p>목록은 행마다 진행·조치를 계산했고, 그 한 행이 {@code findRound}·{@code findTeams}·
+	 * {@code findMembers}로 <b>조회 3건</b>을 돌았다. 회차가 늘면 그대로 곱해져 프론트가 잰
+	 * <b>회차당 약 0.86초</b>가 됐다(고정 1.9초 + 회차당 0.86초 · 8회차 기수 7.9초).
+	 *
+	 * <p>게다가 목록에 필요한 것은 <b>숫자 몇 개</b>뿐인데 팀 행·개인 행을 통째로 실어 왔다.
+	 * 제출 URL·제출자 이름·분석 실패 사유까지 끌고 와서 세기만 하고 버렸다. 그래서 행을
+	 * 나르지 않고 <b>세어서</b> 돌려준다.
+	 *
+	 * <h2>기준은 상세 조회와 같다</h2>
+	 *
+	 * <p>「응시 완료」는 {@code terminal_at}이 있거나 {@code completion_status='COMPLETED'}이고,
+	 * 「미제출」은 레코드 존재가 아니라 {@code submitted_at}으로 판정한다 — 접수 중인 제출을
+	 * '냈다'로 세지 않기 위해서다. 제출·분석을 팀당 한 건씩 접는 기준도 {@link #findTeams}와
+	 * 같은 {@code LATERAL}이라, 목록과 상세가 같은 팀을 두고 다른 말을 하지 않는다.
+	 *
+	 * <p><b>팀에 배정되지 않은 사람은 빠진다.</b> 팀을 통해서만 어느 반인지 알 수 있고, 목록의
+	 * 분모도 팀이 있는 사람 기준이다 — 서비스가 하던 {@code team == null → continue}와 같다.
+	 *
+	 * @param assessmentRoundIds 비어 있으면 조회하지 않고 빈 목록이다
+	 * @param classId            담당 반 중 하나로 좁힐 때만 지정한다. null이면 담당 반 전체
+	 */
+	List<ManagerProgressAggregate> findManagerProgressAggregates(
+			Collection<UUID> assessmentRoundIds, UUID organizationId, UUID managerUserId, UUID classId);
+
+	/**
+	 * 회차 × 반 하나의 집계다.
+	 *
+	 * @param assessedCount 응시를 마친 인원. 화면 `응시 58/71`의 분자
+	 * @param targetCount   그 반에서 팀에 배정된 인원. 분모
+	 */
+	record ManagerProgressAggregate(
+			UUID assessmentRoundId,
+			UUID classId,
+			String className,
+			long assessedCount,
+			long targetCount,
+			int unsubmittedTeamCount,
+			int analysisFailedTeamCount,
+			/**
+			 * 면담 대기·진행 인원(34차 R7①). <b>팀 수가 아니라 사람 수</b>다.
+			 * 판정 기준은 MG-03 면담 목록과 같다 — 제외된 후보와 끝난 면담은 뺀다.
+			 */
+			int interviewBacklogCount
+	) {
+	}
+
+	/** 여러 프로젝트의 같은 순번 회차를 한 번에. {@link #findRound}의 묶음판이다(34차 R8). */
+	List<RoundScope> findRounds(Collection<UUID> projectIds, int roundNo);
 
 	/**
 	 * 프로젝트가 정의한 요구사항 목록. 팀이 아니라 <b>프로젝트</b>에 달린 값이라 팀마다 반복해 싣지 않고

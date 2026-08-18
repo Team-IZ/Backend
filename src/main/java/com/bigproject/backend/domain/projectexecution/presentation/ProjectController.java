@@ -241,9 +241,8 @@ public class ProjectController {
 				cohort, orgId,
 				new ProjectService.ProjectListCriteria(search, curriculumId, status, sort, classId, category));
 		ProjectListResponse response = ProjectListResponse.from(list);
-		List<ProjectResponse> enriched = response.projects().stream()
-				.map(project -> enrichWithProgress(project, authentication.getName(), classId))
-				.toList();
+		List<ProjectResponse> enriched = enrichWithProgress(
+				response.projects(), authentication.getName(), classId);
 		return ResponseEntity.ok(new ProjectListResponse(
 				enriched, response.total(), response.counts(), response.readinessCounts()));
 	}
@@ -257,13 +256,26 @@ public class ProjectController {
 	 * 있다"(MG-07 정의)는 원칙에 따라 진행·조치도 필터 결과와 같은 스코프여야 한다. 여러 반을
 	 * 동시에 골랐으면(담당 반이 여럿) 좁힐 기준이 하나로 정해지지 않으므로 담당 반 전체로 계산한다.
 	 */
-	private ProjectResponse enrichWithProgress(ProjectResponse project, String email, List<UUID> classId) {
-		if (project.category() != ProjectCategory.MINI_PROJECT) {
-			return project;
-		}
+	private List<ProjectResponse> enrichWithProgress(
+			List<ProjectResponse> projects, String email, List<UUID> classId) {
 		UUID scopeClassId = (classId != null && classId.size() == 1) ? classId.get(0) : null;
-		var result = submissionStatusService.findManagerProjectProgress(email, project.projectId(), scopeClassId);
-		return project.withProgress(toProgress(result.progress()), toActionItems(result.actionItems()));
+		List<UUID> targets = projects.stream()
+				.filter(project -> project.category() == ProjectCategory.MINI_PROJECT)
+				.map(ProjectResponse::projectId)
+				.toList();
+		/*
+		 * 34차 R8 — 종전에는 이 자리가 행마다 한 번씩 돌았고, 한 번이 조회 3건이었다.
+		 * 회차가 늘면 그대로 곱해져 회차당 0.86초가 붙었다. 이제 목록 전체가 조회 2건이다.
+		 */
+		var progressByProject = submissionStatusService.findManagerProjectProgress(email, targets, scopeClassId);
+		return projects.stream()
+				.map(project -> {
+					var result = progressByProject.get(project.projectId());
+					// 키가 없으면 잴 것이 없는 프로젝트다(빅프로젝트·PLANNED·팀 없음).
+					return result == null ? project
+							: project.withProgress(toProgress(result.progress()), toActionItems(result.actionItems()));
+				})
+				.toList();
 	}
 
 	private ProjectResponse.Progress toProgress(SubmissionStatusService.ManagerProjectProgress.Progress progress) {

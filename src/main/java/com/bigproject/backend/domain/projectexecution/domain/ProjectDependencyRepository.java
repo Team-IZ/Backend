@@ -61,6 +61,27 @@ public interface ProjectDependencyRepository {
 	Map<UUID, Integer> countAttendedByProject(Collection<UUID> projectIds);
 
 	/**
+	 * 교안 「쓰인 회차」 한 줄이 필요한 수치를 한 번에(34차 R16③④).
+	 *
+	 * <p>종전에는 응시 인원({@code attendedCount})만 있어 화면이 <b>분자만</b> 적었다 —
+	 * 「58명」이라고만 쓰고 그것이 몇 명 중 58명인지 말할 수 없었다. 발행 여부도 없어
+	 * 재분석 경고의 무게를 가릴 수 없었다.
+	 *
+	 * <p>세 값을 한 질의로 낸다. 분모와 분자가 다른 조회에서 오면 그 사이에 응시가 시작될 때
+	 * <b>분자가 분모보다 커지는</b> 순간이 생긴다.
+	 */
+	Map<UUID, CurriculumUsageStat> findCurriculumUsageStats(Collection<UUID> projectIds);
+
+	/**
+	 * @param eligibleCount       그 회차의 대상 인원. 화면 `58 / 71`의 분모
+	 * @param attendedCount       응시를 <b>시작한</b> 인원. 분자
+	 * @param publishedReportCount 발행된 회차 리포트 수. 0이면 아직 발행 전이라
+	 *                             재분석해도 어긋날 리포트가 없다
+	 */
+	record CurriculumUsageStat(int eligibleCount, int attendedCount, int publishedReportCount) {
+	}
+
+	/**
 	 /**
 	 * 반(class) 하나에 편성된 팀들이 참여 중인 프로젝트 ID 목록(중복 제거).
 	 * team을 거쳐 이어 붙인다 — Project 자체는 class 연관이 없다. 이 반에 팀이

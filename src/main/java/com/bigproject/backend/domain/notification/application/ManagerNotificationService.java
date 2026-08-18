@@ -49,9 +49,21 @@ public class ManagerNotificationService {
 			OffsetDateTime since, boolean includeResolved, String cursor, int size) {
 		var actor = scopeGuard.requireCohort(email, cohortId);
 		String afterId = decodeCursor(cursor);
+		/*
+		 * 34차 R9 — 밴드가 1차 정렬 기준이다.
+		 *
+		 * 「서버가 급한 순을 정해 주면 화면이 정렬하지 않겠다」는 요청이라, 화면이 섹션을 나누는
+		 * 기준과 목록 순서가 어긋나면 안 된다. 밴드를 앞에 두고 종전 기준(유형 → 마감 → 발생)을
+		 * 밴드 안의 순서로 남긴다 — 같은 밴드 안에서는 지금까지와 같은 순서다.
+		 *
+		 * now를 한 번만 읽어 정렬과 응답이 같은 시각을 본다. 행마다 새로 읽으면 자정 경계에서
+		 * 정렬 기준과 실린 밴드가 갈릴 수 있다.
+		 */
+		OffsetDateTime now = OffsetDateTime.now();
 		Comparator<ManagerNotificationRepository.InboxRow> order = Comparator
 				.<ManagerNotificationRepository.InboxRow, Integer>comparing(
-						row -> TYPE_PRIORITY.getOrDefault(row.itemType(), 5))
+						row -> NotificationInboxResponse.InboxItem.bandOf(row.deadlineAt(), now))
+				.thenComparing(row -> TYPE_PRIORITY.getOrDefault(row.itemType(), 5))
 				.thenComparing(ManagerNotificationRepository.InboxRow::deadlineAt,
 						Comparator.nullsLast(Comparator.naturalOrder()))
 				.thenComparing(ManagerNotificationRepository.InboxRow::occurredAt, Comparator.reverseOrder())
@@ -72,7 +84,8 @@ public class ManagerNotificationService {
 		boolean hasNext = filtered.size() > size;
 		List<ManagerNotificationRepository.InboxRow> page = filtered.subList(0, Math.min(size, filtered.size()));
 		String next = hasNext && !page.isEmpty() ? encodeCursor(page.get(page.size() - 1).itemId()) : null;
-		return new NotificationInboxResponse(page.stream().map(NotificationInboxResponse.InboxItem::from).toList(), next);
+		return new NotificationInboxResponse(
+				page.stream().map(row -> NotificationInboxResponse.InboxItem.from(row, now)).toList(), next);
 	}
 
 	@Transactional

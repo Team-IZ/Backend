@@ -282,6 +282,18 @@ public class SubmissionStatusService {
 			public static final String UNSUBMITTED_TEAMS = "UNSUBMITTED_TEAMS";
 			/** 제출은 했지만 코드 분석이 실패한 팀. 재제출을 안내해야 한다. */
 			public static final String ANALYSIS_FAILED_TEAMS = "ANALYSIS_FAILED_TEAMS";
+			/**
+			 * 면담이 아직 안 끝난 인원(34차 R7①).
+			 *
+			 * <p><b>{@code teamCount}에 팀이 아니라 사람 수가 들어간다.</b> 앞의 둘은 팀 단위
+			 * 조치이고 면담은 사람 단위인데, 화면이 이미 그 자리를 「숫자 + 단위」로 그리고 있어
+			 * 필드를 새로 내지 않고 같은 자리를 쓴다(프론트 제안). 단위는 화면이 {@code type}으로
+			 * 가른다.
+			 *
+			 * <p>종료된 회차의 조치 열이 늘 비어 있던 것을 메운다 — 회차 6개 중 5개가 종료
+			 * 상태라 표의 5/6이 「—」였다.
+			 */
+			public static final String INTERVIEW_BACKLOG = "INTERVIEW_BACKLOG";
 		}
 	}
 
@@ -295,6 +307,117 @@ public class SubmissionStatusService {
 	 * <p><b>회차가 없거나 아직 시작 전인 프로젝트는 {@code progress}가 null이다.</b> 0/0으로 채우면
 	 * 화면이 "아무도 응시 안 함"으로 읽는데, 예정 회차는 그것과 다르다 — 잴 것 자체가 없다.
 	 */
+	/**
+	 * MG-07 목록 <b>여러 행</b>의 진행·조치를 한 번에 계산한다(34차 R8).
+	 *
+	 * <h2>왜 묶었는가</h2>
+	 *
+	 * <p>종전에는 목록이 행마다 {@link #findManagerProjectProgress}를 불렀고, 그 안에서 회차·팀·개인
+	 * 조회 3건이 돌았다. 회차가 늘면 그대로 곱해져 <b>회차당 약 0.86초</b>가 붙었다(프론트 34차 R8).
+	 * 이제 회차 조회 1건 + 집계 1건으로 <b>목록 전체가 2건</b>이다.
+	 *
+	 * <p>판정 기준은 종전과 같다 — 계산을 자바에서 SQL로 옮겼을 뿐이라 같은 회차에서 같은 값이
+	 * 나와야 한다. {@code PLANNED}가 {@code null}인 것도, 팀 미배정이 분모에서 빠지는 것도 그대로다.
+	 *
+	 * @return 프로젝트별 진행·조치. <b>키가 없는 프로젝트는 잴 것이 없다는 뜻</b>이며 호출자가
+	 *         빈 값으로 그린다
+	 */
+	public Map<UUID, ManagerProjectProgress> findManagerProjectProgress(
+			String email, List<UUID> projectIds, UUID classId) {
+		if (projectIds.isEmpty()) {
+			return Map.of();
+		}
+		// 미니프로젝트는 회차가 프로젝트당 1건이라 round_no=1로 특정된다.
+		var rounds = repository.findRounds(projectIds, 1).stream()
+				// 아직 열리지 않은 회차는 잴 것이 없다. 0/0으로 채우면 화면이 "아무도 응시 안 함"으로
+				// 읽는데, 예정 회차는 그것과 다르다.
+				.filter(round -> !"PLANNED".equals(round.projectLifecycleStatus()))
+				.toList();
+		if (rounds.isEmpty()) {
+			return Map.of();
+		}
+
+		Map<UUID, ManagerProjectProgress> result = new LinkedHashMap<>();
+		// 기수·기관이 섞인 목록은 스코프가 다르므로 묶어서 각각 집계한다. 보통은 한 벌이다.
+		var byScope = rounds.stream().collect(Collectors.groupingBy(
+				round -> List.of(round.cohortId(), round.organizationId()),
+				LinkedHashMap::new, Collectors.toList()));
+
+		byScope.forEach((scope, scopeRounds) -> {
+			UUID cohortId = (UUID) scope.get(0);
+			UUID orgId = (UUID) scope.get(1);
+			var actor = scopeGuard.requireCohort(email, cohortId);
+			UUID managerUserId = actor.userId();
+
+			// 담당 밖 반을 지정했으면 빈 결과가 아니라 404다 — 빈 결과로 두면 화면이
+			// "팀이 없는 회차"로 잘못 읽는다. 목록 전체에 한 번만 검사한다.
+			if (classId != null && !repository.isClassManagedBy(managerUserId, classId, cohortId)) {
+				throw new ApiException(ManagerViewAccessErrorCode.MANAGER_SCOPE_NOT_FOUND);
+			}
+
+			var roundIds = scopeRounds.stream()
+					.map(SubmissionStatusQueryRepository.RoundScope::assessmentRoundId).toList();
+			var byRound = repository
+					.findManagerProgressAggregates(roundIds, orgId, managerUserId, classId).stream()
+					.collect(Collectors.groupingBy(
+							SubmissionStatusQueryRepository.ManagerProgressAggregate::assessmentRoundId));
+
+			for (var round : scopeRounds) {
+				var rows = byRound.get(round.assessmentRoundId());
+				if (rows == null || rows.isEmpty()) {
+					continue;
+				}
+				result.put(round.projectId(),
+						new ManagerProjectProgress(progressOf(rows), actionItemsOf(rows)));
+			}
+		});
+		return result;
+	}
+
+	/** 집계 행에서 합계와 <b>가장 뒤처진 반</b>을 만든다. 기준은 {@link #calculateProgress}와 같다. */
+	private ManagerProjectProgress.Progress progressOf(
+			List<SubmissionStatusQueryRepository.ManagerProgressAggregate> rows) {
+		long assessed = 0;
+		long target = 0;
+		for (var row : rows) {
+			assessed += row.assessedCount();
+			target += row.targetCount();
+		}
+		if (target == 0) {
+			return null;
+		}
+		// 담당 반이 하나뿐이면 합계가 곧 그 반이라 따로 집어 봐야 의미가 없다.
+		var withMembers = rows.stream().filter(row -> row.targetCount() > 0).toList();
+		ManagerProjectProgress.LaggingClass lagging = withMembers.size() < 2 ? null : withMembers.stream()
+				.min(Comparator.comparingDouble(
+						row -> (double) row.assessedCount() / row.targetCount()))
+				.map(row -> new ManagerProjectProgress.LaggingClass(
+						row.classId(), row.className(), row.assessedCount(), row.targetCount()))
+				.orElse(null);
+		return new ManagerProjectProgress.Progress(assessed, target, lagging);
+	}
+
+	/** 0건인 반은 항목을 만들지 않는다 — 조치 열이 비는 것이 정상이며 화면은 그때 —를 그린다. */
+	private List<ManagerProjectProgress.ActionItem> actionItemsOf(
+			List<SubmissionStatusQueryRepository.ManagerProgressAggregate> rows) {
+		List<ManagerProjectProgress.ActionItem> items = new ArrayList<>();
+		for (var row : rows) {
+			if (row.unsubmittedTeamCount() > 0) {
+				items.add(new ManagerProjectProgress.ActionItem(row.classId(), row.className(),
+						ManagerProjectProgress.ActionItem.UNSUBMITTED_TEAMS, row.unsubmittedTeamCount()));
+			}
+			if (row.analysisFailedTeamCount() > 0) {
+				items.add(new ManagerProjectProgress.ActionItem(row.classId(), row.className(),
+						ManagerProjectProgress.ActionItem.ANALYSIS_FAILED_TEAMS, row.analysisFailedTeamCount()));
+			}
+			if (row.interviewBacklogCount() > 0) {
+				items.add(new ManagerProjectProgress.ActionItem(row.classId(), row.className(),
+						ManagerProjectProgress.ActionItem.INTERVIEW_BACKLOG, row.interviewBacklogCount()));
+			}
+		}
+		return items;
+	}
+
 	public ManagerProjectProgress findManagerProjectProgress(String email, UUID projectId, UUID classId) {
 		// 미니프로젝트는 회차가 프로젝트당 1건이라 round_no=1로 특정된다.
 		var round = repository.findRound(projectId, 1).orElse(null);

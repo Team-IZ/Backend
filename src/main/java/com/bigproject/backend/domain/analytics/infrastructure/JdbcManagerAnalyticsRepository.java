@@ -156,6 +156,58 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 		return count == null ? 0 : count;
 	}
 
+	/*
+	 * 34차 R2·R3 — 결과가 하나도 없는 인원.
+	 *
+	 * 개인 뷰 하나로 세 계층을 다 센다. 팀 뷰에도 problem_no IS NULL 묶음이 있지만, 팀 뷰는 이미
+	 * 집계된 값이라 「몇 명인지」를 되찾을 수 없다. 사람 수를 세는 것이 이 조회의 목적이라 개인
+	 * grain에서 센다.
+	 *
+	 * 이름 조인이 LEFT인 이유는 인터페이스 설명 참고 — 팀 배정이 회차 창에 안 걸린 인원도 합계에는
+	 * 들어가야 한다.
+	 */
+	private static final String UNRESOLVED_SQL = """
+			SELECT %1$s AS row_id, %2$s AS row_name,
+			  COUNT(*) FILTER (WHERE h.problem_result_status = 'NOT_ATTENDED')::integer AS not_attended_count,
+			  COUNT(*) FILTER (WHERE h.problem_result_status = 'INVALID')::integer AS invalid_count,
+			  COUNT(*) FILTER (WHERE h.problem_result_status = 'INTERRUPTED')::integer AS interrupted_count,
+			  COUNT(*) FILTER (WHERE h.problem_result_status NOT IN
+			    ('NOT_ATTENDED','INVALID','INTERRUPTED','VALID'))::integer AS pending_count
+			FROM manager_trainee_heatmap_view h
+			""" + MANAGER_SCOPE.formatted("h.class_id") + """
+			%3$s
+			WHERE h.cohort_id = ? AND h.project_id = ? AND h.assessment_round_id = ?
+			  AND h.problem_no IS NULL
+			  AND (?::uuid IS NULL OR h.class_id = ?::uuid)
+			  AND (?::uuid IS NULL OR h.team_id = ?::uuid)
+			GROUP BY %1$s, %2$s
+			ORDER BY %2$s
+			""";
+
+	@Override
+	public List<UnresolvedGroup> findUnresolved(
+			UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId,
+			String level, UUID classroomId, UUID teamId) {
+		String sql = switch (level) {
+			case "CLASS" -> UNRESOLVED_SQL.formatted(
+					"h.class_id", "c.name", "LEFT JOIN class c ON c.class_id = h.class_id");
+			case "TEAM" -> UNRESOLVED_SQL.formatted(
+					"h.team_id", "t.name", "LEFT JOIN team t ON t.team_id = h.team_id");
+			case "TRAINEE" -> UNRESOLVED_SQL.formatted(
+					"h.user_id", "u.name", "LEFT JOIN app_user u ON u.user_id = h.user_id");
+			default -> null;
+		};
+		if (sql == null) {
+			return List.of();
+		}
+		return jdbcTemplate.query(sql, (rs, n) -> new UnresolvedGroup(
+				rs.getObject("row_id", UUID.class), rs.getString("row_name"),
+				rs.getInt("not_attended_count"), rs.getInt("invalid_count"),
+				rs.getInt("interrupted_count"), rs.getInt("pending_count")),
+				managerId, cohortId, projectId, assessmentRoundId,
+				classroomId, classroomId, teamId, teamId);
+	}
+
 	@Override
 	public List<ConceptAxis> findConcepts(
 			UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId) {

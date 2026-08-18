@@ -191,6 +191,107 @@ class ManagerViewAnalyticsServiceTest {
 		assertThat(response.summary().cells().get(0).value()).isEqualByComparingTo("2.4");
 	}
 
+	/**
+	 * 34차 R2 — 결과가 하나도 없는 사람이 세 카운터 어디에도 안 잡히던 것.
+	 *
+	 * <p>명부 21명 · 유효 8명인데 미응시·무효·중단이 전부 0이면 화면이 차이를 설명할 수 없다.
+	 */
+	@Test
+	void summaryCountsResultlessTraineesAndExposesTheRemainder() {
+		stubConceptsAndClassrooms();
+		when(repository.findSummary(managerId, cohortId, projectId, roundId, null, null))
+				.thenReturn(List.of(cell(null, null, 1, "2.4")));
+		when(repository.findUnresolved(managerId, cohortId, projectId, roundId, "CLASS", null, null))
+				.thenReturn(List.of(new ManagerAnalyticsRepository.UnresolvedGroup(
+						classroomId, "C반", 1, 0, 0, 0)));
+
+		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
+				ManagerHeatmapResponse.Level.CLASS, ManagerHeatmapResponse.AttemptView.INITIAL, null, null);
+
+		assertThat(response.summary().cells().get(0)).satisfies(cell -> {
+			assertThat(cell.validCount()).isEqualTo(8);
+			// 격자에 자리가 없던 1명이 미응시로 잡힌다.
+			assertThat(cell.notAttendedCount()).isEqualTo(1);
+			// 21 − 8(유효) − 1(미응시) = 12. 이 자리가 없어서 차이를 설명하지 못했다.
+			assertThat(cell.notInRoundCount()).isEqualTo(12);
+		});
+	}
+
+	/** 34차 R3 — 팀원 전원이 분석 실패라 팀 행 자체가 사라지던 것. */
+	@Test
+	void teamWithNoResultsStillGetsRow() {
+		UUID missingTeamId = UUID.randomUUID();
+		stubConceptsAndClassrooms();
+		when(repository.findParticipatingTeams(managerId, cohortId, projectId, roundId, classroomId))
+				.thenReturn(List.of(
+						new ManagerAnalyticsRepository.TeamParticipant(teamId, "2팀", 3),
+						new ManagerAnalyticsRepository.TeamParticipant(missingTeamId, "4팀", 4)));
+		when(repository.findHeatmap(managerId, cohortId, projectId, roundId,
+				"TEAM", "INITIAL", classroomId, null)).thenReturn(List.of(cell(teamId, "2팀", 1, "1.7")));
+		when(repository.findUnresolved(managerId, cohortId, projectId, roundId, "TEAM", classroomId, null))
+				.thenReturn(List.of(new ManagerAnalyticsRepository.UnresolvedGroup(
+						missingTeamId, "4팀", 0, 0, 4, 0)));
+
+		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
+				ManagerHeatmapResponse.Level.TEAM, ManagerHeatmapResponse.AttemptView.INITIAL, classroomId, null);
+
+		// 되살린 행이 이름 순 제자리에 들어간다 — 2팀 다음이 4팀이다.
+		assertThat(response.rows()).extracting(ManagerHeatmapResponse.Row::rowName)
+				.containsExactly("2팀", "4팀");
+		assertThat(response.rows().get(1)).satisfies(row -> {
+			assertThat(row.memberCount()).isEqualTo(4);
+			// 개념 축만큼 열이 서고, 표본이 없으니 값은 비운다.
+			assertThat(row.cells()).hasSize(2);
+			assertThat(row.cells().get(0).value()).isNull();
+			assertThat(row.cells().get(0).status()).isEqualTo("NO_VALID_RESULT");
+			assertThat(row.cells().get(0).interruptedCount()).isEqualTo(4);
+		});
+	}
+
+	/** 개인 행은 카운터가 아니라 그 사람의 상태를 싣는다 — 화면이 「미응시」를 그대로 그린다. */
+	@Test
+	void traineeWithNoResultsCarriesOwnStatus() {
+		UUID gradedId = UUID.randomUUID();
+		UUID absentId = UUID.randomUUID();
+		stubConceptsAndClassrooms();
+		when(repository.findParticipatingTeams(managerId, cohortId, projectId, roundId, classroomId))
+				.thenReturn(List.of(new ManagerAnalyticsRepository.TeamParticipant(teamId, "2팀", 5)));
+		when(repository.findHeatmap(managerId, cohortId, projectId, roundId,
+				"TRAINEE", "INITIAL", classroomId, teamId)).thenReturn(List.of(
+				cell(gradedId, "김민준", 1, "3")));
+		when(repository.findUnresolved(managerId, cohortId, projectId, roundId, "TRAINEE", classroomId, teamId))
+				.thenReturn(List.of(new ManagerAnalyticsRepository.UnresolvedGroup(
+						absentId, "한유진", 1, 0, 0, 0)));
+
+		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
+				ManagerHeatmapResponse.Level.TRAINEE, ManagerHeatmapResponse.AttemptView.INITIAL,
+				classroomId, teamId);
+
+		assertThat(response.rows()).extracting(ManagerHeatmapResponse.Row::rowName)
+				.containsExactly("김민준", "한유진");
+		assertThat(response.rows().get(1)).satisfies(row -> {
+			assertThat(row.memberCount()).isNull();
+			assertThat(row.cells().get(0).value()).isNull();
+			assertThat(row.cells().get(0).status()).isEqualTo("NOT_ATTENDED");
+			// 개인 셀은 애초에 카운터가 없다.
+			assertThat(row.cells().get(0).notAttendedCount()).isNull();
+		});
+	}
+
+	/** REVIEW는 「안 친 사람」이 정상이라 결과 없는 인원을 세지 않는다. */
+	@Test
+	void reviewHeatmapDoesNotCountResultlessTrainees() {
+		stubConceptsAndClassrooms();
+		when(repository.findParticipatingTeams(managerId, cohortId, projectId, roundId, classroomId))
+				.thenReturn(List.of(new ManagerAnalyticsRepository.TeamParticipant(teamId, "2팀", 3)));
+
+		service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
+				ManagerHeatmapResponse.Level.TRAINEE, ManagerHeatmapResponse.AttemptView.REVIEW,
+				classroomId, teamId);
+
+		verify(repository, never()).findUnresolved(any(), any(), any(), any(), any(), any(), any());
+	}
+
 	private void stubConceptsAndClassrooms() {
 		when(repository.findConcepts(managerId, cohortId, projectId, roundId)).thenReturn(List.of(
 				new ManagerAnalyticsRepository.ConceptAxis(1, UUID.randomUUID(), "JWT 인증·인가"),

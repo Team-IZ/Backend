@@ -24,6 +24,39 @@ public interface ManagerAnalyticsRepository {
 			UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId,
 			UUID classroomId, UUID teamId);
 
+	/**
+	 * <b>이 회차에 수행은 있는데 문제 결과가 하나도 없는 인원</b>이다(34차 R2·R3).
+	 *
+	 * <h2>왜 따로 세는가</h2>
+	 *
+	 * <p>히트맵 뷰의 grain은 {@code problem_stage}다. 세션을 아예 열지 못한 수행은
+	 * <b>{@code problem_no}가 {@code NULL}인 행 하나</b>로만 남는데, 격자 질의가 전부
+	 * {@code problem_no IS NOT NULL}로 그 행을 버렸다. 그래서 그 사람은 {@code rows}에서도
+	 * 사라지고 {@code summary}의 세 카운터에도 안 잡혔다 — 화면에는 「전체 5명」이라 쓰고
+	 * 4행만 그리면서 <b>차이를 설명할 자리가 어디에도 없는</b> 상태가 됐다.
+	 *
+	 * <p>실제로 두 가지가 여기 있다.
+	 *
+	 * <pre>
+	 * 미응시      status=EXPIRED · terminal=NOT_ATTENDED     세션이 없다
+	 * 분석 실패    status=FAILED  · terminal=ANALYSIS_FAILED  팀 전체가 통째로 빠진다
+	 * </pre>
+	 *
+	 * <p>뒤쪽이 34차 R3다 — 한 팀의 팀원 전원이 이 상태면 <b>팀 행 자체가 없어져</b> 매니저가
+	 * 그 팀으로 들어갈 방법이 사라진다.
+	 *
+	 * <h2>{@code rowId}가 {@code null}일 수 있다</h2>
+	 *
+	 * <p>이름 조인을 {@code LEFT}로 둔다. 팀 배정이 회차 시점 창에 걸리지 않으면 뷰의
+	 * {@code team_id}가 {@code NULL}로 오는데, 그 인원도 <b>합계에서는 세야</b> 하기 때문이다.
+	 * 행으로 그릴 수 없을 뿐이라, 합계는 전부 더하고 행은 이름이 있는 것만 만든다.
+	 *
+	 * @param level {@code CLASS}·{@code TEAM}·{@code TRAINEE}. 묶는 단위를 정한다
+	 */
+	List<UnresolvedGroup> findUnresolved(
+			UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId,
+			String level, UUID classroomId, UUID teamId);
+
 	List<ConceptAxis> findConcepts(UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId);
 
 	/** 반·문항별 집단 미달 판정이다. 유효 응시자가 없으면 값이 {@code null}이다. */
@@ -47,6 +80,42 @@ public interface ManagerAnalyticsRepository {
 			UUID rowId, String rowName, int problemNo, BigDecimal value, String status,
 			Integer validCount, Integer notAttendedCount, Integer invalidCount, Integer interruptedCount,
 			Integer initialLevel, Integer comparisonLevel, Integer delta, OffsetDateTime asOfAt) {
+	}
+
+	/**
+	 * 결과가 하나도 없는 인원을 계층 단위로 묶은 것이다(34차 R2·R3).
+	 *
+	 * <p>{@code rowId}·{@code rowName}은 이름을 못 찾으면 {@code null}이다 —
+	 * {@link #findUnresolved} 설명 참고.
+	 */
+	record UnresolvedGroup(
+			UUID rowId, String rowName,
+			int notAttendedCount, int invalidCount, int interruptedCount, int pendingCount) {
+
+		/** 이 묶음의 인원. 격자에 자리가 없던 사람들의 수다. */
+		public int total() {
+			return notAttendedCount + invalidCount + interruptedCount + pendingCount;
+		}
+
+		/**
+		 * 개인 행에 그릴 상태 하나.
+		 *
+		 * <p>개인은 넷 중 하나만 1이라 사실상 그 값이 그대로 나온다. 한 사람에게 INITIAL 수행이
+		 * 둘 이상 있는 드문 경우에만 우선순위가 쓰이며, <b>사람이 먼저 봐야 하는 순</b>으로 둔다 —
+		 * 무효 확정이 가장 무겁고, 판정 전({@code PENDING})이 가장 가볍다.
+		 */
+		public String dominantStatus() {
+			if (invalidCount > 0) {
+				return "INVALID";
+			}
+			if (interruptedCount > 0) {
+				return "INTERRUPTED";
+			}
+			if (notAttendedCount > 0) {
+				return "NOT_ATTENDED";
+			}
+			return "PENDING";
+		}
 	}
 
 	record ConceptAxis(int problemNo, UUID teachesId, String conceptName) {
