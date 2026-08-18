@@ -135,7 +135,7 @@ public class ReportController {
 
 	@Operation(
 			operationId = "findManagedReports",
-			summary = "담당 반 리포트 목록 조회 (매니저) | ⚠️ 사용 불가",
+			summary = "담당 반 리포트 목록 조회 (매니저) | ✅ 사용 가능",
 			description = """
 					매니저가 **담당하는 반**의 개인 리포트 목록. 발행 여부와 공개 상태만 준다.
 
