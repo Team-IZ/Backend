@@ -45,9 +45,12 @@ public record TraineeReportsResponse(
 	 *
 	 * @param id      <b>회차</b> 식별자(assessmentRoundId)다. 리포트 ID가 아니다 —
 	 *                미응시 회차는 리포트 행 자체가 없어 목록의 키로 쓸 수 없기 때문이다.
-	 * @param reportId 이 회차의 리포트 식별자. <b>회차당 최대 1건</b>이다
-	 *                ({@code uq_report_active_user}가 (assessment_round_id, user_id, report_type)로
-	 *                유일성을 건다). 아직 리포트가 만들어지지 않은 회차({@code NOT_ATTEMPTED} 등)에서는
+	 * @param reportId 이 회차의 리포트 식별자. 응답에서는 <b>회차당 최대 1건</b>이다 — 다만 그것을
+	 *                보장하는 것은 인덱스가 아니라 조회 쿼리다. {@code uq_report_active_user}는
+	 *                {@code lifecycle_status='ACTIVE'}에서만, 그것도 {@code report_type}을 포함해
+	 *                유일성을 걸어서 DRAFT가 함께 있거나 유형이 둘이면 행이 늘어난다(실제로 회차가
+	 *                두 번 보였다). 그래서 {@code JdbcTraineeReportQueryRepository}가 하나를 고른다.
+	 *                아직 리포트가 만들어지지 않은 회차({@code NOT_ATTEMPTED} 등)에서는
 	 *                키가 빠진다. {@code GET /reports/{reportId}} 단건 조회에 이 값을 쓴다 —
 	 *                {@code id}(회차 ID)로 부르면 404다.
 	 * @param status  {@code PUBLISHED} · {@code PENDING_PUBLISH} · {@code PENDING_VISIBILITY}
