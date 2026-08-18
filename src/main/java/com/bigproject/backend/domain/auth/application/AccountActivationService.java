@@ -15,7 +15,6 @@ import com.bigproject.backend.domain.member.application.OneTimeTokenHasher;
 import com.bigproject.backend.domain.member.domain.InvitationPurpose;
 import com.bigproject.backend.domain.member.domain.Role;
 import com.bigproject.backend.global.exception.ApiException;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +32,7 @@ public class AccountActivationService {
 	private final AccountActivationRepository accountActivationRepository;
 	private final OneTimeTokenHasher tokenHasher;
 	private final PasswordEncoder passwordEncoder;
+	private final ConsentDocumentCatalog consentDocumentCatalog;
 	private final int consentPolicyVersion;
 	private final PasswordPolicy passwordPolicy = new PasswordPolicy();
 
@@ -40,12 +40,15 @@ public class AccountActivationService {
 			AccountActivationRepository accountActivationRepository,
 			OneTimeTokenHasher tokenHasher,
 			PasswordEncoder passwordEncoder,
-			@Value("${consent.policy-version:1}") int consentPolicyVersion
+			ConsentDocumentCatalog consentDocumentCatalog
 	) {
 		this.accountActivationRepository = accountActivationRepository;
 		this.tokenHasher = tokenHasher;
 		this.passwordEncoder = passwordEncoder;
-		this.consentPolicyVersion = consentPolicyVersion;
+		this.consentDocumentCatalog = consentDocumentCatalog;
+		// 표시한 문서와 기록에 남는 버전이 갈리면 증적이 가리키는 대상이 흐려진다 —
+		// 화면에 내려보내는 카탈로그와 같은 값을 쓴다.
+		this.consentPolicyVersion = consentDocumentCatalog.policyVersion();
 	}
 
 	@Transactional
@@ -204,6 +207,26 @@ public class AccountActivationService {
 		return new ActivateAccountResponse(target.userId(), target.email(), name, target.role(), true);
 	}
 
+	/**
+	 * 동의 1건마다 {@code consent_record} 행을 만든다.
+	 *
+	 * <h2>{@code evidence_hash}의 재료 — 본문 해시가 빠져 있었다</h2>
+	 *
+	 * <p>DDL은 이 컬럼을 <b>"정책 본문·표시 정보의 무결성 검증 해시"</b>로 정의한다. 그런데 종전
+	 * 재료는 {@code userId|tokenId|코드|버전번호|동의여부|시각|채널|requestId}뿐이라 <b>본문이
+	 * 없었다.</b> 그러면 나중에 "1버전" 문안을 조용히 고쳐도 기존 기록의 해시가 그대로 유효해서
+	 * <b>"이 사용자가 무슨 내용에 동의했는가"를 증명할 수 없다</b> — 증적의 존재 이유가 사라진다.
+	 *
+	 * <p>지금 재료는 이 순서다(구분자 {@code |}).
+	 *
+	 * <pre>
+	 * userId | tokenId | 코드 | 정책버전 | <b>문서해시</b> | 동의여부 | 동의시각 | 채널 | requestId
+	 * </pre>
+	 *
+	 * <p>검증할 때는 같은 순서로 다시 조립해 SHA-256을 계산한다. 문서해시는
+	 * {@link ConsentDocumentCatalog}가 리소스 파일에서 계산한 값이므로, 문안이 한 글자라도 바뀌면
+	 * 그 시점 이후의 기록과 이전 기록이 서로 다른 문서를 가리켰다는 사실이 드러난다.
+	 */
 	private List<ConsentRecord> consentRecords(
 			AccountActivationTarget target,
 			List<ConsentChoice> choices,
@@ -220,6 +243,8 @@ public class AccountActivationService {
 					target.tokenId().toString(),
 					choice.code().name(),
 					Integer.toString(consentPolicyVersion),
+					// 🔴 본문 해시가 여기 있어야 evidence_hash가 DDL 주석대로 동작한다(아래 주석 참고).
+					consentDocumentCatalog.find(choice.code()).documentHash(),
 					Boolean.toString(choice.agreed()),
 					capturedAt.toString(),
 					CAPTURE_CHANNEL,
