@@ -41,15 +41,33 @@ class AccountActivationServiceTest {
 	private static final String PASSWORD = "SafePass1!";
 	private static final TokenRequestMetadata METADATA = new TokenRequestMetadata("127.0.0.1", "test-agent");
 
+	private static final String DOCUMENT_HASH =
+			"1111111111111111111111111111111111111111111111111111111111111111";
+
 	private final AccountActivationRepository repository = mock(AccountActivationRepository.class);
 	private final OneTimeTokenHasher tokenHasher = new OneTimeTokenHasher();
 	private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+	/**
+	 * 실물 대신 스텁을 쓴다. 여기서 확인할 것은 문안 파일을 읽는 일(그건
+	 * {@code ConsentDocumentCatalogTest}가 본다)이 아니라, <b>카탈로그가 준 버전과 문서 해시가
+	 * 동의 기록까지 그대로 흘러가는가</b>이기 때문이다. 버전을 3으로 두면 코드에 1이 박혀 있는
+	 * 경우가 드러난다.
+	 */
+	private final ConsentDocumentCatalog consentDocumentCatalog = stubCatalog(DOCUMENT_HASH);
 	private final AccountActivationService service = new AccountActivationService(
 			repository,
 			tokenHasher,
 			passwordEncoder,
-			3
+			consentDocumentCatalog
 	);
+
+	private static ConsentDocumentCatalog stubCatalog(String documentHash) {
+		ConsentDocumentCatalog catalog = mock(ConsentDocumentCatalog.class);
+		when(catalog.policyVersion()).thenReturn(3);
+		when(catalog.find(any())).thenReturn(
+				new ConsentDocumentCatalog.ConsentDocument("동의 문서 본문", documentHash));
+		return catalog;
+	}
 
 	@Test
 	void activatesManagerAndStoresRequiredConsents() {
@@ -81,6 +99,42 @@ class AccountActivationServiceTest {
 		});
 		verify(repository, never()).activateTraineeMembership(any(), any(), any());
 		verify(repository).markInvitationUsed(eq(state.tokenId()), eq("request-1"), any());
+	}
+
+	/**
+	 * {@code evidence_hash}가 <b>본문까지</b> 덮는지 본다.
+	 *
+	 * <p>종전 재료에는 본문이 없어서, "1버전" 문안을 조용히 고쳐도 기존 기록의 해시가 그대로
+	 * 유효했다 — 즉 "이 사용자가 무슨 내용에 동의했는가"를 증명할 수 없었다. 같은 입력에 문서
+	 * 해시만 다르면 증적 해시도 달라져야 그 사실이 드러난다.
+	 */
+	@Test
+	void tiesTheEvidenceHashToTheDocumentTextThatWasShown() {
+		String first = evidenceHashWithDocument(DOCUMENT_HASH);
+		String afterQuietEdit = evidenceHashWithDocument(
+				"2222222222222222222222222222222222222222222222222222222222222222");
+
+		assertThat(first).hasSize(64).isNotEqualTo(afterQuietEdit);
+	}
+
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	private String evidenceHashWithDocument(String documentHash) {
+		AccountActivationRepository isolatedRepository = mock(AccountActivationRepository.class);
+		InvitationState state = InvitationStateFixture.staff(Role.MANAGER).build();
+		when(isolatedRepository.findStateForUpdate(eq(tokenHasher.hash("raw-token"))))
+				.thenReturn(Optional.of(state));
+		when(isolatedRepository.activateUser(eq(USER_ID), eq(ROW_VERSION), eq("매니저"), any(), any()))
+				.thenReturn(true);
+		when(isolatedRepository.markInvitationUsed(eq(state.tokenId()), eq("request-evidence"), any()))
+				.thenReturn(true);
+		AccountActivationService isolatedService = new AccountActivationService(
+				isolatedRepository, tokenHasher, passwordEncoder, stubCatalog(documentHash));
+
+		isolatedService.activateManager(managerSignup(USER_ID), METADATA, "request-evidence", "ko-KR");
+
+		ArgumentCaptor<List<ConsentRecord>> captor = ArgumentCaptor.forClass((Class) List.class);
+		verify(isolatedRepository).saveConsentRecords(captor.capture());
+		return captor.getValue().get(0).evidenceHash();
 	}
 
 	@Test

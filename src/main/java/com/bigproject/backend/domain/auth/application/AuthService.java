@@ -40,6 +40,7 @@ public class AuthService {
 	private final RefreshTokenRepository refreshTokenRepository;
 	private final RefreshTokenHasher refreshTokenHasher;
 	private final LoginAttemptThrottle loginAttemptThrottle;
+	private final PasswordExpirationPolicy passwordExpirationPolicy;
 
 	@Transactional
 	public LoginResult login(
@@ -189,6 +190,13 @@ public class AuthService {
 			if (!ACTIVE.equals(user.organizationStatus())) {
 				throw new ApiException(AuthErrorCode.LOGIN_ORG_SUSPENDED);
 			}
+		}
+
+		// 마지막에 본다. 계정·기관이 이미 막힌 상태라면 그쪽이 사용자가 먼저 알아야 할 사실이고,
+		// 유효기간 만료는 "지금 재설정하면 들어올 수 있다"는 뜻이라 안내가 다르다.
+		// 기본값 0(비활성)에서는 이 분기가 항상 거짓이다.
+		if (passwordExpirationPolicy.isExpired(user.passwordChangedAt(), now)) {
+			throw new ApiException(AuthErrorCode.PASSWORD_EXPIRED);
 		}
 	}
 

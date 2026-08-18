@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.auth.presentation;
 
+import com.bigproject.backend.domain.auth.application.ConsentDocumentCatalog;
 import com.bigproject.backend.domain.auth.domain.ConsentCatalog;
 import com.bigproject.backend.domain.auth.presentation.dto.ConsentItemResponse;
 import com.bigproject.backend.domain.member.domain.Role;
@@ -8,7 +9,6 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,10 +22,10 @@ import java.util.List;
 @RestController
 @RequestMapping(value = "/consents", produces = MediaType.APPLICATION_JSON_VALUE)
 public class ConsentController {
-	private final int consentPolicyVersion;
+	private final ConsentDocumentCatalog consentDocumentCatalog;
 
-	public ConsentController(@Value("${consent.policy-version:1}") int consentPolicyVersion) {
-		this.consentPolicyVersion = consentPolicyVersion;
+	public ConsentController(ConsentDocumentCatalog consentDocumentCatalog) {
+		this.consentDocumentCatalog = consentDocumentCatalog;
 	}
 
 	@Operation(
@@ -44,6 +44,11 @@ public class ConsentController {
 					  `/auth/trainee-activation`)에서 실어 보낼 **필드명**이다. 코드-필드 대응표를
 					  화면이 따로 들고 있지 않아도 되도록 서버가 내려준다
 					- policyVersion: 표시한 동의 문서 버전이며 동의 기록에 그대로 저장된다
+					- **body**: 동의 문서 **본문**(Markdown). 체크박스 옆 한 줄(`description`)만 보여 주고
+					  동의를 받으면 이용자가 무엇에 동의했는지 알 수 없다. 화면은 `전문 보기`에 이 값을 렌더링한다
+					- **documentHash**: 본문의 SHA-256(hex 64자). 동의 기록의 `evidence_hash` 재료로 들어가
+					  **"이 사용자가 어떤 문안에 동의했는가"**를 나중에 증명할 수 있게 한다. 문안이 개정되면
+					  이 값이 달라지므로, 화면이 캐시한 본문이 최신인지 판별하는 데도 쓸 수 있다
 
 					**required=true 항목을 false로 제출하면 가입이 400으로 거부된다.** 화면은 필수 항목이
 					모두 체크되기 전까지 제출 버튼을 막아야 한다. 교육생의 익명 활용 동의만 거부해도 가입된다.
@@ -61,7 +66,10 @@ public class ConsentController {
 			@RequestParam(defaultValue = "MANAGER") Role role
 	) {
 		return ResponseEntity.ok(ConsentCatalog.forRole(role).stream()
-				.map(item -> ConsentItemResponse.from(item, consentPolicyVersion))
+				.map(item -> ConsentItemResponse.from(
+						item,
+						consentDocumentCatalog.find(item.code()),
+						consentDocumentCatalog.policyVersion()))
 				.toList());
 	}
 }

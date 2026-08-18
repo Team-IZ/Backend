@@ -463,13 +463,30 @@ public class CurriculumController {
 					> **Lambda 6MB 상한(요청서 ②)은 이 커밋의 범위가 아니다.** 본문이 base64로
 					> 부풀어(×4/3) 실질 4.5MB에서 막히는 것이라 앱이 손댈 수 있는 층이 아니고,
 					> presigned S3로 그 층을 비켜가는 것이 답이다 — 계약 변경이라 별건이다.
+
+					## 파일 형식은 이름이 아니라 내용으로 판정한다
+
+					앞 5바이트가 `%PDF-` 인지 **실제로 읽어** 확인한다. 확장자와 `Content-Type` 은
+					보내는 쪽이 적는 값이라 근거가 되지 못한다 — 종전에는 `.jpg` 를 `.pdf` 로 이름만
+					바꿔도 그대로 저장됐다. 제출물 ZIP 이 원래부터 쓰던 원칙을 교안에 맞춘 것이다.
+
+					저장되는 `mimeType` 도 클라이언트 값이 아니라 서버가 확인한 `application/pdf` 다.
+
+					| 코드 | 상태 | 언제 |
+					|---|---|---|
+					| `CURRICULUM_FILE_TYPE_INVALID` | 400 | 내용이 PDF 가 아니다 |
+					| `CURRICULUM_FILE_TOO_LARGE` | 413 | 앱 상한(`curriculum.upload.max-bytes`, 기본 50MB)을 넘었다 |
+
+					크기 상한을 앱에도 두는 이유는 **톰캣 multipart 상한(60MB)에서 먼저 걸리면 도메인
+					코드가 붙지 않기 때문**이다. 그 요청은 컨트롤러에 닿지 못해 코드 없는 500 이 된다.
 					"""
     )
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "교안 등록 성공"),
-            @ApiResponse(responseCode = "400", description = "CURRICULUM_FILE_REQUIRED 업로드할 파일이 없음 · VALIDATION_FAILED title 등 필수값 누락"),
+            @ApiResponse(responseCode = "400", description = "CURRICULUM_FILE_REQUIRED 업로드할 파일이 없음 · CURRICULUM_FILE_TYPE_INVALID 내용이 PDF가 아님 · VALIDATION_FAILED title 등 필수값 누락"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
             @ApiResponse(responseCode = "409", description = "CURRICULUM_TITLE_DUPLICATED 같은 기관에 이미 있는 교안 제목 — 제목 입력란에 인라인 오류(22차 R2)"),
+            @ApiResponse(responseCode = "413", description = "CURRICULUM_FILE_TOO_LARGE 앱 상한을 넘는 교안 파일"),
             @ApiResponse(responseCode = "503", description = "CURRICULUM_FILE_STORE_FAILED 업로드한 파일을 저장하지 못함 — 재시도 안내(22차 R2)"),
     })
     @PostMapping(value = "/curricula", consumes = "multipart/form-data")

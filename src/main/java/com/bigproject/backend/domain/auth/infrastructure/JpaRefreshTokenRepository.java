@@ -59,6 +59,11 @@ public class JpaRefreshTokenRepository implements RefreshTokenRepository {
 	}
 
 	@Override
+	public int revokeAllByAdmin(UUID userId, UUID revokedBy, Instant revokedAt) {
+		return tokenRepository.revokeActiveByAdmin(userId, revokedBy, revokedAt);
+	}
+
+	@Override
 	public Optional<RefreshTokenSession> findActiveByTokenHash(String tokenHash, Instant usedAt) {
 		return tokenRepository.findActiveSession(tokenHash, usedAt)
 				.map(row -> new RefreshTokenSession(row.getTokenId(), row.getUserId()));

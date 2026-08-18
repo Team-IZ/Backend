@@ -108,7 +108,28 @@ public enum MemberErrorCode implements ApiErrorCode {
 	 * 초대 흐름이 아닌 곳에서 쓴다 — 이름이 맞지 않으면 프론트가 코드를 보고 무슨 일인지
 	 * 되짚어야 한다. 화면이 할 일은 조용히 로그인 화면으로 보내는 것뿐이다.
 	 */
-	MEMBER_NOT_FOUND(HttpStatus.UNAUTHORIZED, "인증 사용자를 찾을 수 없습니다.");
+	MEMBER_NOT_FOUND(HttpStatus.UNAUTHORIZED, "인증 사용자를 찾을 수 없습니다."),
+
+	/** 로그인 차단을 걸려는 계정이 이 기관에 없다. 다른 기관의 계정도 여기로 온다 — 존재 여부를 알려 주지 않는다. */
+	LOCK_TARGET_NOT_FOUND(HttpStatus.NOT_FOUND, "이 기관의 계정을 찾을 수 없습니다."),
+
+	/**
+	 * 자기 계정을 차단하려 했다.
+	 *
+	 * <p>막는 이유는 안전장치다 — 기관에 오퍼레이터가 한 명뿐인데 자기를 차단하면 <b>풀어 줄 사람이
+	 * 없어진다</b>(차단 해제 API 자체가 오퍼레이터 권한을 요구한다). 마지막 활성 오퍼레이터를 정지하지
+	 * 못하게 막는 {@code LAST_OPERATOR}와 같은 종류의 방어다.
+	 */
+	LOCK_SELF_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "자기 계정의 로그인은 차단할 수 없습니다."),
+
+	/**
+	 * {@code locked=true}인데 차단 종료 시각이 없다.
+	 *
+	 * <p>기한 없는 차단을 만들지 않기 위해서다. 이 방식의 요점은 <b>시각이 지나면 저절로 풀린다</b>는
+	 * 것인데, 종료 시각이 비면 아무도 풀어 주지 않는 한 영구 차단이 된다 — 그건 계정 정지가 할 일이고
+	 * 그쪽은 이력이 남는 별도 조작이다.
+	 */
+	LOCK_UNTIL_REQUIRED(HttpStatus.BAD_REQUEST, "차단 종료 시각을 지정해야 합니다.");
 
 	private final HttpStatus status;
 	private final String defaultMessage;

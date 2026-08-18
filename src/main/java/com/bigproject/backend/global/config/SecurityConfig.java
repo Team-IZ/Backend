@@ -4,6 +4,7 @@ import com.bigproject.backend.global.exception.ErrorResponse;
 import com.bigproject.backend.global.security.JwtFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -15,6 +16,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import tools.jackson.databind.ObjectMapper;
@@ -22,6 +24,25 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.util.List;
 
+import static org.springframework.security.config.Customizer.withDefaults;
+
+/**
+ * 인증·인가와 <b>응답 보안 헤더</b>를 한자리에서 정한다.
+ *
+ * <h2>왜 기본값에 기대지 않고 명시하는가</h2>
+ *
+ * <p>{@code nosniff}·{@code X-Frame-Options}는 Spring Security 기본값으로 이미 나가고 있었다.
+ * 그런데 <b>설정 파일 어디에도 적혀 있지 않아서</b> 두 가지 문제가 있었다 — 감사에서는 "확인 불가"로
+ * 보이고, 나중에 누군가 {@code headers().disable()}을 넣어도 그것이 무엇을 껐는지 아무도 모른다.
+ * 기본값과 같은 값이라도 적어 두면 그때부터는 <b>바꾸는 것이 눈에 보이는 변경</b>이 된다.
+ *
+ * <h2>CSP는 넣지 않는다 — 판단 근거</h2>
+ *
+ * <p>JSON만 내보내는 API 서버라 브라우저가 이 응답으로 스크립트를 실행할 자리가 없다.
+ * 반면 Swagger UI는 인라인 스크립트·스타일을 쓰므로 {@code script-src 'self'} 수준의 정책을 넣는
+ * 순간 문서 화면이 깨진다. 즉 <b>실익은 거의 없고 부작용은 확실한</b> 조합이다.
+ * CSP가 필요한 층은 HTML을 렌더링하는 프론트(Vercel)이며, 거기서 넣는 것이 맞다.
+ */
 @RequiredArgsConstructor
 @Configuration
 @EnableWebSecurity
@@ -31,26 +52,62 @@ public class SecurityConfig {
 	private final JwtFilter jwtFilter;
 	private final AllowedOriginPolicy allowedOriginPolicy;
 
+	/**
+	 * API 문서 경로. {@code swagger.enabled}가 꺼지면 <b>여기도 함께 닫힌다</b>.
+	 *
+	 * <p>springdoc의 스위치만 끄면 문서 생성은 멈추지만 경로는 여전히 인증 없이 열려 있다.
+	 * 문서와 접근 허용이 서로 다른 설정으로 갈리면 "껐다고 생각했는데 열려 있는" 상태가 만들어지므로
+	 * 한 값으로 함께 움직인다.
+	 */
+	private static final String[] API_DOC_PATHS = {
+			"/swagger-ui.html",
+			"/swagger-ui/**",
+			"/v3/api-docs/**"
+	};
+
+	/**
+	 * @param apiDocsEnabled {@code swagger.enabled}(기본 {@code true}). 운영에서 문서를 닫을 때
+	 *                       환경변수 {@code SWAGGER_ENABLED=false} 한 줄로 이 필터체인의 허용 목록과
+	 *                       springdoc 생성을 <b>함께</b> 끈다. 기본값을 {@code true}로 두는 이유는
+	 *                       시연·운영자 수동 조작이 Swagger에 의존하기 때문이다 — 기본을 닫아 두면
+	 *                       "어디선가 환경변수를 안 넣어 문서가 안 열리는" 사고가 배포마다 재발한다.
+	 */
 	@Bean
-	public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+	public SecurityFilterChain filterChain(
+			HttpSecurity http,
+			@Value("${swagger.enabled:true}") boolean apiDocsEnabled
+	) throws Exception {
 		http
 				.cors(cors -> cors.configurationSource(corsConfigurationSource()))
 				.csrf(AbstractHttpConfigurer::disable)
 				.formLogin(AbstractHttpConfigurer::disable)
 				.httpBasic(AbstractHttpConfigurer::disable)
+				.headers(headers -> headers
+						// 서버가 알려 준 Content-Type을 브라우저가 추측으로 덮어쓰지 못하게 한다.
+						// JSON 응답이 HTML로 해석되면 응답에 실린 문자열이 스크립트가 될 수 있다.
+						.contentTypeOptions(withDefaults())
+						// 이 응답을 남의 페이지 안에 액자처럼 끼워 넣지 못하게 한다(클릭재킹).
+						.frameOptions(frame -> frame.deny())
+						// 앞으로 이 호스트는 HTTPS로만 접속하게 한다. 첫 요청이 http로 새는 것을 막는다.
+						.httpStrictTransportSecurity(hsts -> hsts
+								.includeSubDomains(true)
+								.maxAgeInSeconds(31_536_000))
+						// 외부 링크로 나갈 때 우리 경로·쿼리를 Referer에 실어 보내지 않는다.
+						.referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.SAME_ORIGIN))
+				)
 				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 				.addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
-				.authorizeHttpRequests(auth -> auth
-						.requestMatchers(
-								"/api/v0/auth/**",
-								"/api/v0/consents",
-								"/swagger-ui.html",
-								"/swagger-ui/**",
-								"/v3/api-docs/**",
-								"/error"
-						).permitAll()
-						.anyRequest().authenticated()
-				)
+				.authorizeHttpRequests(auth -> {
+					auth.requestMatchers(
+							"/api/v0/auth/**",
+							"/api/v0/consents",
+							"/error"
+					).permitAll();
+					if (apiDocsEnabled) {
+						auth.requestMatchers(API_DOC_PATHS).permitAll();
+					}
+					auth.anyRequest().authenticated();
+				})
 				.exceptionHandling(exception -> exception
 						.authenticationEntryPoint((request, response, authException) ->
 								writeSecurityError(response, 401, "Unauthenticated", "UNAUTHENTICATED", "로그인이 필요합니다."))

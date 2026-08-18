@@ -74,6 +74,29 @@ public enum CurriculumErrorCode implements ApiErrorCode {
     CURRICULUM_FILE_REQUIRED(HttpStatus.BAD_REQUEST, "업로드할 파일이 없습니다."),
 
     /**
+     * 올린 파일의 <b>내용</b>이 PDF가 아니다(시큐어 코딩 점검 1-5).
+     *
+     * <p>종전에는 파일이 비어 있는지만 봤다. 확장자를 {@code .pdf}로 바꾸고
+     * {@code Content-Type}만 맞추면 어떤 파일이든 저장됐다 — 둘 다 <b>보내는 쪽이 적는 값</b>이라
+     * 형식의 근거가 되지 못한다. 이제 앞 5바이트가 {@code %PDF-}인지 실제로 읽어 확인한다
+     * (제출물 ZIP이 원래부터 쓰던 "메타데이터를 믿지 않는다" 원칙과 같다).
+     *
+     * <p>같은 400인 {@link #CURRICULUM_FILE_REQUIRED}와 갈라 둔다 — 화면이 할 말이 다르다.
+     * 그쪽은 "파일을 고르세요", 이쪽은 "PDF만 올릴 수 있습니다"다.
+     */
+    CURRICULUM_FILE_TYPE_INVALID(HttpStatus.BAD_REQUEST, "PDF 파일만 등록할 수 있습니다."),
+
+    /**
+     * 교안 파일이 앱 상한을 넘었다.
+     *
+     * <p>상한을 앱에도 두는 이유는 <b>톰캣이 먼저 거절하면 도메인 코드가 붙지 않기 때문</b>이다.
+     * multipart 상한(기본 60MB)에서 걸린 요청은 컨트롤러에 닿지 못해 코드 없는 500이 나가고,
+     * 화면은 "무엇이 잘못됐는지" 말할 근거가 없다. 앱 상한을 톰캣보다 작게 두면 이 코드로 나간다.
+     * 제출물 ZIP의 {@code FILE_TOO_LARGE}와 같은 성격·같은 상태 코드다.
+     */
+    CURRICULUM_FILE_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE, "허용 크기를 넘는 파일입니다."),
+
+    /**
      * 같은 기관에 <b>같은 제목의 교안이 이미 있다</b>(22차 R2).
      *
      * <p>{@code uq_curriculum_material_org_id_normalized_title}가 <b>부분 인덱스가 아니라 전역

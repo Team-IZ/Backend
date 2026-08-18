@@ -85,14 +85,30 @@ web:
     # 주소를 클라이언트로 읽는다. 배포 직후 "client-ip 첫 관측" 로그 한 줄로 확인할 수 있다.
     trusted-proxy-count: ${CLIENT_IP_TRUSTED_PROXY_COUNT:1}
 
+# API 문서(Swagger UI · OpenAPI JSON)를 공개할지. 🔴 기본값은 true다.
+#
+# 왜 스위치를 두나: /swagger-ui.html 과 /v3/api-docs/** 는 인증 없이 열려 있어 누구나 전체 API
+# 구조(엔드포인트·파라미터·에러 코드)를 읽을 수 있다. 공격 대상을 찾는 비용이 그만큼 줄어든다.
+#
+# 왜 기본을 켜 두나: 시연과 운영자 수동 조작이 Swagger 에 의존한다. 기본을 false 로 두면
+# "어디선가 SWAGGER_ENABLED 를 안 넣어서 문서가 안 열리는" 사고가 배포마다 재발한다.
+# 닫아야 하는 환경은 환경변수 한 줄(SWAGGER_ENABLED=false)로 끈다.
+#
+# 이 값 하나가 springdoc 의 두 스위치와 SecurityConfig 의 permitAll 목록을 함께 움직인다 —
+# 셋이 따로 놀면 "문서는 꺼졌는데 경로는 여전히 인증 없이 열려 있는" 상태가 만들어진다.
+swagger:
+  enabled: ${SWAGGER_ENABLED:true}
+
 springdoc:
   api-docs:
+    enabled: ${swagger.enabled}
     path: /v3/api-docs
 
   packages-to-scan: com.bigproject.backend.domain
   paths-to-match: /api/v0/**
 
   swagger-ui:
+    enabled: ${swagger.enabled}
     path: /swagger-ui.html
     operations-sorter: alpha
     tags-sorter: alpha
@@ -366,6 +382,17 @@ auth:
       max-attempts: ${AUTH_LOGIN_THROTTLE_MAX_ATTEMPTS:5}
       initial-block: ${AUTH_LOGIN_THROTTLE_INITIAL_BLOCK:PT1M}
       max-block: ${AUTH_LOGIN_THROTTLE_MAX_BLOCK:PT15M}
+  password:
+    # 비밀번호 유효기간(일). 🔴 기본값 0은 비활성이며, 0이면 만료 판정을 아예 하지 않는다.
+    #
+    # 변경 주기는 기술이 아니라 운영이 정하는 값이다(주기·예외 대상·안내 방법). 정해지기 전에
+    # 임의의 기본값을 켜 두면 어느 날 갑자기 계정이 잠기고, 그게 시연 당일이면 되돌릴 방법이 없다.
+    # 그래서 구조만 넣고 스위치는 꺼 둔다 — 정책이 확정되면 이 환경변수 하나로 켜진다.
+    #
+    # 켜면 로그인·재발급에서 app_user.password_changed_at 이 이 일수를 넘긴 계정을
+    # 403 PASSWORD_EXPIRED 로 거절한다. 화면은 그 코드에서 비밀번호 재설정으로 보낸다
+    # (정지·일시 차단과 달리 사용자가 지금 스스로 풀 수 있는 상태다).
+    max-age-days: ${AUTH_PASSWORD_MAX_AGE_DAYS:0}
   refresh-cookie:
     name: ${REFRESH_TOKEN_COOKIE_NAME:refresh_token}
     path: ${REFRESH_TOKEN_COOKIE_PATH:/api/v0/auth}
@@ -406,6 +433,16 @@ invitation:
       initial-delay: ${INVITATION_MAIL_OUTBOX_INITIAL_DELAY:PT1M}
   # 자리 확보를 몇 건씩 한 트랜잭션으로 묶을지. 이 값이 곧 "경합이 나면 행 단위로 되돌릴 범위"다.
   reservation-chunk-size: ${INVITATION_RESERVATION_CHUNK_SIZE:100}
+
+curriculum:
+  upload:
+    # 교안 PDF 파일당 상한.
+    #
+    # 🔴 spring.servlet.multipart.max-file-size(60MB)보다 작아야 한다. 톰캣에서 먼저 걸린 요청은
+    # 컨트롤러에 닿지 못해 도메인 코드 없는 500 이 나가고, 화면은 왜 거부됐는지 말할 근거가 없다.
+    # 앱이 먼저 판정하면 413 CURRICULUM_FILE_TOO_LARGE 로 나가 상한을 안내할 수 있다.
+    # 제출물 ZIP(app.submission.max-zip-bytes)과 같은 이중 상한 구조다.
+    max-bytes: ${CURRICULUM_UPLOAD_MAX_BYTES:52428800}
 
 password-reset:
   base-url: ${PASSWORD_RESET_BASE_URL:http://localhost:5173}

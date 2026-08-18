@@ -263,6 +263,11 @@ class AuthServiceTest {
 	}
 
 	private AuthService serviceWith(AuthUserRepository repository) {
+		// 비밀번호 유효기간은 기본 비활성(0)이다 — 여기 대부분의 검사는 그 상태를 가정한다.
+		return serviceWith(repository, new PasswordExpirationPolicy(0));
+	}
+
+	private AuthService serviceWith(AuthUserRepository repository, PasswordExpirationPolicy passwordExpiration) {
 		return new AuthService(
 				repository,
 				passwordEncoder,
@@ -271,7 +276,8 @@ class AuthServiceTest {
 				loginDestinationResolver,
 				refreshTokenRepository,
 				refreshTokenHasher,
-				loginAttemptThrottle
+				loginAttemptThrottle,
+				passwordExpiration
 		);
 	}
 
@@ -342,6 +348,68 @@ class AuthServiceTest {
 				"PENDING", false, null, Role.TRAINEE, "ACTIVE");
 
 		assertLoginFailure(() -> login(serviceReturning(pending)));
+	}
+
+	// ── 비밀번호 유효기간(기본 비활성) ──────────────────────────────
+
+	@Test
+	void 유효기간이_켜져_있으면_오래된_비밀번호를_거절한다() {
+		AuthUser stale = userWithPasswordChangedAt(Instant.now().minus(Duration.ofDays(91)));
+		AuthService service = serviceWith(repositoryReturning(stale), new PasswordExpirationPolicy(90));
+
+		assertThatThrownBy(() -> login(service))
+				.isInstanceOfSatisfying(ApiException.class, exception -> {
+					assertThat(exception.errorCode()).isEqualTo(AuthErrorCode.PASSWORD_EXPIRED);
+					// 정지(403 LOGIN_ACCOUNT_INACTIVE)와 갈라야 화면이 재설정으로 안내할 수 있다.
+					assertThat(exception.errorCode().status().value()).isEqualTo(403);
+				});
+	}
+
+	@Test
+	void 유효기간_안이면_그대로_통과시킨다() {
+		AuthUser recent = userWithPasswordChangedAt(Instant.now().minus(Duration.ofDays(89)));
+
+		assertThatCode(() -> login(serviceWith(repositoryReturning(recent), new PasswordExpirationPolicy(90))))
+				.doesNotThrowAnyException();
+	}
+
+	/**
+	 * 기본값 0에서는 아무리 오래된 비밀번호도 막히지 않는다. <b>이것이 기본 동작이다</b> —
+	 * 정책이 확정되기 전에 계정이 잠기는 일이 없어야 한다.
+	 */
+	@Test
+	void 유효기간이_꺼져_있으면_아무리_오래돼도_막지_않는다() {
+		AuthUser ancient = userWithPasswordChangedAt(Instant.now().minus(Duration.ofDays(3650)));
+
+		assertThatCode(() -> login(serviceReturning(ancient))).doesNotThrowAnyException();
+	}
+
+	/**
+	 * 기준 시각이 없는 계정을 만료로 보면 <b>로그인할 방법이 없는 계정</b>이 된다.
+	 * 값이 비어 있는 것은 데이터 결함이며, 결함을 로그인 차단으로 표현하면 원인을 찾기 어려워진다.
+	 */
+	@Test
+	void 변경_시각이_없는_계정은_만료로_보지_않는다() {
+		AuthUser unknown = userWithPasswordChangedAt(null);
+
+		assertThatCode(() -> login(serviceWith(repositoryReturning(unknown), new PasswordExpirationPolicy(90))))
+				.doesNotThrowAnyException();
+	}
+
+	private AuthUser userWithPasswordChangedAt(Instant passwordChangedAt) {
+		return new AuthUser(
+				UUID.randomUUID(),
+				ORGANIZATION_ID,
+				"lead@example.com",
+				"테스트 사용자",
+				passwordEncoder.encode(PASSWORD),
+				"ACTIVE",
+				true,
+				null,
+				passwordChangedAt,
+				Role.OPERATOR,
+				"ACTIVE"
+		);
 	}
 
 	// ── 연속 실패 차단(A1) ────────────────────────────────────────────

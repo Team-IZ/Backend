@@ -237,7 +237,7 @@ public class AuthController {
 			@ApiResponse(responseCode = "200", description = "로그인 성공 및 토큰 발급"),
 			@ApiResponse(responseCode = "400", description = "VALIDATION_FAILED 요청 형식 오류 · LOGIN_INVALID 로그인 정보 불일치"),
 			@ApiResponse(responseCode = "403",
-					description = "LOGIN_ACCOUNT_INACTIVE 정지 계정 · LOGIN_ORG_SUSPENDED 기관 정지 · LOGIN_ORIGIN_NOT_ALLOWED 허용되지 않은 출처"),
+					description = "LOGIN_ACCOUNT_INACTIVE 정지 계정 · LOGIN_ORG_SUSPENDED 기관 정지 · LOGIN_ORIGIN_NOT_ALLOWED 허용되지 않은 출처 · PASSWORD_EXPIRED 비밀번호 유효기간 만료(정책이 켜진 경우에만) — 재설정 화면으로 안내"),
 			@ApiResponse(responseCode = "429", description = "LOGIN_TEMPORARILY_BLOCKED 연속 실패로 일시 차단. retryAfter(초) 동봉"),
 			@ApiResponse(responseCode = "500", description = "LOGIN_NO_ORG_CONTEXT 기관 소속이 없는 계정")
 	})
@@ -299,7 +299,7 @@ public class AuthController {
 			@ApiResponse(responseCode = "401",
 					description = "REFRESH_TOKEN_INVALID 토큰 누락·만료·위조 · REFRESH_IDENTITY_CHANGED 역할·기관이 바뀌어 재로그인 필요"),
 			@ApiResponse(responseCode = "403",
-					description = "LOGIN_ACCOUNT_INACTIVE 정지 계정 · LOGIN_ORG_SUSPENDED 기관 정지 · LOGIN_ORIGIN_NOT_ALLOWED 허용되지 않은 출처"),
+					description = "LOGIN_ACCOUNT_INACTIVE 정지 계정 · LOGIN_ORG_SUSPENDED 기관 정지 · LOGIN_ORIGIN_NOT_ALLOWED 허용되지 않은 출처 · PASSWORD_EXPIRED 비밀번호 유효기간 만료(정책이 켜진 경우에만) — 재설정 화면으로 안내"),
 			@ApiResponse(responseCode = "429", description = "LOGIN_TEMPORARILY_BLOCKED 일시 차단. retryAfter(초) 동봉"),
 			@ApiResponse(responseCode = "500", description = "LOGIN_NO_ORG_CONTEXT 기관 소속이 없는 계정")
 	})
