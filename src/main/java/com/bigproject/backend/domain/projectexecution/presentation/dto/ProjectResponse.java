@@ -173,8 +173,15 @@ public record ProjectResponse(
     public record ActionItem(
             UUID classId,
             String className,
-            @Schema(description = "UNSUBMITTED_TEAMS(제출 마감 지남·미제출) · ANALYSIS_FAILED_TEAMS(제출했으나 분석 실패)",
+            @Schema(description = """
+                    `UNSUBMITTED_TEAMS` 제출 마감 지남·미제출 · `ANALYSIS_FAILED_TEAMS` 제출했으나 분석 실패 ·
+                    **`INTERVIEW_BACKLOG` 면담이 아직 안 끝난 인원**(34차 R7①)""",
                     example = "UNSUBMITTED_TEAMS") String type,
-            @Schema(description = "해당 유형에 걸린 팀 수") int teamCount) {
+            @Schema(description = """
+                    해당 유형에 걸린 **팀 수**. 단, `INTERVIEW_BACKLOG`는 **사람 수**다.
+
+                    앞의 둘은 팀 단위 조치이고 면담은 사람 단위인데, 화면이 이미 이 자리를
+                    「숫자 + 단위」로 그리고 있어 필드를 새로 내지 않고 같은 자리를 씁니다.
+                    **단위는 `type`으로 갈라 주세요.**""") int teamCount) {
     }
 }

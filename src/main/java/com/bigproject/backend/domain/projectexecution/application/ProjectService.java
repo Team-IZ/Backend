@@ -58,6 +58,11 @@ public interface ProjectService {
      */
     List<CurriculumUsingProject> findProjectsUsingCurricula(Collection<UUID> curriculumVersionIds, UUID orgId);
 
+    /**
+     * @param eligibleCount 그 회차의 대상 인원. 화면 `58 / 71`의 분모다(34차 R16③)
+     * @param reportPublished 회차 리포트가 발행됐는지. {@code true}면 재분석이 이미 나간
+     *                        리포트와 어긋난다(34차 R16④)
+     */
     record CurriculumUsingProject(
             UUID projectId,
             String name,
@@ -65,6 +70,8 @@ public interface ProjectService {
             UUID cohortId,
             String cohortName,
             int attendedCount,
+            int eligibleCount,
+            boolean reportPublished,
             List<String> conceptNames) {
     }
 

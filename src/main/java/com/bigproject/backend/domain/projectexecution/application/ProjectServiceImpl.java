@@ -320,8 +320,11 @@ public class ProjectServiceImpl implements ProjectService {
                 projects.stream().map(Project::getProjectId).toList(), orgId);
         Map<UUID, String> cohortNameById = projectDependencyRepository.findCohortNames(
                 projects.stream().map(Project::getCohortId).collect(Collectors.toSet()));
-        Map<UUID, Integer> attendedByProjectId = projectDependencyRepository.countAttendedByProject(
-                projects.stream().map(Project::getProjectId).toList());
+        // 34차 R16③④ — 분자만 있던 자리에 분모와 발행 여부를 함께 싣는다. 한 질의라
+        // 분모와 분자가 서로 다른 시점을 보지 않는다.
+        Map<UUID, ProjectDependencyRepository.CurriculumUsageStat> usageByProjectId =
+                projectDependencyRepository.findCurriculumUsageStats(
+                        projects.stream().map(Project::getProjectId).toList());
 
         // 회차가 지금 쓰고 있는(ACTIVE) 확정 개념 이름. 재분석하면 위치가 어긋날 개념들이다.
         Map<UUID, List<String>> conceptNamesByProjectId = findConfirmedConceptNames(
@@ -329,14 +332,19 @@ public class ProjectServiceImpl implements ProjectService {
 
         return projects.stream()
                 .sorted(Comparator.comparing(Project::getCohortId).thenComparing(Project::getSequenceNo))
-                .map(project -> new CurriculumUsingProject(
-                        project.getProjectId(),
-                        project.getName(),
-                        labelByProjectId.get(project.getProjectId()),
-                        project.getCohortId(),
-                        cohortNameById.get(project.getCohortId()),
-                        attendedByProjectId.getOrDefault(project.getProjectId(), 0),
-                        conceptNamesByProjectId.getOrDefault(project.getProjectId(), List.of())))
+                .map(project -> {
+                    var usage = usageByProjectId.get(project.getProjectId());
+                    return new CurriculumUsingProject(
+                            project.getProjectId(),
+                            project.getName(),
+                            labelByProjectId.get(project.getProjectId()),
+                            project.getCohortId(),
+                            cohortNameById.get(project.getCohortId()),
+                            usage == null ? 0 : usage.attendedCount(),
+                            usage == null ? 0 : usage.eligibleCount(),
+                            usage != null && usage.publishedReportCount() > 0,
+                            conceptNamesByProjectId.getOrDefault(project.getProjectId(), List.of()));
+                })
                 .toList();
     }
 

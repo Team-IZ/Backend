@@ -17,6 +17,16 @@ class RiskSummaryTextTest {
 				.isEqualTo("응시 기간 종료까지 세션을 시작하지 않음");
 	}
 
+	/** 34차 R5 — 앞의 둘이 사라지자 드러난 세 번째. 시드 원장에 34건 있었다. */
+	@Test
+	void RISK_태그도_걷어낸다() {
+		assertThat(RiskSummaryText.stripSeverityTag("[RISK] 정책·무결성 기준으로 결과가 무효 처리됨"))
+				.isEqualTo("정책·무결성 기준으로 결과가 무효 처리됨");
+
+		assertThat(RiskSummaryText.stripSeverityTag("[RISK] 최근 3개 회차 연속 하락 3.67 → 2.67 → 2.00"))
+				.isEqualTo("최근 3개 회차 연속 하락 3.67 → 2.67 → 2.00");
+	}
+
 	/** 지금 생성 코드가 만드는 문장. 태그가 없으므로 아무 일도 일어나면 안 된다. */
 	@Test
 	void 태그가_없으면_그대로_둔다() {
