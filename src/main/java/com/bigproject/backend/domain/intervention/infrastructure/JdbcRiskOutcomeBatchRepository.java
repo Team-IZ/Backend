@@ -536,12 +536,30 @@ public class JdbcRiskOutcomeBatchRepository implements RiskOutcomeBatchRepositor
 	 *
 	 * <p>RETRY는 앵커에서 뺀다. 재시험은 판정 뒤에 열리므로 포함하면 재시험이 발급될 때마다 앵커가
 	 * 뒤로 밀려 INITIAL 판정이 영영 시작되지 않는다.
+	 *
+	 * <h2>🔴 개인 창만으로는 "회차가 끝났다"가 되지 않는다 (2026-08-18 추가)</h2>
+	 *
+	 * <p>개인 창은 팀 분석이 끝난 시점부터 개인별로 열린다. 그래서 <b>회차가 아직 제출을 받고 있어도
+	 * 이미 응시한 사람들의 창이 전부 닫히면</b> 위 앵커가 통과한다. 진행 중인 회차가 판정 대상이
+	 * 된다는 뜻이다 — 판정은 {@code outcome_judged_at}으로 1회성이라, 그렇게 찍히면 나중에 제출한
+	 * 교육생은 <b>영영 판정되지 않는다.</b>
+	 *
+	 * <p>가정이 아니다. KT 9기 미니프로젝트 6차(제출 마감 08-21)가 개인 창 보정 이후
+	 * 2026-08-17 12:45Z부터 정확히 그 상태였고, 손으로 심었던 판정 5건을
+	 * {@code docs/migration/2026-08-16_revert_prejudgment_outcome.sql}로 지워야 했다. 그때는
+	 * 손 시드에만 가드가 있었고 이 배치에는 없었다 — 켜기만 하면 같은 일이 났다.
+	 *
+	 * <p>그래서 <b>회차 제출 마감</b>을 조건에 건다. {@code submission_due_at}은 NOT NULL이라
+	 * 물러설 값이 필요 없다. 기수 평균·백분위의 모수가 흔들리지 않으려면 "더 들어올 응시가 없다"가
+	 * 먼저이고, 그것을 정하는 것은 개인 창이 아니라 회차 마감이다.
 	 */
 	private static final String ROUNDS_TO_JUDGE_SQL = """
 			SELECT r.assessment_round_id
 			  FROM project_assessment_round r
 			  JOIN project p ON p.project_id = r.project_id
 			 WHERE p.project_category = 'MINI_PROJECT'
+			   AND r.deleted_at IS NULL
+			   AND r.submission_due_at < now()
 			   AND now() >= COALESCE(
 			         (SELECT MAX(ma2.assessment_close_at)
 			            FROM measurement_attempt ma2

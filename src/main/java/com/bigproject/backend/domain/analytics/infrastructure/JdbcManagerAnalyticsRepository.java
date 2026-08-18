@@ -68,7 +68,7 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 					SELECT h.team_id AS row_id, t.name AS row_name, h.problem_no,
 					  h.average_highest_reached_level AS value, h.aggregation_status AS status,
 					  h.valid_result_count AS valid_count, h.not_attended_count,
-					  h.invalid_attempt_count AS invalid_count, NULL::integer AS interrupted_count,
+					  h.invalid_attempt_count AS invalid_count, h.interrupted_count,
 					  NULL::integer AS initial_highest_reached_level,
 					  NULL::integer AS comparison_highest_reached_level, NULL::integer AS comparison_delta,
 					  h.as_of_at
