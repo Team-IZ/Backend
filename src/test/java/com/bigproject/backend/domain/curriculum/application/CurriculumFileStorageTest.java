@@ -26,6 +26,19 @@ class CurriculumFileStorageTest {
 		return new MockMultipartFile("file", "curriculum.pdf", "application/pdf", content);
 	}
 
+	/**
+	 * 요청한 크기의 <b>진짜 PDF</b>를 만든다 — 앞 5바이트가 {@code %PDF-}다.
+	 *
+	 * <p>전에는 {@code new byte[…]}(0으로 찬 배열)을 그대로 올렸다. 시그니처 검증이 생기면서
+	 * 그 바이트는 PDF가 아니라 400으로 끊기는데, <b>이 테스트가 보려는 것은 형식이 아니라 크기</b>라
+	 * 내용만 실제 PDF로 맞춘다.
+	 */
+	private static byte[] pdfOfSize(int size) {
+		byte[] content = new byte[size];
+		System.arraycopy("%PDF-1.7".getBytes(), 0, content, 0, "%PDF-1.7".getBytes().length);
+		return content;
+	}
+
 	@Test
 	void storesUnderTheConfiguredRootSoTheEnvironmentCanPointItSomewhereWritable(@TempDir Path root) {
 		ReflectionTestUtils.setField(service, "storageRoot", root.toString());
@@ -49,7 +62,7 @@ class CurriculumFileStorageTest {
 		ReflectionTestUtils.setField(service, "storageRoot", blocked.resolve("curricula").toString());
 		assertThatThrownBy(() -> {
 			java.nio.file.Files.writeString(blocked, "not a directory");
-			service.store(pdf("%PDF".getBytes()));
+			service.store(pdf("%PDF-1.7".getBytes()));
 		}).isInstanceOfSatisfying(CurriculumException.class, exception ->
 				assertThat(exception.errorCode())
 						.isEqualTo(CurriculumErrorCode.CURRICULUM_FILE_STORE_FAILED));
@@ -60,7 +73,7 @@ class CurriculumFileStorageTest {
 	void doesNotTreatSizeAsAFailureCondition(@TempDir Path root) {
 		ReflectionTestUtils.setField(service, "storageRoot", root.toString());
 
-		assertThat(service.store(pdf(new byte[50 * 1024])).fileSizeBytes()).isEqualTo(50 * 1024);
-		assertThat(service.store(pdf(new byte[3 * 1024 * 1024])).fileSizeBytes()).isEqualTo(3 * 1024 * 1024);
+		assertThat(service.store(pdf(pdfOfSize(50 * 1024))).fileSizeBytes()).isEqualTo(50 * 1024);
+		assertThat(service.store(pdf(pdfOfSize(3 * 1024 * 1024))).fileSizeBytes()).isEqualTo(3 * 1024 * 1024);
 	}
 }
