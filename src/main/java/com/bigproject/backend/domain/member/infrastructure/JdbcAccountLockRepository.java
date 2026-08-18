@@ -21,10 +21,9 @@ public class JdbcAccountLockRepository implements AccountLockRepository {
 	@Override
 	public Optional<LockTarget> findUser(UUID organizationId, UUID userId) {
 		String sql = """
-				SELECT u.user_id, u.org_id, u.email::text AS email, u.name, r.code AS role_code,
+				SELECT u.user_id, u.org_id, u.email::text AS email, u.name, u.role_code,
 					u.status, u.login_blocked_until
 				FROM app_user u
-				JOIN "role" r ON r.role_id = u.role_id
 				WHERE u.deleted_at IS NULL
 					AND u.org_id = ?
 					AND u.user_id = ?

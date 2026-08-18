@@ -61,11 +61,10 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 		String sql = """
 				SELECT COUNT(*) AS cnt
 				FROM app_user u
-				JOIN "role" r ON r.role_id = u.role_id
 				WHERE u.deleted_at IS NULL
 					AND u.status = 'ACTIVE'
 					AND u.org_id = ?
-					AND r.code = ?
+					AND u.role_code = ?
 				""";
 		Integer count = jdbcTemplate.queryForObject(sql, Integer.class, organizationId, OPERATOR_ROLE_CODE);
 		return count == null ? 0 : count;
@@ -222,10 +221,9 @@ public class JdbcOrganizationOperatorRepository implements OrganizationOperatorR
 				                 ORDER BY ui.invited_at DESC
 				                 LIMIT 1) = 'DELIVERY_FAILED', FALSE) AS invitation_delivery_failed
 				FROM app_user u
-				JOIN "role" r ON r.role_id = u.role_id
 				WHERE u.deleted_at IS NULL
 					AND u.org_id = ?
-					AND r.code = ?
+					AND u.role_code = ?
 				""";
 	}
 

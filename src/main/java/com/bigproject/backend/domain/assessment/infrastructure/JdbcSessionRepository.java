@@ -281,8 +281,18 @@ public class JdbcSessionRepository {
 	 * intro_acknowledged_at·intro_notice_version이 필수"라고 못박고 있다. 상태만 옮기고 동의를 비우면
 	 * 정의서와 어긋난 행이 남는다.
 	 *
-	 * <p>커서는 첫 문제의 L1로 세운다. {@code READY}에서만 갱신하므로 두 번 불러도 진행 중인 세션의
-	 * 커서를 처음으로 되돌리지 않는다.
+	 * <p>커서는 첫 문제의 L1로 세운다. 값이 이미 있으면 {@code COALESCE}가 지키므로 두 번 불러도 진행
+	 * 중인 세션의 커서를 처음으로 되돌리지 않는다.
+	 *
+	 * <h2>{@code PAUSED}도 받는다 (37차 R5)</h2>
+	 *
+	 * <p>종전에는 {@code READY}만 걸렸다. {@code PAUSED}는 살아 있는 상태({@link #LIVE_STATUSES})라
+	 * 조회에는 나오는데 되살릴 경로가 없어, 그 상태의 세션은 {@code POST /start}가 조용히 0건이 되고
+	 * 학생은 영영 들어가지 못했다.
+	 *
+	 * <p><b>시계는 되감기지 않는다.</b> 이 UPDATE가 바꾸는 값 중 시간·커서에 해당하는 것은 전부
+	 * {@code COALESCE(기존값, 새값)}이라, 이미 시작된 세션에는 새 값이 들어가지 않는다. 그래서 조건만
+	 * 넓혀도 진행 중이던 응시가 처음부터 다시 시작되지 않는다 — 이것이 이 확장이 안전한 이유다.
 	 *
 	 * @return 실제로 시작된 경우 1
 	 */
@@ -303,7 +313,7 @@ public class JdbcSessionRepository {
 				         WHERE ps.session_id = ?
 				         ORDER BY p.problem_no, ps.question_sequence_no
 				         LIMIT 1) AS first
-				 WHERE s.session_id = ? AND s.status = 'READY'
+				 WHERE s.session_id = ? AND s.status IN ('READY', 'PAUSED')
 				""", noticeVersion, timestamp(timeLimitAt), sessionId, sessionId);
 		stampCurrentProblemStarted(sessionId);
 		return updated;
@@ -425,18 +435,25 @@ public class JdbcSessionRepository {
 	 * CHECK가 "전부 NULL이거나 전부 채움"을 요구한다.
 	 *
 	 * @param stageStatus {@code PASSED} · {@code NOT_PASSED} · {@code IN_PROGRESS} 중 하나
+	 * @param gradingRequestId 이 점수를 만든 AI 호출의 멱등키({@code clientRequestId}). 판정과 <b>같은
+	 *                         UPDATE</b>로 남긴다 — 따로 쓰면 채점은 저장됐는데 어느 호출이었는지는
+	 *                         모르는 행이 생기고, 그 행이 정확히 원인을 되짚어야 하는 행이다(37차 R1).
+	 *                         컬럼은 {@code docs/migration/2026-08-18_problem_stage_grading_request_id.sql}이
+	 *                         만든다 — <b>DB에 먼저 적용해야 이 UPDATE가 돈다.</b>
 	 * @return 낙관적 잠금 충돌이면 0
 	 */
 	public int applyAnswer(UUID problemStageId, AnswerSlot slot, String answerText, int score,
-			boolean passed, String stageStatus, long expectedRowVersion) {
+			boolean passed, String stageStatus, UUID gradingRequestId, long expectedRowVersion) {
 		String prefix = slot.columnPrefix();
 		return jdbc.update("""
 				UPDATE problem_stage
 				   SET %s_answer_text = ?, %s_score = ?, %s_passed = ?, %s_answered_at = now(),
+				       %s_request_id = ?,
 				       status = ?, updated_at = now(), row_version = row_version + 1
 				 WHERE problem_stage_id = ? AND row_version = ?
-				""".formatted(prefix, prefix, prefix, prefix),
-				answerText, score, passed, stageStatus, problemStageId, expectedRowVersion);
+				""".formatted(prefix, prefix, prefix, prefix, prefix),
+				answerText, score, passed, gradingRequestId, stageStatus, problemStageId,
+				expectedRowVersion);
 	}
 
 	/** 답변 단위 이탈·첫 타이핑 지연을 누적한다. 세션 합계도 같은 트랜잭션에서 함께 올린다. */
@@ -456,6 +473,24 @@ public class JdbcSessionRepository {
 				       last_window_returned_at = now(), updated_at = now()
 				 WHERE session_id = ?
 				""", awaySeconds, awaySeconds, sessionId);
+		insertActivityLog(sessionId, problemStageId, "WINDOW_LEAVE", awaySeconds * 1000);
+	}
+
+	/**
+	 * 창 이탈·연결 끊김·첫 타이핑 지연을 발생 건별로 남긴다. {@code assessment_session}·
+	 * {@code problem_stage}의 누적 컬럼은 무효 응시 판정이 그대로 읽으므로 손대지 않고, 이 로그는
+	 * 매니저가 "언제 몇 초씩 몇 번" 벌어졌는지 재구성하기 위한 상세 이력으로 나란히 쌓는다.
+	 *
+	 * <p>{@code startedAt}은 실측이 아니라 근사치다 — 클라이언트가 복귀·재연결 시점에 지속 시간만
+	 * 보내므로 {@code now() - duration}으로 역산한다({@code last_window_left_at}과 같은 방식).
+	 * {@code duration_ms}는 세 이벤트 유형의 단위(초 vs ms)를 밀리초 하나로 맞춘다.
+	 */
+	private void insertActivityLog(UUID sessionId, UUID problemStageId, String eventType, int durationMs) {
+		jdbc.update("""
+				INSERT INTO problem_stage_activity_log
+				       (problem_stage_id, session_id, event_type, started_at, duration_ms)
+				VALUES (?, ?, ?, now() - make_interval(secs => ?::numeric / 1000), ?)
+				""", problemStageId, sessionId, eventType, durationMs, durationMs);
 	}
 
 	/**
@@ -552,8 +587,11 @@ public class JdbcSessionRepository {
 	 * <p>답변 슬롯에 나누지 않는 것은 DDL 주석(v08)의 판단을 따른 것이다 — 무효 응시 판정
 	 * ({@code measurement_attempt}의 {@code EXCESSIVE_CONNECTION_LOSS})이 세션 합계를 보고,
 	 * 네트워크 장애는 특정 답변에 귀속시킬 성질이 아니다. 창 이탈만 슬롯에 함께 쌓는다.
+	 *
+	 * <p>{@code problemStageId}는 판정용 누적에는 쓰이지 않고 {@link #insertActivityLog}에만
+	 * 넘어간다 — "그 순간 어떤 질문을 보고 있었는지"를 매니저 로그 조회의 맥락으로 남기기 위해서다.
 	 */
-	public void recordConnectionLoss(UUID sessionId, int disconnectedSeconds) {
+	public void recordConnectionLoss(UUID sessionId, UUID problemStageId, int disconnectedSeconds) {
 		jdbc.update("""
 				UPDATE assessment_session
 				   SET connection_loss_count = connection_loss_count + 1,
@@ -561,16 +599,26 @@ public class JdbcSessionRepository {
 				       updated_at = now()
 				 WHERE session_id = ?
 				""", disconnectedSeconds, sessionId);
+		insertActivityLog(sessionId, problemStageId, "CONNECTION_LOSS", disconnectedSeconds * 1000);
 	}
 
-	/** 첫 타이핑 지연은 슬롯당 한 번만 남긴다 — 이미 있으면 덮어쓰지 않는다. */
-	public void recordFirstKeystroke(UUID problemStageId, AnswerSlot slot, int delayMs) {
+	/**
+	 * 첫 타이핑 지연은 슬롯당 한 번만 남긴다 — 이미 있으면 손대지 않는다.
+	 *
+	 * <p>{@code column IS NULL}을 WHERE에 넣어 두 번째부터는 UPDATE 자체가 0행이 되게 한다.
+	 * 영향받은 행 수로 최초 기록 여부를 판별해, 중복 전송에는 {@link #insertActivityLog}도
+	 * 부르지 않는다 — 로그도 "중복 전송이 안전하다"는 계약을 그대로 따라야 한다.
+	 */
+	public void recordFirstKeystroke(UUID sessionId, UUID problemStageId, AnswerSlot slot, int delayMs) {
 		String column = slot.columnPrefix() + "_first_keystroke_delay_ms";
-		jdbc.update("""
+		int updated = jdbc.update("""
 				UPDATE problem_stage
-				   SET %s = COALESCE(%s, ?), updated_at = now()
-				 WHERE problem_stage_id = ?
+				   SET %s = ?, updated_at = now()
+				 WHERE problem_stage_id = ? AND %s IS NULL
 				""".formatted(column, column), delayMs, problemStageId);
+		if (updated > 0) {
+			insertActivityLog(sessionId, problemStageId, "FIRST_KEYSTROKE_DELAY", delayMs);
+		}
 	}
 
 	private Map<UUID, List<SessionProblemReference>> findReferences(UUID sessionId) {

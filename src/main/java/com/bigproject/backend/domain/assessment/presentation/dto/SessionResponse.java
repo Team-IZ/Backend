@@ -22,7 +22,7 @@ import java.util.UUID;
 public record SessionResponse(
 		@Schema(description = "세션 ID", requiredMode = Schema.RequiredMode.REQUIRED) UUID sessionId,
 
-		@Schema(description = "FIRST(1차) · REVIEW(다시 보기). REVIEW는 힌트가 없고 판정에 반영되지 않는다",
+		@Schema(description = "FIRST(1차) · REVIEW(다시 보기). REVIEW는 판정에 반영되지 않는다(힌트는 1차와 같다)",
 				allowableValues = {"FIRST", "REVIEW"}, requiredMode = Schema.RequiredMode.REQUIRED)
 		String mode,
 

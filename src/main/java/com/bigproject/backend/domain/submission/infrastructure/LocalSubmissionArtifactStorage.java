@@ -32,8 +32,31 @@ public class LocalSubmissionArtifactStorage implements SubmissionArtifactStorage
 
 	private final Path storageRoot;
 
+	/**
+	 * <b>기동 시점에 루트를 만들고 쓸 수 있는지 확인한다.</b> 못 쓰면 여기서 기동을 실패시킨다.
+	 *
+	 * <p>이 검사가 없어서 실제로 사고가 났다(35차 R1 · 37차 R1b). 컨테이너의 {@code /app}이 root 소유라
+	 * 실행 유저가 {@code var/submissions}를 만들 수 없었는데, 그 사실이 <b>학생이 ZIP을 올린 순간에야</b>
+	 * {@code ARTIFACT_STORE_FAILED}(500)로 드러났다 — 제출이 며칠 동안 막혔고 원인을 찾는 데 사람이 붙었다.
+	 *
+	 * <p>기동이 안 뜨는 편이 낫다. 배포가 실패하면 그 자리에서 알지만, 학생마다 500을 맞으면
+	 * "가끔 제출이 안 된다"는 신고로 흘러 들어와 원인에 닿기까지 오래 걸린다.
+	 */
 	public LocalSubmissionArtifactStorage(@Value("${app.submission.storage-root}") Path storageRoot) {
 		this.storageRoot = storageRoot.toAbsolutePath().normalize();
+		try {
+			Files.createDirectories(this.storageRoot);
+		} catch (IOException exception) {
+			throw new IllegalStateException(
+					"제출물 저장 루트를 만들 수 없습니다: " + this.storageRoot
+							+ " — 컨테이너라면 실행 유저의 쓰기 권한을, 그 밖이면 SUBMISSION_STORAGE_ROOT를 확인하세요.",
+					exception);
+		}
+		if (!Files.isWritable(this.storageRoot)) {
+			throw new IllegalStateException(
+					"제출물 저장 루트에 쓸 수 없습니다: " + this.storageRoot
+							+ " — 실행 유저에게 쓰기 권한이 없습니다.");
+		}
 	}
 
 	@Override

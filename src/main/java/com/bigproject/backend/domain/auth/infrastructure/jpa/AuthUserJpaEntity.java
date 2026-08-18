@@ -24,8 +24,8 @@ public class AuthUserJpaEntity {
 	@Column(name = "org_id", updatable = false)
 	private UUID organizationId;
 
-	@Column(name = "role_id", nullable = false, updatable = false)
-	private UUID roleId;
+	@Column(name = "role_code", nullable = false, updatable = false)
+	private String roleCode;
 
 	// PostgreSQL 확장 타입 CITEXT를 명시해야 ddl-auto=validate가 VARCHAR로 오판하지 않는다.
 	@Column(name = "email", nullable = false, updatable = false, columnDefinition = "citext")

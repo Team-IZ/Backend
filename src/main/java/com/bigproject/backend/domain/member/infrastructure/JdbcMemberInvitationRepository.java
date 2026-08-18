@@ -64,11 +64,10 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 			SELECT EXISTS (
 				SELECT 1
 				FROM app_user u
-				JOIN "role" r ON r.role_id = u.role_id
 				JOIN organization o ON o.org_id = u.org_id
 				WHERE u.normalized_email = ?
 					AND u.org_id = ?
-					AND r.code = 'TRAINEE'
+					AND u.role_code = 'TRAINEE'
 					AND u.deleted_at IS NULL
 					AND o.deleted_at IS NULL
 			)
@@ -80,21 +79,20 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 	private static final String FIND_EXISTING_ORGANIZATION_TRAINEES = """
 			SELECT u.normalized_email
 			FROM app_user u
-			JOIN "role" r ON r.role_id = u.role_id
 			JOIN organization o ON o.org_id = u.org_id
 			WHERE u.normalized_email = ANY(?)
 				AND u.org_id = ?
-				AND r.code = 'TRAINEE'
+				AND u.role_code = 'TRAINEE'
 				AND u.deleted_at IS NULL
 				AND o.deleted_at IS NULL
 			""";
 	private static final String INSERT_PENDING_USER = """
 			INSERT INTO app_user (
-				user_id, org_id, role_id, email, normalized_email, name, password_hash,
+				user_id, org_id, role_code, email, normalized_email, name, password_hash,
 				status, is_email_verified, failed_login_count, password_changed_at,
 				created_at, updated_at, row_version
 			) VALUES (
-				?, ?, (SELECT role_id FROM "role" WHERE code = ?), ?, ?, ?, ?,
+				?, ?, ?, ?, ?, ?, ?,
 				'PENDING', FALSE, 0, ?, ?, ?, 0
 			)
 			""";
@@ -139,7 +137,7 @@ public class JdbcMemberInvitationRepository implements MemberInvitationRepositor
 	private static final String REACTIVATE_INVITED_USER = """
 			UPDATE app_user
 			SET org_id = ?,
-				role_id = (SELECT role_id FROM "role" WHERE code = ?),
+				role_code = ?,
 				email = ?,
 				normalized_email = ?,
 				name = ?,

@@ -11,7 +11,7 @@ import com.bigproject.backend.domain.assessment.domain.SessionModels.SessionStag
 import com.bigproject.backend.domain.assessment.domain.SessionModels.SlotState;
 import com.bigproject.backend.global.ai.AiCallException;
 import com.bigproject.backend.global.ai.AiClient;
-import com.bigproject.backend.global.ai.AiProxyWarmUp;
+import com.bigproject.backend.global.ai.AsyncAiProxyWarmUp;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -35,6 +35,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -52,14 +53,14 @@ class SessionAnswerGraderTest {
 	private static final UUID STAGE_L2 = UUID.randomUUID();
 
 	private AiClient aiClient;
-	private AiProxyWarmUp proxyWarmUp;
+	private AsyncAiProxyWarmUp asyncWarmUp;
 	private SessionAnswerGrader grader;
 
 	@BeforeEach
 	void setUp() {
 		aiClient = mock(AiClient.class);
-		proxyWarmUp = mock(AiProxyWarmUp.class);
-		grader = new SessionAnswerGrader(aiClient, proxyWarmUp);
+		asyncWarmUp = mock(AsyncAiProxyWarmUp.class);
+		grader = new SessionAnswerGrader(aiClient, asyncWarmUp);
 		when(aiClient.post(anyString(), any(), eq(AnswerResult.class), anyString(), any()))
 				.thenReturn(new AnswerResult(SESSION_ID, "IN_PROGRESS", null, null, null, null, null, null,
 						List.of()));
@@ -185,21 +186,41 @@ class SessionAnswerGraderTest {
 				.isEqualTo("minimaxai/minimax-m3");
 	}
 
+	/**
+	 * 게이트웨이 실패에 <b>요청 안에서 재시도하지 않는다.</b>
+	 *
+	 * <p>종전에는 여기서 프록시를 깨우고(최대 150초) 한 번 더 보냈다(다시 150초). 읽기 타임아웃도
+	 * {@code status}가 비어 같은 분기를 타므로 제출 하나가 최악 450초까지 늘어났는데, 그 전에 학생
+	 * 연결이 끊겨 되살린 응답이 닿을 곳이 없었다(37차 R1 — 90초에 끊겼다).
+	 *
+	 * <p>그래서 곧바로 실패시키고 깨우기만 뒤로 넘긴다. 학생은 같은 답을 다시 내면 되고, 멱등키가
+	 * 자리마다 고정이라 재전송이 LLM 비용을 늘리지 않는다.
+	 */
 	@Test
-	void 게이트웨이_실패는_웜업_후_같은_요청을_한_번_재시도한다() {
-		AnswerResult recovered = new AnswerResult(SESSION_ID, "IN_PROGRESS", null, null, null, null,
-				null, null, List.of());
+	void 게이트웨이_실패는_기다리지_않고_실패시키되_뒤에서_깨운다() {
 		when(aiClient.post(anyString(), any(), eq(AnswerResult.class), anyString(), any()))
-				.thenThrow(new AiCallException(HttpStatus.BAD_GATEWAY, null, true, "게이트웨이 실패"))
-				.thenReturn(recovered);
-		when(proxyWarmUp.warmUp()).thenReturn(true);
+				.thenThrow(new AiCallException(HttpStatus.BAD_GATEWAY, null, true, "게이트웨이 실패"));
 
-		AnswerResult result = grader.grade(head(), List.of(problem()), stageL2(), AnswerSlot.SECOND_HINT,
-				"답변", "trace");
+		assertThatThrownBy(() -> grader.grade(head(), List.of(problem()), stageL2(), AnswerSlot.SECOND_HINT,
+				"답변", "trace"))
+				.isInstanceOf(SessionException.class)
+				.hasFieldOrPropertyWithValue("errorCode", SessionErrorCode.GRADING_FAILED);
 
-		assertThat(result).isSameAs(recovered);
-		verify(proxyWarmUp).warmUp();
-		verify(aiClient, times(2)).post(anyString(), any(), eq(AnswerResult.class), anyString(), any());
+		verify(aiClient, times(1)).post(anyString(), any(), eq(AnswerResult.class), anyString(), any());
+		verify(asyncWarmUp).wakeInBackground(anyString());
+	}
+
+	/** 4xx는 깨워도 달라지지 않는다. 헛되이 깨우면 잠든 서버를 요청마다 흔든다. */
+	@Test
+	void 요청_오류는_뒤에서도_깨우지_않는다() {
+		when(aiClient.post(anyString(), any(), eq(AnswerResult.class), anyString(), any()))
+				.thenThrow(new AiCallException(HttpStatus.UNPROCESSABLE_ENTITY, null, false, "본문 오류"));
+
+		assertThatThrownBy(() -> grader.grade(head(), List.of(problem()), stageL2(), AnswerSlot.SECOND_HINT,
+				"답변", "trace"))
+				.isInstanceOf(SessionException.class);
+
+		verifyNoInteractions(asyncWarmUp);
 	}
 
 	private AnswerSubmit capture() {

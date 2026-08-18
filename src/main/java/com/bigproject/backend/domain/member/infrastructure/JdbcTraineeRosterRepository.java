@@ -83,7 +83,7 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				 AND u.org_id = ui.org_id
 				 AND u.status = 'PENDING'
 				 AND u.deleted_at IS NULL
-				JOIN "role" role ON role.role_id = u.role_id AND role.code = 'TRAINEE'
+				 AND u.role_code = 'TRAINEE'
 				WHERE ui.target_role_code = 'TRAINEE'
 				  AND ui.status IN ('PENDING', 'SENT', 'DELIVERY_FAILED', 'EXPIRED')
 				  AND NOT EXISTS (
