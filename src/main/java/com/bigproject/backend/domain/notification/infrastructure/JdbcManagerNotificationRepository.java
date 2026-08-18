@@ -19,31 +19,6 @@ import java.util.UUID;
 public class JdbcManagerNotificationRepository implements ManagerNotificationRepository {
 	private final JdbcTemplate jdbcTemplate;
 
-	/**
-	 * 38차 R1 — {@code latest_review_status}만으로는 REVIEW를 만료시킬 수 없었다.
-	 *
-	 * <p>{@code assessment_round_attendance} 뷰는 다시 보기 상태(SESSION_READY 등)만 줄 뿐, 그 응시의
-	 * 마감({@code measurement_attempt.review_due_at})을 옮겨 담지 않는다. 그런데 {@code SESSION_READY
-	 * → EXPIRED}로 상태를 바꾸는 배치가 코드베이스에 없어(전수 검색 결과 없음), 다시 보기를 시작조차
-	 * 안 한 채 마감을 5개월 넘긴 응시도 영원히 REVIEW·미해소로 남았다(38차 실측 45건).
-	 *
-	 * <p>뷰를 고치는 대신 {@code latest_review_attempt_id}로 {@code measurement_attempt}를 직접
-	 * JOIN해 마감을 읽는다 — {@code review_due_at}은 그 테이블의 실제 컬럼이라({@link
-	 * com.bigproject.backend.domain.assessment.infrastructure.JdbcSessionRepository}가 같은 값을
-	 * 이미 읽는다) 뷰 소유팀 확인 없이 여기서 바로 쓸 수 있다.
-	 *
-	 * <p><b>{@code sourceStatus}(1차 응시 상태)는 보지 않는다.</b> 1차가 끝났어도 다시 보기 마감
-	 * 전이면 여전히 REVIEW·미해소다 — 볼 것은 다시 보기 자신의 마감뿐이다. 마감이 지나면
-	 * {@code EXPIRED}로 옮기는 배치를 대신해, 조회 시점에 "마감 지난 SESSION_READY는 더 이상 할 일이
-	 * 아니다"로 접어 {@code ELSE 'ASSESSMENT'}로 떨어뜨린다 — {@code MeasurementAttemptStatus.EXPIRED}가
-	 * 이미 문서화해 둔 뜻("응시 창이 지나 닫혔다")을 조회 시점에 그대로 적용하는 것뿐이라 새 규칙을
-	 * 만드는 것이 아니다.
-	 *
-	 * <p>REVIEW의 {@code deadlineAt}도 같이 바로잡는다. 종전에는 REVIEW도 1차 마감
-	 * ({@code primary_assessment_close_at})을 썼는데, 다시 보기가 배정된 사람에게 의미 있는 마감은
-	 * 다시 보기 자신의 마감이다 — band(급한 정도)가 "1차가 언제 끝났는가"가 아니라 "다시 보기를
-	 * 언제까지 해야 하는가"를 반영하도록 한다.
-	 */
 	@Override
 	public List<InboxRow> findInbox(UUID managerId, UUID cohortId) {
 		String sql = """
@@ -60,8 +35,7 @@ public class JdbcManagerNotificationRepository implements ManagerNotificationRep
                                           WHEN a.nudge_reason_code = 'INDIVIDUAL_ASSESSMENT_NOT_STARTED' THEN 'ASSESSMENT_NOT_STARTED'
                                           WHEN a.primary_terminal_reason_code = 'NOT_ATTENDED' THEN 'ABSENT'
                                           WHEN a.latest_review_attempt_id IS NOT NULL
-                                            AND a.latest_review_status NOT IN ('COMPLETED', 'EXPIRED')
-                                            AND (rev.review_due_at IS NULL OR rev.review_due_at > now()) THEN 'REVIEW'
+                                            AND a.latest_review_status NOT IN ('COMPLETED', 'EXPIRED') THEN 'REVIEW'
                                           ELSE 'ASSESSMENT'
                                         END AS item_type,
                                         a.project_id, a.assessment_round_id, a.class_id, a.team_id, a.user_id,
@@ -71,15 +45,12 @@ public class JdbcManagerNotificationRepository implements ManagerNotificationRep
                                         CONCAT_WS(' · ', a.round_name, a.submission_deadline_status, a.analysis_status,
                                           a.primary_attempt_status, a.latest_review_status) AS evidence,
                                         CASE WHEN a.nudge_reason_code IN ('TEAM_SUBMISSION_MISSING','TEAM_ANALYSIS_FAILED')
-                                          THEN a.submission_due_at
-                                          WHEN a.latest_review_attempt_id IS NOT NULL THEN rev.review_due_at
-                                          ELSE a.primary_assessment_close_at END AS deadline_at,
+                                          THEN a.submission_due_at ELSE a.primary_assessment_close_at END AS deadline_at,
                                         a.as_of_at AS occurred_at,
                                         CASE
                                           WHEN a.primary_terminal_reason_code = 'NOT_ATTENDED' THEN FALSE
                                           WHEN a.latest_review_attempt_id IS NOT NULL
-                                            AND a.latest_review_status NOT IN ('COMPLETED', 'EXPIRED')
-                                            AND (rev.review_due_at IS NULL OR rev.review_due_at > now()) THEN FALSE
+                                            AND a.latest_review_status NOT IN ('COMPLETED', 'EXPIRED') THEN FALSE
                                           ELSE NOT a.nudge_eligible
                                         END AS resolved,
                                         a.nudge_eligible AS reminder_eligible
@@ -87,7 +58,6 @@ public class JdbcManagerNotificationRepository implements ManagerNotificationRep
                                       JOIN assigned sc ON sc.class_id = a.class_id
                                       LEFT JOIN app_user u ON u.user_id = a.user_id
                                       LEFT JOIN team t ON t.team_id = a.team_id
-                                      LEFT JOIN measurement_attempt rev ON rev.attempt_id = a.latest_review_attempt_id
                                       WHERE a.nudge_reason_code IS NOT NULL
                                          OR a.latest_review_attempt_id IS NOT NULL
                                          OR a.primary_terminal_reason_code = 'NOT_ATTENDED'
