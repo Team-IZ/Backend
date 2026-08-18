@@ -169,7 +169,7 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 						AND r.deleted_at IS NULL
 				), team_stat AS (
 					SELECT sr.assessment_round_id, t.class_id, c.name AS class_name, t.team_id,
-						sub.submitted_at, aj.status AS analysis_status
+						t.name AS team_name, sub.submitted_at, aj.status AS analysis_status
 					FROM scope_round sr
 					JOIN team t ON t.project_id = sr.project_id AND t.org_id = ? AND t.deleted_at IS NULL
 					JOIN "class" c ON c.class_id = t.class_id AND c.deleted_at IS NULL
@@ -238,20 +238,17 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 		sql.append("""
 					GROUP BY v.assessment_round_id, v.class_id
 				)
-				SELECT ts.assessment_round_id, ts.class_id,
-					MIN(ts.class_name) AS class_name,
-					COALESCE(MAX(ms.assessed_count), 0) AS assessed_count,
-					COALESCE(MAX(ms.target_count), 0) AS target_count,
-					COALESCE(MAX(ins.backlog_count), 0) AS interview_backlog_count,
-					COUNT(*) FILTER (WHERE ts.submitted_at IS NULL)::int AS unsubmitted_team_count,
-					COUNT(*) FILTER (WHERE ts.analysis_status = 'FAILED')::int AS analysis_failed_team_count
+				SELECT ts.assessment_round_id, ts.class_id, ts.class_name, ts.team_id, ts.team_name,
+					ts.submitted_at, ts.analysis_status,
+					COALESCE(ms.assessed_count, 0) AS assessed_count,
+					COALESCE(ms.target_count, 0) AS target_count,
+					COALESCE(ins.backlog_count, 0) AS interview_backlog_count
 				FROM team_stat ts
 				LEFT JOIN member_stat ms ON ms.assessment_round_id = ts.assessment_round_id
 					AND ms.class_id = ts.class_id
 				LEFT JOIN interview_stat ins ON ins.assessment_round_id = ts.assessment_round_id
 					AND ins.class_id = ts.class_id
-				GROUP BY ts.assessment_round_id, ts.class_id
-				ORDER BY MIN(ts.class_name)
+				ORDER BY ts.class_name, ts.team_id
 				""");
 
 		return jdbcTemplate.query(
@@ -260,10 +257,12 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 						rs.getObject("assessment_round_id", UUID.class),
 						rs.getObject("class_id", UUID.class),
 						rs.getString("class_name"),
+						rs.getObject("team_id", UUID.class),
+						rs.getString("team_name"),
+						instant(rs, "submitted_at"),
+						rs.getString("analysis_status"),
 						rs.getLong("assessed_count"),
 						rs.getLong("target_count"),
-						rs.getInt("unsubmitted_team_count"),
-						rs.getInt("analysis_failed_team_count"),
 						rs.getInt("interview_backlog_count")
 				),
 				args.toArray()
