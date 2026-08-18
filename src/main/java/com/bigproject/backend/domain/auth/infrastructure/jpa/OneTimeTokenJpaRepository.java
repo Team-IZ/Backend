@@ -33,7 +33,7 @@ public interface OneTimeTokenJpaRepository extends JpaRepository<OneTimeTokenJpa
 				(u.deleted_at IS NOT NULL) AS "userDeleted",
 				(u.normalized_email = ott.target_email_normalized) AS "emailMatched",
 				(u.org_id IS NOT DISTINCT FROM ott.org_id) AS "organizationMatched",
-				r.code AS "roleCode",
+				u.role_code AS "roleCode",
 				o.status AS "organizationStatus",
 				(o.org_id IS NOT NULL AND o.deleted_at IS NOT NULL) AS "organizationDeleted",
 				EXISTS (
@@ -49,7 +49,6 @@ public interface OneTimeTokenJpaRepository extends JpaRepository<OneTimeTokenJpa
 			FROM one_time_token ott
 			JOIN user_invitation ui ON ui.invitation_id = ott.invitation_id
 			JOIN app_user u ON u.user_id = ott.user_id
-			JOIN "role" r ON r.role_id = u.role_id
 			LEFT JOIN organization o ON o.org_id = ott.org_id
 			WHERE ott.token_hash = :tokenHash""";
 

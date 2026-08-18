@@ -23,10 +23,9 @@ public interface AuthUserJpaRepository extends JpaRepository<AuthUserJpaEntity, 
 				u.is_email_verified AS "emailVerified",
 				u.login_blocked_until AS "lockedUntil",
 				u.password_changed_at AS "passwordChangedAt",
-				r.code AS "roleCode",
+				u.role_code AS "roleCode",
 				o.status AS "organizationStatus"
 			FROM app_user u
-			JOIN "role" r ON r.role_id = u.role_id
 			LEFT JOIN organization o ON o.org_id = u.org_id
 			WHERE u.normalized_email = :normalizedEmail
 				AND u.deleted_at IS NULL
@@ -43,12 +42,11 @@ public interface AuthUserJpaRepository extends JpaRepository<AuthUserJpaEntity, 
 				u.normalized_email AS "normalizedEmail",
 				u.password_hash AS "passwordHash",
 				u.status AS "status",
-				r.code AS "roleCode",
+				u.role_code AS "roleCode",
 				ui.invitation_id AS "invitationId",
 				ui.target_cohort_id AS "cohortId",
 				c.name AS "cohortName"
 			FROM app_user u
-			JOIN "role" r ON r.role_id = u.role_id
 			LEFT JOIN organization o ON o.org_id = u.org_id
 			LEFT JOIN user_invitation ui ON ui.invitation_id = (
 				SELECT latest_ui.invitation_id
