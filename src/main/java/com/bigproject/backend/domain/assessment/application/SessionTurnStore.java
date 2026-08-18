@@ -73,8 +73,15 @@ public class SessionTurnStore {
 		SessionStage stage = input.stage();
 		AnswerGrade grade = gradeOf(result);
 
+		// 방금 채점을 요청할 때 쓴 멱등키를 다시 만든다. 키가 결정론적이라(세션·단계·축·힌트사용수)
+		// 같은 값이 나오는 것이 보장되고, 생성 규칙이 한 곳에만 있게 된다 — 값을 들고 다니면
+		// 규칙이 둘로 갈릴 자리가 생긴다.
+		UUID gradingRequestId = SessionAnswerGrader.idempotencyKey(
+				input.head().sessionId(), stage, input.slot());
+
 		if (repository.applyAnswer(stage.problemStageId(), input.slot(), answerText, grade.score(),
-				grade.passed(), stageStatus(input.slot(), grade.passed()), stage.rowVersion()) == 0) {
+				grade.passed(), stageStatus(input.slot(), grade.passed()), gradingRequestId,
+				stage.rowVersion()) == 0) {
 			throw new SessionException(SessionErrorCode.ANSWER_ALREADY_SUBMITTED);
 		}
 
@@ -150,12 +157,17 @@ public class SessionTurnStore {
 	 *
 	 * <p>열지 않는 경우 셋 — 통과했다(더 설명할 것이 없다), 힌트를 다 썼다, 커서가 다른 자리로
 	 * 옮겨 갔다. 마지막은 AI가 "이 질문은 여기까지"라고 판정한 것이므로 닫힌 질문에 힌트를 붙이지
-	 * 않는다. 다시 보기는 힌트가 없으므로({@code isReview}) 애초에 열지 않는다.
+	 * 않는다.
+	 *
+	 * <p><b>다시 보기도 연다(37차 R2).</b> 종전에는 {@code isReview}면 건너뛰었는데, 그러면 힌트 표시
+	 * 시각이 안 남아 {@link SessionStage#nextSlot()}이 영원히 {@code QUESTION}이 되고 미달한 축에서
+	 * 세션이 갇혔다. 1차와 같은 경로를 그대로 쓰면 미달 → 힌트 → 재답변 → (2회 소진 시) 문제 종료가
+	 * 다시 보기에서도 그대로 돈다.
 	 */
 	private AnswerSubmitResponse.AutoHint autoHint(GradingInput input, AnswerResult result, AnswerGrade grade) {
 		SessionStage stage = input.stage();
 		int hintsUsed = stage.hintsUsed();
-		if (grade.passed() || input.head().isReview() || hintsUsed >= 2 || !staysOnSameStage(input, result)) {
+		if (grade.passed() || hintsUsed >= 2 || !staysOnSameStage(input, result)) {
 			return null;
 		}
 
