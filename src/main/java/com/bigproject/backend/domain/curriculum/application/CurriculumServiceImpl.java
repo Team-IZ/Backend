@@ -31,7 +31,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.scheduling.annotation.Scheduled;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
-import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 
@@ -58,11 +57,6 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class CurriculumServiceImpl implements CurriculumService {
 
-    // ✅ 원본 방식 복구: 별도 설정 파일 없이 여기서 직접 S3Client 생성
-    private static final S3Client S3_CLIENT = S3Client.builder()
-            .region(Region.AP_SOUTHEAST_2)
-            .build();
-
     private static final int POLL_MAX_ATTEMPTS = 100;
     private static final long POLL_INTERVAL_MS = 3000L;
     private static final java.time.Duration MAX_WAIT_DURATION = java.time.Duration.ofMinutes(25);
@@ -78,6 +72,7 @@ public class CurriculumServiceImpl implements CurriculumService {
     private final CurriculumCatalogRepository catalogRepository;
     private final JdbcTemplate jdbcTemplate;
     private final TeachesRepository teachesRepository;
+    private final S3Client s3Client;
 
     @org.springframework.beans.factory.annotation.Autowired
     @org.springframework.context.annotation.Lazy
@@ -605,7 +600,6 @@ public class CurriculumServiceImpl implements CurriculumService {
         }
     }
 
-    // ✅ S3 다운로드 로직 추가: S3_CLIENT 상수를 사용하도록 매칭
     private byte[] readFileBytes(String fileUri) {
         URI uri = URI.create(fileUri);
         try {
@@ -621,7 +615,7 @@ public class CurriculumServiceImpl implements CurriculumService {
                         .key(key)
                         .build();
 
-                return S3_CLIENT.getObject(getObjectRequest, ResponseTransformer.toBytes()).asByteArray();
+                return s3Client.getObject(getObjectRequest, ResponseTransformer.toBytes()).asByteArray();
             }
 
             return Files.readAllBytes(Paths.get(uri));

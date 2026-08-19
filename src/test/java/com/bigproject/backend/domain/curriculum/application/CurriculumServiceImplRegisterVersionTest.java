@@ -17,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
+import software.amazon.awssdk.services.s3.S3Client;
 
 import java.util.List;
 import java.util.Optional;
@@ -53,11 +54,12 @@ class CurriculumServiceImplRegisterVersionTest {
 	private final CurriculumCatalogRepository catalogRepository = mock(CurriculumCatalogRepository.class);
 	private final JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
 	private final TeachesRepository teachesRepository = mock(TeachesRepository.class);
+	private final S3Client s3Client = mock(S3Client.class);
 
 	private final CurriculumServiceImpl service = new CurriculumServiceImpl(
 			versionRepository, mappingRepository, analysisRepository, sectionRepository,
 			projectService, materialRepository, fileStorageService, aiCurriculumClient,
-			catalogRepository, jdbcTemplate, teachesRepository);
+			catalogRepository, jdbcTemplate, teachesRepository, s3Client);
 
 	private final UUID orgId = UUID.randomUUID();
 	private final UUID materialId = UUID.randomUUID();

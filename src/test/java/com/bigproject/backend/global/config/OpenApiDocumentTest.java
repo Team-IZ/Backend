@@ -44,7 +44,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 		"auth.refresh-cookie.secure=false",
 		"auth.refresh-cookie.same-site=Lax",
 		"invitation.base-url=http://localhost:5173",
-		"invitation.expiration=P7D"
+		"invitation.expiration=P7D",
+		"curriculum.storage.bucket=test-curricula",
+		"submission.storage.bucket=test-submissions"
 })
 @AutoConfigureMockMvc
 class OpenApiDocumentTest {
