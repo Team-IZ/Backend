@@ -28,6 +28,9 @@ import static org.mockito.Mockito.when;
  */
 class MissedRoundStatusTest {
 
+	/** 운영 기본값과 같은 다시 보기 창(일). 발행일로부터 이만큼 지나면 잠금이 풀린다. */
+	private static final int REVIEW_WINDOW_DAYS = 3;
+
 	private static final UUID USER = UUID.randomUUID();
 	private static final UUID ROUND = UUID.randomUUID();
 
@@ -37,7 +40,7 @@ class MissedRoundStatusTest {
 	@BeforeEach
 	void setUp() {
 		queryRepository = mock(TraineeReportQueryRepository.class);
-		service = new TraineeReportServiceImpl(queryRepository, new ObjectMapper());
+		service = new TraineeReportServiceImpl(queryRepository, new ObjectMapper(), REVIEW_WINDOW_DAYS);
 	}
 
 	@Test
@@ -86,8 +89,8 @@ class MissedRoundStatusTest {
 				ROUND, "미니프로젝트 6차 이해도 확인", 1, "미니프로젝트 6차",
 				null, null, null, 0, 0,
 				attemptId, terminalReasonCode == null ? null : "COMPLETED", terminalReasonCode,
-				"NOT_REQUIRED", null, null,
-				submissionDueAt, null, null, false,
+				"NOT_REQUIRED",
+				submissionDueAt, null, null,
 				null, null, null);
 	}
 }

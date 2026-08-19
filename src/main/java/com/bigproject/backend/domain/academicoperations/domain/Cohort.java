@@ -1,6 +1,6 @@
 package com.bigproject.backend.domain.academicoperations.domain;
 
-import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
+import com.bigproject.backend.domain.organization.domain.DisclosureScope;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;

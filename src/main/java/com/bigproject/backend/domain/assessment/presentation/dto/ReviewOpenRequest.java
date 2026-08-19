@@ -17,7 +17,7 @@ public record ReviewOpenRequest(
 
 		@Schema(description = """
 				근거 리포트. `GET /assessment-rounds`의 `current.reportId`를 그대로 쓴다.
-				본인 것이고 공개된(`traineeReleaseStatus=RELEASED`) 리포트여야 한다.""",
+				본인 것이고 **발행된**(`published_at`이 있는) 리포트여야 한다.""",
 				requiredMode = Schema.RequiredMode.REQUIRED)
 		@NotNull
 		UUID reportId

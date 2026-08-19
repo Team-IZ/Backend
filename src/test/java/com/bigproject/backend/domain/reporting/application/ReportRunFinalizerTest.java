@@ -1,6 +1,5 @@
 package com.bigproject.backend.domain.reporting.application;
 
-import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
 import com.bigproject.backend.domain.reporting.domain.Report;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationItem;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRun;
@@ -65,8 +64,7 @@ class ReportRunFinalizerTest {
 
 		finalizer = new ReportRunFinalizer(reportRepository, runRepository, itemRepository,
 				snapshotRepository, evidenceRepository, payloadRepository, dispatchRepository,
-				new ReportEvidenceFactory(new ObjectMapper()), new ObjectMapper(),
-				"", DisclosureScope.FULL);
+				new ReportEvidenceFactory(new ObjectMapper()), new ObjectMapper());
 
 		when(runRepository.findById(RUN)).thenReturn(Optional.of(run()));
 		when(reportRepository.findById(REPORT)).thenReturn(Optional.of(report()));

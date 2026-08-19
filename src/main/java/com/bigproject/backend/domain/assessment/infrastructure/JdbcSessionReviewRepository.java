@@ -52,9 +52,12 @@ public class JdbcSessionReviewRepository {
 	/**
 	 * 다시 보기의 근거가 되는 리포트와 그 회차의 1차 응시·세션을 한 번에 읽는다.
 	 *
-	 * <p>공개되지 않은 리포트는 <b>없는 것으로 본다.</b> {@code lifecycle_status='ACTIVE'}이고
-	 * {@code trainee_release_status='RELEASED'}일 때만 파생시킨다 — 공개 전 리포트로 다시 보기를 열면
+	 * <p>발행되지 않은 리포트는 <b>없는 것으로 본다.</b> {@code lifecycle_status='ACTIVE'}이고
+	 * {@code published_at}이 있을 때만 파생시킨다 — 발행 전 리포트로 다시 보기를 열면
 	 * 학생이 결과를 보기도 전에 재응시가 시작된다.
+	 *
+	 * <p>종전 조건은 {@code trainee_release_status='RELEASED'}였다. 공개/비공개가 폐지되면서
+	 * (2026-08-19) 발행이 곧 공개가 됐고 {@code published_at}이 그 자리를 물려받았다.
 	 *
 	 * <p>{@code report_snapshot}을 함께 잡는 이유는 DDL이 요구하기 때문이다
 	 * ({@code ck_measurement_attempt_attempt_type_2}는 REVIEW에 리포트와 스냅샷을 <b>둘 다</b>
@@ -72,7 +75,7 @@ public class JdbcSessionReviewRepository {
 				  LEFT JOIN assessment_session s ON s.attempt_id = a.attempt_id
 				 WHERE r.report_id = ? AND r.user_id = ?
 				   AND r.lifecycle_status = 'ACTIVE'
-				   AND r.trainee_release_status = 'RELEASED'
+				   AND r.published_at IS NOT NULL
 				""", (rs, rowNum) -> new ReviewSource(
 						rs.getObject("report_id", UUID.class),
 						rs.getObject("snapshot_id", UUID.class),

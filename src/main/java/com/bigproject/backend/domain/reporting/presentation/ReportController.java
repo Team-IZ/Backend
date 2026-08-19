@@ -1,9 +1,10 @@
 package com.bigproject.backend.domain.reporting.presentation;
 
 import com.bigproject.backend.domain.auth.domain.AuthUser;
-import com.bigproject.backend.domain.reporting.application.ManagedReportService;
 import com.bigproject.backend.domain.reporting.application.TraineeReportService;
-import com.bigproject.backend.domain.reporting.presentation.dto.ManagedReportListResponse;
+import com.bigproject.backend.domain.reporting.domain.ManagerTraineeAccessRepository;
+import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
+import com.bigproject.backend.domain.reporting.domain.ReportException;
 import com.bigproject.backend.domain.reporting.presentation.dto.TraineeReportsResponse;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
@@ -29,7 +30,7 @@ import java.util.UUID;
 public class ReportController {
 
 	private final TraineeReportService traineeReportService;
-	private final ManagedReportService managedReportService;
+	private final ManagerTraineeAccessRepository managerTraineeAccessRepository;
 	private final CurrentUserResolver currentUserResolver;
 
 	@Operation(
@@ -134,74 +135,79 @@ public class ReportController {
 	}
 
 	@Operation(
-			operationId = "findManagedReports",
-			summary = "담당 반 리포트 목록 조회 (매니저) | ✅ 사용 가능",
+			operationId = "findManagedTraineeReports",
+			summary = "담당 교육생 리포트 조회 (매니저) | ⚠️ 사용 보류",
 			description = """
-					매니저가 **담당하는 반**의 개인 리포트 목록. 발행 여부와 공개 상태만 준다.
+					매니저가 담당 교육생 **한 명**의 리포트를 회차별로 본다. 교육생 상세 화면의 리포트 라인이다.
 
-					⚠️ 신설 직후라 **실제 DB로 검증되지 않았다.** SQL이 도는 것을 확인한 뒤
-					`✅ 사용 가능`으로 올린다 — 나머지 Reporting 오퍼레이션과 같은 기준이다.
+					⚠️ **담당 판정 SQL이 실제 DB로 검증되지 않았다.** 본문 조립은 `GET /reports`와 같은
+					경로라 이미 확인된 것이고, 새로 들어온 것은 `ManagerTraineeAccessRepository`의
+					`EXISTS` 절 하나뿐이다. 그 SQL이 도는 것을 확인한 뒤 `✅ 사용 가능`으로 올린다.
 
-					## 왜 필요한가
+					## 응답이 `GET /reports`와 똑같다
 
-					매니저에게 열린 리포트 API는 `PUT /reports/{reportId}/disclosure` 하나뿐이었다.
-					공개 범위를 정할 수는 있는데 **정할 대상을 찾을 방법이 없었다** —
-					상태를 확인하려면 상태를 바꿔야 하는 모순이라 이 API로 메운다.
+					같은 `TraineeReportsResponse`다 — 좌측 레일(`rounds`)과 회차별 본문(`reportsById`)이
+					그대로 온다. **모양을 따로 두지 않은 것은 의도한 것이다.** 리포트 라인은 회차별로
+					"만들어졌나 · 발행됐나"를 보여주고 펼치면 본문을 그리는데, 그 본문이 학생이 보는
+					것과 달라야 할 이유가 없다. 두 벌로 나누면 같은 리포트를 설명하는 말이 두 가지가 된다.
 
-					## 본문은 들어 있지 않다
+					회차 상태(`status`)도 같은 값을 쓴다.
 
-					개념·서술·문답은 나가지 않는다. 개인 리포트 본문 열람은 별개 정책이고,
-					이 API는 "어느 리포트가 발행됐고 지금 어떤 공개 상태인가"에만 답한다.
+					| 값 | 리포트 라인에 그릴 것 |
+					|---|---|
+					| `PUBLISHED` | 결과를 그린다(펼치면 본문) |
+					| `PENDING_PUBLISH` | `리포트 생성 중` |
+					| `NOT_STARTED` | 아직 응시 전(마감 전) |
+					| `NOT_ATTEMPTED` | 미응시 — **매니저 안내가 필요한 줄이다** |
+					| `VOID_ATTEMPT` | 확인 필요 |
+					| `STOPPED` | 중단 |
 
-					## 권한 범위 — 담당 반 전체
+					## 🔴 다시 보기 잠금이 걸리지 않는다
 
-					요청 매니저가 **지금** 배정된 반의 교육생만 나온다.
-					해제된 배정(`manager_assignment.unassigned_at`)과 이탈한 교육생
-					(`cohort_member.left_at`)은 빠진다. 조인 경로가 `PUT .../disclosure`의
-					담당 판정과 **같아서**, 목록에 보이는 리포트는 반드시 수정도 된다.
+					교육생 화면에서는 다시 보기 대상(`level < 2`)이면서 아직 다시 보기를 마치지 않은
+					개념의 `qa`(자기 답변)와 `explain`(해설)이 **빠진다.** 매니저에게는 그 잠금을 걸지
+					않는다 — 잠금의 목적이 "학생이 답을 먼저 보고 다시 푸는 것"을 막는 것이라
+					매니저에게는 해당이 없고, 지도하려면 학생이 뭐라고 답했는지를 봐야 한다.
 
-					면담 대상으로 좁히지 않는다 — 공개 범위 지정은 면담과 무관하게 회차마다
-					생기는 일이라, 면담 대상만 보이면 나머지 교육생 리포트가 영원히 미지정으로 남는다.
+					`retryState`는 **사실대로** 나간다(`NONE` · `PENDING` · `DONE`).
+					다시 보기를 아직 안 한 학생을 찾는 근거이므로 가리지 않는다.
 
 					## 요청
 
 					| 파라미터 | 필수 | 타입 | 설명 |
 					|---|---|---|---|
-					| `cohortId` | 선택 | UUID | 기수로 좁힌다 |
-					| `roundId` | 선택 | UUID | 회차로 좁힌다(`assessmentRoundId`) |
-					| `classId` | 선택 | UUID | 담당 반이 여럿일 때 하나만 |
+					| `traineeId` | **필수** | UUID | 교육생 `userId`. 회차 id도 리포트 id도 아니다 |
 
-					## 응답
+					## 권한 — 지금 담당 중인 교육생만
 
-					| 필드 | 설명 |
+					요청 매니저가 **지금** 배정된 반의 교육생이어야 한다. 해제된 배정
+					(`manager_assignment.unassigned_at`)과 이탈한 교육생(`cohort_member.left_at`)은
+					담당으로 치지 않는다 — 그러지 않으면 지난 기수에 잠깐 담당했던 매니저가
+					계속 남의 교육생 리포트를 본다.
+
+					## 오류
+
+					| 코드 | 상황 |
 					|---|---|
-					| `releaseStatus` | `NOT_CONFIGURED` · `WITHHELD` · `RELEASED` — **판별자** |
-					| `scope` | `PRIVATE` · `SUMMARY` · `FULL`. 미지정이면 **키가 빠진다** |
-					| `publishedAt` | 발행 시각. 발행 전이면 키가 빠진다 |
-					| `bodyVisible` | 교육생이 지금 본문을 읽을 수 있는가 |
+					| 404 `REPORT_NOT_FOUND` | 없는 교육생 **또는 담당하지 않는 교육생** |
 
-					⚠️ **`NOT_CONFIGURED`를 "비공개"로 그리면 안 된다.** 아직 아무도 정하지 않은
-					초기 상태이고, `WITHHELD`(정해서 닫았다)와 구분해야 한다.
+					⚠️ 담당하지 않는 교육생을 403이 아니라 **404로 돌려준다.** 403으로 구분해 주면
+					"그 id의 교육생이 존재한다"는 사실이 새어 나간다(`GET /reports/{reportId}`와 같은 규칙).
 
-					## 담당하지 않는 리포트
-
-					목록에서 **빠질 뿐** 404가 아니다. 목록 조회에서 404는 "그런 반이 없다"는
-					뜻이 되어 실제로 담당이 없는 경우와 구분되지 않는다.
-					빈 목록도 정상이다 — 담당 반이 없거나, 회차가 아직 안 끝났거나, 필터가 좁은 경우다.
+					빈 `rounds`는 정상이다 — 그 교육생이 속한 기수에 회차가 아직 없는 경우다.
 					"""
 	)
 	@PreAuthorize("hasRole('MANAGER')")
 	// `/{reportId}`보다 구체적인 리터럴이라 스프링이 이 경로를 먼저 고른다 — `managed`가
 	// UUID로 파싱되는 일은 없다. CohortReportController의 `/reports/class-diagnosis`도 같은 구조다.
 	@GetMapping("/managed")
-	public ResponseEntity<ManagedReportListResponse> findManagedReports(
-			@RequestParam(required = false) UUID cohortId,
-			@RequestParam(required = false) UUID roundId,
-			@RequestParam(required = false) UUID classId
-	) {
+	public ResponseEntity<TraineeReportsResponse> findManagedTraineeReports(@RequestParam UUID traineeId) {
 		AuthUser manager = currentUserResolver.resolveCurrentUser();
-		return ResponseEntity.ok(managedReportService.findManagedReports(
-				manager.userId(), manager.organizationId(), cohortId, roundId, classId));
+		if (!managerTraineeAccessRepository.isManagedBy(traineeId, manager.userId(), manager.organizationId())) {
+			// 담당이 아니면 404다. 존재 여부를 알려 주지 않기 위해 "없는 교육생"과 같은 응답을 쓴다.
+			throw new ReportException(ReportErrorCode.REPORT_NOT_FOUND);
+		}
+		return ResponseEntity.ok(traineeReportService.findTraineeReportsForManager(traineeId));
 	}
 
 	@Operation(

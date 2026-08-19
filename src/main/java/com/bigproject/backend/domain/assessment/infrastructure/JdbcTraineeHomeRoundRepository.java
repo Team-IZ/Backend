@@ -73,7 +73,6 @@ public class JdbcTraineeHomeRoundRepository implements TraineeHomeRoundRepositor
 			       v.completed_review_count,
 			       v.report_id,
 			       v.report_publish_status,
-			       v.trainee_release_status,
 			       v.explanation_status,
 			       v.submission_due_at,
 			       v.round_assessment_open_at,
@@ -201,7 +200,6 @@ public class JdbcTraineeHomeRoundRepository implements TraineeHomeRoundRepositor
 
 			toUuid(rs, "report_id"),
 			rs.getString("report_publish_status"),
-			rs.getString("trainee_release_status"),
 			rs.getString("explanation_status"),
 
 			toInstant(rs.getTimestamp("submission_due_at")),

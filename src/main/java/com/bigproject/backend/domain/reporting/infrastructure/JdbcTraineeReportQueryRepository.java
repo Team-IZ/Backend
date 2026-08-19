@@ -69,13 +69,9 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				       ma.status                    AS attempt_status,
 				       ma.terminal_reason_code,
 				       ma.validity_review_status,
-				       rpt.trainee_release_status,
-				       rpt.trainee_disclosure_scope,
 				       r.submission_due_at,
 				       r.report_publish_not_before_at,
 				       rpt.published_at,
-				       (rpt.trainee_release_status = 'RELEASED'
-				            AND rs.snapshot_id IS NOT NULL) AS can_view_report,
 				       rev.status                   AS review_status,
 				       rev.review_due_at,
 				       rev.terminal_at              AS review_completed_at
@@ -92,16 +88,17 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				      AND ma.user_id = cm.user_id
 				      AND ma.attempt_type = 'INITIAL'
 				LEFT JOIN LATERAL (
-				       SELECT x.report_id, x.trainee_release_status, x.trainee_disclosure_scope, x.published_at
+				       SELECT x.report_id, x.published_at
 				       FROM report x
 				       WHERE x.assessment_round_id = r.assessment_round_id
 				         AND x.user_id = cm.user_id
 				         AND x.lifecycle_status <> 'SUPERSEDED'
-				       -- report에는 created_at이 없다. 학생이 실제로 볼 수 있는 것을 먼저 고르고
-				       -- (RELEASED), 그다음 최근 발행 순으로 본다. report_id는 동률을 끊어 같은 입력에
-				       -- 늘 같은 행이 나오게 하는 마지막 기준이다.
-				       ORDER BY (x.trainee_release_status = 'RELEASED') DESC,
-				                x.published_at DESC NULLS LAST,
+				       -- report에는 created_at이 없다. 학생이 실제로 볼 수 있는 것을 먼저 고른다 —
+				       -- 종전에는 그 기준이 trainee_release_status='RELEASED'였는데 공개/비공개가
+				       -- 폐지되면서 published_at이 그 자리를 그대로 물려받았다(발행이 곧 공개다).
+				       -- NULLS LAST가 발행된 행을 앞으로 보내므로 정렬 키 하나로 둘 다 된다.
+				       -- report_id는 동률을 끊어 같은 입력에 늘 같은 행이 나오게 하는 마지막 기준이다.
+				       ORDER BY x.published_at DESC NULLS LAST,
 				                x.report_id DESC
 				       LIMIT 1
 				) rpt ON TRUE
@@ -135,12 +132,9 @@ public class JdbcTraineeReportQueryRepository implements TraineeReportQueryRepos
 				rs.getString("attempt_status"),
 				rs.getString("terminal_reason_code"),
 				rs.getString("validity_review_status"),
-				rs.getString("trainee_release_status"),
-				rs.getString("trainee_disclosure_scope"),
 				instant(rs, "submission_due_at"),
 				instant(rs, "report_publish_not_before_at"),
 				instant(rs, "published_at"),
-				rs.getBoolean("can_view_report"),
 				rs.getString("review_status"),
 				instant(rs, "review_due_at"),
 				instant(rs, "review_completed_at")

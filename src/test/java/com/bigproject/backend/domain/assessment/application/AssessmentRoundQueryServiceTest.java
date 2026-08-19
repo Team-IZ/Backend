@@ -231,26 +231,29 @@ class AssessmentRoundQueryServiceTest {
 		assertThat(response.current().teamNumber()).isEqualTo("3");
 	}
 
+	/**
+	 * 리포트가 만들어지는 중이면 아직 열지 않는다. 종전에는 이 자리를
+	 * {@code traineeReleaseStatus}(공개 상태)가 판정했는데, 공개/비공개가 폐지되면서
+	 * (2026-08-19) 발행 여부 하나로 접혔다.
+	 */
 	@Test
-	void normalizesMissingTraineeReleaseStatusToNotConfigured() {
+	void doesNotAllowReportViewWhileTheReportIsStillBeingGenerated() {
 		authenticated();
 		when(repository.findAllByTraineeUserId(traineeUserId)).thenReturn(List.of(
-				roundWithReport("OPEN", 3, null)
+				roundWithReport("OPEN", 3, "GENERATING")
 		));
 
 		AssessmentRoundsResponse response = service.getMyAssessmentRounds();
 
-		// 리포트 행이 없으면 View가 NULL을 주지만 클라이언트 분기를 하나로 유지한다.
-		assertThat(response.current().traineeReleaseStatus()).isEqualTo("NOT_CONFIGURED");
 		assertThat(response.current().canViewReport()).isFalse();
 	}
 
 	@Test
-	void allowsReportViewOnlyWhenTraineeReleaseStatusIsReleased() {
+	void allowsReportViewOnlyWhenTheReportIsPublished() {
 		authenticated();
 		when(repository.findAllByTraineeUserId(traineeUserId)).thenReturn(List.of(
-				roundWithReport("CLOSED", 2, "RELEASED"),
-				roundWithReport("CLOSED", 1, "WITHHELD")
+				roundWithReport("CLOSED", 2, "PUBLISHED"),
+				roundWithReport("CLOSED", 1, "NOT_PUBLISHED")
 		));
 
 		AssessmentRoundsResponse response = service.getMyAssessmentRounds();
@@ -311,9 +314,9 @@ class AssessmentRoundQueryServiceTest {
 		return baseRound(roundStatus, roundNo, roundNo, submissionDueAt, null, null);
 	}
 
-	private static TraineeHomeRound roundWithReport(String roundStatus, int roundNo, String traineeReleaseStatus) {
+	private static TraineeHomeRound roundWithReport(String roundStatus, int roundNo, String reportPublishStatus) {
 		return baseRound(roundStatus, roundNo, roundNo, Instant.parse("2026-07-14T09:00:00Z"),
-				UUID.randomUUID(), traineeReleaseStatus);
+				UUID.randomUUID(), reportPublishStatus);
 	}
 
 	private static TraineeHomeRound baseRound(
@@ -322,7 +325,7 @@ class AssessmentRoundQueryServiceTest {
 			int projectSequenceNo,
 			Instant submissionDueAt,
 			UUID reportId,
-			String traineeReleaseStatus
+			String reportPublishStatus
 	) {
 		return new TraineeHomeRound(
 				UUID.randomUUID(), roundNo, projectSequenceNo, "미프 " + projectSequenceNo + "차", roundStatus,
@@ -332,7 +335,7 @@ class AssessmentRoundQueryServiceTest {
 				"PENDING", "GITHUB_URL", "ACCEPTED", Instant.parse("2026-07-14T08:22:10Z"), true, true,
 				"ANALYZING", "RUNNING", null,
 				"ANALYZING", null, 3, null, 1,
-				reportId, "NOT_PUBLISHED", traineeReleaseStatus, "UNAVAILABLE",
+				reportId, reportPublishStatus == null ? "NOT_PUBLISHED" : reportPublishStatus, "UNAVAILABLE",
 				submissionDueAt, null, null, null, null, null, "ROUND_BATCH", null,
 				UUID.randomUUID(), "김매니저", AS_OF
 		);

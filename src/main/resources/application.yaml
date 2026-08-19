@@ -482,25 +482,22 @@ password-reset:
   expiration: ${PASSWORD_RESET_EXPIRATION:PT30M}
   request-cooldown: ${PASSWORD_RESET_REQUEST_COOLDOWN:PT1M}
 
-app:
-  report:
-    # 리포트를 발행하면서 교육생 공개까지 자동으로 할지.
-    #
-    # 🔴 기본은 꺼 둔다(actor-user-id 가 비면 동작하지 않는다). 켜면 매니저의 판단 없이 리포트가
-    # 학생에게 나가고, AI가 일부 실패한 PARTIAL 리포트(개념 카드가 빠진 것)도 그대로 나간다.
-    # 켤지는 운영이 정할 일이라 기본값으로 정하지 않는다.
-    #
-    # actor-user-id 가 필요한 이유: ck_report_trainee_release_status_2 가 RELEASED 에
-    # trainee_released_by NOT NULL 을 요구하고 그 컬럼이 app_user FK 다. 배치에는 "누가
-    # 공개했는가"에 넣을 사용자가 없어서 밖에서 받아야 한다.
-    #
-    # 운영에서는 자동화 전용 시스템 계정을 가리켜야 한다 — 사람 계정을 넣으면 감사 기록이
-    # 그 사람을 지목한다. 로컬 확인용으로는 아무 계정 UUID 나 넣어도 동작한다.
-    auto-release:
-      actor-user-id: ${REPORT_AUTO_RELEASE_ACTOR:}
-      # SUMMARY 는 문답 원문을 닫는다. PRIVATE 은 Report.release 가 거부한다(비공개는 withhold).
-      scope: ${REPORT_AUTO_RELEASE_SCOPE:FULL}
+# 다시 보기(REVIEW 응시).
+#
+# 🔴 이 값 하나를 두 곳이 함께 읽는다. 옮길 때 한쪽만 고치면 어긋난다.
+#   · AssessmentReviewService  — 다시 보기 세션의 마감(review_due_at)을 정한다
+#   · TraineeReportServiceImpl — 리포트에서 답변·해설 잠금이 풀리는 시각을 정한다
+#
+# 두 곳의 기산점이 다르다는 점에 주의한다. 세션 마감은 학생이 다시 보기를 "연 순간"부터고,
+# 리포트 잠금은 "발행일"부터다. 열지 않은 학생에게는 review_due_at 이 아예 없어서 잠금을
+# 판정할 기준이 없기 때문이다.
+#
+# 3일은 MG-06 정의서 §3("발행일이 다시 보기 창의 기산점 — 발행 +3일")에서 온 값이다.
+# 종전 코드 기본값은 7이었는데 문서와 어긋나 있던 것을 2026-08-19에 맞췄다.
+session:
+  review-window-days: ${SESSION_REVIEW_WINDOW_DAYS:3}
 
+app:
   submission:
     # 파일당 상한. 정의서에 원천 컬럼이 없어 애플리케이션 상수로 두고 적용값을
     # submission_artifact.applied_max_file_bytes 에 그대로 기록한다. 정책화가 필요해지면
