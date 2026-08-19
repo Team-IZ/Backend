@@ -35,6 +35,11 @@ spring:
       validation-timeout: 5000
       idle-timeout: 600000
       max-lifetime: 1800000
+      # Supabase 커넥션 풀러(Supavisor)가 세션마다 `SET default_transaction_read_only = on`을
+      # 얹는 순간이 있다(원인 불명, 2026-08-19 두 차례 실측 — DB 레벨 `ALTER DATABASE ... = off`
+      # 기본값은 그대로인데도 새 세션이 매번 on으로 뜸). 우리가 원인을 못 고치니, 풀이 새 물리
+      # 커넥션을 맺을 때마다 여기서 직접 되돌린다 — Supabase가 뭘 얹든 매번 이걸로 덮어쓴다.
+      connection-init-sql: SET default_transaction_read_only = off
       data-source-properties:
         prepareThreshold: 0
         # pg_stat_activity에서 최신 백엔드와 구버전/다른 DB writer를 구분하기 위한 PGJDBC 식별자.
