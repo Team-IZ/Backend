@@ -257,7 +257,7 @@ public class CurriculumServiceImpl implements CurriculumService {
 
         String normalizedTitle = title.trim().replaceAll("\\s+", " ").toLowerCase();
 
-        if (materialRepository.existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull(orgId, normalizedTitle)) {
+        if (materialRepository.existsByOrgIdAndNormalizedTitle(orgId, normalizedTitle)) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_TITLE_DUPLICATED);
         }
 
@@ -281,7 +281,7 @@ public class CurriculumServiceImpl implements CurriculumService {
      * 있었는데 이들을 잇는 서비스 메서드가 없어 실제로 새 버전을 만들 경로가 없었다(42차 문서가
      * 지적한 그대로). 그 셋을 그대로 이어 붙인다 — 새 판정·새 번호 규칙을 만들지 않는다.
      *
-     * <p>제목 UNIQUE 검사(§ {@code existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull})는 제목을
+     * <p>제목 UNIQUE 검사(§ {@code existsByOrgIdAndNormalizedTitle})는 제목을
      * <b>바꿔 달 때만</b> 돈다. 기존 material에 버전만 추가하는 것이므로, 제목을 그대로 두면 자기
      * 자신의 제목과 부딪힐 이유가 없다(42차 §1 "①로 가면 제목 유니크 제약은 그대로 두셔도
      * 됩니다").
@@ -301,7 +301,7 @@ public class CurriculumServiceImpl implements CurriculumService {
         if (title != null && !title.isBlank()) {
             String normalizedTitle = title.trim().replaceAll("\\s+", " ").toLowerCase();
             if (!normalizedTitle.equals(material.getNormalizedTitle())
-                    && materialRepository.existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull(orgId, normalizedTitle)) {
+                    && materialRepository.existsByOrgIdAndNormalizedTitle(orgId, normalizedTitle)) {
                 throw new CurriculumException(CurriculumErrorCode.CURRICULUM_TITLE_DUPLICATED);
             }
             material.updateTitle(title, normalizedTitle);
