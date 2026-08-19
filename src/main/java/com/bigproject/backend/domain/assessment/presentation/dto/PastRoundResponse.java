@@ -29,7 +29,7 @@ public record PastRoundResponse(
 				implementation = MeasurementAttemptStatus.class) String reviewStatus,
 		@Schema(description = "완료한 다시 보기 건수", example = "1") int completedReviewCount,
 		UUID reportId,
-		@Schema(description = "traineeReleaseStatus = RELEASED일 때만 true") boolean canViewReport
+		@Schema(description = "reportPublishStatus = PUBLISHED일 때만 true") boolean canViewReport
 ) {
 	public static PastRoundResponse from(TraineeHomeRound round) {
 		return new PastRoundResponse(

@@ -147,8 +147,7 @@ public class AssessmentRoundController {
 					| --- | --- | --- |
 					| `reportId` | UUID? | 리포트 식별자 |
 					| `reportPublishStatus` | enum | `PUBLISHED` · `GENERATING` · `NOT_PUBLISHED` |
-					| `traineeReleaseStatus` | enum | 리포트 행이 없으면 `NOT_CONFIGURED`로 정규화한다 |
-					| `canViewReport` | boolean | `traineeReleaseStatus=RELEASED`일 때만 `true` |
+					| `canViewReport` | boolean | `reportPublishStatus=PUBLISHED`일 때만 `true` |
 					| `explanationStatus` | enum | `UNAVAILABLE` · `PARTIAL` · `AVAILABLE` |
 
 					**일정**
@@ -241,7 +240,7 @@ public class AssessmentRoundController {
 					| `reviewStatus` | enum? | 다시 보기 상태. 배정이 없으면 `null` |
 					| `completedReviewCount` | int | 완료한 다시 보기 건수 |
 					| `reportId` | UUID? | 리포트 식별자 |
-					| `canViewReport` | boolean | `traineeReleaseStatus=RELEASED`일 때만 `true` |
+					| `canViewReport` | boolean | `reportPublishStatus=PUBLISHED`일 때만 `true` |
 
 					⚠️ "완료 여부" boolean은 **일부러 두지 않는다.** `representativeStatus`가 완료와 미완료 사유를
 					이미 구분하므로, 파생값을 더하면 계약이 둘로 갈린다.
@@ -261,8 +260,11 @@ public class AssessmentRoundController {
 
 					### 리포트 열람
 
-					**`canViewReport`의 판정 근거는 `traineeReleaseStatus` 하나다.** `reportPublishStatus`는 리포트
-					발행 진행 상태라 열람 판정에 넣지 않는다.
+					**`canViewReport`의 판정 근거는 `reportPublishStatus = 'PUBLISHED'` 하나다.**
+
+					🔴 **`traineeReleaseStatus`가 없어졌다**(2026-08-19). 종전에는 발행과 교육생 공개가 다른
+					사건이라 공개 상태(`NOT_CONFIGURED` · `WITHHELD` · `RELEASED`)가 열람을 따로 판정했다.
+					공개/비공개 개념이 폐지되면서 **발행이 곧 공개**가 됐고, 그 자리를 발행 상태가 물려받았다.
 
 					### 커밋 이메일 배너
 
@@ -331,7 +333,6 @@ public class AssessmentRoundController {
 													    "completedReviewCount": 0,
 													    "reportId": null,
 													    "reportPublishStatus": "NOT_PUBLISHED",
-													    "traineeReleaseStatus": "NOT_CONFIGURED",
 													    "canViewReport": false,
 													    "explanationStatus": "UNAVAILABLE",
 													    "submissionDueAt": "2026-07-14T09:00:00Z",
@@ -416,7 +417,6 @@ public class AssessmentRoundController {
 													    "completedReviewCount": 0,
 													    "reportId": null,
 													    "reportPublishStatus": "NOT_PUBLISHED",
-													    "traineeReleaseStatus": "NOT_CONFIGURED",
 													    "canViewReport": false,
 													    "explanationStatus": "UNAVAILABLE",
 													    "submissionDueAt": null,

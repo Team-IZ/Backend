@@ -140,7 +140,7 @@ class AssessmentRoundControllerTest {
 						"GITHUB_URL", "ACCEPTED", Instant.parse("2026-07-14T08:22:10Z"), true, true,
 						"ANALYZING", "RUNNING", null,
 						"ANALYZING", null, 3, null, 0,
-						null, "NOT_PUBLISHED", "NOT_CONFIGURED", false, "UNAVAILABLE",
+						null, "NOT_PUBLISHED", false, "UNAVAILABLE",
 						Instant.parse("2026-07-14T09:00:00Z"), null, null, null, null, null,
 						"ROUND_BATCH", null,
 						new ManagerResponse(UUID.randomUUID(), "김매니저"), AS_OF

@@ -62,7 +62,6 @@ public record TraineeHomeRound(
 
 		UUID reportId,
 		String reportPublishStatus,
-		String traineeReleaseStatus,
 		String explanationStatus,
 
 		Instant submissionDueAt,
@@ -80,7 +79,7 @@ public record TraineeHomeRound(
 ) {
 	private static final String ROUND_STATUS_OPEN = "OPEN";
 	private static final String ROUND_STATUS_PLANNED = "PLANNED";
-	private static final String TRAINEE_RELEASE_STATUS_RELEASED = "RELEASED";
+	private static final String REPORT_PUBLISH_STATUS_PUBLISHED = "PUBLISHED";
 
 	public boolean isOpen() {
 		return ROUND_STATUS_OPEN.equals(roundStatus);
@@ -109,13 +108,17 @@ public record TraineeHomeRound(
 	}
 
 	/**
-	 * 리포트 열람 허용 여부. 판정 근거는 {@code traineeReleaseStatus} 하나다.
+	 * 리포트 열람 허용 여부. <b>발행됐는가</b> 하나다.
 	 *
-	 * <p>{@code reportPublishStatus}는 회차 마감 후 일괄 생성되는 리포트의 <em>발행 진행 상태</em>라
-	 * 열람 판정에 넣지 않는다. View가 {@code default_action_code = 'VIEW_REPORT'}를 만들 때 쓰는
-	 * 조건과 같은 근거를 써야 계약이 갈리지 않는다.
+	 * <p>종전 근거는 {@code traineeReleaseStatus = 'RELEASED'}였다. 공개/비공개가 폐지되면서
+	 * (2026-08-19) 발행이 곧 공개가 됐고, 그 값을 읽던 자리를 {@code reportPublishStatus}가
+	 * 물려받았다 — 뷰에서 {@code published_at IS NOT NULL}일 때 {@code PUBLISHED}이므로
+	 * <b>같은 컬럼을 보는 것</b>이다.
+	 *
+	 * <p>View가 {@code default_action_code = 'VIEW_REPORT'}를 만들 때 쓰는 조건과 같은 근거를
+	 * 써야 계약이 갈리지 않는다. 마이그레이션 4절이 그 조건도 {@code published_at}으로 옮겼다.
 	 */
 	public boolean canViewReport() {
-		return TRAINEE_RELEASE_STATUS_RELEASED.equals(traineeReleaseStatus);
+		return REPORT_PUBLISH_STATUS_PUBLISHED.equals(reportPublishStatus);
 	}
 }

@@ -58,8 +58,17 @@ public class AssessmentReviewService {
 	private final JdbcSessionReviewRepository reviewRepository;
 	private final JdbcSessionRepository sessionRepository;
 
-	/** 다시 보기 마감까지의 기간(일). {@code review_due_at}은 DDL상 NOT NULL이라 기본값이 반드시 있어야 한다. */
-	@Value("${session.review-window-days:7}")
+	/**
+	 * 다시 보기 마감까지의 기간(일). {@code review_due_at}은 DDL상 NOT NULL이라 기본값이 반드시 있어야 한다.
+	 *
+	 * <p>기본값을 7에서 <b>3으로 내렸다</b>(2026-08-19). MG-06 정의서 §3과
+	 * {@code Report.publishedAt} javadoc이 처음부터 "발행 +3일"이라고 적고 있었는데 코드만 7이었다.
+	 *
+	 * <p>🔴 {@code TraineeReportServiceImpl.reviewWindowDays}가 <b>같은 키를 읽는다.</b> 그쪽은
+	 * 리포트에서 답변·해설 잠금을 푸는 시각을 이 값으로 정한다. 둘이 어긋나면 잠금이 풀린 뒤에도
+	 * 다시 보기 세션이 살아 있어 학생이 답을 보면서 다시 푸는 구간이 생긴다. 옮길 일이 생기면 함께 옮긴다.
+	 */
+	@Value("${session.review-window-days:3}")
 	private int reviewWindowDays;
 
 	/**

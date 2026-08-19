@@ -1,6 +1,5 @@
 package com.bigproject.backend.domain.reporting.presentation.dto;
 
-import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
 import com.bigproject.backend.domain.reporting.domain.ReportCompletionStatus;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -53,13 +52,9 @@ public record TraineeReportsResponse(
 	 *                아직 리포트가 만들어지지 않은 회차({@code NOT_ATTEMPTED} 등)에서는
 	 *                키가 빠진다. {@code GET /reports/{reportId}} 단건 조회에 이 값을 쓴다 —
 	 *                {@code id}(회차 ID)로 부르면 404다.
-	 * @param status  {@code PUBLISHED} · {@code PENDING_PUBLISH} · {@code PENDING_VISIBILITY}
+	 * @param status  {@code PUBLISHED} · {@code PENDING_PUBLISH}
 	 *                · {@code NOT_STARTED} · {@code NOT_ATTEMPTED} · {@code VOID_ATTEMPT} · {@code STOPPED}
 	 * @param publishAfter {@code PENDING_PUBLISH}에서만. 이 시각 이후에 발행된다.
-	 * @param disclosureScope 이 리포트의 공개 범위. 발행·공개 전이거나 리포트가 없으면 키가 빠진다.
-	 *                <b>화면이 {@code qa} 유무로 범위를 되짚지 않게</b> 하려고 값으로 내려준다 —
-	 *                {@code FULL}인데 문항이 아직 없어 {@code qa}가 비는 경우를 {@code SUMMARY}로
-	 *                오인하는 것을 막는다.
 	 * @param completionStatus 리포트가 <b>몇 개 문제로 만들어졌는가</b>. {@code PUBLISHED}에서만.
 	 *                자세한 뜻은 아래 주석을 볼 것 — 같은 이름이 OP-05에서는 다른 뜻이다.
 	 * @param concepts {@code PUBLISHED}에서만.
@@ -74,19 +69,22 @@ public record TraineeReportsResponse(
 
 					| 값 | 뜻 | 화면 |
 					|---|---|---|
-					| `PUBLISHED` | 리포트가 공개됐다 | 결과를 그린다 |
-					| `PENDING_PUBLISH` | 아직 발행 전이다 | `publishAfter` 이후에 나온다 |
-					| `PENDING_VISIBILITY` | 발행됐지만 공개 범위가 안 정해졌다 | 매니저가 공개해야 열린다 |
+					| `PUBLISHED` | 리포트가 발행됐다 | 결과를 그린다 |
+					| `PENDING_PUBLISH` | 리포트를 만드는 중이다 | `리포트가 생성 중입니다` |
 					| `NOT_STARTED` | **제출 마감 전인데 아직 응시 기록이 없다** | 아직 시간이 있다 |
 					| `NOT_ATTEMPTED` | **마감이 지나도록 응시하지 않았다** | 놓쳤다 — 매니저 안내가 필요하다 |
 					| `VOID_ATTEMPT` | 무효 응시 검토 중이거나 무효로 확정됐다 | `확인 필요` |
 					| `STOPPED` | 세션을 시작했지만 끝내지 못했다 | 중단 |
 
+					🔴 **`PENDING_VISIBILITY`가 없어졌다**(2026-08-19). 종전에는 발행과 공개가 다른 사건이라
+					`발행은 됐지만 매니저가 아직 공개 범위를 안 정했다`는 상태가 있었는데, 공개/비공개 개념이
+					폐지되면서 사라졌다. **발행되면 그 즉시 `PUBLISHED`다.**
+
 					🔴 **`NOT_STARTED`와 `NOT_ATTEMPTED`를 한 문구로 묶지 않는다.** 둘을 같은 말로 그리면
 					아직 시간이 있는 학생에게 놓쳤다고 말하거나, 정말 놓친 학생에게서 경고가 사라진다(26차 A1).
 					가르는 축은 **제출 마감**이며, 홈의 `SUBMISSION_REQUIRED` / `SUBMISSION_MISSED`와 같은 값으로
 					갈리므로 두 화면이 같은 회차를 같은 말로 설명한다.""",
-					allowableValues = {"PUBLISHED", "PENDING_PUBLISH", "PENDING_VISIBILITY",
+					allowableValues = {"PUBLISHED", "PENDING_PUBLISH",
 							"NOT_STARTED", "NOT_ATTEMPTED", "VOID_ATTEMPT", "STOPPED"})
 			String status,
 			@JsonInclude(JsonInclude.Include.NON_NULL)
@@ -95,7 +93,6 @@ public record TraineeReportsResponse(
 			@Schema(description = "PUBLISHED에서만. 그 외에는 키가 빠진다") String publishedAt,
 			@JsonInclude(JsonInclude.Include.NON_NULL)
 			@Schema(description = "PUBLISHED에서만. 그 외에는 키가 빠진다") String curriculum,
-			@JsonInclude(JsonInclude.Include.NON_NULL) DisclosureScope disclosureScope,
 
 			// 여기 PARTIAL은 "일부 문제의 AI 생성이 실패해 개념 카드가 빠졌다"는 뜻이다.
 			// OP-05의 동명 값과 뜻이 다르니 설명은 ReportCompletionStatus javadoc을 볼 것 —
@@ -154,28 +151,36 @@ public record TraineeReportsResponse(
 	 *              눈금은 AI {@code reachedStage} 0~4와 같다. <b>DB {@code reach_display_code}는 원천이
 	 *              아니다</b> — 미니프로젝트에서 항상 L0라 쓸 수 없다
 	 *              ({@code JdbcTraineeReportQueryRepository.findConcepts} 주석 참고).
-	 * @param said  학생에게 보여주는 서술. 공개 범위가 SUMMARY 미만이면 비어 있다.
-	 * @param isRetryTarget 다시 보기 대상인가.
-	 * @param curriculumRef 교안 위치. 공개 범위 SUMMARY 이상일 때만.
-	 * @param qa    문답 원문. <b>공개 범위 FULL일 때만</b> 채워진다.
-	 * @param explain 막힌 이유 해설. 다시 보기 대상일 때만.
+	 * @param said  학생에게 보여주는 서술. 항상 있다 — 가림 대상이 아니다.
+	 * @param isRetryTarget 다시 보기 대상인가({@code level < 2}).
+	 * @param curriculumRef 교안 위치. 항상 있다 — 어디를 다시 볼지는 잠금과 무관하게 알려 준다.
+	 * @param qa    문답 원문. <b>다시 보기 대상이면서 아직 안 했으면 키가 빠진다.</b>
+	 * @param explain 막힌 이유 해설. 다시 보기 대상이고 <b>다시 보기를 마친 뒤</b>에만.
 	 * @param comparedReach 다시 보기 전/후 비교. 다시 보기를 마쳤을 때만.
+	 *
+	 * <h2>무엇이 언제 가려지는가</h2>
+	 *
+	 * <p>공개/비공개와 공개 범위(SUMMARY·FULL)가 폐지되면서(2026-08-19) <b>가림막은 하나만 남았다</b>
+	 * — 다시 보기 대상({@code level < 2})인데 아직 다시 보기를 마치지 않았으면 {@code qa}와
+	 * {@code explain}이 빠진다. 다시 풀 문제의 답과 해설을 먼저 주면 다시 보기가 성립하지 않기 때문이다.
+	 *
+	 * <p>{@code level}·{@code said}·{@code isRetryTarget}·{@code curriculumRef}는 <b>항상 나간다.</b>
+	 * 어디가 막혔고 교안 어디를 볼지는 알려 주되, 답과 해설만 다시 보기 뒤로 미루는 것이다.
+	 * 매니저 조회({@code GET /reports/managed})에서는 이 잠금도 걸리지 않는다.
 	 *
 	 * <h2>🔴 프론트엔드 수정 필요 — 선택 필드가 화면 타입에서 필수다</h2>
 	 *
 	 * <p>이 레코드는 {@link JsonInclude}로 <b>키 자체를 뺀다</b>(null을 싣지 않는다).
 	 * 그런데 Frontend {@code trainee/report/types.ts}의 {@code ConceptReport}는
-	 * {@code said: string}과 {@code qa: QaEntry[]}를 <b>필수</b>로 선언한다
-	 * ({@code curriculumRef?}만 선택이다).
+	 * {@code qa: QaEntry[]}를 <b>필수</b>로 선언한다.
 	 *
-	 * <p>그래서 공개 범위가 {@code PRIVATE}·{@code SUMMARY}인 리포트에서 화면이
-	 * {@code concept.qa.map(...)}을 무조건 부르면 {@code TypeError}가 난다.
+	 * <p>그래서 다시 보기를 안 한 회차에서 화면이 {@code concept.qa.map(...)}을 무조건 부르면
+	 * {@code TypeError}가 난다.
 	 *
-	 * <p><b>백엔드 계약은 바꾸지 않는다.</b> 빈 값({@code ""}·{@code []})을 채워 보내면
-	 * "빈 배열"과 "공개 범위상 안 열림"을 구분할 수 없게 되고, 화면은 문답이 없는 개념과
-	 * 볼 권한이 없는 개념을 같은 모양으로 그리게 된다.
+	 * <p><b>백엔드 계약은 바꾸지 않는다.</b> 빈 배열을 채워 보내면 "문답이 없는 개념"과
+	 * "다시 보기 전이라 안 열린 개념"을 구분할 수 없게 되고, 화면이 둘을 같은 모양으로 그리게 된다.
 	 *
-	 * <p>프론트에서 {@code said?}·{@code qa?}로 바꾸고 {@code ConceptCard.tsx}·{@code QaList.tsx}에
+	 * <p>프론트에서 {@code qa?}로 바꾸고 {@code ConceptCard.tsx}·{@code QaList.tsx}에
 	 * 미존재 분기를 두면 된다.
 	 */
 	public record ConceptReportResponse(

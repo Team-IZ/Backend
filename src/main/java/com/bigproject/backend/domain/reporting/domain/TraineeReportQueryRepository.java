@@ -81,7 +81,11 @@ public interface TraineeReportQueryRepository {
 	 *                        아직 낼 수 있고(`NOT_STARTED`), 지났으면 놓친 것이다(`NOT_ATTEMPTED`).
 	 *                        홈이 `SUBMISSION_REQUIRED`와 `SUBMISSION_MISSED`를 가르는 값과 같다.
 	 * @param reportPublishNotBeforeAt 발행 예정 시각. 화면 `PENDING_PUBLISH`의 `publishAfter`.
+	 * @param publishedAt <b>발행 시각이자 학생이 볼 수 있게 된 시각</b>. null이면 아직 발행 전이다.
+	 *                    공개/비공개가 폐지되면서(2026-08-19) 종전의 {@code traineeReleaseStatus}·
+	 *                    {@code traineeDisclosureScope}·{@code canViewReport} 세 값이 전부 여기로 접혔다.
 	 * @param reviewStatus      다시 보기(REVIEW attempt) 상태. 없으면 null.
+	 * @param reviewCompletedAt 다시 보기를 마친 시각. <b>답변·해설 잠금을 푸는 값</b>이다.
 	 */
 	record RoundRow(
 			UUID assessmentRoundId,
@@ -97,12 +101,9 @@ public interface TraineeReportQueryRepository {
 			String attemptStatus,
 			String terminalReasonCode,
 			String validityReviewStatus,
-			String traineeReleaseStatus,
-			String traineeDisclosureScope,
 			Instant submissionDueAt,
 			Instant reportPublishNotBeforeAt,
 			Instant publishedAt,
-			boolean canViewReport,
 			String reviewStatus,
 			Instant reviewDueAt,
 			Instant reviewCompletedAt

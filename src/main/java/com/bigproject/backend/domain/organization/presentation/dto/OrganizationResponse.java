@@ -1,6 +1,6 @@
 package com.bigproject.backend.domain.organization.presentation.dto;
 
-import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
+import com.bigproject.backend.domain.organization.domain.DisclosureScope;
 import com.bigproject.backend.domain.organization.domain.OrganizationStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 

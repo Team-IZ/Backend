@@ -27,6 +27,9 @@ import static org.mockito.Mockito.when;
  */
 class RetryTargetPolicyTest {
 
+	/** 운영 기본값과 같은 다시 보기 창(일). 발행일로부터 이만큼 지나면 잠금이 풀린다. */
+	private static final int REVIEW_WINDOW_DAYS = 3;
+
 	private static final UUID USER = UUID.randomUUID();
 	private static final UUID ROUND = UUID.randomUUID();
 	private static final UUID REPORT = UUID.randomUUID();
@@ -37,7 +40,7 @@ class RetryTargetPolicyTest {
 	@BeforeEach
 	void setUp() {
 		queryRepository = mock(TraineeReportQueryRepository.class);
-		service = new TraineeReportServiceImpl(queryRepository, new ObjectMapper());
+		service = new TraineeReportServiceImpl(queryRepository, new ObjectMapper(), REVIEW_WINDOW_DAYS);
 	}
 
 	/**
@@ -96,8 +99,7 @@ class RetryTargetPolicyTest {
 				ROUND, "미프 1차 이해도 확인", 1, "미니프로젝트",
 				REPORT, UUID.randomUUID(), "FULL", 3, 0,
 				UUID.randomUUID(), "COMPLETED", null, "APPROVED",
-				"RELEASED", "FULL",
-				null, null, Instant.parse("2026-07-01T00:00:00Z"), true,
+				null, null, Instant.now().minus(java.time.Duration.ofDays(1)),
 				null, null, null)));
 		when(queryRepository.findConcepts(USER)).thenReturn(List.of(rows));
 	}

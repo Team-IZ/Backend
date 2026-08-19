@@ -1,6 +1,5 @@
 package com.bigproject.backend.domain.reporting.application;
 
-import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
 import com.bigproject.backend.domain.reporting.domain.ReportCompletionStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
 import com.bigproject.backend.domain.reporting.domain.ReportException;
@@ -16,13 +15,14 @@ import com.bigproject.backend.domain.reporting.presentation.dto.TraineeReportsRe
 import com.bigproject.backend.domain.reporting.presentation.dto.TraineeReportsResponse.QaEntryResponse;
 import com.bigproject.backend.domain.reporting.presentation.dto.TraineeReportsResponse.RoundListItem;
 import com.bigproject.backend.domain.reporting.presentation.dto.TraineeReportsResponse.RoundReportResponse;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -34,13 +34,14 @@ import java.util.stream.Collectors;
 /**
  * TR-04 조립. 뷰에서 읽은 행들을 화면 계약({@code types.ts})의 모양으로 맞춘다.
  *
- * <p>여기서 하는 일은 <b>판정이 아니라 번역</b>이다 — 도달 단계·공개 범위 판정은 전부
- * DB(뷰·CHECK)가 이미 내렸고, 이 클래스는 그 값을 화면 어휘로 바꾼다.
- * 판정을 여기서 다시 하면 뷰와 두 벌이 된다.
+ * <p>여기서 하는 일은 <b>판정이 아니라 번역</b>이다 — 도달 단계 판정은 DB(뷰)가 이미 내렸고,
+ * 이 클래스는 그 값을 화면 어휘로 바꾼다. 판정을 여기서 다시 하면 뷰와 두 벌이 된다.
+ *
+ * <p>예외는 <b>다시 보기 잠금</b> 하나다. 공개/비공개가 없어진 뒤 남은 유일한 가림막이라
+ * 뷰가 아니라 여기서 정한다({@link #isRetryPending}).
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class TraineeReportServiceImpl implements TraineeReportService {
 
 	/**
@@ -52,9 +53,56 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	private final TraineeReportQueryRepository queryRepository;
 	private final ObjectMapper objectMapper;
 
+	/**
+	 * 다시 보기 창(일). <b>발행일이 기산점</b>이다 — MG-06 정의서 §3 "발행 +3일".
+	 *
+	 * <p>🔴 {@code measurement_attempt.review_due_at}을 쓰지 않는 이유. 그 컬럼은 학생이 다시 보기를
+	 * <b>연 순간</b> {@code now + N}으로 찍힌다({@code AssessmentReviewService}). 열지 않은 학생은
+	 * 값 자체가 없어서 "기한이 지났는가"를 물을 수가 없다. 잠금은 열지 않은 학생에게도 걸려야
+	 * 하므로 기산점이 발행일이어야 한다.
+	 *
+	 * <p>{@code session.review-window-days}와 <b>같은 값을 본다.</b> 리포트가 잠금을 푸는 시각과
+	 * 세션이 닫히는 시각이 어긋나면, 잠금이 풀린 뒤에도 다시 보기 세션이 살아 있어 학생이
+	 * 답을 보면서 다시 푸는 구간이 생긴다.
+	 */
+	private final int reviewWindowDays;
+
+	/**
+	 * {@code @RequiredArgsConstructor}를 쓰지 않는다 — 이 프로젝트에 lombok.config가 없어
+	 * {@link Value}가 생성자 파라미터로 복사되지 않기 때문이다({@code ReportRunFinalizer}와 같은 이유).
+	 */
+	public TraineeReportServiceImpl(
+			TraineeReportQueryRepository queryRepository,
+			ObjectMapper objectMapper,
+			@Value("${session.review-window-days:3}") int reviewWindowDays) {
+
+		this.queryRepository = queryRepository;
+		this.objectMapper = objectMapper;
+		this.reviewWindowDays = reviewWindowDays;
+	}
+
 	@Override
 	@Transactional(readOnly = true)
 	public TraineeReportsResponse findMyReports(UUID userId) {
+		return findReports(userId, false);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public TraineeReportsResponse findTraineeReportsForManager(UUID traineeUserId) {
+		return findReports(traineeUserId, true);
+	}
+
+	/**
+	 * 회차 목록 + 회차별 본문.
+	 *
+	 * @param managerView 매니저가 보는가. 다시 보기 잠금을 걸지 <b>않는다</b> — 잠금의 목적은
+	 *                    "학생이 답을 먼저 보고 다시 푸는 것"을 막는 것이라 매니저에게는 해당이 없고,
+	 *                    지도하려면 학생이 뭐라고 답했는지를 봐야 한다.
+	 *                    {@code retryState}는 그대로 <b>사실대로</b> 내보낸다 — 매니저가 다시 보기를
+	 *                    아직 안 한 학생을 찾는 근거이므로 가리면 안 된다.
+	 */
+	private TraineeReportsResponse findReports(UUID userId, boolean managerView) {
 		List<RoundRow> rounds = queryRepository.findRounds(userId);
 		Map<UUID, List<ConceptRow>> conceptsByReport = conceptsByReport(userId);
 		Map<UUID, List<UnaskedConceptRow>> unaskedByReport = unaskedByReport(userId);
@@ -67,7 +115,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 			String roundId = round.assessmentRoundId().toString();
 			boolean hasRetryTarget = hasRetryTarget(round, conceptsByReport);
 			railItems.add(new RoundListItem(roundId, round.roundName(), isRetryPending(round, hasRetryTarget)));
-			reportsById.put(roundId, toRoundReport(round, conceptsByReport, unaskedByReport, answersByReport));
+			reportsById.put(roundId,
+					toRoundReport(round, conceptsByReport, unaskedByReport, answersByReport, managerView));
 		}
 
 		return new TraineeReportsResponse(railItems, reportsById);
@@ -84,7 +133,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				.orElseThrow(() -> new ReportException(ReportErrorCode.REPORT_NOT_FOUND));
 
 		return toRoundReport(target, conceptsByReport(userId), unaskedByReport(userId),
-				answersByReport(userId));
+				answersByReport(userId), false);
 	}
 
 	private Map<UUID, List<ConceptRow>> conceptsByReport(UUID userId) {
@@ -117,7 +166,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 			RoundRow round,
 			Map<UUID, List<ConceptRow>> conceptsByReport,
 			Map<UUID, List<UnaskedConceptRow>> unaskedByReport,
-			Map<UUID, Map<UUID, List<StageAnswerRow>>> answersByReport
+			Map<UUID, Map<UUID, List<StageAnswerRow>>> answersByReport,
+			boolean managerView
 	) {
 		String id = round.assessmentRoundId().toString();
 		// 회차당 리포트는 최대 1건이다(uq_report_active_user). 아직 만들어지지 않은 회차는 null이고,
@@ -155,30 +205,24 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		//    publishAfter는 회차가 정해 둔 "이 시각 전에는 발행하지 않는다" 값이다.
 		if (round.reportId() == null || round.publishedAt() == null) {
 			return new RoundReportResponse(id, reportId, label, "PENDING_PUBLISH",
-					iso(round.reportPublishNotBeforeAt()), null, null, null, null,
+					iso(round.reportPublishNotBeforeAt()), null, null, null,
 					null, null, null, null, null, null);
 		}
 
-		// ⑤ 발행됐지만 공개 범위 미지정 — 발행과 공개는 다른 사건이다.
-		if (!round.canViewReport()) {
-			return statusOnly(id, reportId, label, "PENDING_VISIBILITY");
-		}
-
-		// ⑥ 공개됨.
+		// ⑤ 발행됨 — 곧 공개다. 종전에는 여기에 `발행은 됐지만 매니저가 공개 범위를 안 정했다`
+		//    (PENDING_VISIBILITY) 분기가 하나 더 있었는데, 공개/비공개 개념이 없어지면서 사라졌다.
 		List<ConceptRow> conceptRows = conceptsByReport.getOrDefault(round.reportId(), List.of());
 		Map<UUID, List<StageAnswerRow>> answers = answersByReport.getOrDefault(round.reportId(), Map.of());
 
-		// 두 값 다 회차 단위다. 개념 카드마다 다시 계산하지 않고 한 번 정해 넘긴다.
-		boolean fullScope = DisclosureScope.FULL == scope(round.traineeDisclosureScope());
+		// 회차 단위 값이라 개념 카드마다 다시 계산하지 않고 한 번 정해 넘긴다.
 		boolean hasRetryTarget = conceptRows.stream().anyMatch(TraineeReportServiceImpl::isRetryTarget);
-		boolean retryPending = isRetryPending(round, hasRetryTarget);
+		boolean retryPending = !managerView && isRetryPending(round, hasRetryTarget);
 
 		// 물은 개념과 묻지 못한 개념을 한 배열에 담는다. 화면이 개념 3개를 나란히 그리고, 빠진
 		// 자리에 "코드에 이 개념이 없어 묻지 못했습니다"를 띄우려면 같은 목록에 있어야 한다 —
 		// 두 배열로 나누면 개념 순서(concept_display_order)가 무너진다.
 		List<ConceptReportResponse> concepts = new ArrayList<>(conceptRows.stream()
-				.map(row -> toConcept(row, answers.getOrDefault(row.problemId(), List.of()),
-						fullScope, retryPending))
+				.map(row -> toConcept(row, answers.getOrDefault(row.problemId(), List.of()), retryPending))
 				.toList());
 		unaskedByReport.getOrDefault(round.reportId(), List.of()).stream()
 				.map(row -> ConceptReportResponse.unasked(
@@ -191,12 +235,8 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				null,
 				iso(round.publishedAt()),
 				round.projectName(),
-				// 값 집합은 DB CHECK(ck_report_trainee_disclosure_scope)가 강제하므로 모르는 값을
-				// 만나면 조용히 넘길 데이터가 아니다 — valueOf가 그대로 터지게 둔다
-				// (ManagedReportListResponse.scope와 같은 판단).
-				scope(round.traineeDisclosureScope()),
-				// PUBLISHED 분기에서만 채운다. 앞의 ①~⑤는 활성 스냅샷이 없거나(발행 전)
-				// 볼 수 없는 상태라 완전성을 말할 대상 자체가 없다.
+				// PUBLISHED 분기에서만 채운다. 앞의 ①~④는 활성 스냅샷이 없어서(발행 전)
+				// 완전성을 말할 대상 자체가 없다.
 				completion(round.completionStatus()),
 				// 19차 Q1 — 생성 실패(장애)와 문항 없음(정상)을 화면이 가를 수 있게 건수를 준다.
 				// 문항 없음은 위 concepts에 asked=false로 들어가고, 생성 실패는 아예 빠지므로
@@ -210,15 +250,11 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		);
 	}
 
-	private static DisclosureScope scope(String value) {
-		return value == null ? null : DisclosureScope.valueOf(value);
-	}
-
 	/**
 	 * 활성 스냅샷의 완전성. 스냅샷이 없으면 null이고 {@code @JsonInclude(NON_NULL)}이라 키가 빠진다.
 	 *
 	 * <p>{@code ck_report_snapshot_completion_status}가 {@code FULL}·{@code PARTIAL} 둘만 허용하므로
-	 * 모르는 값은 조용히 넘길 데이터가 아니다 — {@link #scope}와 같이 valueOf가 그대로 터지게 둔다.
+	 * 모르는 값은 조용히 넘길 데이터가 아니다 — valueOf가 그대로 터지게 둔다.
 	 */
 	private static ReportCompletionStatus completion(String value) {
 		return value == null ? null : ReportCompletionStatus.valueOf(value);
@@ -229,25 +265,22 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	 *
 	 * <h2>🔴 자기 답변을 언제 보여주는가</h2>
 	 *
-	 * <p>두 가지가 함께 막는다.
-	 * <ol>
-	 *   <li><b>공개 범위</b> — {@code FULL}이 아니면 답변을 보여주지 않는다. 뷰의
-	 *       {@code can_view_own_answers}와 같은 판정이다</li>
-	 *   <li><b>다시 보기 진행 상태</b> — 다시 보기 대상인데 <b>아직 안 했으면</b> 막는다.
-	 *       다시 풀어야 할 문제의 답을 먼저 보여주면 다시 보기가 성립하지 않는다</li>
-	 * </ol>
+	 * <p>막는 조건은 <b>하나뿐이다</b> — 다시 보기 대상({@code reachLevel < 2})인데 아직 안 했으면
+	 * 막는다. 다시 풀어야 할 문제의 답을 먼저 보여주면 다시 보기가 성립하지 않는다.
 	 *
-	 * <p>2번은 공개 범위와 무관하다. {@code FULL}로 공개된 리포트에서도 다시 보기 전이면 막는다 —
-	 * 매니저가 전부 공개했다고 해서 다시 풀 문제의 답이 열려야 할 이유는 없다.
+	 * <p>종전에는 공개 범위({@code SUMMARY}면 전부 가림)가 하나 더 있었는데, 공개/비공개가
+	 * 없어지면서 리포트는 항상 전문 공개다. 매니저가 문제별로 무엇을 가릴지 정하던 자리를
+	 * <b>도달 단계가 그대로 물려받는다</b> — 2단을 통과한 개념은 발행 즉시 열리고,
+	 * 못 넘은 개념만 다시 보기를 마칠 때까지 닫힌다.
 	 *
-	 * @param fullScope    이 리포트의 공개 범위가 {@code FULL}인가
-	 * @param retryPending 이 회차에 <b>아직 끝내지 않은</b> 다시 보기가 있는가
+	 * @param retryPending 이 회차에 <b>아직 끝내지 않은</b> 다시 보기가 있는가.
+	 *                     매니저 조회에서는 항상 false다.
 	 */
 	private ConceptReportResponse toConcept(ConceptRow row, List<StageAnswerRow> answerRows,
-			boolean fullScope, boolean retryPending) {
+			boolean retryPending) {
 
 		boolean retryTarget = isRetryTarget(row);
-		boolean hideOwnAnswers = !fullScope || (retryTarget && retryPending);
+		boolean hideOwnAnswers = retryTarget && retryPending;
 
 		List<QaEntryResponse> qa = (hideOwnAnswers || answerRows.isEmpty())
 				? null
@@ -266,7 +299,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				retryTarget,
 				row.canViewExplanation() ? curriculumRef(row.curriculumLocationJson()) : null,
 				qa,
-				explain(row, fullScope, retryPending, retryTarget),
+				explain(row, retryPending, retryTarget),
 				comparedReach(row.reviewBeforeAfterItemsJson())
 		);
 	}
@@ -294,9 +327,9 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	/**
 	 * 이 회차에 다시 볼 개념이 하나라도 있는가. {@link #isRetryTarget}과 <b>같은 원천</b>이다.
 	 *
-	 * <p>개념 행이 없는 회차(미응시·발행 전)는 대상도 없다. 공개 대기(PENDING_VISIBILITY)는
-	 * 개념 행 자체는 있으므로 여기서 걸러지지 않는다 — {@code trainee_report_problem_view}가
-	 * 공개 여부를 행 유무가 아니라 {@code can_view_explanation} 컬럼으로 표현하기 때문이다.
+	 * <p>개념 행이 없는 회차(미응시·발행 전)는 대상도 없다. 다만 <b>행 유무로 열람 가능 여부를
+	 * 판단하면 안 된다</b> — {@code trainee_report_problem_view}는 그것을 행 유무가 아니라
+	 * {@code can_view_explanation} 컬럼으로 표현한다. 판정은 {@link #isRetryPending}이 한다.
 	 */
 	private static boolean hasRetryTarget(RoundRow round, Map<UUID, List<ConceptRow>> conceptsByReport) {
 		if (round.reportId() == null) {
@@ -335,26 +368,56 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	 *
 	 * <p>판정 순서는 이렇다.
 	 * <ol>
-	 *   <li>REVIEW 응시가 없다 → {@code NONE}</li>
 	 *   <li>REVIEW 응시를 마쳤다 → {@code DONE}. <b>대상 수와 무관하다</b> —
 	 *       이미 일어난 사실의 기록이라 지금 대상이 0개여도 참이고, 이 값이 해설 잠금을 푼다</li>
-	 *   <li>미완료인데 대상이 0개다 → {@code NONE}. 지킬 수 없는 할 일은 만들지 않는다</li>
-	 *   <li>그 외 → {@code PENDING}</li>
+	 *   <li>{@link #isRetryPending}이 참이다 → {@code PENDING}</li>
+	 *   <li>그 외 → {@code NONE}</li>
 	 * </ol>
+	 *
+	 * <p>🔴 <b>{@link #isRetryPending}과 같은 판정을 써야 한다.</b> 화면은 이 값으로 `다시 볼 문제
+	 * N개` 배너와 시작 버튼을 그리고, 잠금은 저쪽이 정한다. 둘이 어긋나면 "답은 가려져 있는데
+	 * 다시 볼 것은 없다고 하는" 회차나 그 반대가 생긴다. 기한이 지나 잠금이 풀린 회차가
+	 * {@code NONE}으로 떨어지는 것도 이 때문이다 — 들어갈 수 없는 세션의 버튼을 그리면 안 된다.
+	 * 대상이었다는 사실은 개념 카드의 {@code isRetryTarget}에 그대로 남는다.
 	 */
-	private static String retryState(RoundRow round, boolean hasRetryTarget) {
-		if (round.reviewStatus() == null) {
-			return "NONE";
-		}
+	private String retryState(RoundRow round, boolean hasRetryTarget) {
 		if (round.reviewCompletedAt() != null) {
 			return "DONE";
 		}
-		return hasRetryTarget ? "PENDING" : "NONE";
+		return isRetryPending(round, hasRetryTarget) ? "PENDING" : "NONE";
 	}
 
-	/** {@code rounds[].hasPendingRetry}. {@link #retryState}의 {@code PENDING}과 같은 판정이다. */
-	private static boolean isRetryPending(RoundRow round, boolean hasRetryTarget) {
-		return hasRetryTarget && round.reviewStatus() != null && round.reviewCompletedAt() == null;
+	/**
+	 * 다시 보기가 아직 남아 있는가. <b>자기 답변·해설을 가리는 유일한 조건</b>이자
+	 * {@code rounds[].hasPendingRetry}다.
+	 *
+	 * <h2>🔴 REVIEW 응시 행의 유무를 보지 않는다</h2>
+	 *
+	 * <p>종전 판정은 {@code reviewStatus != null}, 즉 <b>학생이 다시 보기를 연 적이 있는가</b>를
+	 * 함께 봤다. 그래서 아예 열지 않은 학생은 잠금이 걸리지 않았고 — 리포트에서 답과 해설을
+	 * 그대로 볼 수 있었다. <b>안 들어가는 쪽이 이득</b>인 셈이라 잠금이 목적을 잃는다.
+	 * 매니저가 공개해 줄 때까지 리포트 자체가 안 보이던 시절에는 드러나지 않았지만,
+	 * 발행 즉시 공개로 바뀌면 그대로 노출된다.
+	 *
+	 * <p>이제는 <b>다시 볼 문제가 있다는 사실만으로</b> 잠근다. 푸는 것은 완료뿐이다.
+	 *
+	 * <h2>기한이 지나면 열어 준다</h2>
+	 *
+	 * <p>다시 보기를 못 한 채 창이 닫히면 기회는 사라지지만 잠금도 함께 푼다 — 잠금의 목적이
+	 * "답을 먼저 보고 다시 푸는 것"을 막는 것인데, 다시 풀 방법이 없어진 뒤에는 막을 것이 없다.
+	 * 그때부터는 학습 자료로 열어 두는 편이 낫다.
+	 *
+	 * <p>기산점은 {@code review_due_at}이 아니라 <b>발행일</b>이다. 이유는
+	 * {@link #reviewWindowDays} 참고 — 열지 않은 학생에게는 {@code review_due_at}이 없다.
+	 */
+	private boolean isRetryPending(RoundRow round, boolean hasRetryTarget) {
+		if (!hasRetryTarget || round.reviewCompletedAt() != null) {
+			return false;
+		}
+		// 발행 전이면 애초에 볼 수 있는 본문이 없다. 창을 계산할 기산점도 없으므로 잠긴 것으로 둔다.
+		Instant publishedAt = round.publishedAt();
+		return publishedAt == null
+				|| Instant.now().isBefore(publishedAt.plus(Duration.ofDays(reviewWindowDays)));
 	}
 
 	/** 화면 `[내 답변] 펼침`의 슬롯 이름. 축을 앞에 붙여 어느 단계의 문답인지 보이게 한다. */
@@ -397,17 +460,11 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	 * <p>대상 판정은 {@code isRetryTarget}이 넘겨준 값을 쓴다 — 저장된 {@code decision_code}를 다시
 	 * 읽으면 해설이 붙는 개념과 재시험 뱃지가 붙는 개념이 갈린다.
 	 */
-	private static List<String> explain(ConceptRow row, boolean fullScope, boolean retryPending,
-			boolean retryTarget) {
+	private static List<String> explain(ConceptRow row, boolean retryPending, boolean retryTarget) {
 		if (!retryTarget || !row.canViewExplanation()) {
 			return null;
 		}
-		// 공개 범위가 FULL이 아니면 해설을 내보내지 않는다. SUMMARY는 "무엇을 어디까지 했는지"까지고,
-		// 막힌 이유를 풀어 주는 것은 그보다 한 단계 더 여는 것이다.
-		if (!fullScope) {
-			return null;
-		}
-		// 다시 보기 전에는 해설도 막는다 — 다시 풀 문제의 해설을 먼저 주면 다시 보기가 성립하지 않는다.
+		// 다시 보기 전에는 해설을 막는다 — 다시 풀 문제의 해설을 먼저 주면 다시 보기가 성립하지 않는다.
 		// 마친 뒤(retryState=DONE)에는 학습 자료로 열어 준다.
 		if (retryPending) {
 			return null;
@@ -422,11 +479,11 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		 * (problem_stage 의 second_hint/first_hint/question_answer_text 를 COALESCE 한 값이
 		 *  report_evidence.quote_excerpt 로 저장된 것).
 		 *
-		 * 그래서 qa 와 같은 기준으로 막아야 한다. 위 !fullScope 로 이미 걸리지만 조건을 따로 둔다 —
+		 * 그래서 qa 와 같은 기준으로 막아야 한다. 위 retryPending 분기로 이미 걸리지만 조건을 따로 둔다 —
 		 * 그 조건이 나중에 완화되면 여기로 답변이 새기 때문이다. 실제로 종전 코드가 그 상태였다:
 		 * SUMMARY 에서 qa 는 막으면서 이 줄로 같은 답변의 발췌를 내보내고 있었다.
 		 */
-		if (fullScope && row.answerExcerpt() != null && !row.answerExcerpt().isBlank()) {
+		if (!retryPending && row.answerExcerpt() != null && !row.answerExcerpt().isBlank()) {
 			lines.add(row.answerExcerpt());
 		}
 		return lines.isEmpty() ? null : lines;
@@ -476,7 +533,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	/** 본문이 없는 상태들. 화면은 status만 보고 그린다. */
 	private static RoundReportResponse statusOnly(String id, String reportId, String label, String status) {
 		return new RoundReportResponse(id, reportId, label, status,
-				null, null, null, null, null, null, null, null, null, null, null);
+				null, null, null, null, null, null, null, null, null, null);
 	}
 
 	private static String iso(Instant instant) {

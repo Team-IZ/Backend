@@ -32,18 +32,14 @@ class TraineeReportSchemaTest {
 	}
 
 	/**
-	 * 공개 범위를 값으로 내려준다. 없으면 화면이 {@code qa} 유무로 되짚어야 하는데,
-	 * {@code FULL}인데 문항이 아직 없어 {@code qa}가 비는 경우를 {@code SUMMARY}로 오인한다.
+	 * 🔴 공개 범위({@code disclosureScope})는 응답에서 <b>없어졌다</b>(2026-08-19).
+	 *
+	 * <p>종전에는 화면이 {@code qa} 유무로 범위를 되짚지 않게 값으로 내려줬는데, 공개/비공개가
+	 * 폐지되면서 되짚을 범위 자체가 사라졌다. 되살리면 화면이 죽은 축으로 다시 분기하게 된다.
 	 */
 	@Test
-	void tellsTheDisclosureScopeInsteadOfMakingTheScreenGuessFromQa() {
-		Map<String, Schema> schemas = ModelConverters.getInstance()
-				.readAll(new AnnotatedType(TraineeReportsResponse.class));
-
-		assertThat(((Schema<?>) roundReportProperties().get("disclosureScope")).get$ref())
-				.isEqualTo("#/components/schemas/DisclosureScope");
-		assertThat(schemas.get("DisclosureScope").getEnum())
-				.containsExactlyInAnyOrder("SUMMARY", "PRIVATE", "FULL");
+	void noLongerCarriesADisclosureScope() {
+		assertThat(roundReportProperties()).doesNotContainKey("disclosureScope");
 	}
 
 	/**

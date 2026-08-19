@@ -1,6 +1,6 @@
 package com.bigproject.backend.domain.usagemetering.application;
 
-import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
+import com.bigproject.backend.domain.organization.domain.DisclosureScope;
 import com.bigproject.backend.domain.organization.domain.Organization;
 import com.bigproject.backend.domain.organization.domain.OrganizationPolicy;
 import com.bigproject.backend.domain.organization.domain.OrganizationStatus;

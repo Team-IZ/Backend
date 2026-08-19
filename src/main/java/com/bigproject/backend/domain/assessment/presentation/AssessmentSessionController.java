@@ -266,7 +266,7 @@ public class AssessmentSessionController {
 					| `reportId` | 필수 | UUID | 근거 리포트. `GET /assessment-rounds`의 `current.reportId` |
 
 					리포트는 **본인 것이고 공개된 것**이어야 한다(`lifecycle_status=ACTIVE` ·
-					`traineeReleaseStatus=RELEASED`). 회차·1차 응시는 리포트에서 도출하므로 따로 받지 않는다.
+					발행된 리포트여야 한다). 회차·1차 응시는 리포트에서 도출하므로 따로 받지 않는다.
 
 					스키마가 리포트를 요구한다 — `ck_measurement_attempt_attempt_type_2`가 REVIEW에
 					리포트 ID와 스냅샷 ID를 둘 다 NOT NULL로 못박고 있다.
