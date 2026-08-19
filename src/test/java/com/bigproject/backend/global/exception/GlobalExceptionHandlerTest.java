@@ -14,8 +14,9 @@ class GlobalExceptionHandlerTest {
 	@Test
 	void 도메인_에러_코드가_응답의_code로_그대로_나간다() {
 		ApiExceptionHandler handler = new ApiExceptionHandler();
+		MockHttpServletRequest request = new MockHttpServletRequest();
 
-		var response = handler.handleApiException(new ApiException(AuthErrorCode.RESET_TOKEN_EXPIRED));
+		var response = handler.handleApiException(new ApiException(AuthErrorCode.RESET_TOKEN_EXPIRED), request);
 
 		// 상태는 코드가 들고 있다 — 호출부마다 다른 상태로 나가는 일을 막기 위해서다.
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.GONE);
@@ -27,9 +28,10 @@ class GlobalExceptionHandlerTest {
 	@Test
 	void 일시_차단은_남은_시간을_본문과_헤더에_함께_싣는다() {
 		ApiExceptionHandler handler = new ApiExceptionHandler();
+		MockHttpServletRequest request = new MockHttpServletRequest();
 
 		var response = handler.handleApiException(
-				new ApiException(AuthErrorCode.LOGIN_TEMPORARILY_BLOCKED, 300L));
+				new ApiException(AuthErrorCode.LOGIN_TEMPORARILY_BLOCKED, 300L), request);
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
 		assertThat(response.getBody()).isNotNull();
@@ -41,8 +43,9 @@ class GlobalExceptionHandlerTest {
 	@Test
 	void 차단이_아니면_retryAfter_키_자체가_없다() {
 		ApiExceptionHandler handler = new ApiExceptionHandler();
+		MockHttpServletRequest request = new MockHttpServletRequest();
 
-		var response = handler.handleApiException(new ApiException(AuthErrorCode.LOGIN_INVALID));
+		var response = handler.handleApiException(new ApiException(AuthErrorCode.LOGIN_INVALID), request);
 
 		// NON_NULL이라 null이면 직렬화에서 키가 빠진다. 0이나 -1을 넣으면 화면이 그걸 대기 시간으로 읽는다.
 		assertThat(response.getBody()).isNotNull();

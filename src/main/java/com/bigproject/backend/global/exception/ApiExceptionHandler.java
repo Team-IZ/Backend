@@ -1,5 +1,6 @@
 package com.bigproject.backend.global.exception;
 
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -23,14 +24,21 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class ApiExceptionHandler {
 
 	@ExceptionHandler(ApiException.class)
-	public ResponseEntity<ErrorResponse> handleApiException(ApiException exception) {
+	public ResponseEntity<ErrorResponse> handleApiException(ApiException exception, HttpServletRequest request) {
 		ApiErrorCode errorCode = exception.errorCode();
 
 		// 5xx는 서버 결함이라 스택을 남기고, 4xx는 정상적인 사용자 흐름이라 한 줄만 남긴다.
+		// method/path/origin/userAgent는 2026-08-18 특정 화면들에서 반복 관측된 404 폭주(예:
+		// CURRICULUM_MATERIAL_NOT_FOUND)의 호출자를 특정할 근거가 없어 추가했다 — 재발 시 이
+		// 필드만으로 어느 배포/클라이언트인지 바로 좁힐 수 있어야 한다.
 		if (errorCode.status().is5xxServerError()) {
-			log.error("도메인 오류: code={}", errorCode.name(), exception);
+			log.error("도메인 오류: code={}, method={}, path={}, origin={}, userAgent={}",
+					errorCode.name(), request.getMethod(), request.getRequestURI(),
+					request.getHeader("Origin"), request.getHeader("User-Agent"), exception);
 		} else {
-			log.info("도메인 오류: code={}, message={}", errorCode.name(), exception.getMessage());
+			log.info("도메인 오류: code={}, message={}, method={}, path={}, origin={}, userAgent={}",
+					errorCode.name(), exception.getMessage(), request.getMethod(), request.getRequestURI(),
+					request.getHeader("Origin"), request.getHeader("User-Agent"));
 		}
 
 		String message = exception.getMessage() == null || exception.getMessage().isBlank()
