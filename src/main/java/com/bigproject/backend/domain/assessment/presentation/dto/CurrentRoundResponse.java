@@ -9,7 +9,6 @@ import com.bigproject.backend.domain.assessment.domain.TraineeRepresentativeStat
 import com.bigproject.backend.domain.codeanalysis.domain.AnalysisJobStatus;
 import com.bigproject.backend.domain.member.domain.CommitEmailStatus;
 import com.bigproject.backend.domain.projectexecution.domain.ProjectCategory;
-import com.bigproject.backend.domain.reporting.domain.TraineeReleaseStatus;
 import com.bigproject.backend.domain.submission.domain.SubmissionMethod;
 import com.bigproject.backend.domain.submission.domain.SubmissionStatus;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
@@ -128,9 +127,7 @@ public record CurrentRoundResponse(
 
 		@Schema(nullable = true) UUID reportId,
 		@Schema(allowableValues = {"PUBLISHED", "GENERATING", "NOT_PUBLISHED"}) String reportPublishStatus,
-		@Schema(description = "리포트 행이 없으면 NOT_CONFIGURED로 정규화한다",
-				implementation = TraineeReleaseStatus.class) String traineeReleaseStatus,
-		@Schema(description = "traineeReleaseStatus = RELEASED일 때만 true") boolean canViewReport,
+		@Schema(description = "reportPublishStatus = PUBLISHED일 때만 true") boolean canViewReport,
 		@Schema(allowableValues = {"UNAVAILABLE", "PARTIAL", "AVAILABLE"}) String explanationStatus,
 
 		@Schema(nullable = true) Instant submissionDueAt,
@@ -181,7 +178,6 @@ public record CurrentRoundResponse(
 		@Schema(nullable = true) ManagerResponse manager,
 		@Schema(description = "서버 조회 시각") Instant asOfAt
 ) {
-	private static final String TRAINEE_RELEASE_STATUS_NOT_CONFIGURED = "NOT_CONFIGURED";
 
 	public static CurrentRoundResponse from(TraineeHomeRound round, List<String> availableSubmissionMethods) {
 		return new CurrentRoundResponse(
@@ -223,7 +219,6 @@ public record CurrentRoundResponse(
 
 				round.reportId(),
 				round.reportPublishStatus(),
-				normalizeTraineeReleaseStatus(round.traineeReleaseStatus()),
 				round.canViewReport(),
 				round.explanationStatus(),
 
@@ -250,18 +245,10 @@ public record CurrentRoundResponse(
 				null, List.of(), null, null, null, false, false,
 				"NOT_SUBMITTED", null, null,
 				null, null, 0, null, 0,
-				null, "NOT_PUBLISHED", TRAINEE_RELEASE_STATUS_NOT_CONFIGURED, false, "UNAVAILABLE",
+				null, "NOT_PUBLISHED", false, "UNAVAILABLE",
 				null, null, null, null, null, null, null, null,
 				null, asOfAt
 		);
-	}
-
-	/**
-	 * 리포트 행이 없으면 View의 {@code trainee_release_status}가 NULL이다.
-	 * 클라이언트 분기를 하나로 유지하려고 {@code NOT_CONFIGURED}로 정규화한다.
-	 */
-	private static String normalizeTraineeReleaseStatus(String traineeReleaseStatus) {
-		return traineeReleaseStatus == null ? TRAINEE_RELEASE_STATUS_NOT_CONFIGURED : traineeReleaseStatus;
 	}
 
 	private static ManagerResponse toManager(TraineeHomeRound round) {

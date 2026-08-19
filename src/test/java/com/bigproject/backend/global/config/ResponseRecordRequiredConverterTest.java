@@ -1,9 +1,8 @@
 package com.bigproject.backend.global.config;
 
-import com.bigproject.backend.domain.disclosure.presentation.dto.ReportDisclosureResponse;
 import com.bigproject.backend.domain.organization.presentation.dto.CreateOrganizationRequest;
 import com.bigproject.backend.domain.organization.presentation.dto.OrganizationResponse;
-import com.bigproject.backend.domain.reporting.presentation.dto.ManagedReportListResponse;
+import com.bigproject.backend.domain.reporting.presentation.dto.TraineeReportsResponse;
 import io.swagger.v3.core.converter.AnnotatedType;
 import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.models.media.Schema;
@@ -48,31 +47,28 @@ class ResponseRecordRequiredConverterTest {
 
 	/**
 	 * 17차 R2. 예전에는 클래스 레벨 {@code @JsonInclude(NON_NULL)} 하나로 전 필드가 required를
-	 * 잃었다 — {@code scope}·{@code publishedAt}·{@code releasedAt} 셋만 상태에 따라 키가 빠지는데도
-	 * {@code reportId}처럼 항상 오는 필드까지 optional로 나갔다. 어노테이션을 필드 단위로 내려
-	 * 항상 오는 값과 조건부인 값을 갈랐다.
+	 * 잃었다 — 상태에 따라 키가 빠지는 몇 개 때문에 <b>항상 오는 필드까지</b> optional로 나갔다.
+	 * 어노테이션을 필드 단위로 내려 항상 오는 값과 조건부인 값을 갈랐다.
+	 *
+	 * <p>레코드 전체가 아니라 <b>필드 하나</b>에 걸린 {@code @JsonInclude}도 키를 뺀다. 그 표시는
+	 * record 컴포넌트에 남지 않고 접근자로 전파되므로, 컴포넌트만 보면 빠지는 키가 required로
+	 * 나간다 — 스펙이 거짓말을 하는 쪽이라 더 나쁘다.
+	 *
+	 * <p>종전에는 {@code ReportDisclosureResponse}·{@code ManagedReportListResponse}로 확인했는데,
+	 * 공개/비공개 폐지(2026-08-19)로 둘 다 없어져 같은 성질을 가진
+	 * {@code RoundReportResponse}로 옮겼다 — 회차 상태에 따라 본문 필드가 통째로 빠지는 레코드다.
 	 */
 	@Test
 	void marksOnlyTheFieldsThatCanDisappearAsOptional() {
-		Schema<?> schema = resolve(ReportDisclosureResponse.class).get("ReportDisclosureResponse");
+		Schema<?> schema = resolve(TraineeReportsResponse.RoundReportResponse.class)
+				.get("RoundReportResponse");
 
 		assertThat(schema.getRequired())
-				.contains("reportId", "assessmentRoundId", "releaseStatus", "bodyVisible", "visibleFields")
-				.doesNotContain("scope", "publishedAt", "releasedAt");
-	}
-
-	/**
-	 * 레코드 전체가 아니라 <b>필드 하나</b>에 걸린 {@code @JsonInclude}도 키를 뺀다.
-	 * 그 표시는 record 컴포넌트에 남지 않고 접근자로 전파되므로, 컴포넌트만 보면
-	 * 빠지는 키가 required로 나간다 — 스펙이 거짓말을 하는 쪽이라 더 나쁘다.
-	 */
-	@Test
-	void skipsOnlyTheFieldsThatCanDisappear() {
-		Schema<?> schema = resolve(ManagedReportListResponse.class).get("ManagedReportItem");
-
-		assertThat(schema.getRequired())
-				.contains("reportId", "roundNo", "releaseStatus", "bodyVisible")
-				.doesNotContain("roundName", "publishedAt", "scope", "releasedAt");
+				// 회차 카드는 상태와 무관하게 이 셋을 항상 준다.
+				.contains("id", "label", "status")
+				// 나머지는 PUBLISHED 등 특정 상태에서만 실린다.
+				.doesNotContain("reportId", "publishAfter", "publishedAt", "curriculum",
+						"completionStatus", "concepts", "retryState");
 	}
 
 	private Map<String, Schema> resolve(Class<?> type) {

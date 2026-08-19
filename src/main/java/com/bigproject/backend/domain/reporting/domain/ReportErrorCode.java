@@ -24,18 +24,16 @@ public enum ReportErrorCode implements ApiErrorCode {
 	REPORT_ACCESS_DENIED(HttpStatus.FORBIDDEN, "다른 사람의 리포트는 조회할 수 없습니다."),
 
 	// ── TR-04 내 리포트 ──
-	/**
-	 * 발행은 됐지만 공개 범위가 정해지지 않았다(trainee_release_status=NOT_CONFIGURED).
-	 * 화면은 이 코드로 `공개 범위 미지정` 상태를 그린다 — 빈 리포트로 그리면 안 된다.
+	/*
+	 * 🔴 여기 있던 코드 셋을 없앴다(2026-08-19, 공개/비공개 폐지).
+	 *
+	 *   REPORT_DISCLOSURE_NOT_CONFIGURED  발행됐지만 공개 범위 미지정 — 그 상태가 사라졌다
+	 *   REPORT_WITHHELD                   비공개라 못 본다 — 비공개가 사라졌다
+	 *   REPORT_DISCLOSURE_SCOPE_INVALID   RELEASED에 PRIVATE을 넘겼다 — 전이 자체가 사라졌다
+	 *
+	 * 되살리지 말 것. 리포트는 발행되면 그 순간 열리고, 발행 전은 오류가 아니라
+	 * 화면이 `리포트 생성 중`으로 그리는 정상 상태다(TraineeReportsResponse.status).
 	 */
-	REPORT_DISCLOSURE_NOT_CONFIGURED(HttpStatus.CONFLICT, "리포트 공개 범위가 아직 정해지지 않았습니다."),
-	/** 공개 범위가 PRIVATE이라 교육생이 본문을 볼 수 없다. */
-	REPORT_WITHHELD(HttpStatus.FORBIDDEN, "이 리포트는 공개되지 않았습니다."),
-	/**
-	 * RELEASED로 전이하면서 PRIVATE을 넘겼다. DB CHECK가 막기 전에 도메인에서 끊는다 —
-	 * "공개하는데 범위가 비공개"는 뜻이 성립하지 않는다. 비공개는 withhold다.
-	 */
-	REPORT_DISCLOSURE_SCOPE_INVALID(HttpStatus.BAD_REQUEST, "공개 범위는 SUMMARY 또는 FULL이어야 합니다."),
 
 	// ── OP-05 리포트 ──
 	/** 기수에 수업 진단 리포트가 아직 없다. 회차가 하나도 안 끝났을 때 정상적으로 발생한다. */

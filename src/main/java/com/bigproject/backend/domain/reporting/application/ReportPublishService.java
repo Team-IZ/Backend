@@ -1,13 +1,11 @@
 package com.bigproject.backend.domain.reporting.application;
 
-import com.bigproject.backend.domain.disclosure.domain.DisclosureScope;
 import com.bigproject.backend.domain.reporting.domain.Report;
-import com.bigproject.backend.domain.reporting.domain.TraineeReleaseStatus;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportDispatchRepository.FinalizeContext;
 import com.bigproject.backend.domain.reporting.infrastructure.ReportRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,7 +26,7 @@ import java.util.UUID;
  * 그게 이 클래스다.
  *
  * <p>보류된 리포트는 스냅샷과 근거가 이미 다 들어가 있다 — 여기서 하는 일은
- * {@code published_at}을 찍는 것과, 설정이 있으면 공개까지 하는 것뿐이다.
+ * {@code published_at}을 찍는 것뿐이고, 그 순간 학생이 본다.
  *
  * <h2>유효성을 다시 본다</h2>
  *
@@ -37,27 +35,11 @@ import java.util.UUID;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class ReportPublishService {
 
 	private final ReportRepository reportRepository;
 	private final ReportDispatchRepository dispatchRepository;
-
-	/** 자동 공개 행위자. 비면 발행만 하고 공개는 매니저 몫으로 남긴다. {@link ReportRunFinalizer} 참고. */
-	private final String autoReleaseActorId;
-
-	private final DisclosureScope autoReleaseScope;
-
-	public ReportPublishService(
-			ReportRepository reportRepository,
-			ReportDispatchRepository dispatchRepository,
-			@Value("${app.report.auto-release.actor-user-id:}") String autoReleaseActorId,
-			@Value("${app.report.auto-release.scope:FULL}") DisclosureScope autoReleaseScope) {
-
-		this.reportRepository = reportRepository;
-		this.dispatchRepository = dispatchRepository;
-		this.autoReleaseActorId = autoReleaseActorId;
-		this.autoReleaseScope = autoReleaseScope;
-	}
 
 	/**
 	 * 발행 시각이 지난 보류분을 발행한다.
@@ -115,30 +97,12 @@ public class ReportPublishService {
 			return false;
 		}
 
+		// 발행이 곧 공개다. 종전에는 여기서 설정을 보고 자동 공개까지 갈지 정했는데,
+		// 공개/비공개가 없어지면서 그 분기가 사라졌다(2026-08-19).
 		report.publish(now);
-		autoRelease(report, now);
 		reportRepository.save(report);
 
 		log.info("보류 리포트 발행: reportId={}, publishAfter={}", reportId, context.getPublishNotBeforeAt());
 		return true;
-	}
-
-	/**
-	 * 설정이 있으면 공개까지 한다. {@link ReportRunFinalizer#autoRelease}와 같은 규칙이다 —
-	 * 매니저가 이미 정한 것은 건드리지 않고 {@code NOT_CONFIGURED}만 대상이다.
-	 */
-	private void autoRelease(Report report, Instant now) {
-		if (autoReleaseActorId == null || autoReleaseActorId.isBlank()) {
-			return;
-		}
-		if (report.getTraineeReleaseStatus() != TraineeReleaseStatus.NOT_CONFIGURED) {
-			return;
-		}
-		try {
-			report.release(autoReleaseScope, UUID.fromString(autoReleaseActorId), now);
-		} catch (IllegalArgumentException exception) {
-			log.error("app.report.auto-release.actor-user-id 가 UUID 형식이 아니다. "
-					+ "자동 공개를 건너뛴다: value={}", autoReleaseActorId);
-		}
 	}
 }
