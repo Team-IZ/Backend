@@ -4,15 +4,17 @@ import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
 import org.springframework.mock.web.MockMultipartFile;
-import org.springframework.test.util.ReflectionTestUtils;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 /**
  * 교안 업로드의 형식 판정은 <b>내용</b>으로만 한다. 확장자와 Content-Type은 보내는 쪽이 적는
@@ -20,13 +22,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class FileStorageServiceTest {
 
+	private S3Client s3Client;
 	private FileStorageService fileStorageService;
 
 	@BeforeEach
-	void setUp(@TempDir Path tempDir) {
-		fileStorageService = new FileStorageService();
-		ReflectionTestUtils.setField(fileStorageService, "storageRoot", tempDir.toString());
-		ReflectionTestUtils.setField(fileStorageService, "maxUploadBytes", 1024L);
+	void setUp() {
+		s3Client = Mockito.mock(S3Client.class);
+		when(s3Client.putObject(any(software.amazon.awssdk.services.s3.model.PutObjectRequest.class),
+				any(software.amazon.awssdk.core.sync.RequestBody.class)))
+				.thenReturn(PutObjectResponse.builder().build());
+		fileStorageService = new FileStorageService(s3Client, "test-bucket", 1024L);
 	}
 
 	@Test
@@ -39,6 +44,7 @@ class FileStorageServiceTest {
 		assertThat(stored.originalFileName()).isEqualTo("교안.pdf");
 		assertThat(stored.fileSizeBytes()).isEqualTo(pdfBytes().length);
 		assertThat(stored.contentHash()).isNotBlank();
+		assertThat(stored.fileUri()).startsWith("s3://test-bucket/");
 	}
 
 	/**

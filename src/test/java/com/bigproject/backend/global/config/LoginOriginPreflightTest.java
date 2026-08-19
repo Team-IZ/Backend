@@ -42,7 +42,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 		"auth.refresh-cookie.secure=true",
 		"auth.refresh-cookie.same-site=None",
 		"invitation.base-url=http://localhost:5173",
-		"invitation.expiration=P7D"
+		"invitation.expiration=P7D",
+		"curriculum.storage.bucket=test-curricula",
+		"submission.storage.bucket=test-submissions"
 })
 @AutoConfigureMockMvc
 class LoginOriginPreflightTest {

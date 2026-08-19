@@ -472,6 +472,10 @@ curriculum:
     # 앱이 먼저 판정하면 413 CURRICULUM_FILE_TOO_LARGE 로 나가 상한을 안내할 수 있다.
     # 제출물 ZIP(app.submission.max-zip-bytes)과 같은 이중 상한 구조다.
     max-bytes: ${CURRICULUM_UPLOAD_MAX_BYTES:52428800}
+  storage:
+    # 🔴 기본값 없음: 미설정 상태로 기동되면 조용히 로컬/임시 경로에 쓰다가 재배포 시 파일이
+    # 사라지는 사고(교안 2건 유실, 2026-08)로 이어졌던 전례가 있어 여기서는 바로 기동 실패시킨다.
+    bucket: ${CURRICULUM_STORAGE_BUCKET}
 
 password-reset:
   base-url: ${PASSWORD_RESET_BASE_URL:http://localhost:5173}
@@ -498,11 +502,13 @@ app:
       scope: ${REPORT_AUTO_RELEASE_SCOPE:FULL}
 
   submission:
-    # ZIP 제출물 저장 위치. 지금은 로컬 파일시스템이며 경로는 <root>/<orgId>/<teamId>/<submissionId>.zip 이다.
-    # 인스턴스가 여러 대가 되거나 분석 배치가 별도 프로세스로 분리되면 이 경로로는 파일을 찾을 수 없으므로
-    # SubmissionArtifactStorage 의 S3 구현체로 교체해야 한다.
-    storage-root: ${SUBMISSION_STORAGE_ROOT:./var/submissions}
     # 파일당 상한. 정의서에 원천 컬럼이 없어 애플리케이션 상수로 두고 적용값을
     # submission_artifact.applied_max_file_bytes 에 그대로 기록한다. 정책화가 필요해지면
     # organization_policy.max_submission_file_bytes 로 승격한다.
     max-zip-bytes: ${SUBMISSION_MAX_ZIP_BYTES:52428800}
+
+submission:
+  storage:
+    # 🔴 기본값 없음(curriculum.storage.bucket과 같은 이유). 레거시 제출물 38건은
+    # s3://izget-submission/...(우리 IAM 밖의 옛 버킷)을 가리키므로 이 버킷으로 옮기지 않는다.
+    bucket: ${SUBMISSION_STORAGE_BUCKET}
