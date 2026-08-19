@@ -102,6 +102,23 @@ public interface CurriculumService {
             UUID orgId, String title, String topic, org.springframework.web.multipart.MultipartFile file, UUID actorUserId);
 
     /**
+     * 42차 R1 — 기존 교안(material)에 새 버전을 올린다. 새 material을 만들지 않는다.
+     *
+     * <p>새 버전은 그 material의 <b>현재 최신 버전 번호 + 1</b>로 번호가 매겨지고, 그 최신 버전은
+     * {@link com.bigproject.backend.domain.curriculum.domain.CurriculumVersion#deactivate()}로
+     * {@code INACTIVE}가 된다 — {@code findLinkableCurricula}류가 {@code ACTIVE}만 후보로 주므로,
+     * 새 프로젝트를 연결할 때는 이제 이 새 버전만 골라진다. <b>기존 버전 행 자체와 그 버전에
+     * 이미 연결된 프로젝트(project_curriculum)는 손대지 않는다</b> — 상태만 바뀔 뿐 불변성이
+     * 깨지지 않는다.
+     *
+     * @param title null이거나 공백이면 material 제목을 그대로 둔다. 값이 있으면 제목을 바꿔 단다 —
+     *              이때만 (기관 + 새 제목) 중복 검사를 한다(자기 자신과 같은 제목이면 통과)
+     */
+    com.bigproject.backend.domain.curriculum.domain.CurriculumVersion registerCurriculumVersion(
+            UUID materialId, UUID orgId, String title,
+            org.springframework.web.multipart.MultipartFile file, UUID actorUserId);
+
+    /**
      * 교안 재분석 요청.
      *
      * @param force 진행 중({@code PENDING}·{@code RUNNING}) 검사를 건너뛴다(25차 R2).

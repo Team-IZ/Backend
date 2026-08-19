@@ -502,6 +502,68 @@ public class CurriculumController {
     }
 
     @Operation(
+            summary = "교안 새 버전 등록 | ✅ 사용 가능",
+            description = """
+					기존 교안(material)에 새 버전을 올린다(42차 R1). **새 교안을 만들지 않는다** —
+					`materialId`가 가리키는 그 교안에 다음 버전이 하나 늘어난다.
+
+					⚠ `POST /curricula`(새 교안 등록)와 다른 오퍼레이션이다. 새 개정판을 올리려는
+					것과 새 교안을 만들려는 것은 사용자 의도가 다르다는 것이 42차 문서의 요청이다 —
+					이 경로가 그 의도를 명시적으로 받는다.
+
+					**요청 (multipart/form-data)**
+					- file (필수): PDF 파일
+					- title (선택): 제목을 바꿔 달 때만 보낸다. 비우면 기존 제목을 그대로 쓴다
+
+					**응답 (201)**
+					- 새로 생긴 버전 정보(응답 필드는 `POST /curricula`와 동일)
+
+					## versionNo는 이 교안의 현재 최신 버전 + 1이다
+
+					새 material을 만들지 않고, `materialId`는 그대로 유지된다. 새 버전의 번호는 이
+					교안에서 지금까지 가장 큰 `versionNo`에 1을 더한 값이다.
+
+					## 기존 버전은 지우거나 바꾸지 않는다
+
+					기존 버전 행은 그대로 남는다 — 그 버전을 이미 연결해 쓰고 있는 회차
+					(`project_curriculum`)도 그대로다. 발행된 리포트가 가리키는 쪽 번호가 바뀌지
+					않는 이유가 이것이다.
+
+					바뀌는 것은 상태 하나뿐이다 — 기존 최신 버전이 `INACTIVE`로 넘어가
+					`GET /cohorts/{cohortId}/curricula`(연결 후보 목록) 같은 "고를 수 있는 교안"
+					조회에서 새 버전에게 자리를 내준다. **읽기 쪽 구버전 상세·버전 목록 API는 이번에도
+					추가하지 않는다** — 42차 문서가 명시적으로 요청하지 않았다.
+
+					## 제목은 안 바꿔도 된다 — 바꾸면 그때만 중복 검사
+
+					title을 생략하면 material 제목은 그대로다. 이 경로로 올릴 때는 **같은 교안에
+					버전을 추가하는 것**이므로 자기 자신의 제목과 겹치는 것을 막을 이유가 없다 —
+					`POST /curricula`의 제목 UNIQUE 검사는 여기서 돌지 않는다. title을 보내 제목을
+					바꾸는 경우에만 (기관 + 새 제목)이 **다른** 교안과 겹치는지 검사한다.
+					"""
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "새 버전 등록 성공"),
+            @ApiResponse(responseCode = "400", description = "CURRICULUM_FILE_REQUIRED 업로드할 파일이 없음 · CURRICULUM_FILE_TYPE_INVALID 내용이 PDF가 아님"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 교안을 찾을 수 없음(이미 지운 교안·다른 기관의 교안 포함)"),
+            @ApiResponse(responseCode = "409", description = "CURRICULUM_TITLE_DUPLICATED title을 보냈는데 다른 교안이 이미 그 제목을 쓰고 있음"),
+            @ApiResponse(responseCode = "413", description = "CURRICULUM_FILE_TOO_LARGE 앱 상한을 넘는 교안 파일"),
+            @ApiResponse(responseCode = "503", description = "CURRICULUM_FILE_STORE_FAILED 업로드한 파일을 저장하지 못함"),
+    })
+    @PostMapping(value = "/curricula/{materialId}/versions", consumes = "multipart/form-data")
+    public ResponseEntity<CurriculumVersionResponse> registerCurriculumVersion(
+            @Parameter(description = "새 버전을 올릴 교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId,
+            @Parameter(description = "PDF 파일") @RequestParam("file") MultipartFile file,
+            @Parameter(description = "제목을 바꿔 달 때만 보낸다. 비우면 기존 제목을 그대로 쓴다") @RequestParam(value = "title", required = false) String title
+    ) {
+        UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
+        UUID actorUserId = currentUserResolver.resolveCurrentMemberId();
+        var version = curriculumService.registerCurriculumVersion(materialId, orgId, title, file, actorUserId);
+        return ResponseEntity.status(HttpStatus.CREATED).body(CurriculumVersionResponse.from(version));
+    }
+
+    @Operation(
             summary = "재분석 요청 | ✅ 사용 가능",
             description = """
 					교안의 재분석을 AI 서버에 요청한다.

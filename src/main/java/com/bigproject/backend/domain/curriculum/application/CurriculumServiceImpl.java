@@ -257,7 +257,7 @@ public class CurriculumServiceImpl implements CurriculumService {
 
         String normalizedTitle = title.trim().replaceAll("\\s+", " ").toLowerCase();
 
-        if (materialRepository.existsByOrgIdAndNormalizedTitle(orgId, normalizedTitle)) {
+        if (materialRepository.existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull(orgId, normalizedTitle)) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_TITLE_DUPLICATED);
         }
 
@@ -268,6 +268,60 @@ public class CurriculumServiceImpl implements CurriculumService {
 
         CurriculumVersion version = CurriculumVersion.createFirstVersion(
                 material.getMaterialId(), stored.originalFileName(), stored.fileUri(),
+                stored.fileSizeBytes(), stored.contentHash(), actorUserId);
+
+        return curriculumVersionRepository.save(version);
+    }
+
+    /**
+     * 42차 R1 — {@code POST /curricula/{materialId}/versions}.
+     *
+     * <p>기존에 {@link CurriculumVersion#createNextVersion}·{@link CurriculumVersion#deactivate()}·
+     * {@link CurriculumVersionRepository#findAllByMaterialIdAndOrgIdOrderByVersionNoDesc}가 이미
+     * 있었는데 이들을 잇는 서비스 메서드가 없어 실제로 새 버전을 만들 경로가 없었다(42차 문서가
+     * 지적한 그대로). 그 셋을 그대로 이어 붙인다 — 새 판정·새 번호 규칙을 만들지 않는다.
+     *
+     * <p>제목 UNIQUE 검사(§ {@code existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull})는 제목을
+     * <b>바꿔 달 때만</b> 돈다. 기존 material에 버전만 추가하는 것이므로, 제목을 그대로 두면 자기
+     * 자신의 제목과 부딪힐 이유가 없다(42차 §1 "①로 가면 제목 유니크 제약은 그대로 두셔도
+     * 됩니다").
+     */
+    @Override
+    @Transactional
+    public CurriculumVersion registerCurriculumVersion(
+            UUID materialId, UUID orgId, String title, MultipartFile file, UUID actorUserId) {
+        if (file == null || file.isEmpty()) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_FILE_REQUIRED);
+        }
+
+        CurriculumMaterial material = materialRepository.findByMaterialIdAndOrgId(materialId, orgId)
+                .filter(found -> !found.isDeleted())
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+
+        if (title != null && !title.isBlank()) {
+            String normalizedTitle = title.trim().replaceAll("\\s+", " ").toLowerCase();
+            if (!normalizedTitle.equals(material.getNormalizedTitle())
+                    && materialRepository.existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull(orgId, normalizedTitle)) {
+                throw new CurriculumException(CurriculumErrorCode.CURRICULUM_TITLE_DUPLICATED);
+            }
+            material.updateTitle(title, normalizedTitle);
+        }
+
+        List<CurriculumVersion> versions = curriculumVersionRepository
+                .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId);
+        // materialRepository 조회를 이미 통과했으므로(위) 첫 버전이 없을 수 없다 — 방어적으로만 막는다.
+        CurriculumVersion currentLatest = versions.stream().findFirst()
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+
+        FileStorageService.StoredFile stored = fileStorageService.store(file);
+
+        // 기존 버전 행은 지우거나 바꾸지 않는다 — 상태만 INACTIVE로 옮겨 "연결 가능한 후보"
+        // 목록(findLinkableCurricula류, status=ACTIVE만 봄)에서만 빠지게 한다. 이미 그 버전을
+        // 쓰고 있는 프로젝트(project_curriculum)는 versionId를 그대로 들고 있어 영향이 없다.
+        currentLatest.deactivate();
+
+        CurriculumVersion version = CurriculumVersion.createNextVersion(
+                materialId, currentLatest.getVersionNo() + 1, stored.originalFileName(), stored.fileUri(),
                 stored.fileSizeBytes(), stored.contentHash(), actorUserId);
 
         return curriculumVersionRepository.save(version);
