@@ -43,6 +43,17 @@ public class JdbcManagerNotificationRepository implements ManagerNotificationRep
 	 * ({@code primary_assessment_close_at})을 썼는데, 다시 보기가 배정된 사람에게 의미 있는 마감은
 	 * 다시 보기 자신의 마감이다 — band(급한 정도)가 "1차가 언제 끝났는가"가 아니라 "다시 보기를
 	 * 언제까지 해야 하는가"를 반영하도록 한다.
+	 *
+	 * <p>41차 R1 — {@code SUBMISSION_MISSING}·{@code ANALYSIS_FAILED}·{@code ASSESSMENT_NOT_STARTED}가
+	 * {@code resolved=true}로 접혀 미해소 인박스에 한 건도 안 실렸다. 원인은 {@code resolved}의
+	 * {@code ELSE} 갈래가 {@code NOT a.nudge_eligible}이었던 것 — {@code nudge_eligible}은 "지금 새
+	 * 독촉을 보내도 되는가"(이미 보냈으면 꺼진다)일 뿐 "문제가 해소됐는가"가 아닌데, {@code nudge_reason_code}가
+	 * 서 있는 행(제출 누락·분석 실패·응시 미시작)까지 그 갈래로 떨어져 독촉을 한 번 보내고 나면
+	 * 문제가 그대로인데도 해소로 잡혔다. {@link com.bigproject.backend.domain.notification.presentation.dto.NotificationInboxResponse.InboxItem}
+	 * 문서가 이미 "{@code resolved}는 {@code reminderEligible}의 반대가 아니다"라고 못박아 둔 것과도
+	 * 어긋난다. {@code nudge_reason_code}가 서 있는 동안은 {@code NOT_ATTENDED}·{@code REVIEW}와 같은
+	 * 자리에서 무조건 미해소로 둔다 — 새 규칙이 아니라 옆 갈래 둘이 이미 쓰던 "조건이 서 있으면
+	 * 미해소" 규칙을 그대로 적용한 것뿐이다.
 	 */
 	@Override
 	public List<InboxRow> findInbox(UUID managerId, UUID cohortId) {
@@ -80,6 +91,7 @@ public class JdbcManagerNotificationRepository implements ManagerNotificationRep
                                           WHEN a.latest_review_attempt_id IS NOT NULL
                                             AND a.latest_review_status NOT IN ('COMPLETED', 'EXPIRED')
                                             AND (rev.review_due_at IS NULL OR rev.review_due_at > now()) THEN FALSE
+                                          WHEN a.nudge_reason_code IS NOT NULL THEN FALSE
                                           ELSE NOT a.nudge_eligible
                                         END AS resolved,
                                         a.nudge_eligible AS reminder_eligible
@@ -110,7 +122,10 @@ public class JdbcManagerNotificationRepository implements ManagerNotificationRep
 				    v.planned_at, v.candidate_detected_at,
 				    COALESCE(v.interview_status = 'COMPLETED', FALSE), FALSE
 				  FROM manager_interview_list_view v
-				  WHERE v.manager_user_id = ? AND v.cohort_id = ?
+				  -- 41차 R1 — MG-03/INTERVIEW_BACKLOG(JdbcSubmissionStatusQueryRepository.interview_stat)와
+				  -- 같은 "대기" 판정을 쓴다: 제외된 후보(candidate_status='EXCLUDED')는 두 화면이 같은
+				  -- 사람을 두고 한쪽만 대기라고 말하지 않도록 뺀다.
+				  WHERE v.manager_user_id = ? AND v.cohort_id = ? AND v.candidate_status <> 'EXCLUDED'
 				), reminder AS (
 				  SELECT 'REMINDER:' || rd.dispatch_id, 'REMINDER', p.project_id,
 				    rd.assessment_round_id, pm.class_id, rd.team_id, rd.user_id,

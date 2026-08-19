@@ -73,7 +73,7 @@ public class ManagerNotificationController {
 					| 필드 | 타입 | 설명 |
 					|---|---|---|
 					| `itemId` | string | 항목 식별자. 원천에 따라 형식이 다르다(`ATTENDANCE:...`·`INVALID:...`·`INTERVIEW:...`·`REMINDER:...`) |
-					| `itemType` | string | 항목 유형. `SUBMISSION_MISSING`·`ANALYSIS_FAILED`·`ASSESSMENT_NOT_STARTED`·`REVIEW`·`ASSESSMENT`·`INVALID_ATTEMPT`·`INTERVIEW`·`REMINDER` |
+					| `itemType` | string | 항목 유형. `SUBMISSION_MISSING`·`ANALYSIS_FAILED`·`ASSESSMENT_NOT_STARTED`·`ABSENT`·`REVIEW`·`ASSESSMENT`·`INVALID_ATTEMPT`·`INTERVIEW`·`REMINDER`(41차 R1 — 미응시를 `ABSENT`로 실어 온 지 오래인데 목록에 빠져 있었다) |
 					| `projectId` / `assessmentRoundId` / `classroomId` / `teamId` / `traineeId` | UUID | 이 항목이 걸린 대상 |
 					| `subject` | string | 대상 이름(교육생명 또는 팀명) |
 					| `sourceStatus` | string | 원천의 현재 상태 |
