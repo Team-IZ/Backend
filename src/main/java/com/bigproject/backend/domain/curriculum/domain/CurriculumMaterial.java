@@ -74,6 +74,13 @@ public class CurriculumMaterial {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    /** 42차 R1 — 새 버전을 올리며 제목을 바꿔 달 때만 쓴다(선택). material 자체는 그대로다. */
+    public void updateTitle(String title, String normalizedTitle) {
+        this.title = title;
+        this.normalizedTitle = normalizedTitle;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public boolean isDeleted() {
         return this.deletedAt != null;
     }
