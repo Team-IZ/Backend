@@ -176,6 +176,22 @@ public class CurriculumServiceImpl implements CurriculumService {
     }
 
     @Override
+    public UUID resolveVersionId(UUID materialId, UUID versionId, UUID orgId) {
+        if (versionId != null) {
+            return curriculumVersionRepository.findByVersionIdAndOrgId(versionId, orgId)
+                    .filter(version -> version.getMaterialId().equals(materialId))
+                    .map(CurriculumVersion::getVersionId)
+                    .orElseThrow(() -> new CurriculumException(
+                            CurriculumErrorCode.CURRICULUM_VERSION_NOT_FOUND, "그 교안의 버전이 아닙니다."));
+        }
+        return curriculumVersionRepository
+                .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId)
+                .stream().findFirst()
+                .map(CurriculumVersion::getVersionId)
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+    }
+
+    @Override
     public List<SectionItemView> findSectionItems(UUID sectionId, UUID orgId) {
         List<CurriculumTeachesMapping> mappings = mappingRepository.findAllBySectionIdOrderBySequenceNoAsc(sectionId);
         return toSectionItemViews(mappings, orgId);
@@ -240,14 +256,24 @@ public class CurriculumServiceImpl implements CurriculumService {
 
     @Override
     public List<ProjectService.CurriculumUsingProject> findUsedProjects(UUID materialId, UUID orgId) {
-        List<UUID> versionIds = curriculumVersionRepository
-                .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId).stream()
-                .map(CurriculumVersion::getVersionId)
-                .toList();
-        if (versionIds.isEmpty()) {
-            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND);
+        return findUsedProjects(materialId, orgId, null);
+    }
+
+    @Override
+    public List<ProjectService.CurriculumUsingProject> findUsedProjects(UUID materialId, UUID orgId, UUID versionId) {
+        if (versionId == null) {
+            List<UUID> versionIds = curriculumVersionRepository
+                    .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId).stream()
+                    .map(CurriculumVersion::getVersionId)
+                    .toList();
+            if (versionIds.isEmpty()) {
+                throw new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND);
+            }
+            return projectService.findProjectsUsingCurricula(versionIds, orgId);
         }
-        return projectService.findProjectsUsingCurricula(versionIds, orgId);
+
+        UUID resolved = resolveVersionId(materialId, versionId, orgId);
+        return projectService.findProjectsUsingCurricula(List.of(resolved), orgId);
     }
 
     @Override
@@ -603,6 +629,14 @@ public class CurriculumServiceImpl implements CurriculumService {
     @Override
     public CurriculumCatalogRepository.CurriculumCatalogRow findCatalogItem(UUID materialId, UUID orgId) {
         return catalogRepository.findOne(orgId, materialId)
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+    }
+
+    @Override
+    public CurriculumCatalogRepository.CurriculumCatalogRow findCatalogItem(
+            UUID materialId, UUID versionId, UUID orgId) {
+        UUID resolved = resolveVersionId(materialId, versionId, orgId);
+        return catalogRepository.findOne(orgId, materialId, resolved)
                 .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
     }
 

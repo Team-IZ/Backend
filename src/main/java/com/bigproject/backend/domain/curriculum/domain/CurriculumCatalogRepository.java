@@ -50,8 +50,19 @@ public interface CurriculumCatalogRepository {
 	 */
 	Map<CurriculumAnalysisStatus, Long> countByAnalysisStatus(UUID orgId);
 
-	/** 교안 하나. 목록과 <b>같은 SELECT</b>를 쓰므로 두 응답의 필드가 어긋날 수 없다. */
-	Optional<CurriculumCatalogRow> findOne(UUID orgId, UUID materialId);
+	/** 교안 하나(최신 버전). 목록과 <b>같은 SELECT</b>를 쓰므로 두 응답의 필드가 어긋날 수 없다. */
+	default Optional<CurriculumCatalogRow> findOne(UUID orgId, UUID materialId) {
+		return findOne(orgId, materialId, null);
+	}
+
+	/**
+	 * 교안 하나, {@code versionId}로 특정 버전을 지정할 수 있다(2026-08-20, 44차 R1).
+	 *
+	 * @param versionId null이면 최신 버전(위 2-인자 메서드와 동일). 값이 있으면 그 버전으로 SELECT의
+	 *                   {@code v}를 고정한다 — 그 버전이 이 {@code materialId}의 것이 아니어도 여기서는
+	 *                   걸러지지 않는다(버전 존재·소속 검증은 호출부의 {@code resolveVersionId}가 한다)
+	 */
+	Optional<CurriculumCatalogRow> findOne(UUID orgId, UUID materialId, UUID versionId);
 
 	/**
 	 * @param query           파일명·교안 제목 부분검색(대소문자 무시). null·공백이면 전체
@@ -75,7 +86,13 @@ public interface CurriculumCatalogRepository {
 	 *                        재분석을 걸어 두고 진행 중인지 실패했는지 화면이 폴링할 대상이 이 값이다
 	 * @param sectionCount    가장 최근 <b>성공</b>한 분석이 만든 섹션 수. 성공 분석이 없으면 0
 	 * @param conceptCount    최신 버전의 승인된(ACTIVE) 개념 매핑 수
-	 * @param usedProjectCount 이 교안(모든 버전)을 연결한 <b>삭제되지 않은</b> 회차 수. 삭제·교체 판단 근거
+	 * @param usedProjectCount 이 교안(모든 버전)을 연결한 <b>삭제되지 않은</b> 회차 수. 삭제·교체 판단 근거.
+	 *                         {@code versionId}로 옛 버전을 조회해도 이 값은 바뀌지 않는다 — 삭제
+	 *                         가드와 같은 모집단을 유지해야 한다
+	 * @param versionUsedProjectCount 이 행이 대표하는 <b>그 버전만</b> 연결한 삭제되지 않은 회차 수
+	 *                                (2026-08-20, 44차 R1). {@code usedProjectCount}와 달리 행마다
+	 *                                다른 값이다 — 목록(항상 최신 버전 행)에서는 최신 버전만의 개수이고,
+	 *                                {@code versionId}를 지정한 상세에서는 그 버전만의 개수다
 	 * @param uploadedByName  올린 사람 이름. 계정이 지워졌으면 null
 	 */
 	record CurriculumCatalogRow(
@@ -89,6 +106,7 @@ public interface CurriculumCatalogRepository {
 			long sectionCount,
 			long conceptCount,
 			long usedProjectCount,
+			long versionUsedProjectCount,
 			Instant uploadedAt,
 			String uploadedByName) {
 	}

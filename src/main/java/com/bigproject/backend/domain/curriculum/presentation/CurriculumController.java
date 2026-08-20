@@ -291,25 +291,43 @@ public class CurriculumController {
 					| `analysisStatus` | enum? | 최근 분석 시도 상태. **한 번도 안 했으면 null**이며 `FAILED`와 다르다 |
 					| `teachesCount` | int | 승인된 가르친 항목 수 |
 					| `createdAt` | date-time | 등록 시각 |
-					| `linkedProjects[]` | array | **이 교안을 쓴 회차들**. `projectId` · `projectName` · `sequenceNo` |
+					| `linkedProjects[]` | array | **이 행의 버전을 쓴 회차들**. `projectId` · `projectName` · `sequenceNo` ·
+					  `curriculumVersionId`(2026-08-20, 44차 R2 — 이 행의 `versionId`와 항상 같다) |
 
-					**한 교안이 여러 회차에 걸리면 한 번만 나오고** `linkedProjects[]`에 그 회차가 모두
-					담긴다. 이 배열이 이 화면의 맥락 전부라 비어 있는 채로 나오는 일은 없다 —
-					연결이 있어야 목록에 들어오기 때문이다.
+					**행은 교안이 아니라 버전 단위다.** 한 교안이 여러 회차에 걸려도 **같은 버전**을
+					연결한 회차끼리만 `linkedProjects[]`에 함께 담긴다 — 회차마다 다른 버전을 연결했다면
+					행이 그만큼 나뉜다. 이 배열이 이 화면의 맥락 전부라 비어 있는 채로 나오는 일은 없다
+					— 연결이 있어야 목록에 들어오기 때문이다.
 
 					회차 차수는 `sequenceNo`다. 미니프로젝트는 `round_no`가 늘 1이라 그것으로는
 					차수를 셀 수 없다.
 
 					연결이 하나도 없으면 빈 배열이다(기수가 아직 교안을 붙이지 않은 상태이며 정상이다).
 
-					## 🔴 (2026-08-20, 44차 R2) 미해결 — `versionId`·`versionNo`가 단수다
+					## `versionId`가 단수인 이유 — 행이 이미 버전 하나만 대표한다 (2026-08-20, 44차 R2 회신)
 
-					한 교안이 여러 버전으로 개정돼, 같은 기수 안에서도 회차마다 **다른 버전**을
-					연결한 경우(예: 1차는 v1, 3차 이후는 v2)에 이 행이 어느 버전을 대표하는지
-					계약이 없다. `linkedProjects[]`에는 여러 회차가 섞여 담기는데 그 각각이 어느
-					버전을 쓰는지 알 방법이 없다 — 매니저가 이 행을 눌러 상세로 들어갈 때 열어야
-					할 버전을 정할 근거가 없다. 요청은 접수됐고(버전 단위로 행 분리, 또는
-					`linkedProjects[]` 각 항목에 `curriculumVersionId` 추가) 아직 구현되지 않았다.
+					요청서는 "한 교안이 여러 버전으로 개정돼 회차마다 다른 버전을 연결하면(예: 1차는
+					v1, 3차 이후는 v2) 이 행이 어느 버전을 대표하는지 계약이 없다"고 지목했다 — 그런데
+					실제로 확인해 보니 **이 조회는 이미 버전 단위로 행을 나누고 있었다.** 위 예시를
+					그대로 넣으면:
+
+					| `versionId` | `versionNo` | `linkedProjects[]` |
+					|---|---|---|
+					| v1 | 1 | `[{sequenceNo: 1, curriculumVersionId: v1}]` |
+					| v2 | 2 | `[{sequenceNo: 3, curriculumVersionId: v2}, …]` |
+
+					같은 `materialId`가 **두 행**으로 나오고, 각 행의 `linkedProjects[]`에는 **그 행의
+					`versionId`를 쓴 회차만** 담긴다 — 요청서가 제안한 "옵션 1(버전 단위로 행 분리)"이
+					이미 동작이었다. 요청서가 지목한 것은 동작이 아니라 **이 문서의 옛 문구**("한 교안이
+					여러 회차에 걸리면 한 번만 나온다")였다 — 그 문구만 실제와 어긋나 있었다.
+
+					추가로 요청서의 옵션 2도 함께 반영했다 — `linkedProjects[]`의 각 항목이
+					`curriculumVersionId`를 직접 들고 있다(이 행의 `versionId`와 항상 같은 값이다).
+					행을 순회하는 코드가 행 묶음 규칙을 몰라도 회차 하나만 보고 바로 버전을 읽을 수
+					있도록 하기 위해서다.
+
+					**상세로 들어갈 때 열 버전은 `GET /curricula/{materialId}?versionId=`로 이 행의
+					`versionId`를 그대로 넘기면 된다**(44차 R1로 구현됨).
 					"""
     )
     @PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
@@ -350,17 +368,30 @@ public class CurriculumController {
 					- materialId (경로): **교안 ID**(버전이 바뀌어도 유지되는 고정 식별자).
 					  교안 목록 응답의 `materialId`와 형제 엔드포인트 `GET /curricula/{materialId}/sections`가
 					  받는 값과 **같은 것**이다
+					- versionId (쿼리, 선택): 특정 버전만 쓴 회차로 좁힌다(2026-08-20, 44차 R3).
+					  생략하면 아래 "모든 버전" 기준(종전과 동일)이다. 그 교안(materialId)의 버전이
+					  아니거나 존재하지 않으면 404 `CURRICULUM_VERSION_NOT_FOUND`다
 
 					**응답 (200)** — 연결된 회차가 없으면 빈 배열
 
-					## 목록의 `usedProjectCount`와 같은 기준이다
+					## `versionId`를 생략하면 목록의 `usedProjectCount`와 같은 기준이다
 
 					이 교안의 **모든 버전**을 쓰는 회차를 모은다. 삭제된 회차는 뺀다.
 					교안 목록의 `usedProjectCount`가 세는 것과 같은 모집단이라
 					**`usedProjectCount`와 이 배열의 길이가 일치한다.**
 
-					최신 버전만 보지 않는 이유는 지난 버전으로 연결된 회차가 빠지면 두 숫자가 다시
-					갈리기 때문이다 — 화면이 어느 쪽을 믿어야 할지 정할 수 없게 된다.
+					모든 버전을 보는 이유는 **삭제 가드**(`CURRICULUM_MATERIAL_IN_USE`)가 이 모집단을
+					쓰기 때문이다 — 지난 버전으로 연결된 회차가 빠지면 삭제 버튼이 "쓰는 회차 없음"으로
+					읽었는데 실제 삭제는 409로 막히는 어긋남이 생긴다.
+
+					## `versionId`를 주면 그 버전만 쓴 회차로 좁혀진다 (2026-08-20, 44차 R3 회신)
+
+					옛 버전 상세 화면에서 "이 버전이 쓰인 회차"만 보고 싶을 때 쓴다. **삭제 가드에는
+					영향이 없다** — `versionId`를 지정해 받은 배열이 비어 있어도(그 버전은 안 쓰였어도)
+					다른 버전이 쓰고 있으면 삭제는 여전히 409다. 이 파라미터는 표시용이고, 삭제 가능
+					여부는 `versionId` 없이 부른 `usedProjectCount`(교안 전체)로만 판단해야 한다.
+					`GET /curricula/{materialId}?versionId=`가 주는 `versionUsedProjectCount`와 같은
+					모집단이다.
 
 					| 필드 | 설명 |
 					|---|---|
@@ -384,27 +415,21 @@ public class CurriculumController {
 					예전에는 연결된 회차 중 빅프로젝트가 하나라도 있으면 400으로 <b>조회 전체가 실패</b>했다.
 					지금은 `roundLabel`만 `null`로 두고 나머지는 그대로 준다 — 목록 하나 때문에
 					화면이 통째로 비는 편이 더 나쁘다.
-
-					## 🔴 (2026-08-20, 44차 R3) 미해결 — 버전으로 못 좁힌다
-
-					위 "모든 버전"이 삭제 판정(`CURRICULUM_MATERIAL_IN_USE`)에는 여전히 맞는 기준이다.
-					다만 **표시용으로는** 옛 버전 상세 화면에서 이 탭을 열면 그 버전만 쓰는 회차가
-					아니라 전 버전의 회차가 섞여 나온다. `versionId` 선택 쿼리로 좁히는 요청이
-					접수됐고 아직 구현되지 않았다 — 반영 전까지는 최신 버전 상세에서만 이 배열을
-					그대로 믿을 수 있다.
 					"""
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "쓰인 회차 조회 성공"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
-            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 교안을 찾을 수 없음(다른 기관의 교안 포함)"),
+            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 교안을 찾을 수 없음(다른 기관의 교안 포함) 또는 CURRICULUM_VERSION_NOT_FOUND versionId를 넘겼는데 그 버전이 없거나 이 교안의 버전이 아님(44차 R3)"),
     })
     @GetMapping("/curricula/{materialId}/projects")
     public ResponseEntity<List<CurriculumUsingProjectResponse>> findUsedProjects(
-            @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId
+            @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId,
+            @Parameter(description = "특정 버전만 쓴 회차로 좁힌다. 생략하면 모든 버전(종전과 동일, usedProjectCount와 같은 기준).")
+            @RequestParam(required = false) UUID versionId
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-        return ResponseEntity.ok(curriculumService.findUsedProjects(materialId, orgId).stream()
+        return ResponseEntity.ok(curriculumService.findUsedProjects(materialId, orgId, versionId).stream()
                 .map(CurriculumUsingProjectResponse::from)
                 .toList());
     }
@@ -557,13 +582,15 @@ public class CurriculumController {
 					(`project_curriculum`)도 그대로다. 발행된 리포트가 가리키는 쪽 번호가 바뀌지
 					않는 이유가 이것이다.
 
-					바뀌는 것은 상태 하나뿐이다 — 기존 최신 버전이 `INACTIVE`로 넘어가
-					`GET /cohorts/{cohortId}/curricula`(연결 후보 목록) 같은 "고를 수 있는 교안"
-					조회에서 새 버전에게 자리를 내준다. **(2026-08-20 정정)** 읽기 쪽 구버전 상세·
-					버전 목록 API는 이후 커밋으로 추가됐다 — `GET /curricula/{materialId}/versions`
-					(버전 목록)와 `GET /curricula/{materialId}/sections?versionId=`(특정 버전 섹션)를
-					쓴다. 다만 `GET /curricula/{materialId}`(교안 단건 상세)는 아직 `versionId`를
-					안 받는다 — 44차 R1으로 접수됨, 이 문서만으로는 아직 최신 버전 머리글만 나간다.
+					**(2026-08-20 정정)** 예전에는 여기서 "기존 최신 버전이 `INACTIVE`로 넘어간다"고
+					적고 있었는데, 그 처리는 이미 코드에서 빠졌다 — 지금은 새 버전을 올려도 이전
+					버전이 계속 `ACTIVE`로 남고, `GET /cohorts/{cohortId}/curricula`(연결 후보 목록)
+					같은 "고를 수 있는 교안" 조회에도 옛 버전이 계속 뜬다. 읽기 쪽 구버전 상세·버전
+					목록 API는 이후 커밋으로 추가됐다 — `GET /curricula/{materialId}/versions`
+					(버전 목록), `GET /curricula/{materialId}/sections?versionId=`(특정 버전 섹션),
+					`GET /curricula/{materialId}?versionId=`(특정 버전 상세, 44차 R1),
+					`GET /curricula/{materialId}/projects?versionId=`(특정 버전이 쓰인 회차, 44차 R3)를
+					쓴다.
 
 					## 제목은 안 바꿔도 된다 — 바꾸면 그때만 중복 검사
 
