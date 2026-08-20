@@ -29,7 +29,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.scheduling.annotation.Scheduled;
 import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -386,15 +385,23 @@ public class CurriculumServiceImpl implements CurriculumService {
         analysisRepository.save(analysis);
     }
 
-    @Scheduled(fixedDelay = 600000)
+    /**
+     * 대기·진행 중인 분석을 훑어 상태를 되짚는다.
+     *
+     * <p>{@code @Scheduled}가 없다 — 이 메서드를 언제 부를지는 {@code CurriculumJobScheduler}가
+     * 정한다(2026-08-20 분리). 클래스가 자기 실행 주기를 알면 "언제 도는가"를 바꾸려고 도메인 로직
+     * 파일을 열게 된다({@code ReportBatchService}/{@code ReportJobScheduler}와 같은 판단이다).
+     */
     public void pollPendingCurriculumAnalyses() {
         List<CurriculumAnalysis> pendingList = analysisRepository
                 .findAllByStatusIn(List.of(CurriculumAnalysisStatus.PENDING, CurriculumAnalysisStatus.RUNNING));
 
-        log.info("### DEBUG 스케줄러 실행됨, 대기 중인 분석 건수={}", pendingList.size());
+        if (pendingList.isEmpty()) {
+            return;
+        }
+        log.debug("교안 분석 폴링: 대기 중인 건수={}", pendingList.size());
 
         for (CurriculumAnalysis analysis : pendingList) {
-            log.info("### DEBUG 처리 시도: analysisId={}, status={}", analysis.getAnalysisId(), analysis.getStatus());
             try {
                 self.reconcileOne(analysis);
             } catch (Exception e) {
@@ -426,12 +433,12 @@ public class CurriculumServiceImpl implements CurriculumService {
         }
 
         if (result == null) {
-            log.warn("### DEBUG result가 null입니다. jobId={}", jobId);
+            log.warn("AI 분석 상태 조회 응답이 비어 있습니다: jobId={}", jobId);
             return;
         }
 
-        log.info("### DEBUG result 수신: status={}, sections size={}",
-                result.status(), result.sections() != null ? result.sections().size() : -1);
+        log.debug("AI 분석 상태 수신: jobId={}, status={}, sections={}",
+                jobId, result.status(), result.sections() != null ? result.sections().size() : -1);
 
         String status = result.status();
 
@@ -468,6 +475,17 @@ public class CurriculumServiceImpl implements CurriculumService {
 
     private void persistAnalysisResult(CurriculumAnalysis analysis, CurriculumVersion version,
                                        UUID orgId, AiCurriculumClient.AnalysisResult result) {
+        // 인스턴스가 둘 이상이면 findAllByStatusIn이 같은 행을 두 번 넘길 수 있다 — 여기서 DB 행을
+        // 먼저 선점한다. 0건이면 다른 인스턴스가 이미 처리 중이거나 끝냈다는 뜻이라 조용히 물러난다.
+        int claimed = analysisRepository.claimForCompletion(
+                analysis.getAnalysisId(),
+                List.of(CurriculumAnalysisStatus.PENDING, CurriculumAnalysisStatus.RUNNING),
+                CurriculumAnalysisStatus.RUNNING);
+        if (claimed == 0) {
+            log.debug("다른 인스턴스가 이미 처리 중이라 건너뜁니다: analysisId={}", analysis.getAnalysisId());
+            return;
+        }
+
         analysis.start();
 
         int sectionSeq = 1;

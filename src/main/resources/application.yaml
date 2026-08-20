@@ -386,6 +386,14 @@ ai:
   curriculum:
     x-internal-key: ${AI_INTERNAL_KEY:}
 
+    # [2026-08-20] pollPendingCurriculumAnalyses가 여태 CurriculumServiceImpl에 @Scheduled로
+    # 직접 걸려 있어 이 스위치 자체가 없었다 — 로컬 개발·@SpringBootTest·운영 전부에서
+    # 무조건 돌았다. CurriculumJobScheduler로 분리하며 다른 스케줄러(ai.analysis.scheduler·
+    # ai.report.scheduler)와 같은 기본 꺼짐 규약을 맞춘다. 켜지 않으면 대기 중인 분석이
+    # PENDING/RUNNING에 영원히 머문다 — 배포 체크리스트에 넣을 것.
+    scheduler:
+      enabled: ${AI_CURRICULUM_SCHEDULER_ENABLED:false}
+
 jwt:
   secret: ${JWT_SECRET}
   access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION}
