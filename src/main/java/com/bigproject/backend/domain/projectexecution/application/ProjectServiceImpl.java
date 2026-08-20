@@ -34,6 +34,8 @@ import com.bigproject.backend.domain.academicoperations.domain.AcademicOperation
 import com.bigproject.backend.global.exception.ApiException;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,6 +47,7 @@ import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -60,6 +63,7 @@ public class ProjectServiceImpl implements ProjectService {
     private final CurriculumAnalysisRepository curriculumAnalysisRepository;
     private final CurriculumSectionRepository curriculumSectionRepository;
     private final ProjectDependencyRepository projectDependencyRepository;
+    private final ProjectCreationTransaction projectCreationTransaction;
 
     @Override
     @Transactional
@@ -380,8 +384,10 @@ public class ProjectServiceImpl implements ProjectService {
         return result;
     }
 
+    /** cohort당 sequence_no 경합 재시도 상한. 둘 다 유효한 요청이라 거절이 아니라 재시도로 푼다. */
+    private static final int MAX_SEQUENCE_NO_ATTEMPTS = 3;
+
     @Override
-    @Transactional
     public Project createProject(UUID orgId, UUID cohortId, String name, ProjectCategory category,
                                  LocalDate startDate, LocalDate endDate, Instant submissionDueAt,
                                  UUID actorUserId) {
@@ -391,28 +397,27 @@ public class ProjectServiceImpl implements ProjectService {
             throw new ApiException(ProjectExecutionErrorCode.PROJECT_NAME_DUPLICATED,
                     "이미 존재하는 프로젝트명입니다(삭제된 회차의 이름도 다시 쓸 수 없습니다): " + name);
         }
-        int nextSequenceNo = projectRepository.findMaxSequenceNo(cohortId, orgId) + 1;
 
-        Project project = category == ProjectCategory.MINI_PROJECT
-                ? Project.createMiniProject(orgId, cohortId, name, nextSequenceNo, startDate, endDate, actorUserId)
-                : Project.createBigProject(orgId, cohortId, name, nextSequenceNo, startDate, endDate, actorUserId);
+        Instant dueAt = submissionDueAt != null ? submissionDueAt : deriveSubmissionDueAt(endDate);
 
-        // saveAndFlush다. project_id는 GenerationType.UUID라 애플리케이션이 메모리에서 만들어
-        // Hibernate가 실제 INSERT를 커밋 시점까지 미룰 수 있다. 바로 아래 회차 INSERT는 Hibernate를
-        // 거치지 않는 raw JdbcTemplate이라 그 지연을 볼 방법이 없어, project row가 아직 없는 채로
-        // project_assessment_round가 그 id를 참조해 FK 위반(409)이 났다 — flush로 먼저 물리적으로 심는다.
-        Project saved = projectRepository.saveAndFlush(project);
-
-        // 22차 R5·R6 — 회차를 함께 만든다. 여태 만들지 않아서 화면으로 만든 프로젝트는 회차가 없는
-        // 채로 남았고, 현황 탭이 회차를 못 찾았으며 제출 마감을 저장할 자리도 없었다.
-        // 같은 트랜잭션이라 회차 INSERT가 실패하면 프로젝트도 함께 롤백된다 — 회차 없는 프로젝트를
-        // 다시 만들지 않기 위해서다.
-        projectDependencyRepository.createAssessmentRound(
-                saved.getProjectId(), orgId, cohortId, name,
-                submissionDueAt != null ? submissionDueAt : deriveSubmissionDueAt(endDate),
-                actorUserId);
-
-        return saved;
+        // sequence_no는 findMaxSequenceNo(max+1) 조회 후 삽입이라, 같은 cohort에 두 요청이 동시에
+        // 들어오면 둘 다 같은 값을 읽고 uq_project_cohort_id_sequence_no에서 하나가 막힌다
+        // (Project.java 주석: "동시성은 DB 유니크가 최종 방어선"). 그 막힘은 데이터 손상이 아니라
+        // 정당한 두 번째 요청이 낯선 409를 받는 UX 문제라, 재시도로 다음 번호를 다시 읽는다.
+        // 시도마다 완전히 새 트랜잭션이어야 하므로(실패한 flush의 영향이 다음 시도로 새면 안 된다)
+        // 실제 삽입은 REQUIRES_NEW인 ProjectCreationTransaction에 위임한다.
+        for (int attempt = 1; attempt <= MAX_SEQUENCE_NO_ATTEMPTS; attempt++) {
+            try {
+                return projectCreationTransaction.createOnce(
+                        orgId, cohortId, name, category, startDate, endDate, dueAt, actorUserId);
+            } catch (DataIntegrityViolationException exception) {
+                if (attempt == MAX_SEQUENCE_NO_ATTEMPTS) {
+                    throw exception;
+                }
+                log.debug("sequence_no 경합으로 재시도: cohortId={}, attempt={}", cohortId, attempt);
+            }
+        }
+        throw new IllegalStateException("unreachable — 루프가 위 두 경로 중 하나로 항상 빠져나간다");
     }
 
     /**

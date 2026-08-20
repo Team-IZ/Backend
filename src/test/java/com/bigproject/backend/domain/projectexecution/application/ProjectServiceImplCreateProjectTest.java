@@ -13,73 +13,106 @@ import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectRequ
 import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectVerificationConceptRepository;
 import com.bigproject.backend.domain.projectexecution.infrastructure.ProjectVerificationConceptSetRepository;
 import org.junit.jupiter.api.Test;
-import org.mockito.InOrder;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * project_id는 {@code GenerationType.UUID}라 애플리케이션이 메모리에서 만든다 — Hibernate가 실제
- * {@code INSERT INTO project}를 커밋 시점까지 미룰 수 있다는 뜻이다. 바로 뒤에 회차를 만드는
- * {@code projectDependencyRepository.createAssessmentRound}는 Hibernate를 거치지 않는 raw
- * JdbcTemplate이라 그 지연된 INSERT를 볼 방법이 없어, project row가 아직 없는 채로
- * project_assessment_round가 그 id를 참조해 FK 위반(409 DATA_INTEGRITY_VIOLATION)이 났다
- * (2026-08-20, POST /cohorts/{id}/projects 실제 재현).
- *
- * <p>이 테스트는 회차 INSERT 전에 project 저장이 <b>flush까지</b> 됐는지만 못 박는다 — 순서가
- * 반대로 바뀌거나 {@code save()}로 되돌아가면 실패해야 한다.
+ * {@code sequence_no} 경합({@code uq_project_cohort_id_sequence_no})으로 실제 삽입
+ * ({@link ProjectCreationTransaction}, REQUIRES_NEW)이 실패했을 때 {@code createProject}가
+ * 재시도하는지를 본다. 삽입 자체의 내용(flush 순서 등)은
+ * {@link ProjectCreationTransactionTest}가 따로 본다.
  */
 class ProjectServiceImplCreateProjectTest {
 
+	private final ProjectRepository projectRepository = mock(ProjectRepository.class);
+	private final ProjectDependencyRepository projectDependencyRepository = mock(ProjectDependencyRepository.class);
+	private final ProjectCreationTransaction projectCreationTransaction = mock(ProjectCreationTransaction.class);
+
+	private final ProjectServiceImpl service = new ProjectServiceImpl(
+			projectRepository,
+			mock(ProjectRequirementRepository.class),
+			mock(ProjectVerificationConceptRepository.class),
+			mock(ProjectVerificationConceptSetRepository.class),
+			mock(ProjectCurriculumRepository.class),
+			mock(CurriculumTeachesMappingRepository.class),
+			mock(CurriculumVersionRepository.class),
+			mock(CurriculumAnalysisRepository.class),
+			mock(CurriculumSectionRepository.class),
+			projectDependencyRepository,
+			projectCreationTransaction);
+
+	private final UUID orgId = UUID.randomUUID();
+	private final UUID cohortId = UUID.randomUUID();
+	private final UUID actorUserId = UUID.randomUUID();
+	private final LocalDate start = LocalDate.of(2026, 8, 1);
+	private final LocalDate end = LocalDate.of(2026, 8, 20);
+
 	@Test
-	void flushesProjectBeforeCreatingItsAssessmentRound() {
-		ProjectRepository projectRepository = mock(ProjectRepository.class);
-		ProjectDependencyRepository projectDependencyRepository = mock(ProjectDependencyRepository.class);
-
-		ProjectServiceImpl service = new ProjectServiceImpl(
-				projectRepository,
-				mock(ProjectRequirementRepository.class),
-				mock(ProjectVerificationConceptRepository.class),
-				mock(ProjectVerificationConceptSetRepository.class),
-				mock(ProjectCurriculumRepository.class),
-				mock(CurriculumTeachesMappingRepository.class),
-				mock(CurriculumVersionRepository.class),
-				mock(CurriculumAnalysisRepository.class),
-				mock(CurriculumSectionRepository.class),
-				projectDependencyRepository);
-
-		UUID orgId = UUID.randomUUID();
-		UUID cohortId = UUID.randomUUID();
-		UUID actorUserId = UUID.randomUUID();
-		LocalDate start = LocalDate.of(2026, 8, 1);
-		LocalDate end = LocalDate.of(2026, 8, 20);
-
+	void succeedsOnFirstAttemptWithoutRetrying() {
 		when(projectRepository.existsByCohortIdAndOrgIdAndName(cohortId, orgId, "1차 미니프로젝트"))
 				.thenReturn(false);
-		when(projectRepository.findMaxSequenceNo(cohortId, orgId)).thenReturn(0);
-		when(projectRepository.saveAndFlush(any(Project.class)))
-				.thenAnswer(invocation -> invocation.getArgument(0));
+		Project created = mock(Project.class);
+		when(projectCreationTransaction.createOnce(
+				any(), any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(created);
 
-		service.createProject(orgId, cohortId, "1차 미니프로젝트", ProjectCategory.MINI_PROJECT,
+		Project result = service.createProject(orgId, cohortId, "1차 미니프로젝트", ProjectCategory.MINI_PROJECT,
 				start, end, Instant.parse("2026-08-20T14:59:00Z"), actorUserId);
 
-		// saveAndFlush다 — save()로 되돌아가면 project row가 아직 안 심긴 채로 아래 회차 INSERT가 나간다.
-		// projectId는 여기서 null이다(GenerationType.UUID는 Hibernate가 실제 persist 시점에 채우는
-		// 값이라, Hibernate 없이 mock만 쓰는 이 테스트에서는 채워지지 않는다) — any()로 받는다.
-		InOrder order = inOrder(projectRepository, projectDependencyRepository);
-		order.verify(projectRepository).saveAndFlush(any(Project.class));
-		order.verify(projectDependencyRepository).createAssessmentRound(
-				any(), eq(orgId), eq(cohortId), eq("1차 미니프로젝트"),
-				any(Instant.class), eq(actorUserId));
+		assertThat(result).isSameAs(created);
+		verify(projectCreationTransaction, times(1)).createOnce(
+				any(), any(), any(), any(), any(), any(), any(), any());
+	}
 
-		verifyNoMoreInteractions(projectDependencyRepository);
+	/**
+	 * 🔴 <b>재시도가 실제로 일어나는지가 이 테스트의 핵심이다.</b> 첫 시도가
+	 * {@code uq_project_cohort_id_sequence_no} 경합으로 실패해도(둘 다 유효한 요청이라) 거절하지
+	 * 않고, sequence_no를 다시 읽어 두 번째 시도로 성공시킨다.
+	 */
+	@Test
+	void retriesOnceOnSequenceNoCollisionAndSucceeds() {
+		when(projectRepository.existsByCohortIdAndOrgIdAndName(cohortId, orgId, "1차 미니프로젝트"))
+				.thenReturn(false);
+		Project created = mock(Project.class);
+		when(projectCreationTransaction.createOnce(
+				any(), any(), any(), any(), any(), any(), any(), any()))
+				.thenThrow(new DataIntegrityViolationException("uq_project_cohort_id_sequence_no"))
+				.thenReturn(created);
+
+		Project result = service.createProject(orgId, cohortId, "1차 미니프로젝트", ProjectCategory.MINI_PROJECT,
+				start, end, Instant.parse("2026-08-20T14:59:00Z"), actorUserId);
+
+		assertThat(result).isSameAs(created);
+		verify(projectCreationTransaction, times(2)).createOnce(
+				any(), any(), any(), any(), any(), any(), any(), any());
+	}
+
+	/** 경합이 재시도 상한을 넘겨 계속되면 포기하고 그대로 던진다 — 무한 재시도로 숨기지 않는다. */
+	@Test
+	void givesUpAfterExhaustingRetries() {
+		when(projectRepository.existsByCohortIdAndOrgIdAndName(cohortId, orgId, "1차 미니프로젝트"))
+				.thenReturn(false);
+		when(projectCreationTransaction.createOnce(
+				any(), any(), any(), any(), any(), any(), any(), any()))
+				.thenThrow(new DataIntegrityViolationException("uq_project_cohort_id_sequence_no"));
+
+		assertThatThrownBy(() -> service.createProject(orgId, cohortId, "1차 미니프로젝트",
+				ProjectCategory.MINI_PROJECT, start, end,
+				Instant.parse("2026-08-20T14:59:00Z"), actorUserId))
+				.isInstanceOf(DataIntegrityViolationException.class);
+
+		verify(projectCreationTransaction, times(3)).createOnce(
+				any(), any(), any(), any(), any(), any(), any(), any());
 	}
 }
