@@ -30,6 +30,7 @@ public class CohortService {
     private final com.bigproject.backend.domain.academicoperations.infrastructure.ClassMembershipRepository classMembershipRepository;
     private final com.bigproject.backend.domain.academicoperations.infrastructure.ClassroomRepository classroomRepository;
     private final com.bigproject.backend.domain.academicoperations.domain.CohortDependencyRepository cohortDependencyRepository;
+    private final com.bigproject.backend.domain.academicoperations.infrastructure.ManagerAssignmentRepository managerAssignmentRepository;
     // 기수 생성
     @Transactional
     public Cohort createCohort(UUID orgId, String name, LocalDate startDate,
@@ -198,7 +199,7 @@ public class CohortService {
         java.util.List<com.bigproject.backend.domain.academicoperations.domain.CohortMember> memberships =
                 cohortMemberRepository.findByUserIdAndOrgIdAndLeftAtIsNull(userId, orgId);
 
-        return memberships.stream()
+        java.util.stream.Stream<EnrollmentView> traineeEnrollments = memberships.stream()
                 .map(member -> {
                     Cohort cohort = findCohort(member.getCohortId(), orgId);
                     return classMembershipRepository
@@ -208,7 +209,24 @@ public class CohortService {
                                     .map(classroom -> enrollmentView(cohort, classroom.getClassId(), classroom.getName()))
                                     .orElseGet(() -> enrollmentView(cohort, null, null)))
                             .orElseGet(() -> enrollmentView(cohort, null, null));
-                })
+                });
+
+        // 매니저는 cohort_member에 행이 없다 — 소속 원장이 manager_assignment이기 때문이다(교육생만
+        // 초대를 수락해 cohort_member에 들어간다). 위 스트림만 쓰면 담당 기수가 있는 매니저도 항상 빈
+        // 배열을 받는다. classroom은 문서화된 대로 always null로 내려준다 — 담당 반은
+        // GET /cohorts/{cohortId}/classrooms가 별도로 돌려주는 값이다.
+        java.util.stream.Stream<EnrollmentView> managerEnrollments = managerAssignmentRepository
+                .findByManagerUserIdAndOrgIdAndStatusAndUnassignedAtIsNull(userId, orgId, "ACTIVE")
+                .stream()
+                .map(assignment -> classroomRepository
+                        .findByClassIdAndOrgIdAndDeletedAtIsNull(assignment.getClassId(), orgId)
+                        .map(classroom -> classroom.getCohortId()))
+                .filter(java.util.Optional::isPresent)
+                .map(java.util.Optional::get)
+                .distinct()
+                .map(cohortId -> enrollmentView(findCohort(cohortId, orgId), null, null));
+
+        return java.util.stream.Stream.concat(traineeEnrollments, managerEnrollments)
                 .sorted(ENROLLMENT_ORDER)
                 .toList();
     }
