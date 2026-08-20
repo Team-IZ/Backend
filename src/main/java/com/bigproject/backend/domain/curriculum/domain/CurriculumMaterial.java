@@ -69,8 +69,15 @@ public class CurriculumMaterial {
                 .build();
     }
 
+    /**
+     * 삭제와 동시에 {@code normalizedTitle}을 봉인한다 — {@code uq_curriculum_material_org_id_normalized_title}가
+     * 부분 인덱스가 아니라 전역 UNIQUE라 삭제된 행도 제목을 계속 점유하는 문제를, 마이그레이션 없이
+     * 여기서 끊는다. {@code materialId}는 PK라 항상 유일하므로 이 값은 다른 어떤 행과도 충돌하지 않는다.
+     * 화면 표시는 {@code title} 필드를 쓰고 삭제된 교안은 목록 조회에서 애초에 빠지므로 노출 영향은 없다.
+     */
     public void softDelete() {
         this.deletedAt = OffsetDateTime.now();
+        this.normalizedTitle = "__deleted__" + this.materialId;
         this.updatedAt = OffsetDateTime.now();
     }
 

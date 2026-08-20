@@ -83,6 +83,13 @@ public interface CurriculumService {
     List<SectionView> findSections(UUID versionId, UUID orgId);
 
     /**
+     * 이 교안(material)의 전체 버전 이력을 최신순으로 돌려준다 — 상세 화면이 "예전 버전"을
+     * 보여줄 때 쓴다. {@link #findLinkableCurricula}류가 {@code ACTIVE}(최신)만 보는 것과 달리,
+     * {@code INACTIVE}로 넘어간 과거 버전도 전부 포함한다.
+     */
+    List<CurriculumVersion> findVersionHistory(UUID materialId, UUID orgId);
+
+    /**
      * 이 교안을 쓰는 회차들(11차 R3). 이름 배열이던 것을 회차 객체로 바꿨다 —
      * 화면이 재분석 경고를 <b>응시가 시작된 회차만</b>으로 좁힐 수 있어야 한다.
      *
