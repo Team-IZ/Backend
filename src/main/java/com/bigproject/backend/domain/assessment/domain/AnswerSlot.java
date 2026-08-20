@@ -37,4 +37,16 @@ public enum AnswerSlot {
 		}
 		return values()[hintsUsed];
 	}
+
+	/**
+	 * 바로 앞 슬롯. {@code JdbcSessionRepository#openHint}가 "건너뛴 슬롯"을 가리킬 때 쓴다.
+	 *
+	 * @throws IllegalStateException {@code QUESTION}에는 앞 슬롯이 없다
+	 */
+	public AnswerSlot previous() {
+		if (this == QUESTION) {
+			throw new IllegalStateException("QUESTION 앞에는 슬롯이 없다");
+		}
+		return values()[ordinal() - 1];
+	}
 }
