@@ -136,13 +136,9 @@ public class ReportController {
 
 	@Operation(
 			operationId = "findManagedTraineeReports",
-			summary = "담당 교육생 리포트 조회 (매니저) | ⚠️ 사용 보류",
+			summary = "담당 교육생 리포트 조회 (매니저) | ✅ 사용 가능",
 			description = """
 					매니저가 담당 교육생 **한 명**의 리포트를 회차별로 본다. 교육생 상세 화면의 리포트 라인이다.
-
-					⚠️ **담당 판정 SQL이 실제 DB로 검증되지 않았다.** 본문 조립은 `GET /reports`와 같은
-					경로라 이미 확인된 것이고, 새로 들어온 것은 `ManagerTraineeAccessRepository`의
-					`EXISTS` 절 하나뿐이다. 그 SQL이 도는 것을 확인한 뒤 `✅ 사용 가능`으로 올린다.
 
 					## 응답이 `GET /reports`와 똑같다
 
