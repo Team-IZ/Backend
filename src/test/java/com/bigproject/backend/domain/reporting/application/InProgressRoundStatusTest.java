@@ -17,16 +17,22 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * 2026-08-20 발견·수정 — 응시가 아직 {@code COMPLETED}에 이르지 못한 회차가
- * {@code PENDING_PUBLISH}("응시 완료")로 잘못 보이던 버그를 고정한다.
+ * {@code PENDING_PUBLISH}("응시 완료")가 실제로는 응시가 안 끝났거나 끝날 수 없는 회차까지
+ * 삼키던 버그 두 건을 고정한다.
  *
- * <p>실사용 재현: 코드 분석이 진행 중인 회차(측정 응시 상태 {@code SESSION_READY})가
- * "내 리포트" 좌측 레일에 "응시 완료"로 떴다 — 이해도 확인은 시작도 안 했는데 "다 봤고 리포트만
- * 기다리는 중"으로 읽혔다. 원인은 상태 분기 ①②③이 {@code NOT_SUBMITTED}·{@code NOT_ATTENDED}·
+ * <p><b>2026-08-20</b> — 응시가 아직 {@code COMPLETED}에 이르지 못한 회차. 실사용 재현: 코드
+ * 분석이 진행 중인 회차(측정 응시 상태 {@code SESSION_READY})가 "내 리포트" 좌측 레일에
+ * "응시 완료"로 떴다 — 이해도 확인은 시작도 안 했는데 "다 봤고 리포트만 기다리는 중"으로
+ * 읽혔다. 원인은 상태 분기 ①②③이 {@code NOT_SUBMITTED}·{@code NOT_ATTENDED}·
  * {@code SESSION_INCOMPLETE} 세 종료 사유만 걸렀고, 그 외의 <b>진행 중(비종료)</b> 응시 상태
  * ({@code NOT_STARTED}·{@code SUBMITTED}·{@code ANALYZING}·{@code SESSION_READY}·
  * {@code SESSION_IN_PROGRESS})는 아무 데도 안 걸려 그대로 ④(발행 전=PENDING_PUBLISH)로
  * 떨어졌던 것이다.
+ *
+ * <p><b>2026-08-21</b> — 코드 분석이 실패로 끝났고 리포트 행이 아예 없는 회차. 실사용 재현:
+ * 문주안 계정 미니프로젝트 3차가 "리포트를 만들고 있어요 · 발행 예정 N월 N일 이후"로 떴는데
+ * 그 발행 예정일은 한 달 전에 지나 있었다 — 분석 실패는 리포트를 만들 근거 자체가 없는데
+ * 이 사실을 거르는 분기가 없어 똑같이 ④로 떨어졌던 것이다.
  */
 class InProgressRoundStatusTest {
 
@@ -85,9 +91,12 @@ class InProgressRoundStatusTest {
 	/**
 	 * 분석 실패(FAILED)여도 이미 리포트가 발행됐으면 PUBLISHED다 — IN_PROGRESS가 FAILED·EXPIRED를
 	 * 가로채면 안 된다는 회귀 방지(실제로 이런 회차가 있다: 분석 실패해도 발행된 리포트가 존재).
+	 *
+	 * <p>이 테스트는 {@code ANALYSIS_FAILED} 상태(2026-08-21 추가)의 회귀 가드도 겸한다 — 이 회차는
+	 * {@code reportId}가 있으므로 새 분기(③-3)를 타지 않고 그대로 ⑤(PUBLISHED)로 떨어져야 한다.
 	 */
 	@Test
-	@DisplayName("FAILED여도 이미 발행됐으면 PUBLISHED다 — IN_PROGRESS가 가로채지 않는다")
+	@DisplayName("FAILED여도 이미 발행됐으면 PUBLISHED다 — IN_PROGRESS·ANALYSIS_FAILED가 가로채지 않는다")
 	void failedButAlreadyPublishedIsStillPublishedNotInProgress() {
 		RoundRow row = new RoundRow(
 				ROUND, "미니프로젝트 4차 이해도 확인", 1, "미니프로젝트 4차",
@@ -97,6 +106,26 @@ class InProgressRoundStatusTest {
 				null, null, null);
 
 		assertThat(statusOf(row)).isEqualTo("PUBLISHED");
+	}
+
+	/**
+	 * 2026-08-21 발견·수정 — 분석 실패로 끝났고 리포트 행이 아예 없으면 ANALYSIS_FAILED다.
+	 *
+	 * <p>실사용 재현: 문주안 계정 미니프로젝트 3차. 코드 분석이 실패해 이해도 확인 문항 자체가
+	 * 없는데 이 사실을 거르는 분기가 없어 PENDING_PUBLISH("응시 완료" · "리포트를 만들고
+	 * 있어요 · 발행 예정 N월 N일 이후")로 떨어졌다 — 그 발행 예정일은 이미 한 달 전에 지났다.
+	 */
+	@Test
+	@DisplayName("분석 실패(ANALYSIS_FAILED)이고 리포트가 없으면 ANALYSIS_FAILED다 — PENDING_PUBLISH가 아니다")
+	void analysisFailedWithoutAReportIsAnalysisFailedNotPendingPublish() {
+		RoundRow row = new RoundRow(
+				ROUND, "미니프로젝트 3차 이해도 확인", 1, "미니프로젝트 3차",
+				null, null, null, 0, 0,
+				UUID.randomUUID(), "FAILED", "ANALYSIS_FAILED", "NOT_REQUIRED",
+				Instant.now().minus(Duration.ofDays(40)), Instant.now().minus(Duration.ofDays(30)), null,
+				null, null, null);
+
+		assertThat(statusOf(row)).isEqualTo("ANALYSIS_FAILED");
 	}
 
 	// ------------------------------------------------------------------ fixture

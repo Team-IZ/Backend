@@ -66,7 +66,7 @@ public class ReportController {
 					| `label` | string | 회차 이름(예: `미프 3차`) |
 					| `hasPendingRetry` | boolean | 아직 안 한 다시 보기가 있다 — 레일에 점으로 표시 |
 
-					## 회차 상태 7종 — `reportsById[id].status`
+					## 회차 상태 8종 — `reportsById[id].status`
 
 					**(2026-08-20 정정)** 아래 표는 실제와 어긋나 있었다 — `PENDING_VISIBILITY`는
 					공개/비공개 폐지(2026-08-19)로 이미 없어졌고, `NOT_STARTED`(마감 전 미응시)가
@@ -79,6 +79,7 @@ public class ReportController {
 					| `VOID_ATTEMPT` | 무효 응시(검토 중 또는 무효 확정) | — |
 					| `STOPPED` | 세션을 시작했지만 끝내지 못함 | — |
 					| `IN_PROGRESS` | **응시 기록은 있지만 아직 안 끝났다**(제출·분석·이해도 확인 세션 준비/진행 중, 2026-08-20 추가) | — |
+					| `ANALYSIS_FAILED` | **코드 분석이 실패해 리포트를 만들 근거가 없다**(리포트 행이 없을 때만, 2026-08-21 추가) | — |
 					| `PENDING_PUBLISH` | **이해도 확인까지 마쳤고** 아직 발행 전 | `publishAfter` |
 					| `PUBLISHED` | 공개됨 | `publishedAt` · `curriculum` · `concepts[]` · `retryState` |
 
@@ -90,6 +91,15 @@ public class ReportController {
 					"응시 완료(리포트 생성 중)"로 보이는 상태**였다(실사용 재현: 코드 분석이 진행 중인
 					회차가 화면에 "응시 완료"로 뜸). `PENDING_PUBLISH`는 이제 **이해도 확인까지 실제로
 					마친** 경우로만 좁혔고, 그 전 단계는 `IN_PROGRESS`다.
+
+					## 🔴 `ANALYSIS_FAILED` 추가 배경 (2026-08-21 발견·수정)
+
+					코드 분석이 실패하면 이해도 확인 문항 자체가 없어 리포트를 만들 근거가 없는데, 이 사실을
+					거르는 자리가 없어 `PENDING_PUBLISH`로 떨어졌다 — **분석 실패로 끝난 회차가 "리포트를
+					만들고 있어요 · 발행 예정 N월 N일 이후"로 보이고, 그 발행 예정일은 이미 지나 있는
+					상태**였다(실사용 재현). 리포트 행이 아예 없는 분석 실패 회차만 이 값이고, 리포트 행이
+					있으면(예: 다른 종류의 리포트가 같은 회차에 걸린 기존 사례) `PENDING_PUBLISH`/
+					`PUBLISHED` 판정을 그대로 따른다.
 
 					## concepts[] — `PUBLISHED`에서만
 
@@ -165,6 +175,7 @@ public class ReportController {
 					| `PUBLISHED` | 결과를 그린다(펼치면 본문) |
 					| `PENDING_PUBLISH` | 이해도 확인까지 마침, `리포트 생성 중` |
 					| `IN_PROGRESS` | 아직 응시가 안 끝남(제출·분석·이해도 확인 세션 준비/진행 중, 2026-08-20 추가) — `PENDING_PUBLISH`와 구분해서 그린다 |
+					| `ANALYSIS_FAILED` | 분석 실패로 리포트를 만들 수 없음(리포트 행 없을 때만, 2026-08-21 추가) — `PENDING_PUBLISH`와 구분해서 그린다 |
 					| `NOT_STARTED` | 아직 응시 전(마감 전) |
 					| `NOT_ATTEMPTED` | 미응시 — **매니저 안내가 필요한 줄이다** |
 					| `VOID_ATTEMPT` | 확인 필요 |
