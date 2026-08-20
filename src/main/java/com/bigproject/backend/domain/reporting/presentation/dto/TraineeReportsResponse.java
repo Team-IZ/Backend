@@ -53,7 +53,8 @@ public record TraineeReportsResponse(
 	 *                키가 빠진다. {@code GET /reports/{reportId}} 단건 조회에 이 값을 쓴다 —
 	 *                {@code id}(회차 ID)로 부르면 404다.
 	 * @param status  {@code PUBLISHED} · {@code PENDING_PUBLISH} · {@code IN_PROGRESS}
-	 *                · {@code NOT_STARTED} · {@code NOT_ATTEMPTED} · {@code VOID_ATTEMPT} · {@code STOPPED}
+	 *                · {@code ANALYSIS_FAILED} · {@code NOT_STARTED} · {@code NOT_ATTEMPTED}
+	 *                · {@code VOID_ATTEMPT} · {@code STOPPED}
 	 * @param publishAfter {@code PENDING_PUBLISH}에서만. 이 시각 이후에 발행된다.
 	 * @param completionStatus 리포트가 <b>몇 개 문제로 만들어졌는가</b>. {@code PUBLISHED}에서만.
 	 *                자세한 뜻은 아래 주석을 볼 것 — 같은 이름이 OP-05에서는 다른 뜻이다.
@@ -72,6 +73,7 @@ public record TraineeReportsResponse(
 					| `PUBLISHED` | 리포트가 발행됐다 | 결과를 그린다 |
 					| `PENDING_PUBLISH` | **이해도 확인까지 마쳤고** 리포트를 만드는 중이다 | `리포트가 생성 중입니다` |
 					| `IN_PROGRESS` | 응시 기록은 있지만 아직 안 끝났다(제출 전·분석 중·이해도 확인 세션 준비됨·진행 중) — 2026-08-20 추가 | 진행 상황을 그린다. `PENDING_PUBLISH`와 다른 말이어야 한다 |
+					| `ANALYSIS_FAILED` | 코드 분석이 실패해 리포트를 만들 근거가 없다(리포트 행이 아예 없을 때만) — 2026-08-21 추가 | 다시 제출을 안내한다 |
 					| `NOT_STARTED` | **제출 마감 전인데 아직 응시 기록이 없다** | 아직 시간이 있다 |
 					| `NOT_ATTEMPTED` | **마감이 지나도록 응시하지 않았다** | 놓쳤다 — 매니저 안내가 필요하다 |
 					| `VOID_ATTEMPT` | 무효 응시 검토 중이거나 무효로 확정됐다 | `확인 필요` |
@@ -90,8 +92,17 @@ public record TraineeReportsResponse(
 					전자는 이해도 확인까지 **다 끝내고** 리포트만 기다리는 것이고, 후자는 **아직 응시 자체를
 					끝내지 못한** 것이다 — 코드 제출·분석·이해도 확인 세션 준비 단계에서 이 둘을 섞으면
 					학생이 하지도 않은 걸 "응시 완료"로 보게 된다(실사용 재현: 코드 분석 중인 회차가
-					"응시 완료"로 표시).""",
-					allowableValues = {"PUBLISHED", "PENDING_PUBLISH", "IN_PROGRESS",
+					"응시 완료"로 표시).
+
+					🔴 **`PENDING_PUBLISH`와 `ANALYSIS_FAILED`도 한 문구로 묶지 않는다**(2026-08-21
+					발견·수정). 전자는 리포트가 곧 나올 것이라는 약속이고, 후자는 **분석이 실패해 이
+					회차의 리포트가 만들어질 수 없다**는 사실이다 — 리포트 행이 없는 채로 이 둘을 섞으면
+					학생이 이미 지난 발행 예정일을 계속 기다리게 된다(실사용 재현: 코드 분석이 실패한
+					회차가 "리포트를 만들고 있어요 · 발행 예정 N월 N일 이후"로 표시, 그 날짜는 이미
+					지났음). 단, 분석 실패 회차에도 리포트 행이 실제로 걸려 있으면(예: 다른 종류의
+					리포트가 같은 회차 id를 공유하는 기존 사례) 이 값 대신 그대로 `PUBLISHED`/
+					`PENDING_PUBLISH`로 판정한다 — 리포트 행의 유무가 갈림점이다.""",
+					allowableValues = {"PUBLISHED", "PENDING_PUBLISH", "IN_PROGRESS", "ANALYSIS_FAILED",
 							"NOT_STARTED", "NOT_ATTEMPTED", "VOID_ATTEMPT", "STOPPED"})
 			String status,
 			@JsonInclude(JsonInclude.Include.NON_NULL)

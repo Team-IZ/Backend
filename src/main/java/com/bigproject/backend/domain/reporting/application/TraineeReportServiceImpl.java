@@ -224,6 +224,26 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 			return statusOnly(id, reportId, label, "IN_PROGRESS");
 		}
 
+		/*
+		 * ③-3 분석 실패 — 리포트가 만들어질 수 없다(2026-08-21 발견·수정).
+		 *
+		 * 코드 분석 자체가 실패하면 이해도 확인 문항이 없어 리포트를 만들 근거가 없다.
+		 * 그런데 이 사실을 거르는 자리가 없었다 — ②는 NOT_SUBMITTED·NOT_ATTENDED만 보고,
+		 * ③-2는 FAILED를 의도적으로 뺀다(그 상태가 그대로 ④로 떨어져도 "발행 대기"만큼은
+		 * 맞을 수 있다고 봤기 때문인데, 리포트 행 자체가 없으면 그마저도 거짓 약속이 된다).
+		 * 그래서 학생은 홈에서는 "코드를 분석하지 못했어요, 다시 제출해 주세요"를 정확히
+		 * 보면서 리포트 화면에서는 "리포트를 만들고 있어요 · 발행 예정 N월 N일 이후"라는,
+		 * 이미 지난 날짜의 헛된 약속을 봤다(실사용 재현: 문주안 계정 미프 3차).
+		 *
+		 * 🔴 **리포트 행이 있으면 이 분기를 타지 않는다.** 분석 실패 회차에도 실제로 리포트가
+		 * 걸려 있는 경우가 있다(실측 84건 — 대부분 CHECKPOINT 리포트가 같은 assessment_round_id를
+		 * 공유해 걸린 것으로 보인다, 별도 확인 필요한 기존 동작이라 이 수정 범위 밖). 그 경우는
+		 * 그대로 ④·⑤ 판정으로 넘어가 기존 화면을 깨지 않는다.
+		 */
+		if ("ANALYSIS_FAILED".equals(terminal) && round.reportId() == null) {
+			return statusOnly(id, reportId, label, "ANALYSIS_FAILED");
+		}
+
 		// ④ 발행 전 — 리포트 행이 없거나 published_at이 비어 있다.
 		//    publishAfter는 회차가 정해 둔 "이 시각 전에는 발행하지 않는다" 값이다.
 		if (round.reportId() == null || round.publishedAt() == null) {
