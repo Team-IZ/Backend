@@ -25,7 +25,7 @@ import java.util.UUID;
 public class AssessmentValidityController {
 	private final AssessmentValidityService service;
 
-	@Operation(operationId = "updateAssessmentAttemptValidity", summary = "무효 응시 확정·복원 | ⚠️ 사용 불가")
+	@Operation(operationId = "updateAssessmentAttemptValidity", summary = "무효 응시 확정·복원 | ✅ 사용 가능")
 	@PatchMapping(value = "/{attemptId}/validity", consumes = MediaType.APPLICATION_JSON_VALUE)
 	public ResponseEntity<AssessmentValidityResponse> update(
 			@PathVariable UUID attemptId,

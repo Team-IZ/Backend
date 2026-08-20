@@ -98,7 +98,7 @@ public class ManagerViewAnalyticsController {
 				assessmentRoundId, level, attemptView, classroomId, teamId));
 	}
 
-	@Operation(operationId = "findManagerConceptScope", summary = "면담 브리프 개념 소관 판정 | ⚠️ 사용 불가")
+	@Operation(operationId = "findManagerConceptScope", summary = "면담 브리프 개념 소관 판정 | ✅ 사용 가능")
 	@GetMapping("/concept-scope")
 	public ResponseEntity<ConceptScopeResponse> findConceptScope(
 			@PathVariable UUID cohortId, @RequestParam UUID assessmentRoundId,
