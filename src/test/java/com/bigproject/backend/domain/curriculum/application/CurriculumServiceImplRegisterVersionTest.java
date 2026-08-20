@@ -88,7 +88,7 @@ class CurriculumServiceImplRegisterVersionTest {
 		when(versionRepository.findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId))
 				.thenReturn(List.of(v1));
 		when(fileStorageService.store(any())).thenReturn(stored("v2.pdf"));
-		when(versionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+		when(versionRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
 		CurriculumVersion created = service.registerCurriculumVersion(materialId, orgId, null, pdf(), actorUserId);
 
@@ -108,7 +108,7 @@ class CurriculumServiceImplRegisterVersionTest {
 						assertThat(exception.errorCode()).isEqualTo(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
 
 		verify(materialRepository, never()).save(any());
-		verify(versionRepository, never()).save(any());
+		verify(versionRepository, never()).saveAndFlush(any());
 	}
 
 	/** 파일이 없으면 400 — 등록 API와 같은 코드다. */
@@ -128,7 +128,7 @@ class CurriculumServiceImplRegisterVersionTest {
 		when(versionRepository.findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId))
 				.thenReturn(List.of(v1));
 		when(fileStorageService.store(any())).thenReturn(stored("v2.pdf"));
-		when(versionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+		when(versionRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
 		service.registerCurriculumVersion(materialId, orgId, "  ", pdf(), actorUserId);
 
@@ -149,7 +149,31 @@ class CurriculumServiceImplRegisterVersionTest {
 				.isInstanceOfSatisfying(CurriculumException.class, exception ->
 						assertThat(exception.errorCode()).isEqualTo(CurriculumErrorCode.CURRICULUM_TITLE_DUPLICATED));
 
-		verify(versionRepository, never()).save(any());
+		verify(versionRepository, never()).saveAndFlush(any());
+	}
+
+	/**
+	 * 2026-08-20, 45차 R1 조사 중 발견 — 이 교안의 다른 버전과 파일 내용이 완전히 같으면
+	 * {@code uq_curriculum_version_material_id_content_hash} 위반이 {@code saveAndFlush}에서 즉시
+	 * 터진다. 종전에는 이 예외를 잡지 않아 코드 없는 500이었다.
+	 */
+	@Test
+	void reportsDuplicateContentWhenTheUploadedFileMatchesAnExistingVersionByteForByte() {
+		when(materialRepository.findByMaterialIdAndOrgId(materialId, orgId)).thenReturn(Optional.of(material));
+		CurriculumVersion v1 = CurriculumVersion.createFirstVersion(
+				materialId, "v1.pdf", "file:///tmp/v1.pdf", 10L, "hash-v1", actorUserId);
+		when(versionRepository.findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId))
+				.thenReturn(List.of(v1));
+		when(fileStorageService.store(any())).thenReturn(stored("v1.pdf"));
+		when(versionRepository.saveAndFlush(any()))
+				.thenThrow(new org.springframework.dao.DataIntegrityViolationException(
+						"duplicate key value violates unique constraint "
+								+ "\"uq_curriculum_version_material_id_content_hash\""));
+
+		assertThatThrownBy(() -> service.registerCurriculumVersion(materialId, orgId, null, pdf(), actorUserId))
+				.isInstanceOfSatisfying(CurriculumException.class, exception ->
+						assertThat(exception.errorCode())
+								.isEqualTo(CurriculumErrorCode.CURRICULUM_VERSION_CONTENT_DUPLICATED));
 	}
 
 	/** 새 제목이 지금 자기 제목과 같으면(대소문자·공백만 다름) 중복이 아니다. */
@@ -161,7 +185,7 @@ class CurriculumServiceImplRegisterVersionTest {
 		when(versionRepository.findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId))
 				.thenReturn(List.of(v1));
 		when(fileStorageService.store(any())).thenReturn(stored("v2.pdf"));
-		when(versionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+		when(versionRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
 		service.registerCurriculumVersion(materialId, orgId, "AI_LLMOps", pdf(), actorUserId);
 

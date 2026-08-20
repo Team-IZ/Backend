@@ -592,6 +592,14 @@ public class CurriculumController {
 					`GET /curricula/{materialId}/projects?versionId=`(특정 버전이 쓰인 회차, 44차 R3)를
 					쓴다.
 
+					## 🔴 같은 내용의 파일을 다시 올리면 409다 (2026-08-20, 45차 R1 조사 중 발견)
+
+					이 교안의 **다른 버전과 파일 내용이 완전히 같으면**(같은 바이트, `content_hash` 동일)
+					`409 CURRICULUM_VERSION_CONTENT_DUPLICATED`다. 종전에는 이 경우 DB UNIQUE 제약
+					위반이 그대로 올라가 코드 없는 500이었다 — 45차 R1의 "버전 2개부터 교안이
+					사라진다"는 신고를 조사하다가 재현 로그에서 발견했다(R1 자체는 실제로는 같은
+					교안을 조사 중 직접 삭제한 뒤의 정상 동작이었고 버그가 아니었다 — 별도 확인 완료).
+
 					## 제목은 안 바꿔도 된다 — 바꾸면 그때만 중복 검사
 
 					title을 생략하면 material 제목은 그대로다. 이 경로로 올릴 때는 **같은 교안에
@@ -605,7 +613,7 @@ public class CurriculumController {
             @ApiResponse(responseCode = "400", description = "CURRICULUM_FILE_REQUIRED 업로드할 파일이 없음 · CURRICULUM_FILE_TYPE_INVALID 내용이 PDF가 아님"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
             @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 교안을 찾을 수 없음(이미 지운 교안·다른 기관의 교안 포함)"),
-            @ApiResponse(responseCode = "409", description = "CURRICULUM_TITLE_DUPLICATED title을 보냈는데 다른 교안이 이미 그 제목을 쓰고 있음"),
+            @ApiResponse(responseCode = "409", description = "CURRICULUM_TITLE_DUPLICATED title을 보냈는데 다른 교안이 이미 그 제목을 쓰고 있음 또는 CURRICULUM_VERSION_CONTENT_DUPLICATED 이 교안의 다른 버전과 파일 내용이 완전히 같음(2026-08-20, 45차 R1 조사 중 발견 — 종전엔 코드 없는 500이었다)"),
             @ApiResponse(responseCode = "413", description = "CURRICULUM_FILE_TOO_LARGE 앱 상한을 넘는 교안 파일"),
             @ApiResponse(responseCode = "503", description = "CURRICULUM_FILE_STORE_FAILED 업로드한 파일을 저장하지 못함"),
     })

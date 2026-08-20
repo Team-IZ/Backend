@@ -149,6 +149,10 @@ public interface CurriculumService {
      *
      * @param title null이거나 공백이면 material 제목을 그대로 둔다. 값이 있으면 제목을 바꿔 단다 —
      *              이때만 (기관 + 새 제목) 중복 검사를 한다(자기 자신과 같은 제목이면 통과)
+     * @throws com.bigproject.backend.domain.curriculum.domain.CurriculumException
+     *         파일 내용이 이 교안의 다른 버전과 완전히 같으면
+     *         {@code CURRICULUM_VERSION_CONTENT_DUPLICATED}(409, 2026-08-20 45차 R1 조사 중 발견 —
+     *         종전엔 DB UNIQUE 위반이 그대로 올라가 코드 없는 500이었다)
      */
     com.bigproject.backend.domain.curriculum.domain.CurriculumVersion registerCurriculumVersion(
             UUID materialId, UUID orgId, String title,

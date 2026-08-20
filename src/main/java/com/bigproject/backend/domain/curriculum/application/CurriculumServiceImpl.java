@@ -364,7 +364,16 @@ public class CurriculumServiceImpl implements CurriculumService {
                 materialId, currentLatest.getVersionNo() + 1, stored.originalFileName(), stored.fileUri(),
                 stored.fileSizeBytes(), stored.contentHash(), actorUserId);
 
-        return curriculumVersionRepository.save(version);
+        // 2026-08-20, 45차 R1 조사 중 발견 — 같은 교안에 내용이 완전히 같은 파일을 다시 올리면
+        // uq_curriculum_version_material_id_content_hash에 걸린다. contentHash는 위 store() 이후에만
+        // 정해지는 값이라 저장 전에는 미리 확인할 수 없다 — saveAndFlush로 이 지점에서 즉시
+        // 터뜨려 도메인 코드로 바꾼다(save()만 쓰면 UUID 전략 엔티티라 실제 INSERT가 트랜잭션
+        // 커밋 시점까지 미뤄질 수 있어 이 catch를 빠져나간 뒤에야 터질 위험이 있다).
+        try {
+            return curriculumVersionRepository.saveAndFlush(version);
+        } catch (DataIntegrityViolationException exception) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_VERSION_CONTENT_DUPLICATED);
+        }
     }
 
     @Override

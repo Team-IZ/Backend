@@ -127,6 +127,18 @@ public enum CurriculumErrorCode implements ApiErrorCode {
     CURRICULUM_TITLE_DUPLICATED(HttpStatus.CONFLICT, "이미 존재하는 교안 제목입니다."),
 
     /**
+     * 새 버전으로 올린 파일이 <b>같은 교안의 다른 버전과 내용이 완전히 같다</b>(2026-08-20, 45차 R1 조사 중 발견).
+     *
+     * <p>{@code uq_curriculum_version_material_id_content_hash}가 (material_id, content_hash) 쌍의
+     * 전역 UNIQUE다. {@code registerCurriculumVersion}이 저장 전에 이 값을 미리 확인하지 않아서,
+     * 종전에는 이 충돌이 그대로 {@code DataIntegrityViolationException} → <b>코드 없는 500</b>으로
+     * 나갔다. 파일 내용 해시가 저장(S3 업로드) 이후에만 정해지는 값이라 사전 검사가 값 자체를
+     * 얻으려면 업로드를 먼저 해야 하므로, {@code CURRICULUM_TITLE_DUPLICATED}처럼 저장 시점의
+     * 제약 위반을 여기서 잡아 도메인 코드로 바꾼다.
+     */
+    CURRICULUM_VERSION_CONTENT_DUPLICATED(HttpStatus.CONFLICT, "이미 등록된 버전과 내용이 같은 파일입니다."),
+
+    /**
      * 업로드한 파일을 <b>저장하지 못했다</b>(22차 R2).
      *
      * <p>저장 경로가 쓸 수 없는 상태일 때 난다 — 배포 환경의 파일시스템이 읽기 전용이거나
