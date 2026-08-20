@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -49,6 +50,20 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	 * 확정 채점 모델의 "불합격(2단 미만) 개념만 재시험"이 이 상수 하나로 표현된다.
 	 */
 	static final int RETRY_TARGET_BELOW_LEVEL = 2;
+
+	/**
+	 * {@code measurement_attempt.status}가 <b>아직 끝나지 않았다</b>는 뜻인 값들
+	 * (2026-08-20 발견·수정). {@code ck_measurement_attempt_status}가 정한 8종 중
+	 * {@code COMPLETED}·{@code FAILED}·{@code EXPIRED} 셋을 뺀 나머지다.
+	 *
+	 * <p>고치기 전에는 이 다섯 값이 전부 아래 ④(발행 전 = {@code PENDING_PUBLISH})로 떨어져
+	 * "응시 완료"로 잘못 보였다 — 코드 제출은 했지만 <b>분석도 끝나지 않았고 이해도 확인은
+	 * 시작도 안 한</b> 회차가 "다 봤고 리포트만 기다리는 중"으로 뜬 것이다. {@code FAILED}·
+	 * {@code EXPIRED}는 빼야 한다 — 그 상태에서도 리포트가 만들어질 수 있어(예: 분석 실패해도
+	 * 발행된 회차가 실제로 있다) ④·⑤ 판정을 그대로 타야 한다.
+	 */
+	private static final Set<String> ATTEMPT_STILL_IN_PROGRESS = Set.of(
+			"NOT_STARTED", "SUBMITTED", "ANALYZING", "SESSION_READY", "SESSION_IN_PROGRESS");
 
 	private final TraineeReportQueryRepository queryRepository;
 	private final ObjectMapper objectMapper;
@@ -199,6 +214,14 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		// ③ 중단 — 세션을 시작했지만 끝내지 못했다.
 		if ("SESSION_INCOMPLETE".equals(terminal)) {
 			return statusOnly(id, reportId, label, "STOPPED");
+		}
+
+		// ③-2 아직 진행 중(2026-08-20 발견·수정) — 응시 기록은 있지만 COMPLETED에 이르지 못했다
+		// (제출 전·분석 중·이해도 확인 세션 준비됨·이해도 확인 진행 중). ①②③ 어디에도 안 걸리고
+		// 그대로 두면 ④(PENDING_PUBLISH="응시 완료")로 떨어져, 아직 응시조차 안 한 회차가
+		// "다 보고 리포트만 기다리는 중"으로 잘못 보인다.
+		if (ATTEMPT_STILL_IN_PROGRESS.contains(round.attemptStatus())) {
+			return statusOnly(id, reportId, label, "IN_PROGRESS");
 		}
 
 		// ④ 발행 전 — 리포트 행이 없거나 published_at이 비어 있다.
