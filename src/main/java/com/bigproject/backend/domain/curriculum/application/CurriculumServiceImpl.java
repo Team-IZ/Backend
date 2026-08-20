@@ -25,6 +25,7 @@ import com.bigproject.backend.global.exception.ApiException;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -383,7 +384,17 @@ public class CurriculumServiceImpl implements CurriculumService {
                 version.getVersionId(), placeholderModelId, nextAnalysisVersion,
                 idempotencyKeyUuid, requestFingerprint, actorUserId);
         analysis.updateExternalJobId(accepted.jobId());
-        analysisRepository.save(analysis);
+
+        // 위 findAllByVersionIdAndStatusIn 체크는 SELECT-then-INSERT라 동시 요청 두 건이 둘 다
+        // 통과할 수 있다(2026-08-20, docs/migration/2026-08-20_curriculum_analysis_dedupe_index.sql
+        // 참고). 그 인덱스가 적용된 뒤에는 진 쪽이 여기서 DataIntegrityViolationException을 받는다 —
+        // 이미 위에서 같은 판정에 쓰는 코드로 옮긴다. 인덱스가 아직 미적용이면 이 catch는 도달하지
+        // 않고(그때까지는 방어선이 SELECT 하나뿐이다), 적용된 뒤에는 조용히 즉시 방어선이 된다.
+        try {
+            analysisRepository.save(analysis);
+        } catch (DataIntegrityViolationException exception) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_ANALYSIS_IN_PROGRESS);
+        }
     }
 
     @Scheduled(fixedDelay = 600000)

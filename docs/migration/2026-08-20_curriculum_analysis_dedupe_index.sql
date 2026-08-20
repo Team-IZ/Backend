@@ -1,0 +1,46 @@
+-- =============================================================================
+-- 교안 재분석 요청 경합 방지 — 부분 유니크 인덱스
+--
+-- 작성일: 2026-08-20
+-- 관련: CurriculumServiceImpl#requestAnalysis, AiCurriculumClient
+--
+-- 상태: ⬜ 백엔드 구현 완료 · ⬜ 운영 DB 미적용
+--
+--   ★ 코드는 이 인덱스가 없어도 동작한다(애플리케이션 레벨 체크가 1차 방어). 이 DDL은
+--     2차 방어 — 앱 레벨 체크를 이기는 동시 요청까지 막는 용도다. 적용을 미뤄도 장애는
+--     아니지만, 그동안은 동시 재분석 요청이 중복 LLM 호출을 낼 수 있다.
+--
+-- 무엇이 문제인가
+--
+--   requestAnalysis는 "PENDING/RUNNING이 있는가"를 SELECT로 먼저 본 뒤(25차 R2) 없으면
+--   AI에 요청하고 CurriculumAnalysis 행을 저장한다. 이 SELECT-then-INSERT 사이에 잠금이
+--   없다 — 기본 트랜잭션 격리 수준(READ COMMITTED)에서는 평범한 SELECT가 다른 트랜잭션을
+--   막지 않는다. 그래서 같은 버전에 대한 재분석 요청 두 건이 거의 동시에 들어오면 둘 다
+--   같은 SELECT를 통과하고, 둘 다 AI에 요청하고(LLM 비용 두 배), 둘 다
+--   curriculum_analysis 행을 만든다.
+--
+--   더 나쁜 경우: nextAnalysisVersion도 같은 방식(countByVersionId + 1)으로 계산돼
+--   두 요청이 같은 값을 읽으면 idempotency_key까지 같아진다. 그런데
+--   curriculum_analysis.idempotency_key는 NOT NULL이지만 UNIQUE가 아니라서, 이 경우도
+--   DB가 막아 주지 않고 두 행이 그대로 들어간다.
+--
+-- 무엇이 바뀌나
+--
+--   version_id당 PENDING/RUNNING 상태의 행이 최대 1개만 존재하도록 부분 유니크 인덱스를
+--   건다. SUCCEEDED·FAILED는 이력으로 계속 쌓여야 하므로 WHERE로 그 두 상태만 겨눈다 —
+--   바닥이 아니라 인덱스에 담긴 조건 자체가 "진행 중인 분석은 하나뿐"이라는 불변식이다.
+--
+--   적용 후 두 번째 요청은 INSERT 시점에 DataIntegrityViolationException을 받는다.
+--   CurriculumServiceImpl#requestAnalysis가 이를 잡아 기존 앱 레벨 체크와 같은 코드
+--   (CURRICULUM_ANALYSIS_IN_PROGRESS, 409)로 옮긴다 — 사용자에게는 어느 쪽 방어선에
+--   걸렸는지가 드러나지 않는다.
+--
+-- CONCURRENTLY인 이유
+--
+--   운영 테이블에 락 없이 인덱스를 건다. 트랜잭션 안에서 실행할 수 없으므로 마이그레이션
+--   러너가 아니라 별도 접속으로 직접 실행해야 한다.
+-- =============================================================================
+
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_curriculum_analysis_version_active
+    ON curriculum_analysis (version_id)
+    WHERE status IN ('PENDING', 'RUNNING');
