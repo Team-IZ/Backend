@@ -134,14 +134,14 @@ class CurriculumServiceImplRegisterVersionTest {
 
 		assertThat(material.getTitle()).isEqualTo("AI_LLMOps");
 		verify(materialRepository, never())
-				.existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull(any(), anyString());
+				.existsByOrgIdAndNormalizedTitle(any(), anyString());
 	}
 
 	/** title을 바꿔 달았는데 다른 교안이 이미 그 제목을 쓰고 있으면 409 — 자기 자신과 겹치는 것은 허용한다. */
 	@Test
 	void rejectsRenamingToATitleAnotherLiveMaterialAlreadyUses() {
 		when(materialRepository.findByMaterialIdAndOrgId(materialId, orgId)).thenReturn(Optional.of(material));
-		when(materialRepository.existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull(orgId, "spring 심화"))
+		when(materialRepository.existsByOrgIdAndNormalizedTitle(orgId, "spring 심화"))
 				.thenReturn(true);
 
 		assertThatThrownBy(() ->
@@ -166,6 +166,6 @@ class CurriculumServiceImplRegisterVersionTest {
 		service.registerCurriculumVersion(materialId, orgId, "AI_LLMOps", pdf(), actorUserId);
 
 		verify(materialRepository, never())
-				.existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull(eq(orgId), anyString());
+				.existsByOrgIdAndNormalizedTitle(eq(orgId), anyString());
 	}
 }
