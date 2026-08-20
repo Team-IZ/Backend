@@ -1,10 +1,6 @@
 package com.bigproject.backend.domain.curriculum.presentation;
 
 import com.bigproject.backend.domain.curriculum.application.CurriculumService;
-import com.bigproject.backend.domain.curriculum.domain.CurriculumErrorCode;
-import com.bigproject.backend.domain.curriculum.domain.CurriculumException;
-import com.bigproject.backend.domain.curriculum.domain.CurriculumVersion;
-import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumVersionRepository;
 import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumCatalogItemResponse;
 import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumVersionResponse;
 import com.bigproject.backend.domain.curriculum.presentation.dto.SectionResponse;
@@ -38,7 +34,6 @@ import java.util.UUID;
 public class CurriculumMaterialController {
 
     private final CurriculumService curriculumService;
-    private final CurriculumVersionRepository curriculumVersionRepository;
     private final CurrentUserResolver currentUserResolver;
 
     @Operation(
@@ -53,6 +48,10 @@ public class CurriculumMaterialController {
 
 					**요청**
 					- materialId (경로): 교안 ID(버전이 바뀌어도 유지되는 고정 식별자)
+					- versionId (쿼리, 선택): 특정 옛 버전의 머리글을 보고 싶을 때 그 버전 ID를 넘긴다.
+					  생략하면 최신 버전으로 해석한다(`sections`와 같은 규칙). 그 교안(materialId)의
+					  버전이 아니거나 존재하지 않으면 404 `CURRICULUM_VERSION_NOT_FOUND`다
+					  (2026-08-20, 44차 R1).
 
 					**응답 (200)**
 
@@ -61,40 +60,35 @@ public class CurriculumMaterialController {
 
 					| 필드 | 설명 |
 					|---|---|
-					| `materialId` · `versionId` | 교안 ID / 최신 버전 ID |
-					| `title` · `originalFileName` · `versionNo` · `pageCount` | 머리글 |
-					| `analysisStatus` | 가장 최근 분석 **시도** 상태. 한 번도 분석하지 않았으면 null |
-					| `sectionCount` · `conceptCount` | `12섹션 · 개념 48건` |
-					| `usedProjectCount` | `3개 회차에서 사용 중` |
-					| `uploadedAt` · `uploadedByName` | 업로드 시각 / 올린 사람 |
+					| `materialId` · `versionId` | 교안 ID / **기준 버전** ID(위 `versionId`를 생략하면 최신) |
+					| `title` · `originalFileName` · `versionNo` · `pageCount` | 기준 버전의 머리글 |
+					| `analysisStatus` | 기준 버전의 가장 최근 분석 **시도** 상태. 한 번도 분석하지 않았으면 null |
+					| `sectionCount` · `conceptCount` | `12섹션 · 개념 48건` — 기준 버전 기준 |
+					| `usedProjectCount` | `3개 회차에서 사용 중` — **교안 전체(모든 버전) 기준으로 고정**이다. 기준 버전을
+					  바꿔도 이 값은 바뀌지 않는다(삭제 가드와 같은 모집단을 유지해야 하기 때문) |
+					| `versionUsedProjectCount` | 기준 버전 **하나만** 쓴 회차 수 (2026-08-20, 44차 R1) |
+					| `uploadedAt` · `uploadedByName` | 기준 버전 업로드 시각 / 올린 사람 |
 
-					**섹션 내용은 `GET /curricula/{materialId}/sections`, 쓰는 회차 목록은
-					`GET /curricula/{materialId}/projects`가 따로 준다.** 이 API는 머리글만 담당한다 —
-					섹션은 교안 하나에 수십 건이라 머리글만 필요한 화면이 그걸 다 받을 이유가 없다.
-
-					## 🔴 (2026-08-20, 44차 R1) 미해결 — `versionId`를 못 받는다
-
-					위 표의 `versionId`는 **항상 최신 버전**이다 — 이 엔드포인트에는 `sections`
-					(2026-08-20부터 `?versionId=`를 받는다)와 달리 옛 버전을 지정할 방법이 없다.
-					그래서 옛 버전 상세를 열면 **머리글은 최신 버전을 말하는데 섹션 본문만 옛
-					버전인** 상태가 된다. 교안마다 버전이 하나뿐인 지금은 안 드러나지만, 새 버전
-					올리기 화면을 켜는 순간 실제로 어긋난다 — 그래서 그 화면은 이 항목이 풀리기
-					전까지 열지 않기로 했다. `sections`와 같은 규칙의 선택 `versionId` 쿼리 요청이
-					접수됐고 아직 구현되지 않았다.
+					**섹션 내용은 `GET /curricula/{materialId}/sections?versionId=`, 쓰는 회차 목록은
+					`GET /curricula/{materialId}/projects?versionId=`가 같은 `versionId`로 따로 준다.**
+					이 API는 머리글만 담당한다 — 섹션은 교안 하나에 수십 건이라 머리글만 필요한 화면이
+					그걸 다 받을 이유가 없다.
 					"""
     )
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "교안 상세 조회 성공"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
-            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 교안을 찾을 수 없음(다른 기관의 교안도 여기로 온다)"),
+            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 교안을 찾을 수 없음(다른 기관의 교안도 여기로 온다) 또는 CURRICULUM_VERSION_NOT_FOUND versionId를 넘겼는데 그 버전이 없거나 이 교안의 버전이 아님(44차 R1)"),
     })
     @GetMapping
     public ResponseEntity<CurriculumCatalogItemResponse> findCurriculum(
-            @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId
+            @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId,
+            @Parameter(description = "특정 옛 버전의 머리글을 보고 싶을 때 그 버전 ID. 생략하면 최신 버전으로 해석한다.")
+            @RequestParam(required = false) UUID versionId
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
-        return ResponseEntity.ok(
-                CurriculumCatalogItemResponse.from(curriculumService.findCatalogItem(materialId, orgId)));
+        return ResponseEntity.ok(CurriculumCatalogItemResponse.from(
+                curriculumService.findCatalogItem(materialId, versionId, orgId)));
     }
 
     @Operation(
@@ -206,17 +200,7 @@ public class CurriculumMaterialController {
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
 
-        UUID targetVersionId = versionId != null
-                ? curriculumVersionRepository.findByVersionIdAndOrgId(versionId, orgId)
-                        .filter(version -> version.getMaterialId().equals(materialId))
-                        .map(CurriculumVersion::getVersionId)
-                        .orElseThrow(() -> new CurriculumException(
-                                CurriculumErrorCode.CURRICULUM_VERSION_NOT_FOUND, "그 교안의 버전이 아닙니다."))
-                : curriculumVersionRepository
-                        .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId)
-                        .stream().findFirst()
-                        .map(CurriculumVersion::getVersionId)
-                        .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+        UUID targetVersionId = curriculumService.resolveVersionId(materialId, versionId, orgId);
 
         List<SectionResponse> response = curriculumService.findSections(targetVersionId, orgId).stream()
                 .map(SectionResponse::from)

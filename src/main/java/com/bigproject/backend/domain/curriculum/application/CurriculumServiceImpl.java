@@ -176,6 +176,22 @@ public class CurriculumServiceImpl implements CurriculumService {
     }
 
     @Override
+    public UUID resolveVersionId(UUID materialId, UUID versionId, UUID orgId) {
+        if (versionId != null) {
+            return curriculumVersionRepository.findByVersionIdAndOrgId(versionId, orgId)
+                    .filter(version -> version.getMaterialId().equals(materialId))
+                    .map(CurriculumVersion::getVersionId)
+                    .orElseThrow(() -> new CurriculumException(
+                            CurriculumErrorCode.CURRICULUM_VERSION_NOT_FOUND, "그 교안의 버전이 아닙니다."));
+        }
+        return curriculumVersionRepository
+                .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId)
+                .stream().findFirst()
+                .map(CurriculumVersion::getVersionId)
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+    }
+
+    @Override
     public List<SectionItemView> findSectionItems(UUID sectionId, UUID orgId) {
         List<CurriculumTeachesMapping> mappings = mappingRepository.findAllBySectionIdOrderBySequenceNoAsc(sectionId);
         return toSectionItemViews(mappings, orgId);
@@ -240,14 +256,24 @@ public class CurriculumServiceImpl implements CurriculumService {
 
     @Override
     public List<ProjectService.CurriculumUsingProject> findUsedProjects(UUID materialId, UUID orgId) {
-        List<UUID> versionIds = curriculumVersionRepository
-                .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId).stream()
-                .map(CurriculumVersion::getVersionId)
-                .toList();
-        if (versionIds.isEmpty()) {
-            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND);
+        return findUsedProjects(materialId, orgId, null);
+    }
+
+    @Override
+    public List<ProjectService.CurriculumUsingProject> findUsedProjects(UUID materialId, UUID orgId, UUID versionId) {
+        if (versionId == null) {
+            List<UUID> versionIds = curriculumVersionRepository
+                    .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId).stream()
+                    .map(CurriculumVersion::getVersionId)
+                    .toList();
+            if (versionIds.isEmpty()) {
+                throw new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND);
+            }
+            return projectService.findProjectsUsingCurricula(versionIds, orgId);
         }
-        return projectService.findProjectsUsingCurricula(versionIds, orgId);
+
+        UUID resolved = resolveVersionId(materialId, versionId, orgId);
+        return projectService.findProjectsUsingCurricula(List.of(resolved), orgId);
     }
 
     @Override
@@ -338,7 +364,16 @@ public class CurriculumServiceImpl implements CurriculumService {
                 materialId, currentLatest.getVersionNo() + 1, stored.originalFileName(), stored.fileUri(),
                 stored.fileSizeBytes(), stored.contentHash(), actorUserId);
 
-        return curriculumVersionRepository.save(version);
+        // 2026-08-20, 45차 R1 조사 중 발견 — 같은 교안에 내용이 완전히 같은 파일을 다시 올리면
+        // uq_curriculum_version_material_id_content_hash에 걸린다. contentHash는 위 store() 이후에만
+        // 정해지는 값이라 저장 전에는 미리 확인할 수 없다 — saveAndFlush로 이 지점에서 즉시
+        // 터뜨려 도메인 코드로 바꾼다(save()만 쓰면 UUID 전략 엔티티라 실제 INSERT가 트랜잭션
+        // 커밋 시점까지 미뤄질 수 있어 이 catch를 빠져나간 뒤에야 터질 위험이 있다).
+        try {
+            return curriculumVersionRepository.saveAndFlush(version);
+        } catch (DataIntegrityViolationException exception) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_VERSION_CONTENT_DUPLICATED);
+        }
     }
 
     @Override
@@ -385,12 +420,21 @@ public class CurriculumServiceImpl implements CurriculumService {
         analysis.updateExternalJobId(accepted.jobId());
 
         // 위 findAllByVersionIdAndStatusIn 체크는 SELECT-then-INSERT라 동시 요청 두 건이 둘 다
-        // 통과할 수 있다(2026-08-20, docs/migration/2026-08-20_curriculum_analysis_dedupe_index.sql
-        // 참고). 그 인덱스가 적용된 뒤에는 진 쪽이 여기서 DataIntegrityViolationException을 받는다 —
-        // 이미 위에서 같은 판정에 쓰는 코드로 옮긴다. 인덱스가 아직 미적용이면 이 catch는 도달하지
-        // 않고(그때까지는 방어선이 SELECT 하나뿐이다), 적용된 뒤에는 조용히 즉시 방어선이 된다.
+        // 통과할 수 있다. 부분 유니크 인덱스가 운영 DB에 이미 적용돼 있다(2026-08-20 확인 —
+        // docs/migration/2026-08-20_curriculum_analysis_dedupe_index.sql이 적어 둔 이름과
+        // 실제 인덱스명이 달라서 "미적용"으로 잘못 표시돼 있었다, 마이그레이션 파일 정정 완료).
+        // 진 쪽은 여기서 DataIntegrityViolationException을 받고, 위에서 같은 판정에 쓰는
+        // 코드로 옮긴다.
+        //
+        // saveAndFlush를 쓰는 이유(2026-08-20 발견·수정) — CurriculumAnalysis는
+        // GenerationType.UUID라 save()만 쓰면 실제 INSERT(따라서 제약 검사)가 이 메서드가
+        // 반환한 뒤 트랜잭션 커밋 시점까지 미뤄질 수 있다. 그러면 이 catch를 그냥 지나쳐
+        // DataIntegrityViolationException이 트랜잭션 밖에서 터지고, 잡는 코드가 없어 그대로
+        // 500이 된다 — registerCurriculumVersion에서 실측으로 확인된 것과 같은 함정이다
+        // (@DataJpaTest로 save() 단독이 여기서 예외를 던지지 않음을 재현 후 saveAndFlush로
+        // 교체해 확인).
         try {
-            analysisRepository.save(analysis);
+            analysisRepository.saveAndFlush(analysis);
         } catch (DataIntegrityViolationException exception) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_ANALYSIS_IN_PROGRESS);
         }
@@ -603,6 +647,14 @@ public class CurriculumServiceImpl implements CurriculumService {
     @Override
     public CurriculumCatalogRepository.CurriculumCatalogRow findCatalogItem(UUID materialId, UUID orgId) {
         return catalogRepository.findOne(orgId, materialId)
+                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+    }
+
+    @Override
+    public CurriculumCatalogRepository.CurriculumCatalogRow findCatalogItem(
+            UUID materialId, UUID versionId, UUID orgId) {
+        UUID resolved = resolveVersionId(materialId, versionId, orgId);
+        return catalogRepository.findOne(orgId, materialId, resolved)
                 .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
     }
 

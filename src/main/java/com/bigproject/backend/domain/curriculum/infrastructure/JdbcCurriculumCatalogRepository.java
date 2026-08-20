@@ -23,16 +23,15 @@ import java.util.UUID;
 public class JdbcCurriculumCatalogRepository implements CurriculumCatalogRepository {
 
 	/**
-	 * 한 행이 교안(material) 하나이고 값은 <b>최신 버전</b> 기준이다.
+	 * 한 행이 교안(material) 하나이고 집계 대부분은 SELECT의 {@code v}가 가리키는 버전 기준이다.
+	 * 어느 버전을 {@code v}로 고정할지는 {@link #LATEST_VERSION_PREDICATE}·
+	 * {@link #EXPLICIT_VERSION_PREDICATE}가 {@link #CATALOG_FROM} 뒤에 붙어 정한다(2026-08-20,
+	 * 44차 R1 — 상세가 옛 버전을 지정할 수 있어야 해서 이 부분을 분리했다).
 	 *
-	 * <p>최신 버전을 고르는 데 {@code LATERAL} 대신 상관 서브쿼리
-	 * ({@code v.version_no = (SELECT MAX(...))})를 쓴다 — 표준 SQL이라 다른 엔진에서도 그대로 돈다.
-	 *
-	 * <p>집계 넷을 조인이 아니라 상관 서브쿼리로 둔 이유는, 조인하면 교안 한 건이 섹션·매핑·연결 수만큼
-	 * 중복 행으로 늘어나 LIMIT/OFFSET이 행 곱을 먼저 만든 뒤 자르는 꼴이 되기 때문이다
-	 * ({@code JdbcManagerRosterRepository}와 같은 이유).
+	 * <p>목록 조회({@link #findPage})는 항상 {@link #LATEST_VERSION_PREDICATE}만 쓴다 — 목록에
+	 * 버전 지정 기능은 없다.
 	 */
-	private static final String CATALOG_SELECT = """
+	private static final String CATALOG_SELECT_LIST = """
 			SELECT m.material_id,
 			       m.title,
 			       v.version_id,
@@ -60,16 +59,46 @@ public class JdbcCurriculumCatalogRepository implements CurriculumCatalogReposit
 			       (SELECT COUNT(*) FROM curriculum_teaches_mapping tm
 			         WHERE tm.version_id = v.version_id
 			           AND tm.mapping_status = 'ACTIVE') AS concept_count,
-			       /* 사용 회차는 버전이 아니라 '교안' 기준이다 — 화면이 교안을 파일 하나로 다룬다. */
+			       /* 사용 회차는 버전이 아니라 '교안' 기준이다 — 삭제 가드와 같은 모집단을 유지한다. */
 			       (SELECT COUNT(DISTINCT pc.project_id) FROM project_curriculum pc
 			         JOIN curriculum_version cv ON cv.version_id = pc.curriculum_version_id
 			         JOIN project p ON p.project_id = pc.project_id AND p.deleted_at IS NULL
-			         WHERE cv.material_id = m.material_id) AS used_project_count
+			         WHERE cv.material_id = m.material_id) AS used_project_count,
+			       /*
+			        * 2026-08-20, 44차 R1 — 위와 달리 이 행의 버전(v) 하나만 쓴 회차 수다.
+			        * used_project_count(교안 전체)와 다른 모집단이라 이름도 다르다.
+			        */
+			       (SELECT COUNT(DISTINCT pc3.project_id) FROM project_curriculum pc3
+			         JOIN project p3 ON p3.project_id = pc3.project_id AND p3.deleted_at IS NULL
+			         WHERE pc3.curriculum_version_id = v.version_id) AS version_used_project_count
+			""";
+
+	/** SELECT의 {@code v}가 아직 어느 버전인지 정해지지 않은 FROM/JOIN — 버전 술어는 호출부가 붙인다. */
+	private static final String CATALOG_FROM = """
 			FROM curriculum_material m
 			JOIN curriculum_version v ON v.material_id = m.material_id
+			""";
+
+	/**
+	 * {@code v}를 그 교안의 최신 버전으로 고정한다. 목록·2-인자 {@code findOne}이 쓴다.
+	 * {@code LATERAL} 대신 상관 서브쿼리를 쓰는 이유는 표준 SQL이라 다른 엔진에서도 그대로 돌기
+	 * 때문이다.
+	 */
+	private static final String LATEST_VERSION_PREDICATE = """
 			 AND v.version_no = (SELECT MAX(v2.version_no) FROM curriculum_version v2
 			                      WHERE v2.material_id = m.material_id)
 			""";
+
+	/**
+	 * {@code v}를 지정된 버전 하나로 고정한다(2026-08-20, 44차 R1). 자리표시자가 {@code FROM}보다
+	 * 먼저(JOIN 절 안에) 나오므로, 이 술어를 쓰는 SQL을 바인딩할 때는 <b>versionId를 다른 WHERE
+	 * 인자보다 먼저</b> 넣어야 한다 — {@link #findOne(UUID, UUID, UUID)}가 그 순서를 지킨다.
+	 *
+	 * <p>여기서는 그 버전이 이 {@code materialId}의 것인지 확인하지 않는다(존재·소속 검증은 서비스
+	 * 층의 {@code resolveVersionId}가 먼저 한다) — 확인 없이 다른 교안의 버전 ID를 넣으면
+	 * {@code m.material_id = ?} 조건과 부딪혀 그냥 빈 결과가 된다.
+	 */
+	private static final String EXPLICIT_VERSION_PREDICATE = " AND v.version_id = ?\n";
 
 	/**
 	 * 최신 분석 시도 상태로 거르는 조건. SELECT 절의 서브쿼리와 <b>같은 식이어야 한다</b>.
@@ -107,7 +136,8 @@ public class JdbcCurriculumCatalogRepository implements CurriculumCatalogReposit
 		args.add(offset);
 
 		return jdbcTemplate.query(
-				CATALOG_SELECT + filter.where() + orderBy(criteria.sort()) + " LIMIT ? OFFSET ?",
+				CATALOG_SELECT_LIST + CATALOG_FROM + LATEST_VERSION_PREDICATE
+						+ filter.where() + orderBy(criteria.sort()) + " LIMIT ? OFFSET ?",
 				(ResultSet rs, int rowNum) -> mapRow(rs),
 				args.toArray());
 	}
@@ -173,11 +203,21 @@ public class JdbcCurriculumCatalogRepository implements CurriculumCatalogReposit
 	}
 
 	@Override
-	public Optional<CurriculumCatalogRow> findOne(UUID orgId, UUID materialId) {
+	public Optional<CurriculumCatalogRow> findOne(UUID orgId, UUID materialId, UUID versionId) {
+		String versionPredicate = versionId != null ? EXPLICIT_VERSION_PREDICATE : LATEST_VERSION_PREDICATE;
+		String sql = CATALOG_SELECT_LIST + CATALOG_FROM + versionPredicate
+				+ " WHERE m.org_id = ? AND m.deleted_at IS NULL AND m.material_id = ?";
+
+		// EXPLICIT_VERSION_PREDICATE의 자리표시자가 JOIN 절 안에 있어 WHERE의 인자들보다 먼저 온다.
+		List<Object> args = new ArrayList<>();
+		if (versionId != null) {
+			args.add(versionId);
+		}
+		args.add(orgId);
+		args.add(materialId);
+
 		List<CurriculumCatalogRow> found = jdbcTemplate.query(
-				CATALOG_SELECT + " WHERE m.org_id = ? AND m.deleted_at IS NULL AND m.material_id = ?",
-				(ResultSet rs, int rowNum) -> mapRow(rs),
-				orgId, materialId);
+				sql, (ResultSet rs, int rowNum) -> mapRow(rs), args.toArray());
 		return found.stream().findFirst();
 	}
 
@@ -241,6 +281,7 @@ public class JdbcCurriculumCatalogRepository implements CurriculumCatalogReposit
 				rs.getLong("section_count"),
 				rs.getLong("concept_count"),
 				rs.getLong("used_project_count"),
+				rs.getLong("version_used_project_count"),
 				toInstant(rs.getTimestamp("uploaded_at")),
 				rs.getString("uploaded_by_name"));
 	}

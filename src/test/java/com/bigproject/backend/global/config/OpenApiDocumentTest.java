@@ -415,6 +415,53 @@ class OpenApiDocumentTest {
 	}
 
 	/**
+	 * 44차 R1/R2/R3 — 교안 상세·쓰인 회차 조회가 선택 {@code versionId}를 받고, 기수-연결 교안 응답의
+	 * 각 회차가 자기 버전을 직접 들고 있는지 고정한다.
+	 */
+	@Test
+	void curriculumEndpointsAcceptVersionIdAndCarryPerVersionCounts() throws Exception {
+		JsonNode materialParams = spec().path("paths")
+				.path("/api/v0/curricula/{materialId}").path("get").path("parameters");
+		JsonNode versionIdOnDetail = findParameter(materialParams, "versionId");
+		assertThat(versionIdOnDetail.isMissingNode()).as("교안 상세에 versionId 쿼리 파라미터가 있어야 한다").isFalse();
+		assertThat(versionIdOnDetail.path("in").asString()).isEqualTo("query");
+		assertThat(versionIdOnDetail.path("required").asBoolean(false)).isFalse();
+
+		JsonNode projectsParams = spec().path("paths")
+				.path("/api/v0/curricula/{materialId}/projects").path("get").path("parameters");
+		JsonNode versionIdOnProjects = findParameter(projectsParams, "versionId");
+		assertThat(versionIdOnProjects.isMissingNode()).as("쓰인 회차 조회에 versionId 쿼리 파라미터가 있어야 한다").isFalse();
+		assertThat(versionIdOnProjects.path("required").asBoolean(false)).isFalse();
+
+		// 둘 다 versionId가 이 교안의 버전이 아니면 404 CURRICULUM_VERSION_NOT_FOUND를 낼 수 있어야 한다.
+		assertThat(spec().path("paths").path("/api/v0/curricula/{materialId}").path("get")
+				.path("responses").path("404").path("content").path("application/json")
+				.path("examples").toString()).contains("CURRICULUM_VERSION_NOT_FOUND");
+		assertThat(spec().path("paths").path("/api/v0/curricula/{materialId}/projects").path("get")
+				.path("responses").path("404").path("content").path("application/json")
+				.path("examples").toString()).contains("CURRICULUM_VERSION_NOT_FOUND");
+
+		// D1 — 목록·상세가 공유하는 CurriculumCatalogItem에 버전 단독 사용 회차 수가 추가됐다.
+		JsonNode catalogItem = spec().path("components").path("schemas")
+				.path("CurriculumCatalogItem").path("properties");
+		assertThat(catalogItem.propertyNames()).contains("versionUsedProjectCount");
+
+		// D2 — 기수-연결 교안 응답의 회차 각각이 자기 버전을 직접 들고 있다.
+		JsonNode linkedProject = spec().path("components").path("schemas")
+				.path("CohortCurriculumLinkedProject").path("properties");
+		assertThat(linkedProject.propertyNames()).contains("curriculumVersionId");
+	}
+
+	private JsonNode findParameter(JsonNode parameters, String name) {
+		for (JsonNode parameter : parameters) {
+			if (name.equals(parameter.path("name").asString(null))) {
+				return parameter;
+			}
+		}
+		return tools.jackson.databind.node.MissingNode.getInstance();
+	}
+
+	/**
 	 * 9차 Q1 ⓐ — 준비 상태를 서버가 판정한다. {@code status}에 값을 더하지 않고 <b>축을 나눴다</b>:
 	 * 시간이 정하는 것과 구성이 정하는 것을 한 필드에 합치면 "진행 중인데 교안이 비었다"를 표현할 수 없다.
 	 */

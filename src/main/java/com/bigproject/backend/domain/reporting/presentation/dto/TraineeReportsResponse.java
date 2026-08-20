@@ -52,7 +52,7 @@ public record TraineeReportsResponse(
 	 *                아직 리포트가 만들어지지 않은 회차({@code NOT_ATTEMPTED} 등)에서는
 	 *                키가 빠진다. {@code GET /reports/{reportId}} 단건 조회에 이 값을 쓴다 —
 	 *                {@code id}(회차 ID)로 부르면 404다.
-	 * @param status  {@code PUBLISHED} · {@code PENDING_PUBLISH}
+	 * @param status  {@code PUBLISHED} · {@code PENDING_PUBLISH} · {@code IN_PROGRESS}
 	 *                · {@code NOT_STARTED} · {@code NOT_ATTEMPTED} · {@code VOID_ATTEMPT} · {@code STOPPED}
 	 * @param publishAfter {@code PENDING_PUBLISH}에서만. 이 시각 이후에 발행된다.
 	 * @param completionStatus 리포트가 <b>몇 개 문제로 만들어졌는가</b>. {@code PUBLISHED}에서만.
@@ -70,7 +70,8 @@ public record TraineeReportsResponse(
 					| 값 | 뜻 | 화면 |
 					|---|---|---|
 					| `PUBLISHED` | 리포트가 발행됐다 | 결과를 그린다 |
-					| `PENDING_PUBLISH` | 리포트를 만드는 중이다 | `리포트가 생성 중입니다` |
+					| `PENDING_PUBLISH` | **이해도 확인까지 마쳤고** 리포트를 만드는 중이다 | `리포트가 생성 중입니다` |
+					| `IN_PROGRESS` | 응시 기록은 있지만 아직 안 끝났다(제출 전·분석 중·이해도 확인 세션 준비됨·진행 중) — 2026-08-20 추가 | 진행 상황을 그린다. `PENDING_PUBLISH`와 다른 말이어야 한다 |
 					| `NOT_STARTED` | **제출 마감 전인데 아직 응시 기록이 없다** | 아직 시간이 있다 |
 					| `NOT_ATTEMPTED` | **마감이 지나도록 응시하지 않았다** | 놓쳤다 — 매니저 안내가 필요하다 |
 					| `VOID_ATTEMPT` | 무효 응시 검토 중이거나 무효로 확정됐다 | `확인 필요` |
@@ -83,8 +84,14 @@ public record TraineeReportsResponse(
 					🔴 **`NOT_STARTED`와 `NOT_ATTEMPTED`를 한 문구로 묶지 않는다.** 둘을 같은 말로 그리면
 					아직 시간이 있는 학생에게 놓쳤다고 말하거나, 정말 놓친 학생에게서 경고가 사라진다(26차 A1).
 					가르는 축은 **제출 마감**이며, 홈의 `SUBMISSION_REQUIRED` / `SUBMISSION_MISSED`와 같은 값으로
-					갈리므로 두 화면이 같은 회차를 같은 말로 설명한다.""",
-					allowableValues = {"PUBLISHED", "PENDING_PUBLISH",
+					갈리므로 두 화면이 같은 회차를 같은 말로 설명한다.
+
+					🔴 **`PENDING_PUBLISH`와 `IN_PROGRESS`를 한 문구로 묶지 않는다**(2026-08-20 발견·수정).
+					전자는 이해도 확인까지 **다 끝내고** 리포트만 기다리는 것이고, 후자는 **아직 응시 자체를
+					끝내지 못한** 것이다 — 코드 제출·분석·이해도 확인 세션 준비 단계에서 이 둘을 섞으면
+					학생이 하지도 않은 걸 "응시 완료"로 보게 된다(실사용 재현: 코드 분석 중인 회차가
+					"응시 완료"로 표시).""",
+					allowableValues = {"PUBLISHED", "PENDING_PUBLISH", "IN_PROGRESS",
 							"NOT_STARTED", "NOT_ATTEMPTED", "VOID_ATTEMPT", "STOPPED"})
 			String status,
 			@JsonInclude(JsonInclude.Include.NON_NULL)

@@ -32,11 +32,19 @@ import static org.mockito.Mockito.when;
 /**
  * {@code requestAnalysis}의 "진행 중인 분석이 있는가" 체크(25차 R2)는 SELECT-then-INSERT라
  * 동시 요청 두 건이 둘 다 통과할 수 있다 — 부분 유니크 인덱스
- * ({@code docs/migration/2026-08-20_curriculum_analysis_dedupe_index.sql}, 아직 운영 미적용)가
- * 적용되면 진 쪽이 {@code analysisRepository.save}에서 {@link DataIntegrityViolationException}을
+ * ({@code docs/migration/2026-08-20_curriculum_analysis_dedupe_index.sql}, 2026-08-20 확인—
+ * 이미 운영 DB에 적용돼 있다)가 진 쪽을 막으면
+ * {@code analysisRepository.saveAndFlush}에서 {@link DataIntegrityViolationException}을
  * 받는다. 이 테스트는 그 예외가 앱 레벨 체크와 같은 {@code CURRICULUM_ANALYSIS_IN_PROGRESS}로
  * 옮겨지는지만 본다 — 인덱스 자체는 이 테스트의 대상이 아니다(DB 마이그레이션이라 유닛 테스트로
  * 확인할 수 없다).
+ *
+ * <p>{@code save()}가 아니라 {@code saveAndFlush()}를 검증하는 이유(2026-08-20 발견) —
+ * {@code CurriculumAnalysis}가 {@code GenerationType.UUID}라 {@code save()}만으로는 실제
+ * INSERT(그리고 제약 검사)가 이 메서드의 트랜잭션 커밋 시점까지 미뤄질 수 있다. 그러면 이
+ * 메서드 안의 try/catch를 그냥 지나쳐 예외가 도메인 코드로 안 바뀐다 —
+ * {@code registerCurriculumVersion}에서 실측(스로어웨이 {@code @DataJpaTest})으로 확인된 것과
+ * 같은 함정이다.
  */
 class CurriculumServiceImplRequestAnalysisTest {
 
@@ -94,7 +102,7 @@ class CurriculumServiceImplRequestAnalysisTest {
 
 		service().requestAnalysis(materialId, orgId, actorUserId, false);
 
-		org.mockito.Mockito.verify(analysisRepository).save(any());
+		org.mockito.Mockito.verify(analysisRepository).saveAndFlush(any());
 	}
 
 	/**
@@ -119,8 +127,8 @@ class CurriculumServiceImplRequestAnalysisTest {
 		when(aiCurriculumClient.requestAnalysis(eq(versionId), any(), any(), any()))
 				.thenReturn(new AiCurriculumClient.CurriculumAccepted(UUID.randomUUID().toString(), "PENDING"));
 		when(jdbcTemplate.queryForObject(any(String.class), eq(UUID.class))).thenReturn(UUID.randomUUID());
-		when(analysisRepository.save(any()))
-				.thenThrow(new DataIntegrityViolationException("ux_curriculum_analysis_version_active"));
+		when(analysisRepository.saveAndFlush(any()))
+				.thenThrow(new DataIntegrityViolationException("uq_curriculum_analysis_active_per_version"));
 
 		assertThatThrownBy(() -> service().requestAnalysis(materialId, orgId, actorUserId, false))
 				.isInstanceOfSatisfying(CurriculumException.class, exception ->

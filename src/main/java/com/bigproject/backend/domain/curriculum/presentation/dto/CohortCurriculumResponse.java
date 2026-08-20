@@ -49,12 +49,13 @@ public record CohortCurriculumResponse(
         @Schema(description = "등록 시각") OffsetDateTime createdAt,
 
         @Schema(description = """
-                이 교안을 연결한 **회차들**이며 차수 오름차순입니다. **비어 있지 않습니다** —
+                이 행의 `versionId`를 연결한 **회차들**이며 차수 오름차순입니다. **비어 있지 않습니다** —
                 연결이 있어야 이 목록에 들어옵니다.
 
-                한 교안이 여러 회차에 걸리면 교안은 한 번만 나오고 그 회차들이 여기 모입니다.
-                이 값이 없으면 기관 전체 교안 목록과 구분되지 않습니다 — 「이 교안이 3차에 쓰였다」가
-                이 화면의 맥락 전부입니다.
+                **(2026-08-20 정정, 44차 R2)** 묶는 단위는 교안이 아니라 **버전**입니다 — 같은 교안이라도
+                회차마다 다른 버전을 연결했다면 행이 나뉘고, 여기에는 **이 행의 버전만** 쓴 회차만
+                모입니다. 이 값이 없으면 기관 전체 교안 목록과 구분되지 않습니다 — 「이 버전이 3차에
+                쓰였다」가 이 화면의 맥락 전부입니다.
                 """)
         List<LinkedProject> linkedProjects
 ) {
@@ -66,10 +67,18 @@ public record CohortCurriculumResponse(
     public record LinkedProject(
             @Schema(description = "회차(프로젝트) ID") UUID projectId,
             @Schema(description = "회차 이름", example = "미니프로젝트 3차") String projectName,
-            @Schema(description = "기수 안의 차수", example = "3") int sequenceNo
+            @Schema(description = "기수 안의 차수", example = "3") int sequenceNo,
+            @Schema(description = """
+                        이 회차가 실제로 연결한 버전 ID(2026-08-20, 44차 R2). 이 행의 `versionId`와
+                        **항상 같다** — 한 교안이 버전마다 다른 회차에 걸려 있으면 행 자체가 버전
+                        단위로 나뉘기 때문이다(위 `versionId` 필드 설명 참고). 회차별로 직접 들고
+                        있으므로, 여러 행을 순회할 때 행 묶음 규칙을 몰라도 회차 → 버전을 바로 읽을
+                        수 있다.
+                        """)
+            UUID curriculumVersionId
     ) {
         public static LinkedProject from(CohortCurriculumLink link) {
-            return new LinkedProject(link.projectId(), link.projectName(), link.sequenceNo());
+            return new LinkedProject(link.projectId(), link.projectName(), link.sequenceNo(), link.versionId());
         }
     }
 
