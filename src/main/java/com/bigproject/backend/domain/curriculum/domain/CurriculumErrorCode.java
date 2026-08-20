@@ -111,9 +111,15 @@ public enum CurriculumErrorCode implements ApiErrorCode {
      * 같은 기관에 <b>같은 제목의 교안이 이미 있다</b>(22차 R2).
      *
      * <p>{@code uq_curriculum_material_org_id_normalized_title}가 <b>부분 인덱스가 아니라 전역
-     * UNIQUE</b>라, 논리 삭제된 교안도 제목을 계속 점유한다. 종전에는 이 충돌이 그대로 DB까지
-     * 내려가 {@code DataIntegrityViolationException} → <b>코드 없는 500</b>으로 나갔다.
-     * 스펙에도 없는 상태였고, 화면은 제목 입력란에 인라인 오류를 띄울 근거가 없었다.
+     * UNIQUE</b>다. 종전에는 이 충돌이 그대로 DB까지 내려가 {@code DataIntegrityViolationException}
+     * → <b>코드 없는 500</b>으로 나갔다. 스펙에도 없는 상태였고, 화면은 제목 입력란에 인라인 오류를
+     * 띄울 근거가 없었다.
+     *
+     * <p><b>(2026-08-20)</b> 논리 삭제된 교안이 제목을 계속 점유하는 것 자체는 더 이상 사실이
+     * 아니다 — {@code CurriculumMaterial#softDelete()}가 삭제와 동시에 {@code normalized_title}을
+     * 봉인해 그 전역 UNIQUE와 절대 충돌하지 않는다. 다만 사전 체크
+     * ({@code existsByOrgIdAndNormalizedTitle})가 삭제 여부를 안 가리므로, 이 코드는 여전히
+     * "완전히 같은 활성 제목이 이미 있다"는 정상적인 경우에 뜬다.
      *
      * <p>파일 크기와 무관하게 나므로 "50KB짜리도 500"이라는 증상의 한 축이었다.
      * 회차 이름의 {@code PROJECT_NAME_DUPLICATED}와 같은 성격·같은 상태 코드다.

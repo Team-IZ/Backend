@@ -71,6 +71,16 @@ public class CurriculumMaterialController {
 					**섹션 내용은 `GET /curricula/{materialId}/sections`, 쓰는 회차 목록은
 					`GET /curricula/{materialId}/projects`가 따로 준다.** 이 API는 머리글만 담당한다 —
 					섹션은 교안 하나에 수십 건이라 머리글만 필요한 화면이 그걸 다 받을 이유가 없다.
+
+					## 🔴 (2026-08-20, 44차 R1) 미해결 — `versionId`를 못 받는다
+
+					위 표의 `versionId`는 **항상 최신 버전**이다 — 이 엔드포인트에는 `sections`
+					(2026-08-20부터 `?versionId=`를 받는다)와 달리 옛 버전을 지정할 방법이 없다.
+					그래서 옛 버전 상세를 열면 **머리글은 최신 버전을 말하는데 섹션 본문만 옛
+					버전인** 상태가 된다. 교안마다 버전이 하나뿐인 지금은 안 드러나지만, 새 버전
+					올리기 화면을 켜는 순간 실제로 어긋난다 — 그래서 그 화면은 이 항목이 풀리기
+					전까지 열지 않기로 했다. `sections`와 같은 규칙의 선택 `versionId` 쿼리 요청이
+					접수됐고 아직 구현되지 않았다.
 					"""
     )
     @ApiResponses({
