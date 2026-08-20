@@ -381,10 +381,11 @@ ai:
   # 환경변수만 둘이라 한쪽만 채워 넣는 사고가 나기 쉬웠다.
   #
   # [2026-08-11] base-url 을 여기서 없앴다. 교안 제출은 원본 서버로 나가므로
-  # AiCurriculumClient 가 위쪽 ai.origin-base-url 을 직접 읽는다. 남은 x-internal-key 는
-  # 위 ai.internal-key 와 같은 값을 가리키는 중복이라 정리 후보다.
-  curriculum:
-    x-internal-key: ${AI_INTERNAL_KEY:}
+  # AiCurriculumClient 가 위쪽 ai.origin-base-url 을 직접 읽는다.
+  #
+  # [2026-08-20] x-internal-key 도 없앴다. ai.internal-key 와 같은 AI_INTERNAL_KEY 값을
+  # 가리키는 중복이었고(위 주석), AiCurriculumClient 가 공용 AiClient(aiOriginClient)로
+  # 옮겨가면서 내부 키를 직접 다루지 않게 됐다 — 그 클라이언트가 이미 ai.internal-key를 붙인다.
 
 jwt:
   secret: ${JWT_SECRET}
