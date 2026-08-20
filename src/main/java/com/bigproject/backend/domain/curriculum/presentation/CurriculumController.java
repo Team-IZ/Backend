@@ -301,6 +301,15 @@ public class CurriculumController {
 					차수를 셀 수 없다.
 
 					연결이 하나도 없으면 빈 배열이다(기수가 아직 교안을 붙이지 않은 상태이며 정상이다).
+
+					## 🔴 (2026-08-20, 44차 R2) 미해결 — `versionId`·`versionNo`가 단수다
+
+					한 교안이 여러 버전으로 개정돼, 같은 기수 안에서도 회차마다 **다른 버전**을
+					연결한 경우(예: 1차는 v1, 3차 이후는 v2)에 이 행이 어느 버전을 대표하는지
+					계약이 없다. `linkedProjects[]`에는 여러 회차가 섞여 담기는데 그 각각이 어느
+					버전을 쓰는지 알 방법이 없다 — 매니저가 이 행을 눌러 상세로 들어갈 때 열어야
+					할 버전을 정할 근거가 없다. 요청은 접수됐고(버전 단위로 행 분리, 또는
+					`linkedProjects[]` 각 항목에 `curriculumVersionId` 추가) 아직 구현되지 않았다.
 					"""
     )
     @PreAuthorize("hasAnyRole('OPERATOR', 'MANAGER')")
@@ -375,6 +384,14 @@ public class CurriculumController {
 					예전에는 연결된 회차 중 빅프로젝트가 하나라도 있으면 400으로 <b>조회 전체가 실패</b>했다.
 					지금은 `roundLabel`만 `null`로 두고 나머지는 그대로 준다 — 목록 하나 때문에
 					화면이 통째로 비는 편이 더 나쁘다.
+
+					## 🔴 (2026-08-20, 44차 R3) 미해결 — 버전으로 못 좁힌다
+
+					위 "모든 버전"이 삭제 판정(`CURRICULUM_MATERIAL_IN_USE`)에는 여전히 맞는 기준이다.
+					다만 **표시용으로는** 옛 버전 상세 화면에서 이 탭을 열면 그 버전만 쓰는 회차가
+					아니라 전 버전의 회차가 섞여 나온다. `versionId` 선택 쿼리로 좁히는 요청이
+					접수됐고 아직 구현되지 않았다 — 반영 전까지는 최신 버전 상세에서만 이 배열을
+					그대로 믿을 수 있다.
 					"""
     )
     @ApiResponses({
@@ -455,10 +472,13 @@ public class CurriculumController {
 					| `CURRICULUM_TITLE_DUPLICATED` | 409 | 같은 기관에 **같은 제목**의 교안이 이미 있다 |
 					| `CURRICULUM_FILE_STORE_FAILED` | 503 | 저장 경로가 읽기 전용이거나 가득 찼다 |
 
-					**제목 중복이 특히 잘 걸린다.** `uq_curriculum_material_org_id_normalized_title`이
-					부분 인덱스가 아니라 전역 UNIQUE라 **논리 삭제된 교안도 제목을 계속 점유**한다.
-					같은 제목으로 다시 시험하면 파일이 무엇이든 이 충돌이 난다. 화면은 이 코드로
-					제목 입력란에 인라인 오류를 띄우면 된다(회차 이름의 `PROJECT_NAME_DUPLICATED`와 같다).
+					**(2026-08-20 정정)** `uq_curriculum_material_org_id_normalized_title`은 여전히
+					부분 인덱스가 아니라 전역 UNIQUE지만, `CurriculumMaterial#softDelete()`가 삭제와
+					동시에 `normalized_title`을 유일한 값으로 봉인해 **제목은 더 이상 점유되지 않는다.**
+					논리 삭제된 교안과 같은 제목으로 다시 등록해도 통과한다. (raw SQL로 삭제 플래그만
+					찍고 이 봉인을 거치지 않은 과거 행 56건도 소급 봉인 완료 — 지금은 재현되지 않는다.)
+					화면은 이 코드로 제목 입력란에 인라인 오류를 띄우면 된다(회차 이름의
+					`PROJECT_NAME_DUPLICATED`와 같다).
 
 					> **Lambda 6MB 상한(요청서 ②)은 이 커밋의 범위가 아니다.** 본문이 base64로
 					> 부풀어(×4/3) 실질 4.5MB에서 막히는 것이라 앱이 손댈 수 있는 층이 아니고,
@@ -511,6 +531,14 @@ public class CurriculumController {
 					것과 새 교안을 만들려는 것은 사용자 의도가 다르다는 것이 42차 문서의 요청이다 —
 					이 경로가 그 의도를 명시적으로 받는다.
 
+					⚠ **등록 직후엔 이 버전만의 분석이 안 된 상태다.** `POST /curricula`(새 교안)와
+					마찬가지로 이 엔드포인트도 분석을 자동으로 걸지 않는다 — **새 버전은 이전 버전과
+					다른 파일이라 쪽 번호·섹션 구성이 바뀔 수 있고, 분석이 다시 돌지 않으면 검증
+					개념을 못 뽑아 회차에 붙일 수 없는 상태로 남는다.** 새 버전의 섹션·검증개념을
+					쓰려면 응답의 `versionId`로 `POST /curricula/{materialId}/analyses`를 별도 호출해야
+					한다(44차 R4 회신, 2026-08-20 — 실제로는 이전부터 그래 왔고, 지금까지 이 문장이
+					빠져 있었을 뿐이다).
+
 					**요청 (multipart/form-data)**
 					- file (필수): PDF 파일
 					- title (선택): 제목을 바꿔 달 때만 보낸다. 비우면 기존 제목을 그대로 쓴다
@@ -531,8 +559,11 @@ public class CurriculumController {
 
 					바뀌는 것은 상태 하나뿐이다 — 기존 최신 버전이 `INACTIVE`로 넘어가
 					`GET /cohorts/{cohortId}/curricula`(연결 후보 목록) 같은 "고를 수 있는 교안"
-					조회에서 새 버전에게 자리를 내준다. **읽기 쪽 구버전 상세·버전 목록 API는 이번에도
-					추가하지 않는다** — 42차 문서가 명시적으로 요청하지 않았다.
+					조회에서 새 버전에게 자리를 내준다. **(2026-08-20 정정)** 읽기 쪽 구버전 상세·
+					버전 목록 API는 이후 커밋으로 추가됐다 — `GET /curricula/{materialId}/versions`
+					(버전 목록)와 `GET /curricula/{materialId}/sections?versionId=`(특정 버전 섹션)를
+					쓴다. 다만 `GET /curricula/{materialId}`(교안 단건 상세)는 아직 `versionId`를
+					안 받는다 — 44차 R1으로 접수됨, 이 문서만으로는 아직 최신 버전 머리글만 나간다.
 
 					## 제목은 안 바꿔도 된다 — 바꾸면 그때만 중복 검사
 
