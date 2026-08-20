@@ -245,7 +245,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				round.missingCount(),
 				concepts,
 				retryState(round, hasRetryTarget),
-				iso(round.reviewDueAt()),
+				iso(effectiveRetryDueAt(round, hasRetryTarget)),
 				iso(round.reviewCompletedAt())
 		);
 	}
@@ -418,6 +418,31 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 		Instant publishedAt = round.publishedAt();
 		return publishedAt == null
 				|| Instant.now().isBefore(publishedAt.plus(Duration.ofDays(reviewWindowDays)));
+	}
+
+	/**
+	 * 화면에 보여줄 다시 보기 마감일. {@link #isRetryPending}과 <b>같은 기산점</b>을 써야 한다.
+	 *
+	 * <h2>🔴 {@code round.reviewDueAt()}을 그대로 내보내면 안 되는 이유</h2>
+	 *
+	 * <p>{@code isRetryPending}은 위 주석대로 "열지 않은 학생에게는 {@code review_due_at}이 없다"는
+	 * 이유로 그 컬럼 대신 발행일 기준을 쓴다. 그런데 화면에 내려주는 마감일 필드는 종전에
+	 * {@code round.reviewDueAt()}을 그대로 썼다 — 그러면 <b>한 번도 열지 않은 학생</b>은
+	 * {@code retryState}가 {@code PENDING}인데 마감일만 {@code null}이 되고, 화면의 배너 조건
+	 * (`retryState === 'PENDING' && retryDueAt && retryCount > 0`)이 마감일에서 막혀 배너 자체가
+	 * 그려지지 않는다 — 다시 볼 문제가 있다고도, 버튼을 주지도 않는 상태로 남는다.
+	 *
+	 * <p>이미 연 학생은 {@code review_due_at}이 그 학생의 실제 세션 마감이라 그대로 쓰고,
+	 * 아직 안 연 학생만 {@code isRetryPending}과 같은 발행일+{@link #reviewWindowDays} 값으로 채운다.
+	 */
+	private Instant effectiveRetryDueAt(RoundRow round, boolean hasRetryTarget) {
+		if (round.reviewDueAt() != null) {
+			return round.reviewDueAt();
+		}
+		if (!isRetryPending(round, hasRetryTarget) || round.publishedAt() == null) {
+			return null;
+		}
+		return round.publishedAt().plus(Duration.ofDays(reviewWindowDays));
 	}
 
 	/** 화면 `[내 답변] 펼침`의 슬롯 이름. 축을 앞에 붙여 어느 단계의 문답인지 보이게 한다. */

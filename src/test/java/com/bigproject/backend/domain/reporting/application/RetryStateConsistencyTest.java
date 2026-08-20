@@ -106,9 +106,16 @@ class RetryStateConsistencyTest {
 	 * 답과 해설까지 그대로 열려 있었다 — 안 들어가는 쪽이 이득이라 잠금이 목적을 잃는다.
 	 *
 	 * <p>이제는 다시 볼 문제가 있다는 사실만으로 {@code PENDING}이다. 세션을 열었는지는 보지 않는다.
+	 *
+	 * <p>🔴 <b>{@code retryDueAt}도 함께 확인한다.</b> 이 학생은 REVIEW 응시 행이 없어
+	 * {@code measurement_attempt.review_due_at}이 {@code null}이다 — {@code retryDueAt}이 그 컬럼을
+	 * 그대로 내보내면 {@code PENDING}인데 마감일이 없는 응답이 되고, 화면 배너 조건
+	 * (`retryState === 'PENDING' && retryDueAt && ...`)이 마감일에서 막혀 버튼 자체가 사라진다
+	 * (배하린 사례, 2026-08-20). 값은 {@code isRetryPending}과 같은 기산점(발행일+
+	 * {@link RetryStateConsistencyTest#REVIEW_WINDOW_DAYS})이어야 한다.
 	 */
 	@Test
-	@DisplayName("다시 보기를 아직 열지 않았어도 대상이 있으면 PENDING이다")
+	@DisplayName("다시 보기를 아직 열지 않았어도 대상이 있으면 PENDING이고 마감일도 함께 온다")
 	void reportsPendingBeforeTheTraineeEvenOpensTheReview() {
 		given(noReview(), PUBLISHED_RECENTLY, concept("트랜잭션 경계 설정", 1));
 
@@ -116,6 +123,9 @@ class RetryStateConsistencyTest {
 
 		assertThat(report(response).retryState()).isEqualTo("PENDING");
 		assertThat(response.rounds().get(0).hasPendingRetry()).isTrue();
+		assertThat(report(response).retryDueAt()).isNotNull();
+		assertThat(Instant.parse(report(response).retryDueAt()))
+				.isEqualTo(PUBLISHED_RECENTLY.plus(Duration.ofDays(REVIEW_WINDOW_DAYS)));
 	}
 
 	/**
