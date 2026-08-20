@@ -397,7 +397,11 @@ public class ProjectServiceImpl implements ProjectService {
                 ? Project.createMiniProject(orgId, cohortId, name, nextSequenceNo, startDate, endDate, actorUserId)
                 : Project.createBigProject(orgId, cohortId, name, nextSequenceNo, startDate, endDate, actorUserId);
 
-        Project saved = projectRepository.save(project);
+        // saveAndFlush다. project_id는 GenerationType.UUID라 애플리케이션이 메모리에서 만들어
+        // Hibernate가 실제 INSERT를 커밋 시점까지 미룰 수 있다. 바로 아래 회차 INSERT는 Hibernate를
+        // 거치지 않는 raw JdbcTemplate이라 그 지연을 볼 방법이 없어, project row가 아직 없는 채로
+        // project_assessment_round가 그 id를 참조해 FK 위반(409)이 났다 — flush로 먼저 물리적으로 심는다.
+        Project saved = projectRepository.saveAndFlush(project);
 
         // 22차 R5·R6 — 회차를 함께 만든다. 여태 만들지 않아서 화면으로 만든 프로젝트는 회차가 없는
         // 채로 남았고, 현황 탭이 회차를 못 찾았으며 제출 마감을 저장할 자리도 없었다.
