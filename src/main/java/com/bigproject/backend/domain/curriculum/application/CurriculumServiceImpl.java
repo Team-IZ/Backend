@@ -420,12 +420,21 @@ public class CurriculumServiceImpl implements CurriculumService {
         analysis.updateExternalJobId(accepted.jobId());
 
         // 위 findAllByVersionIdAndStatusIn 체크는 SELECT-then-INSERT라 동시 요청 두 건이 둘 다
-        // 통과할 수 있다(2026-08-20, docs/migration/2026-08-20_curriculum_analysis_dedupe_index.sql
-        // 참고). 그 인덱스가 적용된 뒤에는 진 쪽이 여기서 DataIntegrityViolationException을 받는다 —
-        // 이미 위에서 같은 판정에 쓰는 코드로 옮긴다. 인덱스가 아직 미적용이면 이 catch는 도달하지
-        // 않고(그때까지는 방어선이 SELECT 하나뿐이다), 적용된 뒤에는 조용히 즉시 방어선이 된다.
+        // 통과할 수 있다. 부분 유니크 인덱스가 운영 DB에 이미 적용돼 있다(2026-08-20 확인 —
+        // docs/migration/2026-08-20_curriculum_analysis_dedupe_index.sql이 적어 둔 이름과
+        // 실제 인덱스명이 달라서 "미적용"으로 잘못 표시돼 있었다, 마이그레이션 파일 정정 완료).
+        // 진 쪽은 여기서 DataIntegrityViolationException을 받고, 위에서 같은 판정에 쓰는
+        // 코드로 옮긴다.
+        //
+        // saveAndFlush를 쓰는 이유(2026-08-20 발견·수정) — CurriculumAnalysis는
+        // GenerationType.UUID라 save()만 쓰면 실제 INSERT(따라서 제약 검사)가 이 메서드가
+        // 반환한 뒤 트랜잭션 커밋 시점까지 미뤄질 수 있다. 그러면 이 catch를 그냥 지나쳐
+        // DataIntegrityViolationException이 트랜잭션 밖에서 터지고, 잡는 코드가 없어 그대로
+        // 500이 된다 — registerCurriculumVersion에서 실측으로 확인된 것과 같은 함정이다
+        // (@DataJpaTest로 save() 단독이 여기서 예외를 던지지 않음을 재현 후 saveAndFlush로
+        // 교체해 확인).
         try {
-            analysisRepository.save(analysis);
+            analysisRepository.saveAndFlush(analysis);
         } catch (DataIntegrityViolationException exception) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_ANALYSIS_IN_PROGRESS);
         }
