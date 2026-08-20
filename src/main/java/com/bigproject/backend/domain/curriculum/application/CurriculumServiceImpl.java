@@ -271,7 +271,7 @@ public class CurriculumServiceImpl implements CurriculumService {
 
         String normalizedTitle = title.trim().replaceAll("\\s+", " ").toLowerCase();
 
-        if (materialRepository.existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull(orgId, normalizedTitle)) {
+        if (materialRepository.existsByOrgIdAndNormalizedTitle(orgId, normalizedTitle)) {
             throw new CurriculumException(CurriculumErrorCode.CURRICULUM_TITLE_DUPLICATED);
         }
 
@@ -298,7 +298,7 @@ public class CurriculumServiceImpl implements CurriculumService {
      * <p>새 버전을 등록해도 이전 버전을 {@link CurriculumVersion#deactivate()}로 내리지 않는다 —
      * 모든 버전이 계속 ACTIVE로 남는다.
      *
-     * <p>제목 UNIQUE 검사(§ {@code existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull})는 제목을
+     * <p>제목 UNIQUE 검사(§ {@code existsByOrgIdAndNormalizedTitle})는 제목을
      * <b>바꿔 달 때만</b> 돈다. 기존 material에 버전만 추가하는 것이므로, 제목을 그대로 두면 자기
      * 자신의 제목과 부딪힐 이유가 없다(42차 §1 "①로 가면 제목 유니크 제약은 그대로 두셔도
      * 됩니다").
@@ -318,7 +318,7 @@ public class CurriculumServiceImpl implements CurriculumService {
         if (title != null && !title.isBlank()) {
             String normalizedTitle = title.trim().replaceAll("\\s+", " ").toLowerCase();
             if (!normalizedTitle.equals(material.getNormalizedTitle())
-                    && materialRepository.existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull(orgId, normalizedTitle)) {
+                    && materialRepository.existsByOrgIdAndNormalizedTitle(orgId, normalizedTitle)) {
                 throw new CurriculumException(CurriculumErrorCode.CURRICULUM_TITLE_DUPLICATED);
             }
             material.updateTitle(title, normalizedTitle);
