@@ -185,7 +185,18 @@ public class CurriculumServiceImpl implements CurriculumService {
     public List<SectionView> findSections(UUID versionId, UUID orgId) {
         CurriculumAnalysis latestSuccess = analysisRepository
                 .findFirstByVersionIdAndStatusOrderByCompletedAtDesc(versionId, CurriculumAnalysisStatus.SUCCEEDED)
-                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_ANALYSIS_NOT_COMPLETED));
+                .orElseThrow(() -> {
+                    // 성공한 분석이 없다고 다 같은 상태가 아니다 — 최근 시도가 FAILED로 끝난 것과
+                    // 아직 안 끝난 것(미시작·PENDING·RUNNING)을 갈라야, 화면이 "곧 끝납니다"를
+                    // 영구 실패인 교안에도 그려서 사용자를 하염없이 기다리게 만드는 일이 없다.
+                    boolean latestAttemptFailed = analysisRepository
+                            .findFirstByVersionIdOrderByRequestedAtDesc(versionId)
+                            .map(analysis -> analysis.getStatus() == CurriculumAnalysisStatus.FAILED)
+                            .orElse(false);
+                    return new CurriculumException(latestAttemptFailed
+                            ? CurriculumErrorCode.CURRICULUM_ANALYSIS_FAILED
+                            : CurriculumErrorCode.CURRICULUM_ANALYSIS_NOT_COMPLETED);
+                });
 
         List<CurriculumSection> sections = sectionRepository
                 .findAllBySourceAnalysisIdOrderBySequenceNoAsc(latestSuccess.getAnalysisId());
@@ -217,6 +228,14 @@ public class CurriculumServiceImpl implements CurriculumService {
                                         roundLabelsByTeachesId.getOrDefault(mapping.getTeachesId(), List.of())))
                                 .toList()))
                 .toList();
+    }
+
+    @Override
+    public List<CurriculumVersion> findVersionHistory(UUID materialId, UUID orgId) {
+        if (!materialRepository.existsByMaterialIdAndOrgId(materialId, orgId)) {
+            throw new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND);
+        }
+        return curriculumVersionRepository.findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId);
     }
 
     @Override
@@ -271,10 +290,13 @@ public class CurriculumServiceImpl implements CurriculumService {
     /**
      * 42차 R1 — {@code POST /curricula/{materialId}/versions}.
      *
-     * <p>기존에 {@link CurriculumVersion#createNextVersion}·{@link CurriculumVersion#deactivate()}·
+     * <p>기존에 {@link CurriculumVersion#createNextVersion}·
      * {@link CurriculumVersionRepository#findAllByMaterialIdAndOrgIdOrderByVersionNoDesc}가 이미
      * 있었는데 이들을 잇는 서비스 메서드가 없어 실제로 새 버전을 만들 경로가 없었다(42차 문서가
-     * 지적한 그대로). 그 셋을 그대로 이어 붙인다 — 새 판정·새 번호 규칙을 만들지 않는다.
+     * 지적한 그대로). 그 둘을 그대로 이어 붙인다 — 새 판정·새 번호 규칙을 만들지 않는다.
+     *
+     * <p>새 버전을 등록해도 이전 버전을 {@link CurriculumVersion#deactivate()}로 내리지 않는다 —
+     * 모든 버전이 계속 ACTIVE로 남는다.
      *
      * <p>제목 UNIQUE 검사(§ {@code existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull})는 제목을
      * <b>바꿔 달 때만</b> 돈다. 기존 material에 버전만 추가하는 것이므로, 제목을 그대로 두면 자기
@@ -310,11 +332,8 @@ public class CurriculumServiceImpl implements CurriculumService {
 
         FileStorageService.StoredFile stored = fileStorageService.store(file);
 
-        // 기존 버전 행은 지우거나 바꾸지 않는다 — 상태만 INACTIVE로 옮겨 "연결 가능한 후보"
-        // 목록(findLinkableCurricula류, status=ACTIVE만 봄)에서만 빠지게 한다. 이미 그 버전을
-        // 쓰고 있는 프로젝트(project_curriculum)는 versionId를 그대로 들고 있어 영향이 없다.
-        currentLatest.deactivate();
-
+        // 기존 버전 행은 지우거나 바꾸지 않는다 — 새 버전을 올려도 이전 버전을 비활성화하지
+        // 않으므로 모든 버전이 계속 ACTIVE로 남는다(연결 가능한 후보 목록에도 계속 뜬다).
         CurriculumVersion version = CurriculumVersion.createNextVersion(
                 materialId, currentLatest.getVersionNo() + 1, stored.originalFileName(), stored.fileUri(),
                 stored.fileSizeBytes(), stored.contentHash(), actorUserId);
@@ -568,9 +587,9 @@ public class CurriculumServiceImpl implements CurriculumService {
      * <p>행을 지우지 않고 {@code deleted_at}만 찍는다 — 분석·섹션·개념 매핑이 이 교안을 참조하고
      * 있어 물리 삭제는 이력을 함께 지운다.
      *
-     * <p>⚠ <b>제목은 그대로 점유된다.</b> {@code uq_curriculum_material_org_id_normalized_title}이
-     * 부분 인덱스가 아니라 전역 UNIQUE라, 지운 교안과 같은 제목으로 다시 올리면
-     * {@code CURRICULUM_TITLE_DUPLICATED}가 난다(22차 R2와 같은 자리).
+     * <p>제목은 더 이상 점유되지 않는다 — {@link CurriculumMaterial#softDelete()}가 삭제와 동시에
+     * {@code normalizedTitle}을 materialId 기반의 유일한 값으로 봉인한다. 부분 유니크 인덱스
+     * 마이그레이션 없이도, 지운 교안과 같은 제목으로 다시 올릴 수 있다.
      */
     @Override
     @Transactional

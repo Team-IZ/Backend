@@ -48,6 +48,17 @@ public enum CurriculumErrorCode implements ApiErrorCode {
     CURRICULUM_ANALYSIS_NOT_COMPLETED(HttpStatus.CONFLICT, "분석이 아직 완료되지 않았습니다."),
 
     /**
+     * 그 교안의 최신 버전의 <b>가장 최근 분석 시도가 실패로 끝났다.</b>
+     *
+     * <p>{@link #CURRICULUM_ANALYSIS_NOT_COMPLETED}와 상태 코드(409)는 같지만 뜻이 다르다 — 그쪽은
+     * "아직 안 끝났다"(PENDING·RUNNING·시도한 적 없음 — 시간이 지나면 저절로 풀림)이고, 이쪽은
+     * "이미 끝났는데 실패했다"(영구 상태 — 사용자가 재분석을 다시 걸어야만 풀림)다. 둘을 하나로
+     * 묶어 두면 화면이 "곧 끝납니다"를 실패한 교안에도 그려서, 사용자가 재분석이 필요하다는 걸
+     * 알 길 없이 하염없이 기다리게 된다.
+     */
+    CURRICULUM_ANALYSIS_FAILED(HttpStatus.CONFLICT, "분석에 실패했습니다. 재분석을 요청해 주세요."),
+
+    /**
      * 그 교안의 최신 버전에 <b>아직 끝나지 않은 분석</b>이 있다(25차 R2).
      *
      * <p>종전에는 {@code PENDING}·{@code RUNNING}인 교안에 재분석을 걸어도 그대로 202로 접수했다.

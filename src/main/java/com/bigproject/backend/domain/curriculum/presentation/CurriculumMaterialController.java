@@ -6,6 +6,7 @@ import com.bigproject.backend.domain.curriculum.domain.CurriculumException;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumVersion;
 import com.bigproject.backend.domain.curriculum.infrastructure.CurriculumVersionRepository;
 import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumCatalogItemResponse;
+import com.bigproject.backend.domain.curriculum.presentation.dto.CurriculumVersionResponse;
 import com.bigproject.backend.domain.curriculum.presentation.dto.SectionResponse;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -116,10 +118,8 @@ public class CurriculumMaterialController {
 					`deleted_at`만 찍는 논리 삭제다. 분석 이력·섹션·개념 매핑이 이 교안을 참조하고 있어
 					물리 삭제는 그 이력까지 함께 지운다.
 
-					⚠️ **제목은 계속 점유된다.** `uq_curriculum_material_org_id_normalized_title`이 부분
-					인덱스가 아니라 전역 UNIQUE라, 지운 교안과 **같은 제목으로 다시 올리면**
-					`409 CURRICULUM_TITLE_DUPLICATED`가 난다(22차 R2와 같은 자리). 다시 올릴 때는
-					제목을 바꿔야 한다.
+					**제목은 더 이상 점유되지 않는다.** 삭제와 동시에 내부적으로 제목을 봉인해 두므로,
+					지운 교안과 같은 제목으로 바로 다시 등록할 수 있다.
 					"""
     )
     @ApiResponses({
@@ -147,6 +147,9 @@ public class CurriculumMaterialController {
 
 					**요청**
 					- materialId (경로): 교안 ID(버전이 바뀌어도 유지되는 고정 식별자)
+					- versionId (쿼리, 선택): 특정 옛 버전의 섹션을 보고 싶을 때 그 버전 ID를 넘긴다.
+					  생략하면 종전과 동일하게 최신 버전으로 해석한다. 그 교안(materialId)의 버전이
+					  아니거나 존재하지 않으면 404 `CURRICULUM_VERSION_NOT_FOUND`다.
 
 					**응답 (200)**
 					- sections[].sectionId / title / pageStart / pageEnd: 섹션 기본 정보
@@ -159,8 +162,14 @@ public class CurriculumMaterialController {
 
 					## 🔴 분석 전 교안은 409다 (18차 R1)
 
-					이 교안의 최신 버전에 "성공한 분석"이 한 번도 없으면 **`409 CURRICULUM_ANALYSIS_NOT_COMPLETED`**
-					를 즉시 반환한다. 화면은 이때 `분석이 끝나면 고를 수 있습니다`를 그리면 된다.
+					이 교안의 최신 버전에 "성공한 분석"이 한 번도 없으면 409를 즉시 반환한다 — 그런데
+					`code`가 두 가지로 갈린다.
+
+					- **`CURRICULUM_ANALYSIS_NOT_COMPLETED`**: 아직 분석을 안 걸었거나 PENDING·RUNNING 중.
+					  **일시적**이다 — 화면은 `분석이 끝나면 고를 수 있습니다`를 그리면 된다.
+					- **`CURRICULUM_ANALYSIS_FAILED`**: 가장 최근 분석 시도가 실패로 끝남. **영구적**이다 —
+					  기다려도 저절로 풀리지 않는다. 화면은 `분석에 실패했습니다. 재분석을 요청해 주세요`를
+					  그리고 재분석 버튼을 보여줘야 한다.
 
 					**종전에는 503이었다.** 그런데 503은 "서버가 지금 요청을 처리할 수 없다"는 인프라
 					신호라, 프론트 전역 재시도(`status >= 500`)가 자동으로 3회 붙고 그 재시도가 동시에
@@ -168,7 +177,7 @@ public class CurriculumMaterialController {
 					**응답이 아예 오지 않는 것처럼** 보였다. 실제로는 요청이 지금 상태와 맞지 않는
 					것이지 서버가 아픈 것이 아니므로 409가 정확하다.
 
-					재시도해야 한다는 사실은 상태 코드가 아니라 `code`로 전달한다.
+					재시도해야 하는지·재분석을 걸어야 하는지는 상태 코드가 아니라 `code`로 전달한다.
 
 					⚠ 교안 자체가 없으면 그건 영구 실패라 여전히 **404**(`CURRICULUM_MATERIAL_NOT_FOUND`)다.
 					"""
@@ -176,23 +185,64 @@ public class CurriculumMaterialController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "섹션 조회 성공"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
-            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 그 기관에 그 교안이 없음(영구적)"),
-            @ApiResponse(responseCode = "409", description = "CURRICULUM_ANALYSIS_NOT_COMPLETED 최신 버전에 성공한 분석이 아직 없음(일시적 — 화면은 `분석이 끝나면 고를 수 있습니다`를 안내한다). **18차 R1로 503에서 내렸다** — 503은 인프라 신호라 프론트 전역 재시도와 프록시가 그대로 밟아 응답이 화면에 닿지 못했다"),
+            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 그 기관에 그 교안이 없음(영구적) 또는 CURRICULUM_VERSION_NOT_FOUND versionId를 넘겼는데 그 버전이 없거나 이 교안의 버전이 아님"),
+            @ApiResponse(responseCode = "409", description = "CURRICULUM_ANALYSIS_NOT_COMPLETED 대상 버전에 성공한 분석이 아직 없음(일시적 — 화면은 `분석이 끝나면 고를 수 있습니다`를 안내한다) 또는 CURRICULUM_ANALYSIS_FAILED 가장 최근 분석이 실패로 끝남(영구적 — 화면은 재분석을 안내한다). **18차 R1로 503에서 내렸다** — 503은 인프라 신호라 프론트 전역 재시도와 프록시가 그대로 밟아 응답이 화면에 닿지 못했다"),
     })
     @GetMapping("/sections")
     public ResponseEntity<List<SectionResponse>> findSections(
-            @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId
+            @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId,
+            @Parameter(description = "특정 옛 버전의 섹션을 보고 싶을 때 그 버전 ID. 생략하면 최신 버전으로 해석한다.")
+            @RequestParam(required = false) UUID versionId
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
 
-        UUID latestVersionId = curriculumVersionRepository
-                .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId)
-                .stream().findFirst()
-                .map(CurriculumVersion::getVersionId)
-                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+        UUID targetVersionId = versionId != null
+                ? curriculumVersionRepository.findByVersionIdAndOrgId(versionId, orgId)
+                        .filter(version -> version.getMaterialId().equals(materialId))
+                        .map(CurriculumVersion::getVersionId)
+                        .orElseThrow(() -> new CurriculumException(
+                                CurriculumErrorCode.CURRICULUM_VERSION_NOT_FOUND, "그 교안의 버전이 아닙니다."))
+                : curriculumVersionRepository
+                        .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId)
+                        .stream().findFirst()
+                        .map(CurriculumVersion::getVersionId)
+                        .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
 
-        List<SectionResponse> response = curriculumService.findSections(latestVersionId, orgId).stream()
+        List<SectionResponse> response = curriculumService.findSections(targetVersionId, orgId).stream()
                 .map(SectionResponse::from)
+                .toList();
+        return ResponseEntity.ok(response);
+    }
+
+    @Operation(
+            operationId = "findCurriculumVersionHistory",
+            summary = "교안 버전 이력 | ✅ 사용 가능",
+            description = """
+					이 교안(material)의 전체 버전을 최신순으로 돌려준다. 상세 화면에서 "예전 버전"
+					목록을 보여줄 때 쓴다.
+
+					**요청**
+					- materialId (경로): 교안 ID(버전이 바뀌어도 유지되는 고정 식별자)
+
+					**응답 (200)**
+
+					`versionNo` 내림차순 배열. 새 버전을 올려도 기존 버전 행이 지워지거나 바뀌지 않고
+					그대로 남아 있고, 상태도 계속 `ACTIVE`로 유지되므로 과거 버전도 전부 포함된다.
+					각 항목의 스키마는 `CurriculumVersionResponse`(연결 가능한 교안 목록과 동일)다.
+					"""
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "버전 이력 조회 성공"),
+            @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
+            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 그 기관에 그 교안이 없음"),
+    })
+    @GetMapping("/versions")
+    public ResponseEntity<List<CurriculumVersionResponse>> findCurriculumVersionHistory(
+            @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId
+    ) {
+        UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
+        List<CurriculumVersionResponse> response = curriculumService.findVersionHistory(materialId, orgId).stream()
+                .map(CurriculumVersionResponse::from)
                 .toList();
         return ResponseEntity.ok(response);
     }
