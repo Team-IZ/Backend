@@ -29,19 +29,23 @@ spring:
     password: ${DB_PASSWORD}
     hikari:
       pool-name: IzGetHikariPool
-      maximum-pool-size: 10
-      minimum-idle: 2
+      # D: RDS 컷오버(2026-08-20) 후 상향. Supabase 풀러(Supavisor)가 커넥션 수를 죄어서
+      # 보수적으로 10/2였다 — RDS 직결은 그 제약이 없다. max_connections=79(db.t4g.micro),
+      # App Runner 오토스케일링이 인스턴스 1개로 고정(teamiz-backend-max1)이라 이 값이 곧
+      # 앱이 실제로 쓰는 상한이다. 79의 80%(관리자 접속·모니터링 여유분 제외)인 63 안에서
+      # 20/4로 잡아 향후 트래픽 증가분 여유를 둔다.
+      maximum-pool-size: 20
+      minimum-idle: 4
       connection-timeout: 30000
       validation-timeout: 5000
       idle-timeout: 600000
       max-lifetime: 1800000
-      # Supabase 커넥션 풀러(Supavisor)가 세션마다 `SET default_transaction_read_only = on`을
-      # 얹는 순간이 있다(원인 불명, 2026-08-19 두 차례 실측 — DB 레벨 `ALTER DATABASE ... = off`
-      # 기본값은 그대로인데도 새 세션이 매번 on으로 뜸). 우리가 원인을 못 고치니, 풀이 새 물리
-      # 커넥션을 맺을 때마다 여기서 직접 되돌린다 — Supabase가 뭘 얹든 매번 이걸로 덮어쓴다.
-      connection-init-sql: SET default_transaction_read_only = off
+      # (2026-08-20 제거) Supabase Supavisor가 세션마다 read-only를 얹던 문제 대응용
+      # connection-init-sql이 여기 있었다 — RDS 직결로 옮기면서 그 풀러 자체가 없어져 불필요.
       data-source-properties:
-        prepareThreshold: 0
+        # (2026-08-20 제거) prepareThreshold=0도 Supavisor 트랜잭션 풀러가 서버사이드
+        # prepared statement를 깨서 넣은 값이었다. RDS 직결에선 pgjdbc 기본값(서버사이드
+        # prepared statement 캐싱 사용)이 반복 쿼리에 유리하므로 그대로 둔다.
         # pg_stat_activity에서 최신 백엔드와 구버전/다른 DB writer를 구분하기 위한 PGJDBC 식별자.
         # 배포 환경은 DB_APPLICATION_NAME을 revision별 값으로 주는 것이 가장 명확하다.
         ApplicationName: ${DB_APPLICATION_NAME:${spring.application.name:backend}-${PID:unknown}}
