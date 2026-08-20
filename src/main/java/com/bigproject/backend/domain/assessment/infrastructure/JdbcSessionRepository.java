@@ -412,22 +412,50 @@ public class JdbcSessionRepository {
 	}
 
 	/**
-	 * 힌트를 연다. 표시 시각만 남기고 답변 슬롯은 건드리지 않는다 — 힌트를 열어 두고 새로고침해도
-	 * 이 시각으로 {@code hintsUsed}가 복원된다.
+	 * 힌트를 연다. 표시 시각을 남기고, <b>건너뛴 앞 슬롯을 빈 답변으로 채운다.</b>
 	 *
 	 * <p>{@code status}를 먼저 {@code IN_PROGRESS}로 옮기는 이유는 {@code ck_problem_stage_status_2}다.
 	 * {@code PREPARED}는 통과하지만 {@code NOT_REACHED}였던 행이라면 슬롯을 채울 수 없다.
+	 *
+	 * <h2>D-hint-skip-backfill(2026-08-21): 왜 앞 슬롯을 채우는가</h2>
+	 *
+	 * <p>화면의 "다시 설명해 주세요"는 답변란이 비어 있어도 호출된다({@link AssessmentSessionService#openHint}
+	 * 주석 — 의도된 동작이다). 그런데 이 메서드는 원래 {@code %s_presented_at}(힌트를 봤다는 시각)만
+	 * 남기고 <b>앞 슬롯의 답변 칸은 그대로 NULL로 남겨 뒀다.</b> "질문에도 힌트1에도 답 없이" 두 번
+	 * 다시 설명해 주세요를 누르고 힌트2에서 처음 진짜 답을 내면, 그 답이 불합격일 때
+	 * {@code applyAnswer}가 상태를 {@code NOT_PASSED}로 마감하려 하는데 {@code ck_problem_stage_status_2}는
+	 * "{@code NOT_PASSED}면 {@code question_answer_text}가 NOT NULL"을 요구한다 — 질문에 한 번도 답한 적이
+	 * 없으니 이 UPDATE가 CHECK 위반으로 통째로 롤백되고, 학생은 그 문제를 <b>영원히 통과시킬 수 없는
+	 * 상태에 갇힌다</b>(실사용 재현: 문주안 계정, `DATA_INTEGRITY_VIOLATION` 409).
+	 *
+	 * <p>WHY: 건너뛴 슬롯을 "빈 답변으로 실패"로 채워 두면, 나중에 실제 슬롯이 {@code NOT_PASSED}로
+	 * 마감될 때 그 CHECK가 요구하는 값이 이미 채워져 있다. {@code COALESCE}라 <b>이미 답한 슬롯은
+	 * 절대 안 건드린다</b> — 자동 힌트(저점수 뒤 자동으로 다음 힌트가 열리는 경로)로 도달한 경우는
+	 * 앞 슬롯에 이미 진짜 답이 있으므로 이 백필이 아무 일도 안 한다.
+	 * <p>COST: 리포트·매니저 화면에 그 슬롯이 "빈 답변으로 실패"라고 남는다 — 실제로는 "다시 설명만
+	 * 요청하고 안 씀"인데 그 구분은 지금 데이터 모델에 없다. 그래도 지금처럼 리포트 자체가 영영
+	 * 안 나오는 것보다는 낫다.
+	 * <p>EXIT: 더 정직한 표현이 필요해지면 {@code ck_problem_stage_status_2}를 고쳐 {@code NOT_PASSED}가
+	 * "실제로 마지막에 답한 슬롯"(코드상 항상 {@code second_hint})만 요구하도록 DB 마이그레이션하고,
+	 * 이 백필은 걷어낸다.
 	 *
 	 * @return 낙관적 잠금 충돌이면 0
 	 */
 	public int openHint(UUID problemStageId, AnswerSlot slot, long expectedRowVersion) {
 		String column = slot.columnPrefix() + "_presented_at";
+		String skipped = slot.previous().columnPrefix();
 		return jdbc.update("""
 				UPDATE problem_stage
 				   SET %s = COALESCE(%s, now()), status = 'IN_PROGRESS',
+				       %s_answer_text = COALESCE(%s_answer_text, ''),
+				       %s_score = COALESCE(%s_score, 0),
+				       %s_passed = COALESCE(%s_passed, false),
+				       %s_answered_at = COALESCE(%s_answered_at, now()),
 				       updated_at = now(), row_version = row_version + 1
 				 WHERE problem_stage_id = ? AND row_version = ?
-				""".formatted(column, column), problemStageId, expectedRowVersion);
+				""".formatted(column, column, skipped, skipped, skipped, skipped, skipped, skipped,
+						skipped, skipped),
+				problemStageId, expectedRowVersion);
 	}
 
 	/**
