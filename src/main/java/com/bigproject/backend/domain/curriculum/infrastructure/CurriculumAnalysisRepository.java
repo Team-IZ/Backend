@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.curriculum.infrastructure;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysis;
 import com.bigproject.backend.domain.curriculum.domain.CurriculumAnalysisStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -38,4 +39,29 @@ public interface CurriculumAnalysisRepository extends JpaRepository<CurriculumAn
     long countByVersionId(java.util.UUID versionId);
     // 스케줄러가 PENDING/RUNNING 건을 전부(버전 무관) 찾을 때 사용
     List<CurriculumAnalysis> findAllByStatusIn(List<CurriculumAnalysisStatus> statuses);
+
+    /**
+     * 결과 반영 직전에 이 분석을 "내가 처리한다"고 선점한다(2026-08-20).
+     *
+     * <p>스케줄러는 인스턴스 가드가 없어(별도 수정으로 기본 꺼짐이 됐지만, 켜지면 여러 인스턴스가
+     * 동시에 돈다) {@code findAllByStatusIn}이 돌려준 같은 행을 두 인스턴스가 동시에 집을 수 있다.
+     * 그 둘이 그대로 {@code persistAnalysisResult}를 각자 돌리면 섹션·매핑 행이 두 배로 쌓인다 —
+     * {@code CurriculumAnalysis.start()}의 상태 검사는 <b>메모리 안의 detached 엔티티</b>만 보므로
+     * 다른 인스턴스가 이미 UPDATE한 DB 행을 볼 방법이 없다.
+     *
+     * <p>이 UPDATE가 실제 동시성 경계다. {@code expectedStatuses}에 안 걸리면(다른 인스턴스가
+     * 먼저 RUNNING 이상으로 옮겨 놨다는 뜻) 0을 반환하고, 호출부는 그 결과 저장을 건너뛴다 —
+     * 지는 쪽이 조용히 물러나는 것이 정상 경로이지 오류가 아니다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE CurriculumAnalysis a
+               SET a.status = :newStatus
+             WHERE a.analysisId = :analysisId
+               AND a.status IN :expectedStatuses
+            """)
+    int claimForCompletion(
+            @Param("analysisId") UUID analysisId,
+            @Param("expectedStatuses") Collection<CurriculumAnalysisStatus> expectedStatuses,
+            @Param("newStatus") CurriculumAnalysisStatus newStatus);
 }
