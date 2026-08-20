@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -146,6 +147,9 @@ public class CurriculumMaterialController {
 
 					**요청**
 					- materialId (경로): 교안 ID(버전이 바뀌어도 유지되는 고정 식별자)
+					- versionId (쿼리, 선택): 특정 옛 버전의 섹션을 보고 싶을 때 그 버전 ID를 넘긴다.
+					  생략하면 종전과 동일하게 최신 버전으로 해석한다. 그 교안(materialId)의 버전이
+					  아니거나 존재하지 않으면 404 `CURRICULUM_VERSION_NOT_FOUND`다.
 
 					**응답 (200)**
 					- sections[].sectionId / title / pageStart / pageEnd: 섹션 기본 정보
@@ -181,22 +185,30 @@ public class CurriculumMaterialController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "섹션 조회 성공"),
             @ApiResponse(responseCode = "401", description = "UNAUTHENTICATED 액세스 토큰이 없거나 유효하지 않음"),
-            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 그 기관에 그 교안이 없음(영구적)"),
-            @ApiResponse(responseCode = "409", description = "CURRICULUM_ANALYSIS_NOT_COMPLETED 최신 버전에 성공한 분석이 아직 없음(일시적 — 화면은 `분석이 끝나면 고를 수 있습니다`를 안내한다) 또는 CURRICULUM_ANALYSIS_FAILED 가장 최근 분석이 실패로 끝남(영구적 — 화면은 재분석을 안내한다). **18차 R1로 503에서 내렸다** — 503은 인프라 신호라 프론트 전역 재시도와 프록시가 그대로 밟아 응답이 화면에 닿지 못했다"),
+            @ApiResponse(responseCode = "404", description = "CURRICULUM_MATERIAL_NOT_FOUND 그 기관에 그 교안이 없음(영구적) 또는 CURRICULUM_VERSION_NOT_FOUND versionId를 넘겼는데 그 버전이 없거나 이 교안의 버전이 아님"),
+            @ApiResponse(responseCode = "409", description = "CURRICULUM_ANALYSIS_NOT_COMPLETED 대상 버전에 성공한 분석이 아직 없음(일시적 — 화면은 `분석이 끝나면 고를 수 있습니다`를 안내한다) 또는 CURRICULUM_ANALYSIS_FAILED 가장 최근 분석이 실패로 끝남(영구적 — 화면은 재분석을 안내한다). **18차 R1로 503에서 내렸다** — 503은 인프라 신호라 프론트 전역 재시도와 프록시가 그대로 밟아 응답이 화면에 닿지 못했다"),
     })
     @GetMapping("/sections")
     public ResponseEntity<List<SectionResponse>> findSections(
-            @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId
+            @Parameter(description = "교안 ID(버전이 바뀌어도 유지되는 고정 식별자)") @PathVariable UUID materialId,
+            @Parameter(description = "특정 옛 버전의 섹션을 보고 싶을 때 그 버전 ID. 생략하면 최신 버전으로 해석한다.")
+            @RequestParam(required = false) UUID versionId
     ) {
         UUID orgId = currentUserResolver.resolveCurrentUser().organizationId();
 
-        UUID latestVersionId = curriculumVersionRepository
-                .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId)
-                .stream().findFirst()
-                .map(CurriculumVersion::getVersionId)
-                .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
+        UUID targetVersionId = versionId != null
+                ? curriculumVersionRepository.findByVersionIdAndOrgId(versionId, orgId)
+                        .filter(version -> version.getMaterialId().equals(materialId))
+                        .map(CurriculumVersion::getVersionId)
+                        .orElseThrow(() -> new CurriculumException(
+                                CurriculumErrorCode.CURRICULUM_VERSION_NOT_FOUND, "그 교안의 버전이 아닙니다."))
+                : curriculumVersionRepository
+                        .findAllByMaterialIdAndOrgIdOrderByVersionNoDesc(materialId, orgId)
+                        .stream().findFirst()
+                        .map(CurriculumVersion::getVersionId)
+                        .orElseThrow(() -> new CurriculumException(CurriculumErrorCode.CURRICULUM_MATERIAL_NOT_FOUND));
 
-        List<SectionResponse> response = curriculumService.findSections(latestVersionId, orgId).stream()
+        List<SectionResponse> response = curriculumService.findSections(targetVersionId, orgId).stream()
                 .map(SectionResponse::from)
                 .toList();
         return ResponseEntity.ok(response);
@@ -215,7 +227,7 @@ public class CurriculumMaterialController {
 					**응답 (200)**
 
 					`versionNo` 내림차순 배열. 새 버전을 올려도 기존 버전 행이 지워지거나 바뀌지 않고
-					그대로 남아 있으므로(상태만 `ACTIVE`→`INACTIVE`로 바뀜), 과거 버전도 전부 포함된다.
+					그대로 남아 있고, 상태도 계속 `ACTIVE`로 유지되므로 과거 버전도 전부 포함된다.
 					각 항목의 스키마는 `CurriculumVersionResponse`(연결 가능한 교안 목록과 동일)다.
 					"""
     )

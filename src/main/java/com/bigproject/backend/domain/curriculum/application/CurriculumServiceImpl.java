@@ -290,10 +290,13 @@ public class CurriculumServiceImpl implements CurriculumService {
     /**
      * 42차 R1 — {@code POST /curricula/{materialId}/versions}.
      *
-     * <p>기존에 {@link CurriculumVersion#createNextVersion}·{@link CurriculumVersion#deactivate()}·
+     * <p>기존에 {@link CurriculumVersion#createNextVersion}·
      * {@link CurriculumVersionRepository#findAllByMaterialIdAndOrgIdOrderByVersionNoDesc}가 이미
      * 있었는데 이들을 잇는 서비스 메서드가 없어 실제로 새 버전을 만들 경로가 없었다(42차 문서가
-     * 지적한 그대로). 그 셋을 그대로 이어 붙인다 — 새 판정·새 번호 규칙을 만들지 않는다.
+     * 지적한 그대로). 그 둘을 그대로 이어 붙인다 — 새 판정·새 번호 규칙을 만들지 않는다.
+     *
+     * <p>새 버전을 등록해도 이전 버전을 {@link CurriculumVersion#deactivate()}로 내리지 않는다 —
+     * 모든 버전이 계속 ACTIVE로 남는다.
      *
      * <p>제목 UNIQUE 검사(§ {@code existsByOrgIdAndNormalizedTitleAndDeletedAtIsNull})는 제목을
      * <b>바꿔 달 때만</b> 돈다. 기존 material에 버전만 추가하는 것이므로, 제목을 그대로 두면 자기
@@ -329,11 +332,8 @@ public class CurriculumServiceImpl implements CurriculumService {
 
         FileStorageService.StoredFile stored = fileStorageService.store(file);
 
-        // 기존 버전 행은 지우거나 바꾸지 않는다 — 상태만 INACTIVE로 옮겨 "연결 가능한 후보"
-        // 목록(findLinkableCurricula류, status=ACTIVE만 봄)에서만 빠지게 한다. 이미 그 버전을
-        // 쓰고 있는 프로젝트(project_curriculum)는 versionId를 그대로 들고 있어 영향이 없다.
-        currentLatest.deactivate();
-
+        // 기존 버전 행은 지우거나 바꾸지 않는다 — 새 버전을 올려도 이전 버전을 비활성화하지
+        // 않으므로 모든 버전이 계속 ACTIVE로 남는다(연결 가능한 후보 목록에도 계속 뜬다).
         CurriculumVersion version = CurriculumVersion.createNextVersion(
                 materialId, currentLatest.getVersionNo() + 1, stored.originalFileName(), stored.fileUri(),
                 stored.fileSizeBytes(), stored.contentHash(), actorUserId);

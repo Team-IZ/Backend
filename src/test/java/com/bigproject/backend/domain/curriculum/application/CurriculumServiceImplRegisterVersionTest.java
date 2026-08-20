@@ -79,9 +79,9 @@ class CurriculumServiceImplRegisterVersionTest {
 		return new FileStorageService.StoredFile("file:///tmp/" + name, name, "application/pdf", 123L, "hash-" + name);
 	}
 
-	/** 기존 최신 버전 번호 + 1로 다음 버전이 만들어지고, 기존 버전은 INACTIVE로 넘어간다. */
+	/** 기존 최신 버전 번호 + 1로 다음 버전이 만들어지고, 기존 버전은 계속 ACTIVE로 남는다. */
 	@Test
-	void createsTheNextVersionNumberAndDeactivatesThePreviousLatest() {
+	void createsTheNextVersionNumberAndKeepsThePreviousLatestActive() {
 		when(materialRepository.findByMaterialIdAndOrgId(materialId, orgId)).thenReturn(Optional.of(material));
 		CurriculumVersion v1 = CurriculumVersion.createFirstVersion(
 				materialId, "v1.pdf", "file:///tmp/v1.pdf", 10L, "hash-v1", actorUserId);
@@ -95,7 +95,7 @@ class CurriculumServiceImplRegisterVersionTest {
 		assertThat(created.getVersionNo()).isEqualTo(2);
 		assertThat(created.getMaterialId()).isEqualTo(materialId);
 		assertThat(created.getOriginalFileName()).isEqualTo("v2.pdf");
-		assertThat(v1.getStatus()).isEqualTo(CurriculumVersionStatus.INACTIVE);
+		assertThat(v1.getStatus()).isEqualTo(CurriculumVersionStatus.ACTIVE);
 	}
 
 	/** materialId가 없거나 이미 논리 삭제된 교안이면 404 — 새 material을 만들지 않는다. */
