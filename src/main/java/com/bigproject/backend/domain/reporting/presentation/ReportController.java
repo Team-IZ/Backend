@@ -66,19 +66,30 @@ public class ReportController {
 					| `label` | string | 회차 이름(예: `미프 3차`) |
 					| `hasPendingRetry` | boolean | 아직 안 한 다시 보기가 있다 — 레일에 점으로 표시 |
 
-					## 회차 상태 6종 — `reportsById[id].status`
+					## 회차 상태 7종 — `reportsById[id].status`
+
+					**(2026-08-20 정정)** 아래 표는 실제와 어긋나 있었다 — `PENDING_VISIBILITY`는
+					공개/비공개 폐지(2026-08-19)로 이미 없어졌고, `NOT_STARTED`(마감 전 미응시)가
+					빠져 있었다. 같은 날 `IN_PROGRESS`도 새로 추가됐다(아래 참고).
 
 					| 값 | 언제 | 함께 오는 것 |
 					|---|---|---|
-					| `NOT_ATTEMPTED` | 응시 기록이 없거나 미제출·미출석으로 끝남 | — |
+					| `NOT_STARTED` | 제출 마감 전인데 아직 응시 기록이 없다 | — |
+					| `NOT_ATTEMPTED` | 마감이 지나도록 응시하지 않았거나 미제출·미출석으로 끝남 | — |
 					| `VOID_ATTEMPT` | 무효 응시(검토 중 또는 무효 확정) | — |
 					| `STOPPED` | 세션을 시작했지만 끝내지 못함 | — |
-					| `PENDING_PUBLISH` | 아직 발행 전 | `publishAfter` |
-					| `PENDING_VISIBILITY` | 발행됐지만 **공개 범위 미지정** | — |
+					| `IN_PROGRESS` | **응시 기록은 있지만 아직 안 끝났다**(제출·분석·이해도 확인 세션 준비/진행 중, 2026-08-20 추가) | — |
+					| `PENDING_PUBLISH` | **이해도 확인까지 마쳤고** 아직 발행 전 | `publishAfter` |
 					| `PUBLISHED` | 공개됨 | `publishedAt` · `curriculum` · `concepts[]` · `retryState` |
 
-					⚠️ **`PENDING_VISIBILITY`를 빈 리포트로 그리면 안 된다.** 발행과 공개는 다른
-					사건이라, 결과는 이미 확정됐고 공개 범위만 안 정해진 상태다.
+					## 🔴 `IN_PROGRESS` 추가 배경 (2026-08-20 발견·수정)
+
+					고치기 전에는 `NOT_STARTED`·`NOT_ATTEMPTED`·`VOID_ATTEMPT`·`STOPPED` 넷 중 어디에도
+					안 걸리는 진행 중인 응시(코드 제출·분석·이해도 확인 세션 준비 단계)가 전부
+					`PENDING_PUBLISH`로 떨어졌다 — **아직 응시조차 시작 안 했거나 절반쯤 온 회차가
+					"응시 완료(리포트 생성 중)"로 보이는 상태**였다(실사용 재현: 코드 분석이 진행 중인
+					회차가 화면에 "응시 완료"로 뜸). `PENDING_PUBLISH`는 이제 **이해도 확인까지 실제로
+					마친** 경우로만 좁혔고, 그 전 단계는 `IN_PROGRESS`다.
 
 					## concepts[] — `PUBLISHED`에서만
 
@@ -152,7 +163,8 @@ public class ReportController {
 					| 값 | 리포트 라인에 그릴 것 |
 					|---|---|
 					| `PUBLISHED` | 결과를 그린다(펼치면 본문) |
-					| `PENDING_PUBLISH` | `리포트 생성 중` |
+					| `PENDING_PUBLISH` | 이해도 확인까지 마침, `리포트 생성 중` |
+					| `IN_PROGRESS` | 아직 응시가 안 끝남(제출·분석·이해도 확인 세션 준비/진행 중, 2026-08-20 추가) — `PENDING_PUBLISH`와 구분해서 그린다 |
 					| `NOT_STARTED` | 아직 응시 전(마감 전) |
 					| `NOT_ATTEMPTED` | 미응시 — **매니저 안내가 필요한 줄이다** |
 					| `VOID_ATTEMPT` | 확인 필요 |
