@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * "지금 할 일" 카드. 35필드.
+ * "지금 할 일" 카드. 38필드.
  *
  * <p>회차가 없으면 {@link #noActiveRound(Instant)}로 합성한다. 이때 식별·일정 필드는 모두 null이고
  * {@code representativeStatus}만 {@code NO_ACTIVE_ROUND}, {@code defaultActionCode}는 {@code NONE}이다.
@@ -130,6 +130,19 @@ public record CurrentRoundResponse(
 		@Schema(description = "reportPublishStatus = PUBLISHED일 때만 true") boolean canViewReport,
 		@Schema(allowableValues = {"UNAVAILABLE", "PARTIAL", "AVAILABLE"}) String explanationStatus,
 
+		@Schema(description = """
+				다시 보기 상태. `DONE`은 REVIEW 응시를 마쳤다는 사실의 기록이라 지금 대상 수와
+				무관하게 참이다 — 대상이 0개여도 이미 봤다면 `DONE`이다. `TraineeReportServiceImpl
+				.retryState`와 같은 판정이다.""",
+				example = "PENDING", allowableValues = {"NONE", "PENDING", "DONE"})
+		String retryState,
+		@Schema(description = "다시 볼 개념 수. 리포트 미발행 등으로 활성 스냅샷이 없으면 0",
+				example = "2") int retryTargetCount,
+		@Schema(description = """
+				다시 보기 마감일. `retryState = PENDING`이면 항상 값이 있다 — REVIEW 응시를 아직
+				안 열었어도 발행일 + 다시 보기 창으로 계산해서 채운다.""",
+				nullable = true) Instant retryDueAt,
+
 		@Schema(nullable = true) Instant submissionDueAt,
 		@Schema(description = """
 				🔴 **폐기된 필드. 언제나 `null`이다**(2026-08-16).
@@ -179,7 +192,8 @@ public record CurrentRoundResponse(
 		@Schema(description = "서버 조회 시각") Instant asOfAt
 ) {
 
-	public static CurrentRoundResponse from(TraineeHomeRound round, List<String> availableSubmissionMethods) {
+	public static CurrentRoundResponse from(TraineeHomeRound round, List<String> availableSubmissionMethods,
+			String retryState, Instant retryDueAt) {
 		return new CurrentRoundResponse(
 				round.assessmentRoundId(),
 				round.roundNo(),
@@ -222,6 +236,10 @@ public record CurrentRoundResponse(
 				round.canViewReport(),
 				round.explanationStatus(),
 
+				retryState,
+				round.retryTargetCountOrZero(),
+				retryDueAt,
+
 				round.submissionDueAt(),
 				round.roundAssessmentOpenAt(),
 				round.roundAssessmentDueAt(),
@@ -246,6 +264,7 @@ public record CurrentRoundResponse(
 				"NOT_SUBMITTED", null, null,
 				null, null, 0, null, 0,
 				null, "NOT_PUBLISHED", false, "UNAVAILABLE",
+				"NONE", 0, null,
 				null, null, null, null, null, null, null, null,
 				null, asOfAt
 		);

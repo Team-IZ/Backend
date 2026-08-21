@@ -10,10 +10,11 @@ import com.bigproject.backend.domain.assessment.presentation.dto.MembershipRespo
 import com.bigproject.backend.domain.assessment.presentation.dto.PastRoundResponse;
 import com.bigproject.backend.domain.assessment.presentation.dto.UpcomingRoundResponse;
 import com.bigproject.backend.global.security.CurrentUserResolver;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
@@ -40,7 +41,6 @@ import java.util.UUID;
  * {@code UpcomingRoundResponse.roundStatus}에 {@code OPEN}이 실릴 수 있는 것은 이 때문이다.
  */
 @Service
-@RequiredArgsConstructor
 public class AssessmentRoundQueryService {
 
 	/*
@@ -65,6 +65,21 @@ public class AssessmentRoundQueryService {
 	private final TraineeHomeRoundRepository traineeHomeRoundRepository;
 	private final CurrentUserResolver currentUserResolver;
 
+	/**
+	 * 다시 보기 마감 폴백 계산의 창(일). {@code TraineeReportServiceImpl}과 반드시 같은 값을
+	 * 읽는다 — 두 화면이 같은 회차의 잠금 기한을 다르게 말하면 안 된다.
+	 */
+	private final int reviewWindowDays;
+
+	public AssessmentRoundQueryService(
+			TraineeHomeRoundRepository traineeHomeRoundRepository,
+			CurrentUserResolver currentUserResolver,
+			@Value("${session.review-window-days:3}") int reviewWindowDays) {
+		this.traineeHomeRoundRepository = traineeHomeRoundRepository;
+		this.currentUserResolver = currentUserResolver;
+		this.reviewWindowDays = reviewWindowDays;
+	}
+
 	@Transactional(readOnly = true)
 	public AssessmentRoundsResponse getMyAssessmentRounds() {
 		UUID traineeUserId = currentUserResolver.resolveCurrentMemberId();
@@ -85,17 +100,56 @@ public class AssessmentRoundQueryService {
 				.filter(round -> !round.assessmentRoundId().equals(currentRoundId))
 				.filter(round -> round.isPast() || (round.isOpen() && round.isSubmissionClosedAt(asOfAt)))
 				.sorted(PAST_ORDER)
-				.map(PastRoundResponse::from)
+				.map(round -> PastRoundResponse.from(round, retryState(round), effectiveRetryDueAt(round)))
 				.toList();
 
 		return new AssessmentRoundsResponse(
 				resolveMembership(traineeUserId, rounds, current),
 				current
-						.map(round -> CurrentRoundResponse.from(round, resolveSubmissionMethods(traineeUserId)))
+						.map(round -> CurrentRoundResponse.from(round, resolveSubmissionMethods(traineeUserId),
+								retryState(round), effectiveRetryDueAt(round)))
 						.orElseGet(() -> CurrentRoundResponse.noActiveRound(asOfAt)),
 				upcoming,
 				past
 		);
+	}
+
+	/**
+	 * 다시 보기 상태. {@code TraineeReportServiceImpl.retryState}와 <b>같은 판정</b>이다.
+	 *
+	 * <p>🔴 어긋나면 홈의 배너와 리포트의 잠금이 다른 말을 한다. 옮길 일이 생기면 함께 옮긴다
+	 * (원본 판정과 그 근거는 {@code TraineeReportServiceImpl.isRetryPending} javadoc 참고).
+	 */
+	private String retryState(TraineeHomeRound round) {
+		if (round.completedReviewCount() > 0) {
+			return "DONE";
+		}
+		return isRetryPending(round) ? "PENDING" : "NONE";
+	}
+
+	/** {@code TraineeReportServiceImpl.isRetryPending}과 같은 규칙. */
+	private boolean isRetryPending(TraineeHomeRound round) {
+		if (!round.hasRetryTarget() || round.completedReviewCount() > 0) {
+			return false;
+		}
+		Instant publishedAt = round.publishedAt();
+		return publishedAt == null
+				|| Instant.now().isBefore(publishedAt.plus(Duration.ofDays(reviewWindowDays)));
+	}
+
+	/**
+	 * 화면에 보여줄 다시 보기 마감일. {@code TraineeReportServiceImpl.effectiveRetryDueAt}과
+	 * 같은 기산점을 쓴다 — REVIEW 응시를 아직 열지 않은 학생은 {@code reviewDueAt}이 없으므로
+	 * 발행일 + {@link #reviewWindowDays}로 대체한다.
+	 */
+	private Instant effectiveRetryDueAt(TraineeHomeRound round) {
+		if (round.reviewDueAt() != null) {
+			return round.reviewDueAt();
+		}
+		if (!isRetryPending(round) || round.publishedAt() == null) {
+			return null;
+		}
+		return round.publishedAt().plus(Duration.ofDays(reviewWindowDays));
 	}
 
 	/**

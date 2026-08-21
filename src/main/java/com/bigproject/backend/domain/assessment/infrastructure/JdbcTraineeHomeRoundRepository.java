@@ -71,9 +71,12 @@ public class JdbcTraineeHomeRoundRepository implements TraineeHomeRoundRepositor
 			       v.prepared_problem_count,
 			       v.review_status,
 			       v.completed_review_count,
+			       v.review_due_at,
 			       v.report_id,
 			       v.report_publish_status,
 			       v.explanation_status,
+			       rpt.published_at,
+			       snap.retry_target_count,
 			       v.submission_due_at,
 			       v.round_assessment_open_at,
 			       v.round_assessment_due_at,
@@ -88,6 +91,12 @@ public class JdbcTraineeHomeRoundRepository implements TraineeHomeRoundRepositor
 			FROM trainee_home_round_view v
 			LEFT JOIN cohort c ON c.cohort_id = v.cohort_id AND c.deleted_at IS NULL
 			LEFT JOIN project p ON p.project_id = v.project_id AND p.deleted_at IS NULL
+			-- 다시 보기 배너용 2필드. 뷰는 건드리지 않는다(리포트_DB변경_제안서.md 2-2절) —
+			-- report_id로 조인 2개만 더하면 되는 일이라 뷰 재정의보다 이쪽이 싸다.
+			--   rpt.published_at        → retryDueAt 폴백 기산점(TraineeReportServiceImpl과 동일 근거)
+			--   snap.retry_target_count → 다시 볼 개념 수
+			LEFT JOIN report rpt ON rpt.report_id = v.report_id
+			LEFT JOIN report_snapshot snap ON snap.report_id = v.report_id AND snap.is_active
 			WHERE v.trainee_user_id = ?
 			ORDER BY p.sequence_no DESC NULLS LAST, v.round_no DESC
 			""";
@@ -197,10 +206,13 @@ public class JdbcTraineeHomeRoundRepository implements TraineeHomeRoundRepositor
 			rs.getInt("prepared_problem_count"),
 			rs.getString("review_status"),
 			rs.getInt("completed_review_count"),
+			toInstant(rs.getTimestamp("review_due_at")),
 
 			toUuid(rs, "report_id"),
 			rs.getString("report_publish_status"),
 			rs.getString("explanation_status"),
+			toInstant(rs.getTimestamp("published_at")),
+			toInteger(rs, "retry_target_count"),
 
 			toInstant(rs.getTimestamp("submission_due_at")),
 			toInstant(rs.getTimestamp("round_assessment_open_at")),

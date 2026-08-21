@@ -5,6 +5,7 @@ import com.bigproject.backend.domain.assessment.domain.TraineeHomeRound;
 import com.bigproject.backend.domain.assessment.domain.TraineeRepresentativeStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -15,7 +16,7 @@ import java.util.UUID;
  * {@code SUBMISSION_MISSED} · {@code ANALYSIS_FAILED})를 이미 구분하므로,
  * 파생값을 더하면 계약이 둘로 갈린다.
  */
-@Schema(description = "지난 회차. 8필드로 고정한다.")
+@Schema(description = "지난 회차. 11필드로 고정한다.")
 public record PastRoundResponse(
 		UUID assessmentRoundId,
 		Integer roundNo,
@@ -29,9 +30,16 @@ public record PastRoundResponse(
 				implementation = MeasurementAttemptStatus.class) String reviewStatus,
 		@Schema(description = "완료한 다시 보기 건수", example = "1") int completedReviewCount,
 		UUID reportId,
-		@Schema(description = "reportPublishStatus = PUBLISHED일 때만 true") boolean canViewReport
+		@Schema(description = "reportPublishStatus = PUBLISHED일 때만 true") boolean canViewReport,
+
+		@Schema(description = "다시 보기 상태. CurrentRoundResponse.retryState와 같은 판정",
+				example = "NONE", allowableValues = {"NONE", "PENDING", "DONE"})
+		String retryState,
+		@Schema(description = "다시 볼 개념 수. 활성 스냅샷이 없으면 0", example = "0") int retryTargetCount,
+		@Schema(description = "다시 보기 마감일. retryState = PENDING이면 항상 값이 있다",
+				nullable = true) Instant retryDueAt
 ) {
-	public static PastRoundResponse from(TraineeHomeRound round) {
+	public static PastRoundResponse from(TraineeHomeRound round, String retryState, Instant retryDueAt) {
 		return new PastRoundResponse(
 				round.assessmentRoundId(),
 				round.roundNo(),
@@ -40,7 +48,11 @@ public record PastRoundResponse(
 				round.reviewStatus(),
 				round.completedReviewCount(),
 				round.reportId(),
-				round.canViewReport()
+				round.canViewReport(),
+
+				retryState,
+				round.retryTargetCountOrZero(),
+				retryDueAt
 		);
 	}
 }

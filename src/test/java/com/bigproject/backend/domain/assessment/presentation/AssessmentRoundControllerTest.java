@@ -141,6 +141,7 @@ class AssessmentRoundControllerTest {
 						"ANALYZING", "RUNNING", null,
 						"ANALYZING", null, 3, null, 0,
 						null, "NOT_PUBLISHED", false, "UNAVAILABLE",
+						"NONE", 0, null,
 						Instant.parse("2026-07-14T09:00:00Z"), null, null, null, null, null,
 						"ROUND_BATCH", null,
 						new ManagerResponse(UUID.randomUUID(), "김매니저"), AS_OF
@@ -151,7 +152,8 @@ class AssessmentRoundControllerTest {
 				)),
 				List.of(new PastRoundResponse(
 						UUID.randomUUID(), 2, "미프 2차", "ASSESSMENT_COMPLETED",
-						null, 1, UUID.randomUUID(), true
+						null, 1, UUID.randomUUID(), true,
+						"NONE", 0, null
 				))
 		);
 	}
