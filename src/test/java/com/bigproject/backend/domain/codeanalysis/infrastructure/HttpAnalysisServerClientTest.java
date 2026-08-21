@@ -104,4 +104,29 @@ class HttpAnalysisServerClientTest {
 		// 404가 아니면 웜업 대상이 아니다.
 		verify(proxyWarmUp, never()).warmUp();
 	}
+
+	@Test
+	void marksConnectionRefusedAsConnectionLevel() {
+		// AiClient가 ResourceAccessException의 원인이 ConnectException/UnknownHostException일 때
+		// 이 failureCode로 옮긴다(AiClientTest 참고). status는 null이다 — 연결 자체가 안 됐으니
+		// 응답 자체가 없다.
+		aiRespondsWith(new AiCallException(null, "CONNECTION_REFUSED", true, "AI 서버에 닿지 못했습니다"));
+
+		assertThatThrownBy(() -> client.fetchProgress(UUID.randomUUID()))
+				.isInstanceOf(AnalysisServerException.class)
+				.satisfies(exception -> assertThat(((AnalysisServerException) exception).isConnectionLevel())
+						.isTrue());
+	}
+
+	@Test
+	void doesNotMarkAPlainTimeoutAsConnectionLevel() {
+		// 연결은 됐지만 응답이 느린 경우(failureCode=TIMEOUT)는 연결 레벨이 아니다 — AI가 살아서
+		// 처리 중일 수 있으니 AnalysisBatchService의 배치 조기 종료 판단에 넣으면 안 된다.
+		aiRespondsWith(new AiCallException(null, "TIMEOUT", true, "AI 서버에 닿지 못했습니다"));
+
+		assertThatThrownBy(() -> client.fetchProgress(UUID.randomUUID()))
+				.isInstanceOf(AnalysisServerException.class)
+				.satisfies(exception -> assertThat(((AnalysisServerException) exception).isConnectionLevel())
+						.isFalse());
+	}
 }
