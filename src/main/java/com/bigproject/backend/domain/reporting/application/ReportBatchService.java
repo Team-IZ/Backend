@@ -411,44 +411,50 @@ public class ReportBatchService {
 	 *
 	 * @param sessionId   {@code assessment_session.session_id}
 	 * @param requestedBy 누가 눌렀는지. 로그에만 쓴다 — 감사 원장은 이 경로의 책임이 아니다
-	 * @return 요청을 보냈으면 그 {@code generation_run_id}. 대상이 아니거나 문제가 없으면 빈 값
+	 * @return 만든 실행의 {@code generation_run_id}
+	 * @throws ReportException 재생성 대상이 아니거나({@code REPORT_REGENERATION_TARGET_NOT_ELIGIBLE}),
+	 *         모델 설정이 어긋났거나({@code REPORT_MODEL_NOT_CONFIGURED}), 채점된 문제가 없거나
+	 *         ({@code REPORT_SESSION_HAS_NO_PROBLEM}), 이미 진행 중인 수동 실행이 있을 때
+	 *         ({@code REPORT_GENERATION_ALREADY_RUNNING}) — {@link #forceGenerateSession}과
+	 *         같은 예외 방식으로 맞췄다(2026-08-21, 얇은 컨트롤러를 얹으면서).
 	 */
-	public Optional<UUID> regenerateSession(UUID sessionId, String requestedBy) {
-		ReportTarget target = dispatchRepository.findTargetBySession(sessionId).orElse(null);
-		if (target == null) {
-			// 세션이 없는 것과 조건에 안 맞는 것을 구분하지 않는다 — 어느 쪽이든 만들면 안 된다.
-			log.warn("재생성 대상이 아니다: sessionId={}, requestedBy={}", sessionId, requestedBy);
-			return Optional.empty();
-		}
+	public UUID regenerateSession(UUID sessionId, String requestedBy) {
+		// 세션이 없는 것과 조건에 안 맞는 것을 구분하지 않는다 — 어느 쪽이든 만들면 안 된다는
+		// 결론이 같기 때문이다(ReportErrorCode.REPORT_REGENERATION_TARGET_NOT_ELIGIBLE의 D1 참고).
+		ReportTarget target = dispatchRepository.findTargetBySession(sessionId)
+				.orElseThrow(() -> {
+					log.warn("재생성 대상이 아니다: sessionId={}, requestedBy={}", sessionId, requestedBy);
+					return new ReportException(ReportErrorCode.REPORT_REGENERATION_TARGET_NOT_ELIGIBLE);
+				});
 
 		AnalysisModel model = modelRepository.findActiveByModelCode(modelCode).orElse(null);
 		if (model == null) {
 			log.error("ai.report.model-code 가 가리키는 ACTIVE 모델이 ai_model 에 없다. "
 					+ "재생성을 건너뛴다: modelCode={}, sessionId={}", modelCode, sessionId);
-			return Optional.empty();
+			throw new ReportException(ReportErrorCode.REPORT_MODEL_NOT_CONFIGURED);
 		}
 
-		Optional<UUID> runId;
+		UUID runId;
 		try {
-			runId = dispatchOne(target, model, Instant.now(), ReportGenerationTriggerType.USER_REQUESTED);
+			runId = dispatchOne(target, model, Instant.now(), ReportGenerationTriggerType.USER_REQUESTED)
+					.orElseThrow(() -> new ReportException(ReportErrorCode.REPORT_SESSION_HAS_NO_PROBLEM));
 		} catch (DataIntegrityViolationException exception) {
 			/*
 			 * uq_report_generation_run_active 는 (report_id, trigger_type) 부분 유니크다
 			 * (status IN QUEUED·RUNNING·RETRYING).
 			 *
 			 * 즉 진행 중인 수동 재생성이 이미 있다는 뜻이다 — 운영자가 두 번 눌렀거나, 앞의 것이
-			 * 아직 폴링 중이다. 오류가 아니라 "이미 돌고 있다"이므로 예외를 밖으로 던지지 않는다.
+			 * 아직 폴링 중이다. 오류가 아니라 "이미 돌고 있다"이므로 그 뜻 그대로 코드로 옮긴다.
 			 *
 			 * SCHEDULED 실행과는 부딪히지 않는다. trigger_type 이 인덱스 키에 있어서, 배치가 돌고
 			 * 있어도 수동 재생성은 걸린다 — 그게 이 도구가 필요한 상황이기도 하다.
 			 */
 			log.warn("이미 진행 중인 재생성이 있다: sessionId={}, requestedBy={}", sessionId, requestedBy);
-			return Optional.empty();
+			throw new ReportException(ReportErrorCode.REPORT_GENERATION_ALREADY_RUNNING);
 		}
 
-		runId.ifPresent(id -> log.info(
-				"운영자 재생성 요청: sessionId={}, userId={}, roundId={}, runId={}, requestedBy={}",
-				sessionId, target.getUserId(), target.getAssessmentRoundId(), id, requestedBy));
+		log.info("운영자 재생성 요청: sessionId={}, userId={}, roundId={}, runId={}, requestedBy={}",
+				sessionId, target.getUserId(), target.getAssessmentRoundId(), runId, requestedBy);
 		return runId;
 	}
 
