@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -99,7 +100,8 @@ class ReportRunFinalizerTest {
 
 		assertThat(finalizer.finalizeIfComplete(RUN, Instant.now())).isTrue();
 
-		verify(snapshotRepository).save(any());
+		// writeSnapshot이 한 번, writeEvidence 뒤 applyRetryTargetCount가 붙어 한 번 더 저장한다.
+		verify(snapshotRepository, times(2)).save(any());
 		assertThat(savedReport().getPublishedAt()).isNotNull();
 	}
 
@@ -117,7 +119,7 @@ class ReportRunFinalizerTest {
 
 		assertThat(finalizer.finalizeIfComplete(RUN, Instant.now())).isTrue();
 
-		verify(snapshotRepository).save(any());
+		verify(snapshotRepository, times(2)).save(any());
 		assertThat(savedReport().getPublishedAt())
 				.as("무효 세션은 발행하지 않는다")
 				.isNull();
@@ -137,7 +139,7 @@ class ReportRunFinalizerTest {
 
 		assertThat(finalizer.finalizeIfComplete(RUN, Instant.now())).isTrue();
 
-		verify(snapshotRepository).save(any());
+		verify(snapshotRepository, times(2)).save(any());
 		assertThat(savedReport().getPublishedAt())
 				.as("발행 예정 시각 전에는 스냅샷만 만들고 발행은 미룬다")
 				.isNull();

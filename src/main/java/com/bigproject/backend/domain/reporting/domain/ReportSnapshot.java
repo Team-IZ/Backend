@@ -78,6 +78,15 @@ public class ReportSnapshot {
 	@Column(name = "missing_count", nullable = false)
 	private Integer missingCount;
 
+	/**
+	 * 다시 보기 대상인 개념 수(도달 단계 2단 미만). DB CHECK: 0 <= retryTarget <= sample.
+	 *
+	 * <p>스냅샷 생성 시점에는 아직 근거({@code report_evidence})가 없어 알 수 없다 — 항상 0으로
+	 * 시작해서 {@link #applyRetryTargetCount}로 나중에 채운다.
+	 */
+	@Column(name = "retry_target_count", nullable = false)
+	private Integer retryTargetCount;
+
 	@Column(name = "payload_hash", nullable = false, length = 128)
 	private String payloadHash;
 
@@ -110,6 +119,7 @@ public class ReportSnapshot {
 		this.generationRunId = generationRunId;
 		this.payloadSchemaVersion = payloadSchemaVersion;
 		this.isActive = true;
+		this.retryTargetCount = 0;
 	}
 
 	/**
@@ -141,5 +151,23 @@ public class ReportSnapshot {
 	/** 비활성으로 내린다. 새 스냅샷을 활성화하기 전에 부른다. */
 	public void deactivate() {
 		this.isActive = false;
+	}
+
+	/**
+	 * 다시 보기 대상 개념 수를 채운다.
+	 *
+	 * <p>{@code ReportRunFinalizer}가 근거({@code report_evidence})를 다 쓴 뒤에만 부른다 —
+	 * 생성 시점에는 이 값을 알 방법이 없다({@code create}에서 항상 0으로 시작하는 이유).
+	 *
+	 * <p>{@code missingCount}와 같은 이유로 여기서 먼저 막는다 — INSERT/UPDATE 시점에야
+	 * 어긋난 게 드러나면 어느 계산이 잘못됐는지 되짚기 어렵다.
+	 */
+	public void applyRetryTargetCount(int retryTargetCount) {
+		if (retryTargetCount < 0 || retryTargetCount > sampleCount) {
+			throw new IllegalArgumentException(
+					"retry_target_count는 0 이상 sample_count 이하여야 한다: sample=%d, retryTarget=%d"
+							.formatted(sampleCount, retryTargetCount));
+		}
+		this.retryTargetCount = retryTargetCount;
 	}
 }

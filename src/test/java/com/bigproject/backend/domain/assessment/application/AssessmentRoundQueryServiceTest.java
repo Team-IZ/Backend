@@ -23,7 +23,7 @@ class AssessmentRoundQueryServiceTest {
 	private final TraineeHomeRoundRepository repository = mock(TraineeHomeRoundRepository.class);
 	private final CurrentUserResolver currentUserResolver = mock(CurrentUserResolver.class);
 	private final AssessmentRoundQueryService service =
-			new AssessmentRoundQueryService(repository, currentUserResolver);
+			new AssessmentRoundQueryService(repository, currentUserResolver, 3);
 
 	private final UUID traineeUserId = UUID.randomUUID();
 	private static final Instant AS_OF = Instant.parse("2026-08-06T00:14:02Z");
@@ -334,8 +334,9 @@ class AssessmentRoundQueryServiceTest {
 				"ANALYZING", "WAIT_FOR_ANALYSIS", null, List.of(),
 				"PENDING", "GITHUB_URL", "ACCEPTED", Instant.parse("2026-07-14T08:22:10Z"), true, true,
 				"ANALYZING", "RUNNING", null,
-				"ANALYZING", null, 3, null, 1,
+				"ANALYZING", null, 3, null, 1, null,
 				reportId, reportPublishStatus == null ? "NOT_PUBLISHED" : reportPublishStatus, "UNAVAILABLE",
+				null, null,
 				submissionDueAt, null, null, null, null, null, "ROUND_BATCH", null,
 				UUID.randomUUID(), "김매니저", AS_OF
 		);

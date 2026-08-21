@@ -59,10 +59,19 @@ public record TraineeHomeRound(
 		int preparedProblemCount,
 		String reviewStatus,
 		int completedReviewCount,
+		/** REVIEW 응시 행의 마감 시각. 아직 열지 않았으면 null이다({@code isRetryPending} 참고). */
+		Instant reviewDueAt,
 
 		UUID reportId,
 		String reportPublishStatus,
 		String explanationStatus,
+		/** 리포트 발행 시각. {@code reportPublishStatus}는 이 값의 유무를 문자열로 옮긴 것이다. */
+		Instant publishedAt,
+		/**
+		 * 다시 볼 대상 개념 수({@code report_snapshot.retry_target_count}). 활성 스냅샷이
+		 * 없으면(리포트 미발행 등) null이다.
+		 */
+		Integer retryTargetCount,
 
 		Instant submissionDueAt,
 		Instant roundAssessmentOpenAt,
@@ -120,5 +129,18 @@ public record TraineeHomeRound(
 	 */
 	public boolean canViewReport() {
 		return REPORT_PUBLISH_STATUS_PUBLISHED.equals(reportPublishStatus);
+	}
+
+	/**
+	 * 다시 볼 개념이 하나라도 있는가. {@code retryTargetCount}는 활성 스냅샷이 없으면 null이라
+	 * 여기서 0으로 정규화한다 — "모른다"와 "0개다"를 화면에서 굳이 구분할 이유가 없다.
+	 */
+	public boolean hasRetryTarget() {
+		return retryTargetCount != null && retryTargetCount > 0;
+	}
+
+	/** 화면에 내려줄 다시 볼 개념 수. null(활성 스냅샷 없음)이면 0으로 정규화한다. */
+	public int retryTargetCountOrZero() {
+		return retryTargetCount == null ? 0 : retryTargetCount;
 	}
 }

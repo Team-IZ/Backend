@@ -149,6 +149,9 @@ public class AssessmentRoundController {
 					| `reportPublishStatus` | enum | `PUBLISHED` · `GENERATING` · `NOT_PUBLISHED` |
 					| `canViewReport` | boolean | `reportPublishStatus=PUBLISHED`일 때만 `true` |
 					| `explanationStatus` | enum | `UNAVAILABLE` · `PARTIAL` · `AVAILABLE` |
+					| `retryState` | enum | `NONE` · `PENDING` · `DONE`. `DONE`은 대상 수와 무관하게 REVIEW 응시를 마쳤다는 사실이다 |
+					| `retryTargetCount` | int | 다시 볼 개념 수. 활성 스냅샷이 없으면 `0` |
+					| `retryDueAt` | datetime? | 다시 보기 마감. `retryState=PENDING`이면 항상 값이 있다 |
 
 					**일정**
 
@@ -229,7 +232,7 @@ public class AssessmentRoundController {
 					⚠️ 두 일정이 `null`일 수 있는 이유는 `ck_project_assessment_round_assessment_window_required`가
 					`PLANNED` 회차만 면제하기 때문이다.
 
-					### past[] 각 항목 — 8필드
+					### past[] 각 항목 — 11필드
 
 					| 필드 | 타입 | 설명 |
 					| --- | --- | --- |
@@ -241,6 +244,9 @@ public class AssessmentRoundController {
 					| `completedReviewCount` | int | 완료한 다시 보기 건수 |
 					| `reportId` | UUID? | 리포트 식별자 |
 					| `canViewReport` | boolean | `reportPublishStatus=PUBLISHED`일 때만 `true` |
+					| `retryState` | enum | `NONE` · `PENDING` · `DONE`. `current[].retryState`와 같은 판정 |
+					| `retryTargetCount` | int | 다시 볼 개념 수. 활성 스냅샷이 없으면 `0` |
+					| `retryDueAt` | datetime? | 다시 보기 마감. `retryState=PENDING`이면 항상 값이 있다 |
 
 					⚠️ "완료 여부" boolean은 **일부러 두지 않는다.** `representativeStatus`가 완료와 미완료 사유를
 					이미 구분하므로, 파생값을 더하면 계약이 둘로 갈린다.
@@ -335,6 +341,9 @@ public class AssessmentRoundController {
 													    "reportPublishStatus": "NOT_PUBLISHED",
 													    "canViewReport": false,
 													    "explanationStatus": "UNAVAILABLE",
+													    "retryState": "NONE",
+													    "retryTargetCount": 0,
+													    "retryDueAt": null,
 													    "submissionDueAt": "2026-07-14T09:00:00Z",
 													    "roundAssessmentOpenAt": "2026-07-14T15:00:00Z",
 													    "roundAssessmentDueAt": "2026-07-15T14:59:59Z",
@@ -369,7 +378,10 @@ public class AssessmentRoundController {
 													      "reviewStatus": null,
 													      "completedReviewCount": 1,
 													      "reportId": "3f6b0e97-8c24-4a15-9d38-2b7e5c1a4f60",
-													      "canViewReport": true
+													      "canViewReport": true,
+													      "retryState": "DONE",
+													      "retryTargetCount": 2,
+													      "retryDueAt": "2026-07-05T10:30:00Z"
 													    }
 													  ]
 													}"""
@@ -419,6 +431,9 @@ public class AssessmentRoundController {
 													    "reportPublishStatus": "NOT_PUBLISHED",
 													    "canViewReport": false,
 													    "explanationStatus": "UNAVAILABLE",
+													    "retryState": "NONE",
+													    "retryTargetCount": 0,
+													    "retryDueAt": null,
 													    "submissionDueAt": null,
 													    "roundAssessmentOpenAt": null,
 													    "roundAssessmentDueAt": null,

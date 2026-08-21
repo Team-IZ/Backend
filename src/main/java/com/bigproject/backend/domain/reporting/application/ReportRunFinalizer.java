@@ -3,6 +3,7 @@ package com.bigproject.backend.domain.reporting.application;
 import com.bigproject.backend.domain.reporting.domain.Report;
 import com.bigproject.backend.domain.reporting.domain.ReportCompletionStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportEvidence;
+import com.bigproject.backend.domain.reporting.domain.ReportEvidenceDecision;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationItem;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationItemStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRun;
@@ -189,7 +190,20 @@ public class ReportRunFinalizer {
 				&& items.stream().noneMatch(item -> Boolean.TRUE.equals(item.getNarrativeFailed()));
 
 		ReportSnapshot snapshot = writeSnapshot(run, report, items, full, now);
-		int evidenceWritten = writeEvidence(snapshot, items, report);
+		EvidenceResult evidence = writeEvidence(snapshot, items, report);
+
+		/*
+		 * D-retry-target-count(2026-08-21): writeEvidence가 이미 계산한 decisionCode를 그대로
+		 * 센다 — reachedLevel을 여기서 다시 계산하지 않는다.
+		 *   WHY: 도달 단계 판정이 ReportEvidenceFactory 한 곳(decision())에만 있어야 정책이
+		 *        갈리지 않는다. 두 벌이 되면(예: 여기서 별도로 problem_stage를 다시 읽어 판정)
+		 *        이 프로젝트가 이미 겪은 문제(decision_code가 정책과 어긋나 얼어 있던 것, 23차
+		 *        R2)가 재발한다.
+		 *   COST: writeEvidence의 반환 타입이 int에서 레코드로 바뀐다 — 호출부 하나뿐이라 파급 작음.
+		 *   EXIT: 산정 로직을 바꾸려면 ReportEvidenceFactory.decision()만 고치면 여기는 그대로다.
+		 */
+		snapshot.applyRetryTargetCount(evidence.retryTargetCount());
+		snapshotRepository.save(snapshot);
 
 		run.markCompleted(full ? ReportGenerationRunStatus.COMPLETED : ReportGenerationRunStatus.PARTIAL, now);
 		runRepository.save(run);
@@ -201,10 +215,10 @@ public class ReportRunFinalizer {
 
 		// 개념 카드 수를 함께 남긴다. completion 은 AI 성공 여부만 보므로 FULL 인데 카드가 모자란
 		// 경우가 있고, 그때 화면과 이 로그가 어긋난다 — 한 줄에서 바로 보이게 둔다.
-		log.info("리포트 확정: reportId={}, runId={}, 문제 {}건 중 {}건 성공, 개념 카드 {}건, "
-						+ "completion={}, 발행={}",
-				report.getReportId(), generationRunId, items.size(), succeeded, evidenceWritten,
-				full ? "FULL" : "PARTIAL", published ? "함" : "보류");
+		log.info("리포트 확정: reportId={}, runId={}, 문제 {}건 중 {}건 성공, 개념 카드 {}건"
+						+ "(다시 볼 대상 {}건), completion={}, 발행={}",
+				report.getReportId(), generationRunId, items.size(), succeeded, evidence.written(),
+				evidence.retryTargetCount(), full ? "FULL" : "PARTIAL", published ? "함" : "보류");
 		return true;
 	}
 
@@ -287,10 +301,18 @@ public class ReportRunFinalizer {
 	 * 올린다 — 이건 "봐 두면 좋은 것"이 아니라 <b>학생이 볼 리포트에 구멍이 난 것</b>이다.
 	 * 한 장도 못 만들면 발행은 되는데 뷰가 0건을 내므로 더 강하게 남긴다.
 	 *
-	 * @return 실제로 저장한 카드 수
+	 * <h2>다시 볼 대상 수도 여기서 함께 센다</h2>
+	 *
+	 * <p>{@code evidenceFactory.create()}가 이미 {@code decisionCode}(도달 단계 판정)를 정해서
+	 * 돌려주므로, 그 값을 그대로 센다 — {@code report_snapshot.retry_target_count}를 채우려고
+	 * reachedLevel을 여기서 별도로 다시 계산하지 않는다({@code decision()}이 유일한 판정처여야
+	 * 한다, {@link ReportEvidenceFactory} javadoc 참고).
+	 *
+	 * @return 실제로 저장한 카드 수와 그중 다시 보기 대상 수
 	 */
-	private int writeEvidence(ReportSnapshot snapshot, List<ReportGenerationItem> items, Report report) {
+	private EvidenceResult writeEvidence(ReportSnapshot snapshot, List<ReportGenerationItem> items, Report report) {
 		int written = 0;
+		int retryTarget = 0;
 		for (ReportGenerationItem item : items) {
 			Optional<JdbcReportPayloadRepository.ConceptContext> context =
 					payloadRepository.findConceptContext(item.getSessionId(), item.getProblemId());
@@ -304,14 +326,18 @@ public class ReportRunFinalizer {
 				continue;
 			}
 
-			evidenceRepository.save(evidenceFactory.create(
+			ReportEvidence evidence = evidenceFactory.create(
 					snapshot.getSnapshotId(),
 					item.getProblemId(),
 					context.get(),
 					readResult(item),
 					report.getCohortId(),
-					report.getAssessmentRoundId()));
+					report.getAssessmentRoundId());
+			evidenceRepository.save(evidence);
 			written++;
+			if (evidence.getDecisionCode() == ReportEvidenceDecision.REVIEW_REQUIRED) {
+				retryTarget++;
+			}
 		}
 
 		if (written == 0 && !items.isEmpty()) {
@@ -320,7 +346,11 @@ public class ReportRunFinalizer {
 							+ "reportId={}, snapshotId={}, 문제 {}건",
 					report.getReportId(), snapshot.getSnapshotId(), items.size());
 		}
-		return written;
+		return new EvidenceResult(written, retryTarget);
+	}
+
+	/** {@link #writeEvidence} 결과. 저장한 카드 수와 그중 다시 보기 대상 수. */
+	private record EvidenceResult(int written, int retryTargetCount) {
 	}
 
 	/** item에 담아 둔 AI {@code result}. 없거나 깨졌으면 null이다. */
