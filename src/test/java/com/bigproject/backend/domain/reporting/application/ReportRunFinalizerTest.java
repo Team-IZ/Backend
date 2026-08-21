@@ -1,6 +1,7 @@
 package com.bigproject.backend.domain.reporting.application;
 
 import com.bigproject.backend.domain.reporting.domain.Report;
+import com.bigproject.backend.domain.reporting.domain.ReportCompletionStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationItem;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRun;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationTriggerType;
@@ -156,6 +157,48 @@ class ReportRunFinalizerTest {
 		verify(snapshotRepository, never()).save(any());
 	}
 
+	/**
+	 * D-evidence-completeness(2026-08-21): concept context를 못 찾아 카드를 건너뛴 문제가 하나
+	 * 있으면, AI가 셋 다 성공했어도 completion은 FULL이 아니라 PARTIAL이어야 하고 missing_count가
+	 * 그 부족분을 반영해야 한다 — writeEvidence()의 written이 sample_count보다 작은데
+	 * completion_status가 FULL로 남는 게 이 갭의 증상이었다.
+	 */
+	@Test
+	void marksTheSnapshotPartialWhenOneConceptCardIsSkippedEvenIfAllItemsSucceeded() {
+		UUID foundProblemId = UUID.randomUUID();
+		UUID missingProblemId = UUID.randomUUID();
+		when(itemRepository.findByGenerationRunId(RUN)).thenReturn(List.of(
+				succeededItem(foundProblemId), succeededItem(foundProblemId), succeededItem(missingProblemId)));
+		givenSession(true, null, 3);
+		when(payloadRepository.findConceptContext(any(), org.mockito.ArgumentMatchers.eq(foundProblemId)))
+				.thenReturn(Optional.of(conceptContext()));
+		when(payloadRepository.findConceptContext(any(), org.mockito.ArgumentMatchers.eq(missingProblemId)))
+				.thenReturn(Optional.empty());
+
+		assertThat(finalizer.finalizeIfComplete(RUN, Instant.now())).isTrue();
+
+		ReportSnapshot snapshot = savedSnapshot();
+		assertThat(snapshot.getCompletionStatus()).isEqualTo(ReportCompletionStatus.PARTIAL);
+		assertThat(snapshot.getMissingCount()).isEqualTo(1);
+		verify(evidenceRepository, times(2)).save(any());
+	}
+
+	/** 카드가 하나도 안 빠지면 여전히 FULL이다 — 위 테스트의 대조군. */
+	@Test
+	void keepsTheSnapshotFullWhenEveryConceptCardIsWritten() {
+		UUID problemId = UUID.randomUUID();
+		when(itemRepository.findByGenerationRunId(RUN))
+				.thenReturn(List.of(succeededItem(problemId), succeededItem(problemId), succeededItem(problemId)));
+		givenSession(true, null, 3);
+		when(payloadRepository.findConceptContext(any(), any())).thenReturn(Optional.of(conceptContext()));
+
+		assertThat(finalizer.finalizeIfComplete(RUN, Instant.now())).isTrue();
+
+		ReportSnapshot snapshot = savedSnapshot();
+		assertThat(snapshot.getCompletionStatus()).isEqualTo(ReportCompletionStatus.FULL);
+		assertThat(snapshot.getMissingCount()).isZero();
+	}
+
 	// ------------------------------------------------------------------ fixture
 
 	private void givenSession(boolean eligible, Instant publishNotBefore, int problemCount) {
@@ -170,6 +213,19 @@ class ReportRunFinalizerTest {
 		org.mockito.ArgumentCaptor<Report> captor = org.mockito.ArgumentCaptor.forClass(Report.class);
 		verify(reportRepository).save(captor.capture());
 		return captor.getValue();
+	}
+
+	/** 마지막으로 저장된 스냅샷(applyEvidenceWritten·applyRetryTargetCount까지 반영된 최종본). */
+	private ReportSnapshot savedSnapshot() {
+		org.mockito.ArgumentCaptor<ReportSnapshot> captor = org.mockito.ArgumentCaptor.forClass(ReportSnapshot.class);
+		verify(snapshotRepository, org.mockito.Mockito.atLeastOnce()).save(captor.capture());
+		return captor.getValue();
+	}
+
+	private static JdbcReportPayloadRepository.ConceptContext conceptContext() {
+		return new JdbcReportPayloadRepository.ConceptContext(
+				UUID.randomUUID(), "L1", "COMPLETED", "발췌", 1, 1,
+				"개념", 1, 1, "챕터", 1, 2);
 	}
 
 	private static ReportGenerationRun run() {
@@ -187,7 +243,11 @@ class ReportRunFinalizerTest {
 	}
 
 	private static ReportGenerationItem succeededItem() {
-		ReportGenerationItem item = ReportGenerationItem.queued(RUN, UUID.randomUUID(), SESSION, 1,
+		return succeededItem(UUID.randomUUID());
+	}
+
+	private static ReportGenerationItem succeededItem(UUID problemId) {
+		ReportGenerationItem item = ReportGenerationItem.queued(RUN, problemId, SESSION, 1,
 				"{}", "b".repeat(64), 1, RUN.toString());
 		ReflectionTestUtils.setField(item, "generationItemId", UUID.randomUUID());
 		item.acceptExternalJob(UUID.randomUUID(), Instant.now());

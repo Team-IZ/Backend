@@ -202,6 +202,10 @@ public class ReportRunFinalizer {
 		 *   COST: writeEvidence의 반환 타입이 int에서 레코드로 바뀐다 — 호출부 하나뿐이라 파급 작음.
 		 *   EXIT: 산정 로직을 바꾸려면 ReportEvidenceFactory.decision()만 고치면 여기는 그대로다.
 		 */
+		// D-evidence-completeness(2026-08-21): missing_count·completion_status를 실제로 저장된
+		// 카드 수로 다시 맞춘다 — writeSnapshot() 시점의 missing은 AI 생성 성공 여부만 보므로,
+		// concept context를 못 찾아 카드를 통째로 건너뛴 경우(writeEvidence 위 javadoc)를 놓친다.
+		snapshot.applyEvidenceWritten(evidence.written());
 		snapshot.applyRetryTargetCount(evidence.retryTargetCount());
 		snapshotRepository.save(snapshot);
 
@@ -213,12 +217,10 @@ public class ReportRunFinalizer {
 		boolean published = publishIfAllowed(report, context, generationRunId, now);
 		reportRepository.save(report);
 
-		// 개념 카드 수를 함께 남긴다. completion 은 AI 성공 여부만 보므로 FULL 인데 카드가 모자란
-		// 경우가 있고, 그때 화면과 이 로그가 어긋난다 — 한 줄에서 바로 보이게 둔다.
 		log.info("리포트 확정: reportId={}, runId={}, 문제 {}건 중 {}건 성공, 개념 카드 {}건"
 						+ "(다시 볼 대상 {}건), completion={}, 발행={}",
 				report.getReportId(), generationRunId, items.size(), succeeded, evidence.written(),
-				evidence.retryTargetCount(), full ? "FULL" : "PARTIAL", published ? "함" : "보류");
+				evidence.retryTargetCount(), snapshot.getCompletionStatus(), published ? "함" : "보류");
 		return true;
 	}
 
@@ -290,16 +292,18 @@ public class ReportRunFinalizer {
 	 * <p>실패한 item도 카드를 만든다 — 세션 기록만으로 도달 단계와 답변 발췌는 사실이고,
 	 * 빠뜨리면 그 문제가 리포트에서 통째로 사라진다.
 	 *
-	 * <h2>🔴 건너뛴 카드는 어디에도 남지 않는다</h2>
+	 * <h2>건너뛴 카드는 missing_count로 되돌아간다</h2>
 	 *
-	 * <p>stage를 못 찾아 건너뛴 문제는 {@code run.status}에도 {@code completion_status}에도
-	 * 반영되지 않는다 — 그 둘은 <b>AI 생성 성공 여부</b>만 본다. AI가 다 성공했는데 카드가 빠지면
-	 * 리포트는 {@code COMPLETED}·{@code FULL}로 닫히고, 화면에서만 그 문제가 사라진다.
-	 * 뷰가 {@code report_evidence}를 INNER JOIN하기 때문이다.
+	 * <p>stage를 못 찾아 건너뛴 문제는 이 메서드가 반환하는 {@code written}이 그만큼 줄어드는
+	 * 것으로 드러난다 — 호출부({@code finalizeIfComplete})가 {@code ReportSnapshot.applyEvidenceWritten}
+	 * 으로 {@code missing_count}·{@code completion_status}를 다시 맞춘다(D-evidence-completeness,
+	 * 2026-08-21). 예전에는 {@code run.status}·{@code completion_status}가 <b>AI 생성 성공 여부</b>만
+	 * 봐서, AI가 다 성공했는데 카드가 빠지면 리포트가 {@code FULL}로 닫히고 화면에서만 그 문제가
+	 * 사라졌다(뷰가 {@code report_evidence}를 INNER JOIN하기 때문) — 지금은 그 값도 같이 틀어진다.
 	 *
-	 * <p>그래서 로그가 유일한 신호다. 건너뛴 것이 있으면 {@code WARN}이 아니라 {@code ERROR}로
-	 * 올린다 — 이건 "봐 두면 좋은 것"이 아니라 <b>학생이 볼 리포트에 구멍이 난 것</b>이다.
-	 * 한 장도 못 만들면 발행은 되는데 뷰가 0건을 내므로 더 강하게 남긴다.
+	 * <p>로그도 계속 남긴다. 건너뛴 것이 있으면 {@code WARN}이 아니라 {@code ERROR}로 올린다 —
+	 * 이건 "봐 두면 좋은 것"이 아니라 <b>학생이 볼 리포트에 구멍이 난 것</b>이다. 한 장도 못
+	 * 만들면 발행은 되는데 뷰가 0건을 내므로 더 강하게 남긴다.
 	 *
 	 * <h2>다시 볼 대상 수도 여기서 함께 센다</h2>
 	 *
