@@ -409,8 +409,11 @@ public class ReportBatchService {
 	 * <p>아직 화면이 없어 컨트롤러를 두지 않았다. 운영자 화면이 생기면 이 메서드를 부르는 얇은
 	 * 엔드포인트 하나면 된다 — 매핑표에 자리가 잡힌 뒤에 붙이는 것이 맞다.
 	 *
-	 * @param sessionId   {@code assessment_session.session_id}
-	 * @param requestedBy 누가 눌렀는지. 로그에만 쓴다 — 감사 원장은 이 경로의 책임이 아니다
+	 * @param sessionId    {@code assessment_session.session_id}
+	 * @param callerOrgId  호출자(운영자)의 소속 기관. 대상 세션이 다른 기관 소속이면 대상이 아예
+	 *                     없는 것과 같은 응답을 낸다({@code REPORT_REGENERATION_TARGET_NOT_ELIGIBLE}) —
+	 *                     테넌트 경계를 넘는 재생성을 막는다.
+	 * @param requestedBy  누가 눌렀는지. 로그에만 쓴다 — 감사 원장은 이 경로의 책임이 아니다
 	 * @return 만든 실행의 {@code generation_run_id}
 	 * @throws ReportException 재생성 대상이 아니거나({@code REPORT_REGENERATION_TARGET_NOT_ELIGIBLE}),
 	 *         모델 설정이 어긋났거나({@code REPORT_MODEL_NOT_CONFIGURED}), 채점된 문제가 없거나
@@ -418,10 +421,22 @@ public class ReportBatchService {
 	 *         ({@code REPORT_GENERATION_ALREADY_RUNNING}) — {@link #forceGenerateSession}과
 	 *         같은 예외 방식으로 맞췄다(2026-08-21, 얇은 컨트롤러를 얹으면서).
 	 */
-	public UUID regenerateSession(UUID sessionId, String requestedBy) {
-		// 세션이 없는 것과 조건에 안 맞는 것을 구분하지 않는다 — 어느 쪽이든 만들면 안 된다는
-		// 결론이 같기 때문이다(ReportErrorCode.REPORT_REGENERATION_TARGET_NOT_ELIGIBLE의 D1 참고).
+	public UUID regenerateSession(UUID sessionId, UUID callerOrgId, String requestedBy) {
+		/*
+		 * D2: 테넌트 스코프를 sessionId 조회 직후, 다른 어떤 검증보다 먼저 확인한다.
+		 *   WHY: @PreAuthorize("hasRole('MANAGER')")는 role만 보고 소속 기관은 안 본다.
+		 *        target.getOrgId()를 callerOrgId와 값으로 대조하지 않으면 다른 기관 매니저가
+		 *        아무 sessionId나 넣어 남의 리포트를 재생성시킬 수 있다(자동 보안 리뷰가
+		 *        2026-08-21 발견, ManagerTraineeAccessRepository가 org_id를 "경유하는 경로가
+		 *        아니라 값으로" 확인해야 한다고 적어 둔 것과 같은 원칙).
+		 *   COST: target을 먼저 조회해야 하므로, 세션이 아예 없는 경우와 다른 기관 소속인 경우가
+		 *        여기서 합쳐진다 — 그런데 이미 "세션 없음"과 "조건 불충족"도 하나로 합쳐져 있던
+		 *        참이라(D1) 새로 생기는 비용이 아니다.
+		 *   EXIT: 다중 기관 관리자(super-admin류)가 필요해지면 이 조건 앞에 role 분기를 추가하면
+		 *        된다 — target을 다시 조회할 필요는 없다.
+		 */
 		ReportTarget target = dispatchRepository.findTargetBySession(sessionId)
+				.filter(candidate -> candidate.getOrgId().equals(callerOrgId))
 				.orElseThrow(() -> {
 					log.warn("재생성 대상이 아니다: sessionId={}, requestedBy={}", sessionId, requestedBy);
 					return new ReportException(ReportErrorCode.REPORT_REGENERATION_TARGET_NOT_ELIGIBLE);

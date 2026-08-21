@@ -1,5 +1,6 @@
 package com.bigproject.backend.domain.reporting.presentation;
 
+import com.bigproject.backend.domain.auth.domain.AuthUser;
 import com.bigproject.backend.domain.reporting.application.ReportBatchService;
 import com.bigproject.backend.global.security.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
@@ -85,7 +86,7 @@ public class ReportRegenerationController {
 
 					| 코드 | 상태 | 뜻 |
 					|---|---|---|
-					| `REPORT_REGENERATION_TARGET_NOT_ELIGIBLE` | 404 | 세션이 없거나 위 5종 조건에 안 맞습니다. 어느 쪽인지는 이 API로 구분되지 않습니다 |
+					| `REPORT_REGENERATION_TARGET_NOT_ELIGIBLE` | 404 | 세션이 없거나, 다른 기관 소속이거나, 위 5종 조건에 안 맞습니다. 어느 쪽인지는 이 API로 구분되지 않습니다(다른 기관 세션이라는 사실 자체를 알려주지 않기 위해서입니다) |
 					| `REPORT_SESSION_HAS_NO_PROBLEM` | 409 | 채점된 문제가 없는 세션입니다 |
 					| `REPORT_GENERATION_ALREADY_RUNNING` | 409 | 이미 진행 중인 수동 실행이 있습니다. 그 실행이 끝나기를 기다리세요 |
 					| `REPORT_MODEL_NOT_CONFIGURED` | 500 | 리포트 생성 모델 설정이 어긋났습니다. 요청 문제가 아니라 운영 설정 문제입니다 |
@@ -100,8 +101,9 @@ public class ReportRegenerationController {
 			@Parameter(description = "리포트를 다시 만들 검증세션 ID", required = true)
 			@PathVariable UUID sessionId
 	) {
+		AuthUser manager = currentUserResolver.resolveCurrentUser();
 		UUID runId = reportBatchService.regenerateSession(
-				sessionId, currentUserResolver.resolveCurrentMemberId().toString());
+				sessionId, manager.organizationId(), manager.userId().toString());
 
 		return ResponseEntity.accepted().body(new RegenerationResponse(sessionId, runId));
 	}
