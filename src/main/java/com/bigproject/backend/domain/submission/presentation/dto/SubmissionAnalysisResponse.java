@@ -31,14 +31,27 @@ public record SubmissionAnalysisResponse(
 
 		@Schema(
 				description = """
-						FAILED일 때만 값이 있다. 분석 실행 실패 6종과 저장소 접근 실패 5종을 합한 11종이다 —
-						저장소 주소 오류도 제출이 아니라 여기로 드러난다.
+						FAILED일 때만 값이 있다. 분석 실행 실패 5종·저장소 접근 실패 5종·ZIP 내용 검증 2종을
+						합한 12종이 analysis_job.failure_code 실값이다 — 저장소 주소 오류도 제출이 아니라
+						여기로 드러난다.
 
 						SESSION_PREPARATION_FAILED와 EXTERNAL_JOB_ID_LOST는 analysis_job.failure_code에 없는
 						값이다. 둘 다 서버가 조회 시점에 판정해 내려 준다 — 전자는 분석은 성공했지만 이 교육생의
 						세션·문항이 준비되지 않은 경우, 후자는 활성 분석 행이 AI 작업 ID를 잃어 상태를 더 따라갈
 						수 없는 경우다.""",
-				example = "REPO_NOT_FOUND"
+				example = "REPO_NOT_FOUND",
+				allowableValues = {
+						// 분석 실행 실패 5종
+						"TEMPORARY_ERROR", "ANALYSIS_TIMEOUT", "MODEL_ERROR", "SOURCE_UNREACHABLE",
+						"UNSUPPORTED_LANGUAGE",
+						// 저장소 접근 실패 5종
+						"INVALID_REPOSITORY_URL", "REPO_NOT_FOUND", "REPOSITORY_ACCESS_DENIED",
+						"BRANCH_NOT_FOUND", "UNSUPPORTED_HOST",
+						// ZIP 내용 검증 2종
+						"EMPTY_CODE", "GIT_LOG_MISSING",
+						// 조회 시점 합성 sentinel 2종(analysis_job.failure_code에는 없다)
+						"SESSION_PREPARATION_FAILED", "EXTERNAL_JOB_ID_LOST"
+				}
 		)
 		String failureCode,
 

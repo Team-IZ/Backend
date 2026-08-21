@@ -124,7 +124,22 @@ public class AssessmentRoundController {
 					| --- | --- | --- |
 					| `analysisPhase` | enum | `NOT_SUBMITTED` · `ANALYZING` · `FAILED` · `COMPLETED` · `WAITING` |
 					| `analysisJobStatus` | enum? | `QUEUED` · `RUNNING` · `SUCCEEDED` · `PARTIAL` · `FAILED` |
-					| `analysisFailureCode` | string? | 실패했는가만 알린다. 값은 `ANALYSIS_FAILED` 하나. **사유는 TR-02에 있다** |
+					| `analysisFailureCode` | string? | 실패했는가만 알린다. 값은 `ANALYSIS_FAILED` 하나. **구체적 사유(최대 14종)·초 단위 폴링은 TR-02(`GET /submissions/{submissionId}/analysis`)에서** |
+
+					이 셋은 같은 분석 job을 요약해서 보여준다. TR-02의 `phase`(6값)와 이름·값 개수가
+					다르므로 두 API를 함께 쓸 때는 아래 표로 대응시킨다.
+
+					| 상황 | `analysisPhase`(이 API) | `analysisJobStatus`(이 API) | TR-02 `phase` |
+					| --- | --- | --- | --- |
+					| 아직 제출 안 함 | `NOT_SUBMITTED` | `null` | `NOT_STARTED` |
+					| 대기 중 | `ANALYZING` | `QUEUED` | `QUEUED` |
+					| 분석 중 | `ANALYZING` | `RUNNING` | `RUNNING` |
+					| 성공 | `COMPLETED` | `SUCCEEDED` | `SUCCEEDED` |
+					| 부분 성공 | ⚠️ `WAITING`(`COMPLETED`가 아니다) | `PARTIAL` | `PARTIAL` |
+					| 실패 | `FAILED` | `FAILED` | `FAILED` |
+
+					`analysisPhase = ANALYZING`이 된 시점부터가 TR-02를 60초 간격으로 폴링할 시점이다
+					(그보다 짧게 돌려도 새 정보를 못 받는다 — 원장 갱신 주기가 `poll-delay` 기본 `PT1M`).
 
 					**이해도 확인·다시 보기**
 

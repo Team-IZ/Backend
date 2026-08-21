@@ -11,6 +11,8 @@ import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.ConnectException;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -112,7 +114,7 @@ public class AiClient {
 		} catch (ResourceAccessException exception) {
 			// 연결 실패·읽기 타임아웃. 응답이 없으므로 상태 코드도 failureCode도 없다.
 			// AI 서버가 살아 있는데 느린 것일 수 있어 재시도 가능으로 본다.
-			throw new AiCallException(null, "TIMEOUT", true,
+			throw new AiCallException(null, connectionFailureCode(exception), true,
 					"AI 서버에 닿지 못했습니다: " + path, exception);
 		}
 	}
@@ -150,7 +152,7 @@ public class AiClient {
 					})
 					.body(responseType);
 		} catch (ResourceAccessException exception) {
-			throw new AiCallException(null, "TIMEOUT", true,
+			throw new AiCallException(null, connectionFailureCode(exception), true,
 					"AI 서버에 닿지 못했습니다: " + path, exception);
 		}
 	}
@@ -175,9 +177,32 @@ public class AiClient {
 					})
 					.body(responseType);
 		} catch (ResourceAccessException exception) {
-			throw new AiCallException(null, "TIMEOUT", true,
+			throw new AiCallException(null, connectionFailureCode(exception), true,
 					"AI 서버에 닿지 못했습니다: " + path, exception);
 		}
+	}
+
+	/**
+	 * 연결 자체가 안 된 경우와 연결은 됐는데 응답이 느린 경우를 구분한다.
+	 *
+	 * <h2>D-connection-vs-timeout(2026-08-21)</h2>
+	 *
+	 * <p>종전에는 {@code ResourceAccessException}을 전부 {@code "TIMEOUT"}으로 묶었다. 그런데
+	 * "AI 서버가 살아서 느리게 응답 중"과 "AI 서버가 아예 안 떠 있음"은 호출부(분석 폴링 배치)가
+	 * 완전히 다르게 다뤄야 한다 — 전자는 계속 기다리는 게 맞고, 후자는 활성 job 전체가 동시에
+	 * 같은 이유로 막혀 있다는 신호다. {@code ResourceAccessException}은 항상
+	 * {@code java.io.IOException} 계열을 감싸므로, 그 원인이 {@link ConnectException}
+	 * (연결 거부)이거나 {@link UnknownHostException}(호스트 해석 실패)이면 연결 자체가
+	 * 안 된 것으로 본다 — {@link java.net.SocketTimeoutException}은 여기 안 걸려 기존대로
+	 * {@code "TIMEOUT"}이 된다.
+	 *
+	 * <p>{@code failureCode}는 이미 느슨한 문자열 어휘(TIMEOUT·PROVIDER_ERROR·INVALID_JSON 등)라
+	 * 새 값 하나를 더해도 이 값을 모르는 다른 소비자는 기존 default 분기로 그대로 빠진다.
+	 */
+	private static String connectionFailureCode(ResourceAccessException exception) {
+		Throwable cause = exception.getCause();
+		boolean connectionLevel = cause instanceof ConnectException || cause instanceof UnknownHostException;
+		return connectionLevel ? "CONNECTION_REFUSED" : "TIMEOUT";
 	}
 
 	/**

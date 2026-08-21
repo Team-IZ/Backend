@@ -49,6 +49,7 @@ class AnalysisBatchServiceTest {
 	private static final Duration UNKNOWN_JOB_GRACE = Duration.ofMinutes(10);
 	private static final int UNKNOWN_JOB_MAX_CONSECUTIVE = 3;
 	private static final Duration STUCK_JOB_TIMEOUT = Duration.ofMinutes(30);
+	private static final int CONNECTION_FAILURE_MAX_CONSECUTIVE = 3;
 
 	private AnalysisDispatchRepository dispatchRepository;
 	private AnalysisJobRepository jobRepository;
@@ -91,7 +92,7 @@ class AnalysisBatchServiceTest {
 		service = new AnalysisBatchService(dispatchRepository, jobRepository, modelRepository,
 				resultRepository, usageRecorder, analysisJobDiagnostics, sessionPreparer, client, requestContextRepository,
 				mock(PlatformTransactionManager.class), MODEL_CODE, MAX_ATTEMPTS, UNKNOWN_JOB_GRACE,
-				UNKNOWN_JOB_MAX_CONSECUTIVE, STUCK_JOB_TIMEOUT);
+				UNKNOWN_JOB_MAX_CONSECUTIVE, STUCK_JOB_TIMEOUT, CONNECTION_FAILURE_MAX_CONSECUTIVE);
 	}
 
 	/** 카탈로그에 설정된 모델이 있는 정상 상태. */
@@ -169,6 +170,73 @@ class AnalysisBatchServiceTest {
 		assertThat(service.pollActiveJobs()).isZero();
 
 		// 정상 응답 뒤의 두 번은 새 연속 구간이므로 상한 3회에 도달하지 않았다.
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.QUEUED);
+		assertThat(job.getFailureCode()).isNull();
+	}
+
+	/** 연결 자체가 안 됐다는 예외. AiClient가 ResourceAccessException을 이렇게 옮긴다. */
+	private static AnalysisServerException connectionRefused() {
+		return new AnalysisServerException(AnalysisFailureCode.TEMPORARY_ERROR,
+				"AI 서버에 닿지 못했습니다", null, true);
+	}
+
+	@Test
+	void failsAllActiveJobsAfterConsecutiveConnectionFailureCycles() {
+		AnalysisJob first = jobWithExternalId();
+		AnalysisJob second = jobWithExternalId();
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(first, second));
+		when(client.fetchProgress(any())).thenThrow(connectionRefused());
+
+		assertThat(service.pollActiveJobs()).isZero();
+		assertThat(service.pollActiveJobs()).isZero();
+		int updated = service.pollActiveJobs();
+
+		// 3사이클 연속으로 활성 job 전부가 연결 실패라, stuck-job-timeout(30분)을 기다리지 않고 닫는다.
+		assertThat(updated).isEqualTo(2);
+		assertThat(first.getStatus()).isEqualTo(AnalysisJobStatus.FAILED);
+		assertThat(first.getFailureCode()).isEqualTo(AnalysisFailureCode.TEMPORARY_ERROR);
+		assertThat(first.getFailureReason()).contains("연속");
+		assertThat(second.getStatus()).isEqualTo(AnalysisJobStatus.FAILED);
+		// 닫을 때도 external_job_id는 지우지 않는다 — AI 로그와 대조할 유일한 열쇠다.
+		assertThat(first.getExternalJobId()).isNotNull();
+	}
+
+	@Test
+	void resetsConnectionFailureCycleCountWhenOnePollSucceeds() {
+		AnalysisJob job = jobWithExternalId();
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any()))
+				.thenThrow(connectionRefused())
+				.thenThrow(connectionRefused())
+				.thenReturn(Optional.of(new AnalysisProgress(
+						AnalysisJobStatus.QUEUED, null, null, null, null, null, null)))
+				.thenThrow(connectionRefused())
+				.thenThrow(connectionRefused());
+
+		assertThat(service.pollActiveJobs()).isZero();
+		assertThat(service.pollActiveJobs()).isZero();
+		assertThat(service.pollActiveJobs()).isZero(); // 정상 응답 — 카운터 리셋
+		assertThat(service.pollActiveJobs()).isZero();
+		assertThat(service.pollActiveJobs()).isZero(); // 리셋 뒤 2번째라 아직 3회 안 참
+
+		// 새 연속 구간이 3회를 못 채웠으므로 여전히 활성 상태다.
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.QUEUED);
+		assertThat(job.getFailureCode()).isNull();
+	}
+
+	@Test
+	void doesNotCountNonConnectionFailuresTowardTheOutageThreshold() {
+		AnalysisJob job = jobWithExternalId();
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		// connectionLevel=false — 예: AI가 응답은 했는데 이 폴링 로직 자체가 실패한 경우.
+		when(client.fetchProgress(any())).thenThrow(
+				new AnalysisServerException(AnalysisFailureCode.MODEL_ERROR, "AI 응답 파싱 실패", null, false));
+
+		service.pollActiveJobs();
+		service.pollActiveJobs();
+		service.pollActiveJobs();
+
+		// 연결 레벨이 아니므로 배치 조기 종료 대상이 아니다 — 기존 동작(로그만 남기고 계속 폴링)대로.
 		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.QUEUED);
 		assertThat(job.getFailureCode()).isNull();
 	}

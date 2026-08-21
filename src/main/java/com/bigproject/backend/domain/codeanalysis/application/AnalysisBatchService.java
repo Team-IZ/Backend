@@ -29,8 +29,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.ArrayList;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 코드 분석 배치.
@@ -147,6 +149,19 @@ public class AnalysisBatchService {
 	private final ConcurrentMap<UUID, UnknownJobObservation> unknownJobObservations = new ConcurrentHashMap<>();
 
 	/**
+	 * 이 횟수만큼 폴링 사이클이 연속으로 "활성 job 전부가 연결 자체에 실패"하면, {@link #stuckJobTimeout}을
+	 * 기다리지 않고 그 사이클의 활성 job 전체를 조기 종료한다. {@link #closeAllIfConnectionOutageConfirmed}
+	 * 참고.
+	 */
+	private final int connectionFailureMaxConsecutive;
+
+	/**
+	 * {@link #connectionFailureMaxConsecutive}의 진행 카운터. {@code unknownJobObservations}와 같은 이유로
+	 * 프로세스 메모리에만 둔다 — 배치 단위 판단이라 job별 맵이 아니라 값 하나면 된다.
+	 */
+	private final AtomicInteger consecutiveConnectionFailureCycles = new AtomicInteger(0);
+
+	/**
 	 * 생성자를 직접 쓴다({@code @RequiredArgsConstructor}가 아니다). 설정값을 필드 {@code @Value}로
 	 * 주입하면 단위 테스트에서 항상 기본값(null·0)이라 모델 조회와 재시도 상한이 조용히 빗나간다 —
 	 * 생성자 인자로 받으면 테스트가 값을 명시하게 된다.
@@ -166,7 +181,8 @@ public class AnalysisBatchService {
 			@Value("${ai.analysis.max-attempts}") int maxAttempts,
 			@Value("${ai.analysis.unknown-job-grace:PT10M}") Duration unknownJobGrace,
 			@Value("${ai.analysis.unknown-job-max-consecutive:3}") int unknownJobMaxConsecutive,
-			@Value("${ai.analysis.stuck-job-timeout:PT30M}") Duration stuckJobTimeout) {
+			@Value("${ai.analysis.stuck-job-timeout:PT30M}") Duration stuckJobTimeout,
+			@Value("${ai.analysis.connection-failure-max-consecutive:3}") int connectionFailureMaxConsecutive) {
 		this.dispatchRepository = dispatchRepository;
 		this.analysisJobRepository = analysisJobRepository;
 		this.analysisModelRepository = analysisModelRepository;
@@ -189,9 +205,14 @@ public class AnalysisBatchService {
 		if (stuckJobTimeout.isNegative() || stuckJobTimeout.isZero()) {
 			throw new IllegalArgumentException("stuck-job-timeout은 0보다 커야 한다: " + stuckJobTimeout);
 		}
+		if (connectionFailureMaxConsecutive < 1) {
+			throw new IllegalArgumentException(
+					"connection-failure-max-consecutive는 1 이상이어야 한다: " + connectionFailureMaxConsecutive);
+		}
 		this.stuckJobTimeout = stuckJobTimeout;
 		this.unknownJobGrace = unknownJobGrace;
 		this.unknownJobMaxConsecutive = unknownJobMaxConsecutive;
+		this.connectionFailureMaxConsecutive = connectionFailureMaxConsecutive;
 	}
 
 	/**
@@ -386,6 +407,8 @@ public class AnalysisBatchService {
 		active.forEach(candidate -> log.info("🔍 폴링 대상 조회: jobId={}, status={}, external_job_id={}",
 				candidate.getJobId(), candidate.getStatus(), candidate.getExternalJobId()));
 		int updated = 0;
+		int attempted = 0;
+		List<AnalysisJob> connectionFailedJobs = new ArrayList<>();
 		for (AnalysisJob job : active) {
 			if (job.getExternalJobId() == null) {
 				try {
@@ -406,14 +429,74 @@ public class AnalysisBatchService {
 					updated++;
 					continue;
 				}
+				attempted++;
 				if (applyProgress(job)) {
 					updated++;
 				}
+			} catch (AnalysisServerException exception) {
+				// D3: 연결 레벨 실패는 이번 사이클 판정용으로 따로 모은다.
+				//   WHY: 이 job 하나만 봐서는 "AI가 느린가/죽었는가"를 못 가른다. 활성 job 전체가
+				//        같은 사이클에 전부 연결 실패해야 "정말 죽었다"는 신뢰할 수 있는 신호가 된다
+				//        (closeAllIfConnectionOutageConfirmed 참고).
+				//   COST: 이 job은 이번 사이클엔 그대로 둔다(기존과 동일) — 조기 종료는 사이클이 끝난
+				//        뒤 한꺼번에 판단한다.
+				//   EXIT: 판단 기준을 "job 단위"로 낮추고 싶으면 이 목록을 안 쓰고 바로 닫으면 된다.
+				if (exception.isConnectionLevel()) {
+					connectionFailedJobs.add(job);
+				}
+				log.error("분석 상태 갱신 실패. 이 job만 건너뛰고 계속한다: jobId={}, connectionLevel={}",
+						job.getJobId(), exception.isConnectionLevel(), exception);
 			} catch (RuntimeException exception) {
 				log.error("분석 상태 갱신 실패. 이 job만 건너뛰고 계속한다: jobId={}", job.getJobId(), exception);
 			}
 		}
+		updated += closeAllIfConnectionOutageConfirmed(attempted, connectionFailedJobs);
 		return updated;
+	}
+
+	/**
+	 * 이번 사이클에 시도한 job 전부가 연결 자체에 실패했으면 "AI 서버가 완전히 죽었다"로 본다.
+	 * {@link #connectionFailureMaxConsecutive}회 연속 그런 사이클이 이어지면, {@link #stuckJobTimeout}
+	 * (기본 30분)을 기다리지 않고 그 job들을 조기 종료한다.
+	 *
+	 * <h2>왜 "job 하나"가 아니라 "사이클 전체"를 본다</h2>
+	 *
+	 * <p>최소 하나라도 응답을 받았다면(성공이든 다른 실패든) AI 서버 자체는 떠 있는 것이라, 나머지
+	 * job이 연결 실패로 보인 것은 네트워크 일시 요동일 수 있다 — 그런 부분 상황까지 조기 종료하면
+	 * 진짜 진행 중인 분석까지 같이 잘린다. 기존 {@link #closeStuckJob}이 그런 부분 상황(개별 job이
+	 * 느림)을 30분 안전망으로 이미 커버하므로, 이 경로는 <b>완전 장애</b>일 때만 발동해야 한다.
+	 *
+	 * @return 조기 종료한 job 수
+	 */
+	private int closeAllIfConnectionOutageConfirmed(int attempted, List<AnalysisJob> connectionFailedJobs) {
+		if (attempted == 0 || connectionFailedJobs.size() < attempted) {
+			// 이번 사이클에 시도가 없었거나, 최소 하나는 응답을 받았다 — 완전 장애가 아니다.
+			consecutiveConnectionFailureCycles.set(0);
+			return 0;
+		}
+		int cycles = consecutiveConnectionFailureCycles.incrementAndGet();
+		if (cycles < connectionFailureMaxConsecutive) {
+			log.warn("AI 서버 연결 실패가 {}/{}회 연속됐다(활성 job {}건 전부 연결 실패). 아직 기다린다",
+					cycles, connectionFailureMaxConsecutive, connectionFailedJobs.size());
+			return 0;
+		}
+		consecutiveConnectionFailureCycles.set(0);
+		log.error("AI 서버 연결 실패가 {}회 연속돼 활성 job {}건을 조기 종료한다",
+				connectionFailureMaxConsecutive, connectionFailedJobs.size());
+		int closed = 0;
+		for (AnalysisJob job : connectionFailedJobs) {
+			try {
+				markAttemptsFailedIfTerminal(job, AnalysisFailureCode.TEMPORARY_ERROR);
+				job.markFailed(AnalysisFailureCode.TEMPORARY_ERROR,
+						"AI 서버 연결 실패가 " + connectionFailureMaxConsecutive + "회 연속돼 배치 단위로 조기 종료했다.",
+						job.getStartedAt(), Instant.now());
+				saveJob(job);
+				closed++;
+			} catch (RuntimeException exception) {
+				log.error("연결 장애로 인한 일괄 종료 실패: jobId={}", job.getJobId(), exception);
+			}
+		}
+		return closed;
 	}
 
 	/**

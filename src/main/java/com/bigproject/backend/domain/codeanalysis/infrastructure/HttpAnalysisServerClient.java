@@ -123,10 +123,11 @@ public class HttpAnalysisServerClient implements AnalysisServerClient {
 						return Optional.empty();
 					}
 					throw new AnalysisServerException(toFailureCode(retryException),
-							retryException.getMessage(), retryException);
+							retryException.getMessage(), retryException, isConnectionRefused(retryException));
 				}
 			}
-			throw new AnalysisServerException(toFailureCode(exception), exception.getMessage(), exception);
+			throw new AnalysisServerException(toFailureCode(exception), exception.getMessage(), exception,
+					isConnectionRefused(exception));
 		}
 	}
 
@@ -146,6 +147,15 @@ public class HttpAnalysisServerClient implements AnalysisServerClient {
 
 	private static boolean isJobNotFound(AiCallException exception) {
 		return isNotFound(exception) && "JOB_NOT_FOUND".equals(exception.failureCode());
+	}
+
+	/**
+	 * {@code AiClient}가 연결 자체가 안 됐다고 판단한 경우인가. {@code AnalysisBatchService}가
+	 * 배치 단위 조기 종료 판단에 쓰는 유일한 입력이다({@link AnalysisServerException#isConnectionLevel}
+	 * javadoc 참고).
+	 */
+	private static boolean isConnectionRefused(AiCallException exception) {
+		return "CONNECTION_REFUSED".equals(exception.failureCode());
 	}
 
 	/**

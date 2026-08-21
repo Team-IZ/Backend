@@ -83,6 +83,11 @@ public class ReportController {
 					| `PENDING_PUBLISH` | **이해도 확인까지 마쳤고** 아직 발행 전 | `publishAfter` |
 					| `PUBLISHED` | 공개됨 | `publishedAt` · `curriculum` · `concepts[]` · `retryState` |
 
+					`IN_PROGRESS`·`ANALYSIS_FAILED`는 분석 job 기준 상태와 대응한다 — `GET /assessment-rounds`의
+					`analysisJobStatus`가 `QUEUED`·`RUNNING`인 동안은 이 API도 `IN_PROGRESS`를, `FAILED`가
+					되면(리포트 행이 아직 없는 한) `ANALYSIS_FAILED`를 반환한다. 구체적 사유·초 단위 폴링은
+					TR-02(`GET /submissions/{submissionId}/analysis`)에서 확인한다.
+
 					## 🔴 `IN_PROGRESS` 추가 배경 (2026-08-20 발견·수정)
 
 					고치기 전에는 `NOT_STARTED`·`NOT_ATTEMPTED`·`VOID_ATTEMPT`·`STOPPED` 넷 중 어디에도
