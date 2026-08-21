@@ -289,7 +289,9 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 				concepts,
 				retryState(round, hasRetryTarget),
 				iso(effectiveRetryDueAt(round, hasRetryTarget)),
-				iso(round.reviewCompletedAt())
+				// DONE(=isRetryDone)이 아닌데 이 값을 내보내면 FAILED·EXPIRED로 끝난 REVIEW의
+				// terminal_at이 새서 "완료 시각이 있는데 PENDING"이라는 모순된 조합이 나간다.
+				isRetryDone(round) ? iso(round.reviewCompletedAt()) : null
 		);
 	}
 
@@ -424,10 +426,25 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	 * 대상이었다는 사실은 개념 카드의 {@code isRetryTarget}에 그대로 남는다.
 	 */
 	private String retryState(RoundRow round, boolean hasRetryTarget) {
-		if (round.reviewCompletedAt() != null) {
+		if (isRetryDone(round)) {
 			return "DONE";
 		}
 		return isRetryPending(round, hasRetryTarget) ? "PENDING" : "NONE";
+	}
+
+	/**
+	 * 다시 보기를 <b>정상 완료</b>했는가. {@code AssessmentRoundQueryService.retryState()}의
+	 * {@code completedReviewCount() > 0}(REVIEW 응시가 {@code status='COMPLETED'}인 것만 셈)과
+	 * 같은 기준이어야 한다.
+	 *
+	 * <p>🔴 종전에는 {@code round.reviewCompletedAt() != null}(= {@code measurement_attempt.terminal_at}
+	 * 이 찍혔는가)로 판정했다. 그런데 REVIEW 응시가 {@code FAILED}·{@code EXPIRED}로 끝나도
+	 * {@code terminal_at}은 찍힌다(REVIEW attempt가 종료 상태로 들어가면 항상 채워지는 컬럼이라서다) —
+	 * 그래서 다시 보기를 실패·만료로 놓친 학생도 {@code DONE}으로 잘못 나가 답·해설 잠금이 풀리고,
+	 * 홈 화면({@code assessment-rounds})은 여전히 {@code PENDING}이라 두 API가 어긋났다.
+	 */
+	private static boolean isRetryDone(RoundRow round) {
+		return "COMPLETED".equals(round.reviewStatus());
 	}
 
 	/**
@@ -454,7 +471,7 @@ public class TraineeReportServiceImpl implements TraineeReportService {
 	 * {@link #reviewWindowDays} 참고 — 열지 않은 학생에게는 {@code review_due_at}이 없다.
 	 */
 	private boolean isRetryPending(RoundRow round, boolean hasRetryTarget) {
-		if (!hasRetryTarget || round.reviewCompletedAt() != null) {
+		if (!hasRetryTarget || isRetryDone(round)) {
 			return false;
 		}
 		// 발행 전이면 애초에 볼 수 있는 본문이 없다. 창을 계산할 기산점도 없으므로 잠긴 것으로 둔다.

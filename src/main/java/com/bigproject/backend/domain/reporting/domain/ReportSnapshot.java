@@ -170,4 +170,30 @@ public class ReportSnapshot {
 		}
 		this.retryTargetCount = retryTargetCount;
 	}
+
+	/**
+	 * 실제로 저장된 근거 카드 수를 반영해 missing_count·completion_status를 다시 맞춘다.
+	 *
+	 * <p>{@code create()} 시점의 missing_count는 AI 생성 성공 여부만 본다 — {@code writeEvidence}가
+	 * concept context를 못 찾아 카드를 통째로 건너뛴 경우는 그 시점엔 아직 모른다. 그래서
+	 * {@code sample_count - written}(카드가 부족한 만큼)과 기존 missing_count 중 큰 쪽을 최종값으로
+	 * 삼는다 — AI 실패(카드는 있음)와 카드 자체가 없음을 굳이 구분하지 않고 "missing"으로 합쳐서
+	 * 센다. 이 값이 양수면 completion_status는 FULL일 수 없다.
+	 *
+	 * <p>{@code applyRetryTargetCount}와 같은 이유로 {@code writeEvidence} 이후에만 부른다.
+	 */
+	public void applyEvidenceWritten(int written) {
+		int shortfall = sampleCount - written;
+		if (written < 0 || shortfall < 0) {
+			throw new IllegalArgumentException(
+					"evidence 작성 수가 sample_count를 넘을 수 없다: sample=%d, written=%d"
+							.formatted(sampleCount, written));
+		}
+		if (shortfall > this.missingCount) {
+			this.missingCount = shortfall;
+		}
+		if (this.missingCount > 0) {
+			this.completionStatus = ReportCompletionStatus.PARTIAL;
+		}
+	}
 }

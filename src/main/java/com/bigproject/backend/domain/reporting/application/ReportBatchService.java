@@ -9,6 +9,7 @@ import com.bigproject.backend.domain.reporting.domain.ReportGenerationRun;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationTriggerType;
 import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
 import com.bigproject.backend.domain.reporting.domain.ReportException;
+import com.bigproject.backend.domain.reporting.domain.ManagerTraineeAccessRepository;
 import com.bigproject.backend.domain.reporting.domain.ReportLifecycleStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportType;
 import com.bigproject.backend.domain.reporting.infrastructure.JdbcReportPayloadRepository;
@@ -91,6 +92,7 @@ public class ReportBatchService {
 	private final ReportGenerationAiClient aiClient;
 	private final AnalysisModelRepository modelRepository;
 	private final ReportRunFinalizer finalizer;
+	private final ManagerTraineeAccessRepository managerTraineeAccessRepository;
 	private final ObjectMapper objectMapper;
 
 	/**
@@ -145,6 +147,7 @@ public class ReportBatchService {
 			ReportGenerationAiClient aiClient,
 			AnalysisModelRepository modelRepository,
 			ReportRunFinalizer finalizer,
+			ManagerTraineeAccessRepository managerTraineeAccessRepository,
 			ObjectMapper objectMapper,
 			@Value("${ai.report.model-code}") String modelCode,
 			@Value("${ai.report.max-attempts}") int maxAttempts,
@@ -159,6 +162,7 @@ public class ReportBatchService {
 		this.aiClient = aiClient;
 		this.modelRepository = modelRepository;
 		this.finalizer = finalizer;
+		this.managerTraineeAccessRepository = managerTraineeAccessRepository;
 		this.objectMapper = objectMapper;
 		this.modelCode = modelCode;
 		this.maxAttempts = maxAttempts;
@@ -409,46 +413,69 @@ public class ReportBatchService {
 	 * <p>아직 화면이 없어 컨트롤러를 두지 않았다. 운영자 화면이 생기면 이 메서드를 부르는 얇은
 	 * 엔드포인트 하나면 된다 — 매핑표에 자리가 잡힌 뒤에 붙이는 것이 맞다.
 	 *
-	 * @param sessionId   {@code assessment_session.session_id}
-	 * @param requestedBy 누가 눌렀는지. 로그에만 쓴다 — 감사 원장은 이 경로의 책임이 아니다
-	 * @return 요청을 보냈으면 그 {@code generation_run_id}. 대상이 아니거나 문제가 없으면 빈 값
+	 * @param sessionId    {@code assessment_session.session_id}
+	 * @param callerUserId 호출자(운영자)의 {@code user_id}. 대상 세션의 교육생을 지금 담당하고
+	 *                     있는지 확인하는 데 쓴다.
+	 * @param callerOrgId  호출자(운영자)의 소속 기관. 담당 판정의 한 축이다.
+	 * @param requestedBy  누가 눌렀는지. 로그에만 쓴다 — 감사 원장은 이 경로의 책임이 아니다
+	 * @return 만든 실행의 {@code generation_run_id}
+	 * @throws ReportException 재생성 대상이 아니거나({@code REPORT_REGENERATION_TARGET_NOT_ELIGIBLE}),
+	 *         모델 설정이 어긋났거나({@code REPORT_MODEL_NOT_CONFIGURED}), 채점된 문제가 없거나
+	 *         ({@code REPORT_SESSION_HAS_NO_PROBLEM}), 이미 진행 중인 수동 실행이 있을 때
+	 *         ({@code REPORT_GENERATION_ALREADY_RUNNING}) — {@link #forceGenerateSession}과
+	 *         같은 예외 방식으로 맞췄다(2026-08-21, 얇은 컨트롤러를 얹으면서).
 	 */
-	public Optional<UUID> regenerateSession(UUID sessionId, String requestedBy) {
-		ReportTarget target = dispatchRepository.findTargetBySession(sessionId).orElse(null);
-		if (target == null) {
-			// 세션이 없는 것과 조건에 안 맞는 것을 구분하지 않는다 — 어느 쪽이든 만들면 안 된다.
-			log.warn("재생성 대상이 아니다: sessionId={}, requestedBy={}", sessionId, requestedBy);
-			return Optional.empty();
-		}
+	public UUID regenerateSession(UUID sessionId, UUID callerUserId, UUID callerOrgId, String requestedBy) {
+		/*
+		 * D2: 테넌트 스코프가 아니라 담당 여부로 검증한다(2026-08-21, org 단위 1차 수정을 자동
+		 * 보안 리뷰가 재차 지적한 뒤 교체).
+		 *   WHY: 같은 기관이라는 것만으로는 부족하다 — @PreAuthorize("hasRole('MANAGER')")는
+		 *        role만 보고, 첫 수정(target.getOrgId()==callerOrgId)은 "같은 기관 안의 담당
+		 *        아닌 교육생"까지는 막지 못했다. GET /reports/managed가 이미 쓰는
+		 *        ManagerTraineeAccessRepository.isManagedBy가 이 코드베이스에서 유일하게 정의된
+		 *        "매니저가 이 교육생을 다룰 자격" 기준이라 그대로 재사용한다 — 새 기준을
+		 *        발명하지 않는다.
+		 *   COST: 세션 없음·다른 기관·같은 기관이지만 비담당, 셋 다 같은 응답으로 합쳐진다.
+		 *        운영자는 "왜 안 되는지" §6 모니터링 쿼리로 직접 확인해야 한다.
+		 *   EXIT: 담당 여부와 무관하게 기관 전체를 다뤄야 하는 role(super-admin류)이 생기면
+		 *        그 role에서만 이 필터를 건너뛰도록 분기를 추가하면 된다.
+		 */
+		ReportTarget target = dispatchRepository.findTargetBySession(sessionId)
+				.filter(candidate -> managerTraineeAccessRepository.isManagedBy(
+						candidate.getUserId(), callerUserId, callerOrgId))
+				.orElseThrow(() -> {
+					log.warn("재생성 대상이 아니다: sessionId={}, requestedBy={}", sessionId, requestedBy);
+					return new ReportException(ReportErrorCode.REPORT_REGENERATION_TARGET_NOT_ELIGIBLE);
+				});
 
 		AnalysisModel model = modelRepository.findActiveByModelCode(modelCode).orElse(null);
 		if (model == null) {
 			log.error("ai.report.model-code 가 가리키는 ACTIVE 모델이 ai_model 에 없다. "
 					+ "재생성을 건너뛴다: modelCode={}, sessionId={}", modelCode, sessionId);
-			return Optional.empty();
+			throw new ReportException(ReportErrorCode.REPORT_MODEL_NOT_CONFIGURED);
 		}
 
-		Optional<UUID> runId;
+		UUID runId;
 		try {
-			runId = dispatchOne(target, model, Instant.now(), ReportGenerationTriggerType.USER_REQUESTED);
+			runId = dispatchOne(target, model, Instant.now(), ReportGenerationTriggerType.USER_REQUESTED)
+					.orElseThrow(() -> new ReportException(ReportErrorCode.REPORT_SESSION_HAS_NO_PROBLEM));
 		} catch (DataIntegrityViolationException exception) {
 			/*
 			 * uq_report_generation_run_active 는 (report_id, trigger_type) 부분 유니크다
 			 * (status IN QUEUED·RUNNING·RETRYING).
 			 *
 			 * 즉 진행 중인 수동 재생성이 이미 있다는 뜻이다 — 운영자가 두 번 눌렀거나, 앞의 것이
-			 * 아직 폴링 중이다. 오류가 아니라 "이미 돌고 있다"이므로 예외를 밖으로 던지지 않는다.
+			 * 아직 폴링 중이다. 오류가 아니라 "이미 돌고 있다"이므로 그 뜻 그대로 코드로 옮긴다.
 			 *
 			 * SCHEDULED 실행과는 부딪히지 않는다. trigger_type 이 인덱스 키에 있어서, 배치가 돌고
 			 * 있어도 수동 재생성은 걸린다 — 그게 이 도구가 필요한 상황이기도 하다.
 			 */
 			log.warn("이미 진행 중인 재생성이 있다: sessionId={}, requestedBy={}", sessionId, requestedBy);
-			return Optional.empty();
+			throw new ReportException(ReportErrorCode.REPORT_GENERATION_ALREADY_RUNNING);
 		}
 
-		runId.ifPresent(id -> log.info(
-				"운영자 재생성 요청: sessionId={}, userId={}, roundId={}, runId={}, requestedBy={}",
-				sessionId, target.getUserId(), target.getAssessmentRoundId(), id, requestedBy));
+		log.info("운영자 재생성 요청: sessionId={}, userId={}, roundId={}, runId={}, requestedBy={}",
+				sessionId, target.getUserId(), target.getAssessmentRoundId(), runId, requestedBy);
 		return runId;
 	}
 

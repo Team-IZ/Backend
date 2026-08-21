@@ -160,6 +160,39 @@ class RetryStateConsistencyTest {
 		assertThat(response.rounds().get(0).hasPendingRetry()).isTrue();
 	}
 
+	/**
+	 * 🔴 종전 버그의 정확한 재현이다. {@code AssessmentRoundQueryService.retryState()}는
+	 * {@code completedReviewCount() > 0}(REVIEW 응시가 {@code status='COMPLETED'}인 것만 셈)만
+	 * 보는데, 여기는 {@code reviewCompletedAt() != null}( = {@code terminal_at}이 찍혔는가)만
+	 * 봤다. {@code terminal_at}은 REVIEW 응시가 {@code FAILED}·{@code EXPIRED}로 끝나도 찍히므로
+	 * 두 API가 갈렸다 — 리포트는 답·해설이 이미 열린 {@code DONE}인데 홈은 아직 {@code PENDING}
+	 * 배너를 띄우는 상태(2026-08-21, 손진원 진단).
+	 */
+	@Test
+	@DisplayName("REVIEW 응시가 FAILED로 끝나면 terminal_at이 찍혀도 DONE이 아니라 PENDING이다")
+	void doesNotTreatAFailedReviewAsDone() {
+		given(reviewFailed(), PUBLISHED_RECENTLY, concept("트랜잭션 경계 설정", 1));
+
+		TraineeReportsResponse response = service.findMyReports(USER);
+
+		assertThat(report(response).retryState()).isEqualTo("PENDING");
+		assertThat(response.rounds().get(0).hasPendingRetry()).isTrue();
+		// DONE이 아닌데 완료 시각이 나가면 "완료 시각은 있는데 PENDING"이라는 모순된 조합이 된다.
+		assertThat(report(response).retryCompletedAt()).isNull();
+	}
+
+	@Test
+	@DisplayName("REVIEW 응시가 EXPIRED로 끝나면 terminal_at이 찍혀도 DONE이 아니라 PENDING이다")
+	void doesNotTreatAnExpiredReviewAsDone() {
+		given(reviewExpired(), PUBLISHED_RECENTLY, concept("트랜잭션 경계 설정", 1));
+
+		TraineeReportsResponse response = service.findMyReports(USER);
+
+		assertThat(report(response).retryState()).isEqualTo("PENDING");
+		assertThat(response.rounds().get(0).hasPendingRetry()).isTrue();
+		assertThat(report(response).retryCompletedAt()).isNull();
+	}
+
 	// ------------------------------------------------------------------ fixture
 
 	private static TraineeReportsResponse.RoundReportResponse report(TraineeReportsResponse response) {
@@ -186,6 +219,14 @@ class RetryStateConsistencyTest {
 
 	private static Review noReview() {
 		return new Review(null, null);
+	}
+
+	private static Review reviewFailed() {
+		return new Review("FAILED", REVIEW_DONE_AT);
+	}
+
+	private static Review reviewExpired() {
+		return new Review("EXPIRED", REVIEW_DONE_AT);
 	}
 
 	private void given(Review review, Instant publishedAt, ConceptRow... concepts) {

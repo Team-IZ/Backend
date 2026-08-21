@@ -2,10 +2,13 @@ package com.bigproject.backend.domain.reporting.application;
 
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository;
 import com.bigproject.backend.domain.codeanalysis.infrastructure.AnalysisModelRepository.AnalysisModel;
+import com.bigproject.backend.domain.reporting.domain.ManagerTraineeAccessRepository;
 import com.bigproject.backend.domain.reporting.domain.Report;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationItem;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationItemStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRun;
+import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
+import com.bigproject.backend.domain.reporting.domain.ReportException;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationRunStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationTriggerType;
 import com.bigproject.backend.domain.reporting.infrastructure.JdbcReportPayloadRepository;
@@ -24,6 +27,7 @@ import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
@@ -33,10 +37,12 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -78,6 +84,7 @@ class ReportBatchServiceTest {
 	private ReportGenerationAiClient aiClient;
 	private AnalysisModelRepository modelRepository;
 	private ReportRunFinalizer finalizer;
+	private ManagerTraineeAccessRepository managerTraineeAccessRepository;
 	private ReportBatchService service;
 
 	@BeforeEach
@@ -90,9 +97,14 @@ class ReportBatchServiceTest {
 		aiClient = mock(ReportGenerationAiClient.class);
 		modelRepository = mock(AnalysisModelRepository.class);
 		finalizer = mock(ReportRunFinalizer.class);
+		managerTraineeAccessRepository = mock(ManagerTraineeAccessRepository.class);
+		// 담당 판정은 재생성 테스트에서만 의미가 있다 - 기본은 항상 담당으로 둬서 다른 테스트가
+		// 이 축과 무관하게 그대로 통과하게 한다.
+		when(managerTraineeAccessRepository.isManagedBy(any(), any(), any())).thenReturn(true);
 
 		service = new ReportBatchService(dispatchRepository, reportRepository, runRepository,
 				itemRepository, payloadRepository, aiClient, modelRepository, finalizer,
+				managerTraineeAccessRepository,
 				new ObjectMapper(), MODEL_CODE, MAX_ATTEMPTS, ITEM_TIMEOUT, BATCH_SIZE, CUTOFF_AT);
 
 		/*
@@ -417,9 +429,10 @@ class ReportBatchServiceTest {
 		when(aiClient.requestGeneration(any(), any()))
 				.thenAnswer(call -> new ReportGenerationJob.Accepted(UUID.randomUUID().toString(), "QUEUED"));
 
-		Optional<UUID> runId = service.regenerateSession(target.getSessionId(), "operator@example.com");
+		UUID runId = service.regenerateSession(
+				target.getSessionId(), UUID.randomUUID(), target.getOrgId(), "operator@example.com");
 
-		assertThat(runId).isPresent();
+		assertThat(runId).isNotNull();
 		verify(dispatchRepository, never()).findDueSessions(anyInt(), any(), anyInt());
 		verify(aiClient, times(3)).requestGeneration(any(), any());
 
@@ -439,10 +452,77 @@ class ReportBatchServiceTest {
 	void doesNotRegenerateWhatIsNotAValidTarget() {
 		when(dispatchRepository.findTargetBySession(any())).thenReturn(Optional.empty());
 
-		assertThat(service.regenerateSession(UUID.randomUUID(), "operator@example.com")).isEmpty();
+		assertThatThrownBy(() -> service.regenerateSession(
+				UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "operator@example.com"))
+				.isInstanceOf(ReportException.class)
+				.extracting(exception -> ((ReportException) exception).errorCode())
+				.isEqualTo(ReportErrorCode.REPORT_REGENERATION_TARGET_NOT_ELIGIBLE);
 
 		verify(runRepository, never()).save(any());
 		verify(aiClient, never()).requestGeneration(any(), any());
+	}
+
+	/**
+	 * 세션이 존재하고 조건도 맞아도, 호출한 운영자가 <b>지금 그 교육생을 담당하지 않으면</b>
+	 * 존재하지 않는 것과 똑같은 응답을 낸다 — 존재 자체가 다른 운영자에게 새어 나가면 안 된다.
+	 * org 단위 대조만으로는 "같은 기관·비담당"을 못 걸러서 최초 수정이 불충분했다(2026-08-21,
+	 * 자동 보안 리뷰가 재차 지적).
+	 */
+	@Test
+	void treatsAnUnmanagedTraineesSessionAsNotEligibleRatherThanLeakingItsExistence() {
+		ReportTarget target = target();
+		when(dispatchRepository.findTargetBySession(target.getSessionId())).thenReturn(Optional.of(target));
+
+		UUID callerId = UUID.randomUUID();
+		when(managerTraineeAccessRepository.isManagedBy(target.getUserId(), callerId, target.getOrgId()))
+				.thenReturn(false);
+
+		assertThatThrownBy(() -> service.regenerateSession(
+				target.getSessionId(), callerId, target.getOrgId(), "operator@example.com"))
+				.isInstanceOf(ReportException.class)
+				.extracting(exception -> ((ReportException) exception).errorCode())
+				.isEqualTo(ReportErrorCode.REPORT_REGENERATION_TARGET_NOT_ELIGIBLE);
+
+		verify(runRepository, never()).save(any());
+		verify(aiClient, never()).requestGeneration(any(), any());
+	}
+
+	/** 모델 설정 자체가 어긋난 건 요청 문제가 아니라 운영 설정 문제라, 강제 생성과 같은 코드로 낸다. */
+	@Test
+	void reportsMisconfiguredModelDistinctlyFromAnIneligibleTarget() {
+		ReportTarget target = target();
+		when(dispatchRepository.findTargetBySession(target.getSessionId())).thenReturn(Optional.of(target));
+		when(modelRepository.findActiveByModelCode(any())).thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> service.regenerateSession(target.getSessionId(), UUID.randomUUID(), target.getOrgId(), "operator@example.com"))
+				.isInstanceOf(ReportException.class)
+				.extracting(exception -> ((ReportException) exception).errorCode())
+				.isEqualTo(ReportErrorCode.REPORT_MODEL_NOT_CONFIGURED);
+
+		verify(runRepository, never()).save(any());
+	}
+
+	/**
+	 * 진행 중인 수동 실행이 이미 있으면(uq_report_generation_run_active) 오류가 아니라 "이미 돌고
+	 * 있다"는 뜻이지만, 대상 부적격과는 다른 코드로 구분해서 낸다 — 운영자가 "왜 안 되는지" 알아야
+	 * 두 번 누르지 않는다.
+	 */
+	@Test
+	void reportsAnAlreadyRunningRegenerationDistinctlyFromAnIneligibleTarget() {
+		catalogHasTheConfiguredModel();
+		ReportTarget target = target();
+		when(dispatchRepository.findTargetBySession(target.getSessionId())).thenReturn(Optional.of(target));
+		when(dispatchRepository.findSessionProblems(target.getSessionId())).thenReturn(List.of(problem(1)));
+		when(reportRepository.findRoundReports(any(), any(), any())).thenReturn(List.of());
+		// doThrow(...).when(...) 필수 — when(runRepository.save(any())).thenThrow(...)는 재스텁 중에
+		// setUp()의 기존 thenAnswer 스텁이 즉시 실행돼(인자 null) withId()에서 별개 예외로 죽는다.
+		doThrow(new DataIntegrityViolationException("uq_report_generation_run_active"))
+				.when(runRepository).save(any());
+
+		assertThatThrownBy(() -> service.regenerateSession(target.getSessionId(), UUID.randomUUID(), target.getOrgId(), "operator@example.com"))
+				.isInstanceOf(ReportException.class)
+				.extracting(exception -> ((ReportException) exception).errorCode())
+				.isEqualTo(ReportErrorCode.REPORT_GENERATION_ALREADY_RUNNING);
 	}
 
 	// ---------------------------------------------------------------------- poll
