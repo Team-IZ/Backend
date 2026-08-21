@@ -9,6 +9,7 @@ import com.bigproject.backend.domain.reporting.domain.ReportGenerationRun;
 import com.bigproject.backend.domain.reporting.domain.ReportGenerationTriggerType;
 import com.bigproject.backend.domain.reporting.domain.ReportErrorCode;
 import com.bigproject.backend.domain.reporting.domain.ReportException;
+import com.bigproject.backend.domain.reporting.domain.ManagerTraineeAccessRepository;
 import com.bigproject.backend.domain.reporting.domain.ReportLifecycleStatus;
 import com.bigproject.backend.domain.reporting.domain.ReportType;
 import com.bigproject.backend.domain.reporting.infrastructure.JdbcReportPayloadRepository;
@@ -91,6 +92,7 @@ public class ReportBatchService {
 	private final ReportGenerationAiClient aiClient;
 	private final AnalysisModelRepository modelRepository;
 	private final ReportRunFinalizer finalizer;
+	private final ManagerTraineeAccessRepository managerTraineeAccessRepository;
 	private final ObjectMapper objectMapper;
 
 	/**
@@ -145,6 +147,7 @@ public class ReportBatchService {
 			ReportGenerationAiClient aiClient,
 			AnalysisModelRepository modelRepository,
 			ReportRunFinalizer finalizer,
+			ManagerTraineeAccessRepository managerTraineeAccessRepository,
 			ObjectMapper objectMapper,
 			@Value("${ai.report.model-code}") String modelCode,
 			@Value("${ai.report.max-attempts}") int maxAttempts,
@@ -159,6 +162,7 @@ public class ReportBatchService {
 		this.aiClient = aiClient;
 		this.modelRepository = modelRepository;
 		this.finalizer = finalizer;
+		this.managerTraineeAccessRepository = managerTraineeAccessRepository;
 		this.objectMapper = objectMapper;
 		this.modelCode = modelCode;
 		this.maxAttempts = maxAttempts;
@@ -410,9 +414,9 @@ public class ReportBatchService {
 	 * 엔드포인트 하나면 된다 — 매핑표에 자리가 잡힌 뒤에 붙이는 것이 맞다.
 	 *
 	 * @param sessionId    {@code assessment_session.session_id}
-	 * @param callerOrgId  호출자(운영자)의 소속 기관. 대상 세션이 다른 기관 소속이면 대상이 아예
-	 *                     없는 것과 같은 응답을 낸다({@code REPORT_REGENERATION_TARGET_NOT_ELIGIBLE}) —
-	 *                     테넌트 경계를 넘는 재생성을 막는다.
+	 * @param callerUserId 호출자(운영자)의 {@code user_id}. 대상 세션의 교육생을 지금 담당하고
+	 *                     있는지 확인하는 데 쓴다.
+	 * @param callerOrgId  호출자(운영자)의 소속 기관. 담당 판정의 한 축이다.
 	 * @param requestedBy  누가 눌렀는지. 로그에만 쓴다 — 감사 원장은 이 경로의 책임이 아니다
 	 * @return 만든 실행의 {@code generation_run_id}
 	 * @throws ReportException 재생성 대상이 아니거나({@code REPORT_REGENERATION_TARGET_NOT_ELIGIBLE}),
@@ -421,22 +425,24 @@ public class ReportBatchService {
 	 *         ({@code REPORT_GENERATION_ALREADY_RUNNING}) — {@link #forceGenerateSession}과
 	 *         같은 예외 방식으로 맞췄다(2026-08-21, 얇은 컨트롤러를 얹으면서).
 	 */
-	public UUID regenerateSession(UUID sessionId, UUID callerOrgId, String requestedBy) {
+	public UUID regenerateSession(UUID sessionId, UUID callerUserId, UUID callerOrgId, String requestedBy) {
 		/*
-		 * D2: 테넌트 스코프를 sessionId 조회 직후, 다른 어떤 검증보다 먼저 확인한다.
-		 *   WHY: @PreAuthorize("hasRole('MANAGER')")는 role만 보고 소속 기관은 안 본다.
-		 *        target.getOrgId()를 callerOrgId와 값으로 대조하지 않으면 다른 기관 매니저가
-		 *        아무 sessionId나 넣어 남의 리포트를 재생성시킬 수 있다(자동 보안 리뷰가
-		 *        2026-08-21 발견, ManagerTraineeAccessRepository가 org_id를 "경유하는 경로가
-		 *        아니라 값으로" 확인해야 한다고 적어 둔 것과 같은 원칙).
-		 *   COST: target을 먼저 조회해야 하므로, 세션이 아예 없는 경우와 다른 기관 소속인 경우가
-		 *        여기서 합쳐진다 — 그런데 이미 "세션 없음"과 "조건 불충족"도 하나로 합쳐져 있던
-		 *        참이라(D1) 새로 생기는 비용이 아니다.
-		 *   EXIT: 다중 기관 관리자(super-admin류)가 필요해지면 이 조건 앞에 role 분기를 추가하면
-		 *        된다 — target을 다시 조회할 필요는 없다.
+		 * D2: 테넌트 스코프가 아니라 담당 여부로 검증한다(2026-08-21, org 단위 1차 수정을 자동
+		 * 보안 리뷰가 재차 지적한 뒤 교체).
+		 *   WHY: 같은 기관이라는 것만으로는 부족하다 — @PreAuthorize("hasRole('MANAGER')")는
+		 *        role만 보고, 첫 수정(target.getOrgId()==callerOrgId)은 "같은 기관 안의 담당
+		 *        아닌 교육생"까지는 막지 못했다. GET /reports/managed가 이미 쓰는
+		 *        ManagerTraineeAccessRepository.isManagedBy가 이 코드베이스에서 유일하게 정의된
+		 *        "매니저가 이 교육생을 다룰 자격" 기준이라 그대로 재사용한다 — 새 기준을
+		 *        발명하지 않는다.
+		 *   COST: 세션 없음·다른 기관·같은 기관이지만 비담당, 셋 다 같은 응답으로 합쳐진다.
+		 *        운영자는 "왜 안 되는지" §6 모니터링 쿼리로 직접 확인해야 한다.
+		 *   EXIT: 담당 여부와 무관하게 기관 전체를 다뤄야 하는 role(super-admin류)이 생기면
+		 *        그 role에서만 이 필터를 건너뛰도록 분기를 추가하면 된다.
 		 */
 		ReportTarget target = dispatchRepository.findTargetBySession(sessionId)
-				.filter(candidate -> candidate.getOrgId().equals(callerOrgId))
+				.filter(candidate -> managerTraineeAccessRepository.isManagedBy(
+						candidate.getUserId(), callerUserId, callerOrgId))
 				.orElseThrow(() -> {
 					log.warn("재생성 대상이 아니다: sessionId={}, requestedBy={}", sessionId, requestedBy);
 					return new ReportException(ReportErrorCode.REPORT_REGENERATION_TARGET_NOT_ELIGIBLE);
