@@ -67,6 +67,7 @@ public class JdbcMySubmissionQueryRepository implements MySubmissionQueryReposit
 			       job.failure_code               AS analysis_failure_code,
 			       job.completed_at               AS analyzed_at,
 
+			       ca.analysis_id                 AS analysis_result_id,
 			       ca.head_commit_sha             AS analysis_commit_sha,
 			       ca.head_commit_message         AS analysis_commit_message,
 			       ca.head_commit_committed_at    AS analysis_commit_committed_at,
@@ -101,7 +102,7 @@ public class JdbcMySubmissionQueryRepository implements MySubmissionQueryReposit
 			        LIMIT 1
 			  ) job ON TRUE
 			  LEFT JOIN LATERAL (
-			       SELECT c.head_commit_sha, c.head_commit_message, c.head_commit_committed_at
+			       SELECT c.analysis_id, c.head_commit_sha, c.head_commit_message, c.head_commit_committed_at
 			         FROM code_analysis c
 			        WHERE c.source_submission_id = s.submission_id
 			          AND c.status = 'ACTIVE'
@@ -154,6 +155,7 @@ public class JdbcMySubmissionQueryRepository implements MySubmissionQueryReposit
 
 			rs.getString("analysis_job_status"),
 			rs.getObject("analysis_external_job_id", UUID.class),
+			rs.getObject("analysis_result_id", UUID.class),
 			rs.getString("analysis_failure_code"),
 			instant(rs, "analyzed_at"),
 			rs.getString("analysis_commit_sha"),

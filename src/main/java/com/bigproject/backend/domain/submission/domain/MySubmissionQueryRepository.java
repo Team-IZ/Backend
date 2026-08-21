@@ -24,6 +24,10 @@ public interface MySubmissionQueryRepository {
 	 *
 	 * @param sessionStarted 이 교육생이 세션을 시작했는가. {@code READY}와 {@code LOCKED}를 가르는 유일한 축이다
 	 * @param analysisExternalJobId AI 서버가 발급한 작업 ID. 활성 job에서 비어 있으면 폴링 불가능한 실패 상태다
+	 * @param analysisResultId {@code code_analysis.analysis_id}. job이 SUCCEEDED/PARTIAL인데 이 값이 없으면
+	 *                         "성공 응답인데 결과가 적재되지 않은" 상태다 — {@code analysis_job.status} 문자열만
+	 *                         보면 이 경우를 READY로 잘못 읽는다({@code GET .../analysis}가 이미
+	 *                         {@code code_analysis} 존재 여부로 이걸 걸러내는 것과 같은 이유)
 	 * @param analysisFailureCode {@code analysis_job.failure_code}. 12종이며 사용자 문구로 옮겨 내보낸다
 	 * @param verifyClosesAt 개인 응시 창 종료({@code measurement_attempt.assessment_close_at})
 	 * @param artifactFileName ZIP 제출의 원본 파일 이름. GitHub 제출이면 null이다
@@ -58,6 +62,7 @@ public interface MySubmissionQueryRepository {
 
 			String analysisJobStatus,
 			UUID analysisExternalJobId,
+			UUID analysisResultId,
 			String analysisFailureCode,
 			Instant analyzedAt,
 			String analysisCommitSha,
