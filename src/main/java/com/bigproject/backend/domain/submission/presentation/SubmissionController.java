@@ -462,6 +462,7 @@ public class SubmissionController {
 	}
 
 	@Operation(
+			operationId = "getSubmissionAnalysis",
 			summary = "코드 분석 진행 상태·실패 사유 조회 | ✅ 사용 가능",
 			description = """
 					제출 후 화면이 초 단위로 도는 폴링 대상이다. 폴링 대상이 `code_analysis`가 아니라
@@ -473,6 +474,35 @@ public class SubmissionController {
 
 					제출은 팀 단위라 같은 팀이면 누가 조회해도 같은 결과가 나온다. 다만 **세션 준비 여부만은
 					조회자 본인 기준**이다 — 아래 `SESSION_PREPARATION_FAILED` 참고.
+
+					## 이 API와 `GET /assessment-rounds`를 어떻게 나눠 쓰는가
+
+					| | `GET /assessment-rounds` | 이 API |
+					| --- | --- | --- |
+					| 목적 | 회차 전체 요약 카드("지금 할 일") | 제출 1건의 분석 진행 상태 |
+					| 설계 의도 | 진입/새로고침 시 1회 조회 | **초 단위 폴링 전용** |
+					| 상태 표현 | 뭉뚱그린 5단계(`analysisPhase`) | 원시 job 상태 그대로(`phase`) |
+					| 실패 사유 | 있음/없음만(`analysisFailureCode`, `ANALYSIS_FAILED` 1종) | 구체적 사유 코드 최대 14종(아래 `failureCode`) |
+					| `submissionId` 필요 여부 | 불필요 | **필수**(제출 응답 또는 TR-02 `GET /projects/{projectId}/submissions/me`에서 얻는다) |
+
+					**권장 흐름**: 화면 진입 시 `assessment-rounds`로 그리고, `analysisPhase=ANALYZING`인
+					동안만 이 API를 60초 간격으로 폴링해 그 순간 "분석 완료"·"분석 실패"로 전환한다. 그보다
+					짧게 돌려도 새 정보를 못 받는다 — `analysis_job.status`는 백엔드-AI 폴링 스케줄러가
+					`ai.analysis.scheduler.poll-delay`(기본 `PT1M`) 주기로만 갱신한다.
+
+					같은 분석 job을 세 API가 서로 다른 이름·값 개수의 enum으로 표현한다. 대응표:
+
+					| 상황 | `assessment-rounds`<br>`analysisPhase` | `assessment-rounds`<br>`analysisJobStatus` | 이 API의 `phase` |
+					| --- | --- | --- | --- |
+					| 아직 제출 안 함 | `NOT_SUBMITTED` | (없음, `null`) | `NOT_STARTED` |
+					| 대기 중 | `ANALYZING` | `QUEUED` | `QUEUED` |
+					| 분석 중 | `ANALYZING` | `RUNNING` | `RUNNING` |
+					| 성공 | `COMPLETED` | `SUCCEEDED` | `SUCCEEDED` |
+					| 부분 성공 | ⚠️ `WAITING`(`COMPLETED`가 아니다 — 뷰의 분기가 `PARTIAL`을 안 잡아 `ELSE`로 떨어진다) | `PARTIAL` | `PARTIAL` |
+					| 실패 | `FAILED` | `FAILED` | `FAILED` |
+
+					**폴링을 멈춰야 하는 시점은 `phase`가 `QUEUED`·`RUNNING`을 벗어나는 순간**이다
+					(`SUCCEEDED`·`PARTIAL`은 결과 조회로, `FAILED`는 실패 안내로 넘어간다).
 
 					## 요청 (경로 파라미터)
 
@@ -542,6 +572,89 @@ public class SubmissionController {
 					| --- | --- | --- |
 					| `SUBMISSION_NOT_FOUND` | 404 | 그런 제출이 없다 |
 					| `SUBMISSION_ACCESS_DENIED` | 403 | 다른 팀의 제출이다 |""")
+	@ApiResponses({
+			@ApiResponse(
+					responseCode = "200",
+					content = @Content(
+							schema = @Schema(implementation = SubmissionAnalysisResponse.class),
+							examples = {
+									@ExampleObject(
+											name = "NOT_STARTED — 아직 배치가 안 집어감",
+											value = """
+													{
+													  "submissionId": "7d3c8a15-6e29-4b70-9c81-2f5a4d0b6e37",
+													  "phase": "NOT_STARTED",
+													  "analysisJobId": null,
+													  "executionNo": null,
+													  "startedAt": null,
+													  "completedAt": null,
+													  "failureCode": null,
+													  "failureReason": null,
+													  "codeAnalysisId": null
+													}"""),
+									@ExampleObject(
+											name = "RUNNING — 분석 중(폴링 유지)",
+											value = """
+													{
+													  "submissionId": "7d3c8a15-6e29-4b70-9c81-2f5a4d0b6e37",
+													  "phase": "RUNNING",
+													  "analysisJobId": "3f6b0e97-8c24-4a15-9d38-2b7e5c1a4f60",
+													  "executionNo": 1,
+													  "startedAt": "2026-08-21T04:02:20Z",
+													  "completedAt": null,
+													  "failureCode": null,
+													  "failureReason": null,
+													  "codeAnalysisId": null
+													}"""),
+									@ExampleObject(
+											name = "SUCCEEDED — 폴링 중단, 결과 조회로",
+											value = """
+													{
+													  "submissionId": "7d3c8a15-6e29-4b70-9c81-2f5a4d0b6e37",
+													  "phase": "SUCCEEDED",
+													  "analysisJobId": "3f6b0e97-8c24-4a15-9d38-2b7e5c1a4f60",
+													  "executionNo": 1,
+													  "startedAt": "2026-08-21T04:02:20Z",
+													  "completedAt": "2026-08-21T04:07:41Z",
+													  "failureCode": null,
+													  "failureReason": null,
+													  "codeAnalysisId": "9c0b5e28-4a76-4d31-8f92-7e3d1a6c5b04"
+													}"""),
+									@ExampleObject(
+											name = "FAILED — 저장소 접근 실패(재제출 유도)",
+											value = """
+													{
+													  "submissionId": "7d3c8a15-6e29-4b70-9c81-2f5a4d0b6e37",
+													  "phase": "FAILED",
+													  "analysisJobId": "3f6b0e97-8c24-4a15-9d38-2b7e5c1a4f60",
+													  "executionNo": 1,
+													  "startedAt": "2026-08-21T04:02:20Z",
+													  "completedAt": "2026-08-21T04:02:35Z",
+													  "failureCode": "REPO_NOT_FOUND",
+													  "failureReason": "저장소를 찾을 수 없습니다: github.com/team/repo",
+													  "codeAnalysisId": null
+													}"""),
+									@ExampleObject(
+											name = "FAILED — SESSION_PREPARATION_FAILED(분석은 성공)",
+											description = "분석 자체는 성공했지만 조회자 본인 세션이 준비되지 않았다.",
+											value = """
+													{
+													  "submissionId": "7d3c8a15-6e29-4b70-9c81-2f5a4d0b6e37",
+													  "phase": "FAILED",
+													  "analysisJobId": "3f6b0e97-8c24-4a15-9d38-2b7e5c1a4f60",
+													  "executionNo": 1,
+													  "startedAt": "2026-08-21T04:02:20Z",
+													  "completedAt": "2026-08-21T04:07:41Z",
+													  "failureCode": "SESSION_PREPARATION_FAILED",
+													  "failureReason": "이 교육생의 세션·문항이 준비되지 않았습니다",
+													  "codeAnalysisId": null
+													}""")
+							})),
+			@ApiResponse(responseCode = "403", description = "SUBMISSION_ACCESS_DENIED",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+			@ApiResponse(responseCode = "404", description = "SUBMISSION_NOT_FOUND",
+					content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+	})
 	@GetMapping("/{submissionId}/analysis")
 	public ResponseEntity<SubmissionAnalysisResponse> getAnalysis(@PathVariable UUID submissionId) {
 		UUID userId = currentUserResolver.resolveCurrentMemberId();
@@ -549,6 +662,7 @@ public class SubmissionController {
 	}
 
 	@Operation(
+			operationId = "getSubmissionAnalysisResult",
 			summary = "코드 분석 결과 조회 | ✅ 사용 가능",
 			description = """
 					분석이 성공한 뒤 화면이 한 번 읽는 결과 본체다. 문제 슬롯·요구사항 판정·본인 세션을 함께 준다.
