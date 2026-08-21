@@ -39,6 +39,22 @@ public enum ReportErrorCode implements ApiErrorCode {
 	/** 기수에 수업 진단 리포트가 아직 없다. 회차가 하나도 안 끝났을 때 정상적으로 발생한다. */
 	COHORT_REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "기수 리포트를 찾을 수 없습니다."),
 
+	// ── 재생성(운영자 경로) ──
+	/*
+	 * D1: 세션 미존재와 재생성 조건 불충족을 하나의 코드로 합친다.
+	 *   WHY: ReportBatchService#regenerateSession의 findTargetBySession 조회 자체가 이미
+	 *        "세션이 없다"와 "있지만 완료·유효·발행 예정 시각 조건에 안 맞는다"를 구분 안 하고
+	 *        Optional.empty()로 합쳐서 낸다 — 둘 다 결론이 "지금 만들면 안 된다"로 같기 때문에
+	 *        서비스 레이어가 의도적으로 내린 결정이다(그 메서드 자체 주석 참고). 컨트롤러/에러코드가
+	 *        그 결정을 뒤늦게 갈라놓으면 근거 없는 세분화가 된다.
+	 *   COST: 운영자가 "세션 자체가 없는 건지, 조건만 안 맞는 건지" 이 응답만으로는 못 가른다 —
+	 *        구분하려면 §6 모니터링 쿼리로 직접 확인해야 한다.
+	 *   EXIT: findTargetBySession이 이유를 구분해서 돌려주도록 먼저 고치면, 이 코드도 둘로
+	 *        쪼갤 수 있다.
+	 */
+	/** 세션이 없거나 재생성 조건(완료·유효·발행 예정 시각)에 안 맞아 대상이 아니다. */
+	REPORT_REGENERATION_TARGET_NOT_ELIGIBLE(HttpStatus.NOT_FOUND, "재생성 대상이 아닙니다."),
+
 	// ── 강제 생성(연동 시험 전용) ──
 	/** 그 {@code session_id}로 세션을 찾지 못했다. 강제 생성 경로는 이것 말고 거르는 조건이 없다. */
 	REPORT_SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "세션을 찾을 수 없습니다."),

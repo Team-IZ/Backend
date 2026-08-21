@@ -409,46 +409,67 @@ public class ReportBatchService {
 	 * <p>아직 화면이 없어 컨트롤러를 두지 않았다. 운영자 화면이 생기면 이 메서드를 부르는 얇은
 	 * 엔드포인트 하나면 된다 — 매핑표에 자리가 잡힌 뒤에 붙이는 것이 맞다.
 	 *
-	 * @param sessionId   {@code assessment_session.session_id}
-	 * @param requestedBy 누가 눌렀는지. 로그에만 쓴다 — 감사 원장은 이 경로의 책임이 아니다
-	 * @return 요청을 보냈으면 그 {@code generation_run_id}. 대상이 아니거나 문제가 없으면 빈 값
+	 * @param sessionId    {@code assessment_session.session_id}
+	 * @param callerOrgId  호출자(운영자)의 소속 기관. 대상 세션이 다른 기관 소속이면 대상이 아예
+	 *                     없는 것과 같은 응답을 낸다({@code REPORT_REGENERATION_TARGET_NOT_ELIGIBLE}) —
+	 *                     테넌트 경계를 넘는 재생성을 막는다.
+	 * @param requestedBy  누가 눌렀는지. 로그에만 쓴다 — 감사 원장은 이 경로의 책임이 아니다
+	 * @return 만든 실행의 {@code generation_run_id}
+	 * @throws ReportException 재생성 대상이 아니거나({@code REPORT_REGENERATION_TARGET_NOT_ELIGIBLE}),
+	 *         모델 설정이 어긋났거나({@code REPORT_MODEL_NOT_CONFIGURED}), 채점된 문제가 없거나
+	 *         ({@code REPORT_SESSION_HAS_NO_PROBLEM}), 이미 진행 중인 수동 실행이 있을 때
+	 *         ({@code REPORT_GENERATION_ALREADY_RUNNING}) — {@link #forceGenerateSession}과
+	 *         같은 예외 방식으로 맞췄다(2026-08-21, 얇은 컨트롤러를 얹으면서).
 	 */
-	public Optional<UUID> regenerateSession(UUID sessionId, String requestedBy) {
-		ReportTarget target = dispatchRepository.findTargetBySession(sessionId).orElse(null);
-		if (target == null) {
-			// 세션이 없는 것과 조건에 안 맞는 것을 구분하지 않는다 — 어느 쪽이든 만들면 안 된다.
-			log.warn("재생성 대상이 아니다: sessionId={}, requestedBy={}", sessionId, requestedBy);
-			return Optional.empty();
-		}
+	public UUID regenerateSession(UUID sessionId, UUID callerOrgId, String requestedBy) {
+		/*
+		 * D2: 테넌트 스코프를 sessionId 조회 직후, 다른 어떤 검증보다 먼저 확인한다.
+		 *   WHY: @PreAuthorize("hasRole('MANAGER')")는 role만 보고 소속 기관은 안 본다.
+		 *        target.getOrgId()를 callerOrgId와 값으로 대조하지 않으면 다른 기관 매니저가
+		 *        아무 sessionId나 넣어 남의 리포트를 재생성시킬 수 있다(자동 보안 리뷰가
+		 *        2026-08-21 발견, ManagerTraineeAccessRepository가 org_id를 "경유하는 경로가
+		 *        아니라 값으로" 확인해야 한다고 적어 둔 것과 같은 원칙).
+		 *   COST: target을 먼저 조회해야 하므로, 세션이 아예 없는 경우와 다른 기관 소속인 경우가
+		 *        여기서 합쳐진다 — 그런데 이미 "세션 없음"과 "조건 불충족"도 하나로 합쳐져 있던
+		 *        참이라(D1) 새로 생기는 비용이 아니다.
+		 *   EXIT: 다중 기관 관리자(super-admin류)가 필요해지면 이 조건 앞에 role 분기를 추가하면
+		 *        된다 — target을 다시 조회할 필요는 없다.
+		 */
+		ReportTarget target = dispatchRepository.findTargetBySession(sessionId)
+				.filter(candidate -> candidate.getOrgId().equals(callerOrgId))
+				.orElseThrow(() -> {
+					log.warn("재생성 대상이 아니다: sessionId={}, requestedBy={}", sessionId, requestedBy);
+					return new ReportException(ReportErrorCode.REPORT_REGENERATION_TARGET_NOT_ELIGIBLE);
+				});
 
 		AnalysisModel model = modelRepository.findActiveByModelCode(modelCode).orElse(null);
 		if (model == null) {
 			log.error("ai.report.model-code 가 가리키는 ACTIVE 모델이 ai_model 에 없다. "
 					+ "재생성을 건너뛴다: modelCode={}, sessionId={}", modelCode, sessionId);
-			return Optional.empty();
+			throw new ReportException(ReportErrorCode.REPORT_MODEL_NOT_CONFIGURED);
 		}
 
-		Optional<UUID> runId;
+		UUID runId;
 		try {
-			runId = dispatchOne(target, model, Instant.now(), ReportGenerationTriggerType.USER_REQUESTED);
+			runId = dispatchOne(target, model, Instant.now(), ReportGenerationTriggerType.USER_REQUESTED)
+					.orElseThrow(() -> new ReportException(ReportErrorCode.REPORT_SESSION_HAS_NO_PROBLEM));
 		} catch (DataIntegrityViolationException exception) {
 			/*
 			 * uq_report_generation_run_active 는 (report_id, trigger_type) 부분 유니크다
 			 * (status IN QUEUED·RUNNING·RETRYING).
 			 *
 			 * 즉 진행 중인 수동 재생성이 이미 있다는 뜻이다 — 운영자가 두 번 눌렀거나, 앞의 것이
-			 * 아직 폴링 중이다. 오류가 아니라 "이미 돌고 있다"이므로 예외를 밖으로 던지지 않는다.
+			 * 아직 폴링 중이다. 오류가 아니라 "이미 돌고 있다"이므로 그 뜻 그대로 코드로 옮긴다.
 			 *
 			 * SCHEDULED 실행과는 부딪히지 않는다. trigger_type 이 인덱스 키에 있어서, 배치가 돌고
 			 * 있어도 수동 재생성은 걸린다 — 그게 이 도구가 필요한 상황이기도 하다.
 			 */
 			log.warn("이미 진행 중인 재생성이 있다: sessionId={}, requestedBy={}", sessionId, requestedBy);
-			return Optional.empty();
+			throw new ReportException(ReportErrorCode.REPORT_GENERATION_ALREADY_RUNNING);
 		}
 
-		runId.ifPresent(id -> log.info(
-				"운영자 재생성 요청: sessionId={}, userId={}, roundId={}, runId={}, requestedBy={}",
-				sessionId, target.getUserId(), target.getAssessmentRoundId(), id, requestedBy));
+		log.info("운영자 재생성 요청: sessionId={}, userId={}, roundId={}, runId={}, requestedBy={}",
+				sessionId, target.getUserId(), target.getAssessmentRoundId(), runId, requestedBy);
 		return runId;
 	}
 
