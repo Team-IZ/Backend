@@ -327,6 +327,28 @@ class AnalysisBatchServiceTest {
 		assertThat(job.getAnalysisId()).isNull();
 		verify(jobRepository).transitionActiveJob(any(), any(), any(), any(), any(), any(), any(), any());
 		verify(jobRepository, never()).save(job);
+		// job 자체는 재시도 대상에서 영구히 빠지므로(BLOCKING_JOB_EXISTS가 SUCCEEDED를 막지 않는다),
+		// measurement_attempt 를 여기서 대신 닫아주지 않으면 ANALYZING 에 영구히 갇힌다(2026-08-21 진단).
+		verify(sessionPreparer).markAttemptsAnalysisFailed(job.getAssessmentRoundId(), job.getTeamId());
+	}
+
+	/**
+	 * AI가 SUCCEEDED라고 응답했는데 result 자체를 안 준 경우(계약 위반)도 위와 같은 결말이어야 한다.
+	 * job은 SUCCEEDED로 남지만(재시도해도 같은 자리에서 또 비므로), measurement_attempt는 대신 닫는다.
+	 */
+	@Test
+	void closesTheAttemptWhenASucceededJobArrivesWithNoResultAtAll() {
+		AnalysisJob job = jobWithExternalId();
+		when(jobRepository.findByStatusIn(any())).thenReturn(List.of(job));
+		when(client.fetchProgress(any())).thenReturn(Optional.of(new AnalysisProgress(
+				AnalysisJobStatus.SUCCEEDED, NOW, NOW, null, null, null, null)));
+
+		service.pollActiveJobs();
+
+		verify(resultRepository, never()).record(any(), any());
+		assertThat(job.getStatus()).isEqualTo(AnalysisJobStatus.SUCCEEDED);
+		assertThat(job.getAnalysisId()).isNull();
+		verify(sessionPreparer).markAttemptsAnalysisFailed(job.getAssessmentRoundId(), job.getTeamId());
 	}
 
 	/** 적재가 이미 끝난 job 을 다시 적재하지 않는다 — problemId 가 PK 라 재적재는 충돌한다. */

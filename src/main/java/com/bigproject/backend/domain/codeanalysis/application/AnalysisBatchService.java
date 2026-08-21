@@ -711,6 +711,7 @@ public class AnalysisBatchService {
 		if (!progress.hasResult()) {
 			log.warn("성공 응답에 result 가 없어 적재를 건너뛴다: jobId={}, status={}",
 					job.getJobId(), progress.status());
+			closeAttemptsForResultlessSuccess(job);
 			return;
 		}
 		if (job.getAnalysisId() != null) {
@@ -724,6 +725,31 @@ public class AnalysisBatchService {
 			job.attachAnalysis(analysisId);
 		} catch (RuntimeException exception) {
 			log.error("분석 결과 적재 실패. job 은 성공으로 남긴다: jobId={}", job.getJobId(), exception);
+			closeAttemptsForResultlessSuccess(job);
+		}
+	}
+
+	/**
+	 * job은 {@code SUCCEEDED}/{@code PARTIAL}로 남지만 {@code code_analysis}가 끝내 연결되지 못했을 때,
+	 * 대신 응시를 닫는다.
+	 *
+	 * <p>이 job은 이미 성공 상태라 {@code BLOCKING_JOB_EXISTS}가 영구히 재시도 대상에서 제외한다 —
+	 * 안전망이 다시 걸어 줄 기회 자체가 없다({@link #recordResult} 위 문단이 그래서 job 상태는 그대로
+	 * 둔다고 적어 둔 그 이유다). 그래서 {@link #markAttemptsFailedIfTerminal}처럼 재시도 가능 여부를
+	 * 따지지 않고 곧바로 닫는다.
+	 *
+	 * <p>이게 없으면 {@code measurement_attempt}가 {@code ANALYZING}에 영구히 갇힌다.
+	 * {@code GET .../analysis}는 {@code code_analysis} 부재를 조회 시점에 직접 재확인해
+	 * {@code SESSION_PREPARATION_FAILED}로 걸러내지만, {@code my-submission}과
+	 * {@code trainee_home_round_view}는 {@code analysis_job.status}만 보고 성공·진행 중으로
+	 * 잘못 읽는다(2026-08-21 진단).
+	 */
+	private void closeAttemptsForResultlessSuccess(AnalysisJob job) {
+		try {
+			transactions.executeWithoutResult(status ->
+					sessionPreparer.markAttemptsAnalysisFailed(job.getAssessmentRoundId(), job.getTeamId()));
+		} catch (RuntimeException exception) {
+			log.error("결과 없는 성공 job의 응시 종료 처리 실패: jobId={}", job.getJobId(), exception);
 		}
 	}
 

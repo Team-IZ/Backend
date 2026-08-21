@@ -91,6 +91,9 @@ public class MySubmissionService {
 		if (!isAnalysisComplete(row)) {
 			return "ANALYZING";
 		}
+		if (hasNoResult(row)) {
+			return "ANALYSIS_FAILED";
+		}
 		return row.sessionStarted() ? "LOCKED" : "READY";
 	}
 
@@ -100,6 +103,18 @@ public class MySubmissionService {
 	 */
 	private boolean isAnalysisComplete(MySubmissionRow row) {
 		return "SUCCEEDED".equals(row.analysisJobStatus()) || "PARTIAL".equals(row.analysisJobStatus());
+	}
+
+	/**
+	 * job은 SUCCEEDED/PARTIAL로 응답했지만 {@code code_analysis}가 끝내 연결되지 않은 경우다
+	 * (2026-08-21 진단 — {@code analysis_job.status}만 보고 판정하면 이 경우를 READY로 잘못 읽었다).
+	 *
+	 * <p>같은 사실을 {@code GET .../analysis}는 {@code code_analysis} 존재 여부를 직접 재확인해
+	 * {@code SESSION_PREPARATION_FAILED}로 걸러낸다. 여기서는 {@link #isAnalysisComplete}가 먼저
+	 * SUCCEEDED/PARTIAL을 확인했으므로 {@code analysisResultId}만 마저 보면 된다.
+	 */
+	private boolean hasNoResult(MySubmissionRow row) {
+		return row.analysisResultId() == null;
 	}
 
 	private boolean isPastDue(MySubmissionRow row) {
@@ -118,6 +133,11 @@ public class MySubmissionService {
 		if (hasLostExternalJobId(row)) {
 			// 같은 사실을 상세 조회(GET .../analysis)도 내려 준다. 문구가 갈라지지 않게 그쪽 상수를 쓴다.
 			return SubmissionAnalysisResponse.EXTERNAL_JOB_ID_LOST_MESSAGE;
+		}
+		if (isAnalysisComplete(row) && hasNoResult(row)) {
+			// 마찬가지로 상세 조회의 SESSION_PREPARATION_FAILED 문구를 그대로 쓴다 — analysis_job에는
+			// 이 경우의 failure_code가 없어(job은 SUCCEEDED로 남는다) messageOf()로는 만들 수 없다.
+			return SubmissionAnalysisResponse.SESSION_PREPARATION_FAILED_MESSAGE;
 		}
 		return messageOf(row.analysisFailureCode());
 	}

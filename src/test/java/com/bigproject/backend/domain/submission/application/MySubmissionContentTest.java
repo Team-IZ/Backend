@@ -112,6 +112,26 @@ class MySubmissionContentTest {
 		assertThat(response.failureCode()).isNull();
 	}
 
+	/**
+	 * 2026-08-21 진단: {@code analysis_job.status}만 보고 판정하면 이 조합(SUCCEEDED인데 결과가 없다)이
+	 * READY로 잘못 나갔다. {@code GET .../analysis}가 이미 같은 조합을 SESSION_PREPARATION_FAILED로
+	 * 걸러내는 것과 같은 결론을 my-submission도 내야 한다.
+	 */
+	@Test
+	@DisplayName("분석 job이 SUCCEEDED인데 결과가 적재되지 않았으면 ANALYSIS_FAILED로 응답한다")
+	void succeededJobWithoutResultIsReportedAsFailed() {
+		MySubmissionRow row = row("GITHUB_URL", "https://github.com/team3/mini", "main",
+				null, null, null, null, null, "SUCCEEDED", UUID.randomUUID(), null, null);
+		when(queryRepository.findMySubmission(any(), any())).thenReturn(Optional.of(row));
+
+		MySubmissionResponse response = service.getMySubmission(PROJECT, USER);
+
+		assertThat(response.status()).isEqualTo("ANALYSIS_FAILED");
+		assertThat(response.failureReason())
+				.isEqualTo("분석은 완료됐지만 응시할 문항이 준비되지 않았습니다. 담당 매니저에게 문의해 주세요.");
+		assertThat(response.failureCode()).isNull();
+	}
+
 	/** 아티팩트 행이 아직 없는 접수 도중에는 빈 카드를 만들지 않는다. */
 	@Test
 	@DisplayName("ZIP인데 아티팩트가 없으면 content 키 자체가 빠진다")
@@ -140,20 +160,28 @@ class MySubmissionContentTest {
 			String commitSha, String commitMessage, String fileName, Long fileSize,
 			String analysisCommitSha) {
 		return row(method, repoUrl, resolvedBranch, commitSha, commitMessage, fileName, fileSize,
-				analysisCommitSha, "SUCCEEDED", UUID.randomUUID(), null);
+				analysisCommitSha, "SUCCEEDED", UUID.randomUUID(), UUID.randomUUID(), null);
 	}
 
 	private MySubmissionRow row(String method, String repoUrl, String resolvedBranch,
 			String commitSha, String commitMessage, String fileName, Long fileSize,
 			String analysisCommitSha, String analysisJobStatus, UUID analysisExternalJobId,
 			String analysisFailureCode) {
+		return row(method, repoUrl, resolvedBranch, commitSha, commitMessage, fileName, fileSize,
+				analysisCommitSha, analysisJobStatus, analysisExternalJobId, null, analysisFailureCode);
+	}
+
+	private MySubmissionRow row(String method, String repoUrl, String resolvedBranch,
+			String commitSha, String commitMessage, String fileName, Long fileSize,
+			String analysisCommitSha, String analysisJobStatus, UUID analysisExternalJobId,
+			UUID analysisResultId, String analysisFailureCode) {
 		return new MySubmissionRow(
 				ROUND, "미프 1차", "OPEN", Instant.parse("2026-02-20T00:00:00Z"),
 				SUBMISSION, method, "ACCEPTED", Instant.parse("2026-02-19T00:00:00Z"), null,
 				repoUrl, null, resolvedBranch, null,
 				commitSha, commitMessage, commitSha == null ? null : COMMITTED_AT,
 				fileName, fileSize,
-				analysisJobStatus, analysisExternalJobId, analysisFailureCode,
+				analysisJobStatus, analysisExternalJobId, analysisResultId, analysisFailureCode,
 				Instant.parse("2026-02-19T01:00:00Z"),
 				analysisCommitSha, analysisCommitSha == null ? null : "feat: 결제 롤백 처리",
 				analysisCommitSha == null ? null : COMMITTED_AT,

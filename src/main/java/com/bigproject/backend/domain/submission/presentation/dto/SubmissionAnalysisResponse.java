@@ -66,6 +66,13 @@ public record SubmissionAnalysisResponse(
 			"분석 서버의 작업 정보가 유실되어 분석을 계속할 수 없습니다. "
 					+ "코드를 다시 제출해 분석을 재시도해 주세요. 다시 제출할 수 없다면 담당 매니저에게 문의해 주세요.";
 
+	/**
+	 * 같은 사실을 TR-02 제출 현황({@link com.bigproject.backend.domain.submission.application.MySubmissionService})도
+	 * 보여 준다. {@link #EXTERNAL_JOB_ID_LOST_MESSAGE}와 같은 이유로 문구를 여기 한 곳에서만 적는다.
+	 */
+	public static final String SESSION_PREPARATION_FAILED_MESSAGE =
+			"분석은 완료됐지만 응시할 문항이 준비되지 않았습니다. 담당 매니저에게 문의해 주세요.";
+
 	/** 분석 배치가 아직 이 제출을 집어가지 않았다. */
 	public static SubmissionAnalysisResponse notStarted(UUID submissionId) {
 		return new SubmissionAnalysisResponse(
@@ -109,7 +116,7 @@ public record SubmissionAnalysisResponse(
 				job.getStartedAt(),
 				job.getCompletedAt(),
 				"SESSION_PREPARATION_FAILED",
-				"분석은 완료됐지만 응시할 문항이 준비되지 않았습니다. 담당 매니저에게 문의해 주세요.",
+				SESSION_PREPARATION_FAILED_MESSAGE,
 				null
 		);
 	}
