@@ -105,12 +105,17 @@ public class InterviewController {
 			@Parameter(description = "반 필터. 없으면 담당 반 전체")
 			@RequestParam(required = false) UUID classId,
 
+			@Parameter(description = "기수 ID. `assessmentRoundId`를 생략했을 때 「이번 회차」를 고르는 범위를 좁힌다. "
+					+ "생략하면 담당 기수 전부에서 고른다")
+			@RequestParam(required = false) UUID cohort,
+
 			Authentication authentication
 	) {
 		InterviewService.InterviewListResult result = interviewService.findCases(
 				new InterviewService.InterviewListCriteria(
 						currentUserResolver.resolveCurrentMemberId(),
 						ActorContext.organizationId(authentication),
+						cohort,
 						assessmentRoundId,
 						search,
 						status,
@@ -153,9 +158,13 @@ public class InterviewController {
 			@ApiResponse(responseCode = "403", description = "매니저 권한이 없음")
 	})
 	@GetMapping("/rounds")
-	public ResponseEntity<List<InterviewRoundOptionResponse>> findRoundOptions(Authentication authentication) {
+	public ResponseEntity<List<InterviewRoundOptionResponse>> findRoundOptions(
+			@Parameter(description = "기수 ID. 생략하면 담당 기수 전부라 여러 기수의 회차가 섞인다")
+			@RequestParam(required = false) UUID cohort,
+			Authentication authentication) {
 		List<InterviewRoundOptionResponse> options = interviewService
-				.findRoundOptions(currentUserResolver.resolveCurrentMemberId(), ActorContext.organizationId(authentication))
+				.findRoundOptions(currentUserResolver.resolveCurrentMemberId(),
+						ActorContext.organizationId(authentication), cohort)
 				.stream()
 				.map(InterviewRoundOptionResponse::from)
 				.toList();

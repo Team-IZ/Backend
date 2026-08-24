@@ -26,6 +26,14 @@ public record InterviewRoundOptionResponse(
 		UUID projectId,
 
 		@Schema(description = """
+				그 회차가 속한 기수 ID.
+
+				한 매니저가 여러 기수에서 반을 맡을 수 있어(종료 기수를 되돌아보는 경우) 회차만으로는
+				어느 기수의 것인지 가릴 수 없다. 화면이 보고 있는 기수와 대조할 수 있도록 함께 싣는다.
+				""")
+		UUID cohortId,
+
+		@Schema(description = """
 				드롭다운 문구. `round_no`가 프로젝트 안에서만 유일해 **프로젝트명을 함께 붙인다** —
 				안 붙이면 서로 다른 프로젝트의 1차가 목록에 똑같이 두 번 보인다.
 				""", example = "미니프로젝트 3차")
@@ -39,6 +47,7 @@ public record InterviewRoundOptionResponse(
 
 	public static InterviewRoundOptionResponse from(RoundOptionView view) {
 		return new InterviewRoundOptionResponse(
-				view.assessmentRoundId(), view.projectId(), view.label(), view.roundNo(), view.status());
+				view.assessmentRoundId(), view.projectId(), view.cohortId(), view.label(),
+				view.roundNo(), view.status());
 	}
 }

@@ -42,6 +42,12 @@ public interface InterviewService {
 	record InterviewListCriteria(
 			UUID managerUserId,
 			UUID orgId,
+			/**
+			 * 보고 있는 기수. {@code assessmentRoundId}를 생략했을 때 「이번 회차」를 고르는
+			 * 범위를 이 값으로 좁힌다 — {@code null}이면 담당 기수 전부라, 여러 기수를 맡은
+			 * 매니저에게 엉뚱한 기수의 회차가 기본으로 잡힌다.
+			 */
+			UUID cohortId,
 			UUID assessmentRoundId,
 			String search,
 			String status,
@@ -70,14 +76,19 @@ public interface InterviewService {
 	record ClassOptionView(UUID classId, String className) {
 	}
 
-	/** 담당 기수의 회차 목록. 화면 드롭다운을 채운다. */
-	List<RoundOptionView> findRoundOptions(UUID managerUserId, UUID orgId);
+	/**
+	 * 담당 기수의 회차 목록. 화면 드롭다운을 채운다.
+	 *
+	 * @param cohortId 보고 있는 기수. {@code null}이면 담당 기수 전부라 여러 기수가 섞인다.
+	 */
+	List<RoundOptionView> findRoundOptions(UUID managerUserId, UUID orgId, UUID cohortId);
 
 	/**
 	 * @param projectId 그 회차가 속한 프로젝트. 32차 R10 — 히트맵(MG-02)이 회차와 <b>짝으로</b>
 	 *                  필요로 한다. 조회는 이미 이 값을 읽고 있어 왕복도 계산도 늘지 않는다
 	 */
-	record RoundOptionView(UUID assessmentRoundId, UUID projectId, String label, int roundNo, String status) {
+	record RoundOptionView(UUID assessmentRoundId, UUID projectId, UUID cohortId, String label,
+			int roundNo, String status) {
 	}
 
 	/**
