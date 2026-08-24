@@ -209,10 +209,22 @@ public interface TraineeRosterRepository {
 			 * 보지 않는다. {@code matchedRiskTypeCodes}(위험 배열)와 달리 이 값은 응시상태까지 포함한
 			 * 단일 값이며, 걸린 것이 없으면 null(정상)이다.
 			 *
+			 * <p><b>{@code NOT_ATTENDED}는 팀 미제출·코드 분석 실패까지 덮는다.</b> 종전에는
+			 * {@code terminal_reason_code='NOT_ATTENDED'} 하나만 봐서, 팀이 제출을 안 해 응시조차 못 한
+			 * 학생이 명단에서 배지 없이 <b>정상</b>으로 보였다. 원인은 {@code notAttendedReasonCode}에 있다.
+			 *
 			 * <p>중도 이탈은 여기 들어오지 않는다 — 계정 열의 비활성화 사유로 이미 드러나므로
 			 * 이 배지가 또 이탈을 말할 필요가 없다.
 			 */
 			String roundPrimaryStatusCode,
+			/**
+			 * 검증 세션을 <b>왜</b> 하지 못했는가. {@code roundPrimaryStatusCode}가 NOT_ATTENDED일 때만
+			 * 값이 있다. NO_SHOW(볼 수 있었는데 안 봄) · NOT_SUBMITTED(팀 미제출) ·
+			 * ANALYSIS_FAILED(코드 분석 실패)이며, 결과 탭의 {@code notAttendedReason}과 같은 값 집합이다.
+			 *
+			 * <p>NO_SHOW만 학생 책임이다. 나머지 둘은 응시할 문항 자체가 없어 볼 수 없었던 경우다.
+			 */
+			String notAttendedReasonCode,
 			/**
 			 * {@code roundPrimaryStatusCode}가 NOT_ATTENDED·SESSION_INCOMPLETE일 때만 값이 있는 시각이다.
 			 * 화면의 '우수 누적' 칸이 그 회차엔 정상 결과 대신 '세션 중단 · {날짜}'처럼 사유·일자를
@@ -231,7 +243,7 @@ public interface TraineeRosterRepository {
 			this(traineeId, name, email, rawAccountStatus, classroomId, className, joinedAt, leftAt,
 					inactivatedReasonCode, inactivatedReason, inactivatedAt, inactivatedById,
 					inactivatedByName, pendingInvitationTokenId, false,
-					null, null, null, null, null, null, null, new int[0], null, null, null, null);
+					null, null, null, null, null, null, null, new int[0], null, null, null, null, null);
 		}
 	}
 }
