@@ -6639,6 +6639,12 @@ SELECT a.user_id                                                                
            WHEN a.source_submission_id IS NULL THEN 'NOT_SUBMITTED'::text
            WHEN a.analysis_status::text = ANY
                 (ARRAY ['QUEUED'::character varying, 'RUNNING'::character varying]::text[]) THEN 'ANALYZING'::text
+           -- [2026-08-25] 결과 없는 성공(analysis_job SUCCEEDED · analysis_id NULL)에서 응시가
+           -- terminal_reason_code='ANALYSIS_FAILED' 로 닫힌다. 그때 job 상태는 SUCCEEDED 로 남으므로
+           -- 아래 두 줄만으로는 'COMPLETED' 가 나가 "분석은 됐다" 는 거짓을 말한다.
+           -- 위 QUEUED/RUNNING 분기 '아래' 에 두는 것이 이 줄의 가드다 — 재제출로 새 분석이 도는
+           -- 동안에는 직전 실패가 아니라 진행 중이 맞다.
+           WHEN a.primary_terminal_reason_code::text = 'ANALYSIS_FAILED'::text THEN 'FAILED'::text
            WHEN a.analysis_status::text = 'FAILED'::text THEN 'FAILED'::text
            WHEN a.analysis_status::text = 'SUCCEEDED'::text THEN 'COMPLETED'::text
            ELSE 'WAITING'::text
@@ -6647,7 +6653,11 @@ SELECT a.user_id                                                                
        a.analysis_status                                                            AS analysis_job_status,
        ma.code_analysis_id,
        CASE
-           WHEN a.analysis_status::text = 'FAILED'::text THEN 'ANALYSIS_FAILED'::text
+           WHEN a.analysis_status::text = 'FAILED'::text
+                OR (a.primary_terminal_reason_code::text = 'ANALYSIS_FAILED'::text
+                    AND a.analysis_status::text IS DISTINCT FROM 'QUEUED'::text
+                    AND a.analysis_status::text IS DISTINCT FROM 'RUNNING'::text)
+               THEN 'ANALYSIS_FAILED'::text
            ELSE NULL::text
            END::character varying(100)                                              AS analysis_failure_code,
        COALESCE(probs.problem_count, 0)                                             AS prepared_problem_count,
@@ -6696,7 +6706,11 @@ SELECT a.user_id                                                                
                             ELSE NULL::text
                             END,
                         CASE
-                            WHEN a.analysis_status::text = 'FAILED'::text THEN 'ANALYSIS_FAILED'::text
+                            WHEN a.analysis_status::text = 'FAILED'::text
+                                 OR (a.primary_terminal_reason_code::text = 'ANALYSIS_FAILED'::text
+                                     AND a.analysis_status::text IS DISTINCT FROM 'QUEUED'::text
+                                     AND a.analysis_status::text IS DISTINCT FROM 'RUNNING'::text)
+                                THEN 'ANALYSIS_FAILED'::text
                             ELSE NULL::text
                             END,
                         CASE
@@ -6725,7 +6739,15 @@ SELECT a.user_id                                                                
            WHEN (a.primary_attempt_status::text = ANY
                  (ARRAY ['SESSION_READY'::character varying, 'NOT_STARTED'::character varying]::text[])) AND
                 a.primary_assessment_open_at IS NOT NULL THEN 'ASSESSMENT_AVAILABLE'::text
-           WHEN a.analysis_status::text = 'FAILED'::text THEN 'ANALYSIS_FAILED'::text
+           -- [2026-08-25] analysis_job.status 만 보던 절을 응시 원장까지 보도록 넓혔다.
+           -- 위 ASSESSMENT_WINDOW_CLOSED 절보다 아래여도 안전하다 — markAttemptsAnalysisFailed 는
+           -- 세션이 열린 적 없는 응시(NOT_STARTED·SUBMITTED·ANALYZING)만 닫으므로
+           -- primary_assessment_close_at 이 NULL 이고, 그 절이 이 행을 먼저 채 가지 못한다.
+           WHEN a.analysis_status::text = 'FAILED'::text
+                OR (a.primary_terminal_reason_code::text = 'ANALYSIS_FAILED'::text
+                    AND a.analysis_status::text IS DISTINCT FROM 'QUEUED'::text
+                    AND a.analysis_status::text IS DISTINCT FROM 'RUNNING'::text)
+               THEN 'ANALYSIS_FAILED'::text
            WHEN a.source_submission_id IS NULL AND CURRENT_TIMESTAMP > a.submission_due_at THEN 'SUBMISSION_MISSED'::text
            WHEN a.source_submission_id IS NULL THEN 'SUBMISSION_REQUIRED'::text
            ELSE 'ANALYZING'::text
@@ -6743,13 +6765,25 @@ SELECT a.user_id                                                                
                 a.primary_assessment_open_at IS NOT NULL AND
                 (a.primary_assessment_close_at IS NULL OR a.primary_assessment_close_at > CURRENT_TIMESTAMP)
                THEN 'START_ASSESSMENT'::text
-           WHEN a.analysis_status::text = 'FAILED'::text AND a.submission_due_at > CURRENT_TIMESTAMP THEN
+           -- [2026-08-25] 이 절이 이번 수정의 실질적 성과다. 제출 마감 전이면 재제출 버튼이 살아나고,
+           -- 재제출 → 분석 성공 → 적재 성공이면 markAttemptsReady 가 응시를 SESSION_READY 로 되살린다.
+           WHEN (a.analysis_status::text = 'FAILED'::text
+                 OR (a.primary_terminal_reason_code::text = 'ANALYSIS_FAILED'::text
+                     AND a.analysis_status::text IS DISTINCT FROM 'QUEUED'::text
+                     AND a.analysis_status::text IS DISTINCT FROM 'RUNNING'::text))
+                AND a.submission_due_at > CURRENT_TIMESTAMP THEN
                CASE
                    WHEN a.submission_method::text = 'ZIP_WITH_GITLOG'::text THEN 'RESUBMIT_ZIP'::text
                    ELSE 'RESUBMIT_REPOSITORY'::text
                    END
            WHEN a.primary_terminal_reason_code::text = ANY
                 (ARRAY ['NOT_ATTENDED'::character varying, 'SESSION_INCOMPLETE'::character varying, 'NOT_SUBMITTED'::character varying]::text[])
+               THEN 'CONTACT_MANAGER'::text
+           -- [2026-08-25] 마감이 지나 재제출이 불가능한 ANALYSIS_FAILED. 별도 WHEN 으로 둔 이유는
+           -- 위 배열에 값 하나를 더하는 것과 달리 "재분석 중이 아닐 때만" 이라는 가드가 필요해서다.
+           WHEN a.primary_terminal_reason_code::text = 'ANALYSIS_FAILED'::text
+                AND a.analysis_status::text IS DISTINCT FROM 'QUEUED'::text
+                AND a.analysis_status::text IS DISTINCT FROM 'RUNNING'::text
                THEN 'CONTACT_MANAGER'::text
            WHEN a.source_submission_id IS NULL AND CURRENT_TIMESTAMP > a.submission_due_at THEN 'CONTACT_MANAGER'::text
            WHEN a.source_submission_id IS NULL THEN 'SUBMIT_CODE'::text
