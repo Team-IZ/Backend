@@ -6,6 +6,7 @@ build/
 !**/src/test/**/build/
 docs/*
 !docs/table-definition/
+!docs/migration/
 
 ### STS ###
 .apt_generated
