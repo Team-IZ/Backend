@@ -45,9 +45,13 @@ public record ClassProgressResponse(
 	@Schema(name = "ClassProgressSummary", description = """
 			회차 전체 합계.
 
-			analysisTargetCount는 submittedCount와, assessmentTargetCount는 analysisSucceededCount와
-			값이 같습니다 — 단계별 분모를 필드 이름으로도 드러내기 위해 따로 둡니다.
-			제출률은 submittedCount / targetTraineeCount, 응시율은 assessedCount / analysisTargetCount 입니다.
+			analysisTargetCount는 submittedCount와 값이 같습니다 — 단계별 분모를 필드 이름으로도
+			드러내기 위해 따로 둡니다.
+
+			**assessmentTargetCount는 analysisSucceededCount와 다릅니다** — PARTIAL도 그 문항으로
+			응시할 수 있어 응시 대상에 넣기 때문입니다(`SUCCEEDED + PARTIAL`).
+
+			제출률은 submittedCount / targetTraineeCount, 응시율은 assessedCount / assessmentTargetCount 입니다.
 			""")
 	public record Summary(
 			@Schema(description = """
@@ -63,7 +67,16 @@ public record ClassProgressResponse(
 			long analysisTargetCount,
 			@Schema(description = "분석이 성공한 교육생 수", example = "223")
 			long analysisSucceededCount,
-			@Schema(description = "응시 대상 교육생 수이며 analysisSucceededCount와 같습니다.", example = "223")
+			@Schema(description = """
+					응시 대상 교육생 수이며 **응시율의 분모**입니다.
+
+					분석이 끝나 문항이 만들어진 인원(`analysisSucceededCount + analysisPartialCount`)이라
+					`analysisSucceededCount`와 다를 수 있습니다. 미제출·분석 실패는 응시할 문항 자체가
+					없었으므로 빠집니다.
+
+					매니저 프로젝트 목록(`GET /projects`)의 `progress.targetTraineeCount`와 같은 기준이라
+					두 화면의 응시율이 갈리지 않습니다.
+					""", example = "223")
 			long assessmentTargetCount,
 			@Schema(description = "응시(INITIAL 완료)를 마친 교육생 수", example = "198")
 			long assessedCount
@@ -73,9 +86,8 @@ public record ClassProgressResponse(
 	@Schema(description = """
 			반 한 행.
 
-			분석 상태는 네 갈래를 모두 내려줍니다. PARTIAL을 분석 완료로 세지 않기로 했으므로
-			완료·실패만으로는 제출 인원과 등식이 성립하지 않습니다. 네 값을 모두 보면
-			어느 열에도 잡히지 않고 사라지는 인원이 없습니다.
+			분석 상태는 네 갈래를 모두 내려줍니다. 완료·실패만으로는 제출 인원과 등식이 성립하지
+			않습니다. 네 값을 모두 보면 어느 열에도 잡히지 않고 사라지는 인원이 없습니다.
 
 			submittedCount = analysisSucceededCount + analysisFailedCount
 			               + analysisPartialCount + analysisInProgressCount
@@ -87,22 +99,39 @@ public record ClassProgressResponse(
 			long targetTraineeCount,
 			@Schema(description = "소속 팀이 제출을 마친 교육생 수", example = "24")
 			long submittedCount,
-			@Schema(description = "분석이 성공한 교육생 수이며 응시율의 분모입니다. PARTIAL은 포함하지 않습니다.", example = "23")
+			@Schema(description = "분석이 성공한 교육생 수입니다. 응시율의 분모는 이 값이 아니라 "
+					+ "assessmentTargetCount입니다 — PARTIAL도 응시할 수 있어서입니다.", example = "23")
 			long analysisSucceededCount,
+			@Schema(description = "이 반의 응시 대상 교육생 수이며 **응시율의 분모**입니다. "
+					+ "`analysisSucceededCount + analysisPartialCount`입니다.", example = "23")
+			long assessmentTargetCount,
 			@Schema(description = "분석이 실패한 교육생 수", example = "1")
 			long analysisFailedCount,
 			@Schema(description = """
 					분석이 부분 성공(PARTIAL)한 교육생 수입니다.
-					분석 완료로 세지 않으므로 응시율 분모에서 빠집니다. 이 값이 0이 아닌데
-					응시율이 100%를 넘으면 그 인원이 응시를 마쳤다는 뜻입니다.
+					일부 개념만 문항이 생성된 경우이며 **그 문항으로 응시할 수 있으므로
+					`assessmentTargetCount`에 포함**됩니다.
 					""", example = "0")
 			long analysisPartialCount,
 			@Schema(description = "분석이 대기·진행 중인 교육생 수", example = "0")
 			long analysisInProgressCount,
 			@Schema(description = "최초 응시(INITIAL)를 완료한 교육생 수", example = "20")
 			long assessedCount,
-			@Schema(description = "미응시(NOT_ATTENDED) 교육생 수")
+			@Schema(description = """
+					**검증 세션을 하지 못한 교육생 수**이며 미응시 + 팀 미제출 + 코드 분석 실패의 합입니다.
+
+					🆕 종전에는 `NOT_ATTENDED` 코드만 셌습니다. 결과 탭(`GET /projects/{projectId}/evaluations`)의
+					`resultStatus = NOT_ATTENDED`와 **같은 기준**이라 두 화면의 숫자가 갈리지 않습니다.
+					""", example = "31")
 			long notAttendedCount,
+			@Schema(description = """
+					`notAttendedCount` 중 **응시할 수 있었는데 창이 닫히도록 안 본** 교육생 수입니다.
+
+					🔴 **독촉·면담 대상은 이 인원입니다.** 나머지(`notAttendedCount - noShowCount`)는
+					응시할 문항 자체가 만들어지지 않아 **볼 수 없었던** 사람이라 학생 책임이 아닙니다 —
+					팀 미제출은 재제출 안내가, 분석 실패는 시스템 조치가 할 일입니다.
+					""", example = "2")
+			long noShowCount,
 			@Schema(description = "중단(SESSION_INCOMPLETE) 교육생 수")
 			long sessionIncompleteCount,
 			@Schema(description = "무효 확정(CONFIRMED_INVALID) 교육생 수이며 무효 확인 중은 세지 않습니다.")
