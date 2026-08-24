@@ -24,12 +24,25 @@ public record TraineeEvaluationDetailResponse(
 		boolean reportPublished,
 		@Schema(description = """
 				`AVAILABLE`(응시 완료) · `IN_PROGRESS`(응시 중) · `INCOMPLETE`(끝내지 못하고 창이 닫힘) ·
-				`NOT_ATTENDED`(아예 안 봄) · `INVALID`(무효 확정).
+				`NOT_ATTENDED`(검증 세션을 하지 못함) · `INVALID`(무효 확정).
+
+				🆕 `NOT_ATTENDED`는 **팀 미제출·코드 분석 실패까지 포함**합니다. 종전에는 그 둘이
+				`IN_PROGRESS`로 와서 종료된 회차에 「응시 중」인 사람이 남았습니다.
+				원인은 `notAttendedReason`으로 옵니다.
 
 				🔴 **`AVAILABLE`이 아니면 `retryTarget`이 항상 false입니다** — 아직 풀지 않은 문제를
 				2단 미달로 판정하면 응시 중인 사람이 전부 다시 보기 대상이 됩니다.
 				""", example = "AVAILABLE")
 		String resultStatus,
+		@Schema(description = """
+				검증 세션을 **왜** 하지 못했는지이며 `resultStatus`가 `NOT_ATTENDED`일 때만 값이 있습니다.
+
+				`NO_SHOW`(볼 수 있었는데 안 봄 — 학생 책임) · `NOT_SUBMITTED`(팀 미제출로 문항 없음) ·
+				`ANALYSIS_FAILED`(코드 분석 실패 — 시스템 귀책).
+
+				🔴 뒤의 둘은 **볼 수 없었던** 경우라 학생 책임으로 읽으면 안 됩니다.
+				""", example = "NOT_SUBMITTED", nullable = true)
+		String notAttendedReason,
 		@Schema(description = "개념별 결과이며 표시 순서 오름차순입니다.")
 		List<Concept> concepts
 ) {

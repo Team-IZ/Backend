@@ -63,10 +63,20 @@ public class ManagerEvaluationController {
 					|---|---|
 					| `reportPublished` | 회차 리포트 발행 여부. 발행 방식이 ROUND_BATCH라 회차 단위 판정 |
 					| `resultAvailable` | 결과를 그릴 수 있는지. false면 화면은 빈 상태를 보여준다 |
-					| `summary` | `totalCount` · `attendedCount` · `failedCount` · `notAttendedCount` · `invalidCount` |
+					| `summary` | `totalCount` · `attendedCount` · `failedCount` · `notAttendedCount`(세션을 못 한 인원 = 미응시 + 미제출 + 분석 실패) · `invalidCount` |
 					| `classWarnings[]` | 집단 미달 경고. 유효 응시자의 **절반을 넘는** 인원이 막힌 개념 |
 					| `conceptAggregates[]` | 개념별 막힌 사람 · 코드에 없던 사람과 명단 |
 					| `trainees[]` | 교육생 목록. 개념별 도달 결과까지 담고 **축별 단계는 담지 않는다** |
+
+					🆕 **`resultStatus = NOT_ATTENDED`가 팀 미제출·분석 실패까지 포함한다.** 종전에는 그 둘이
+					값이 없어 `IN_PROGRESS`로 나갔고, 그래서 **이미 종료된 회차에 「응시 중」인 사람이
+					남았다.** 셋 다 검증 세션을 하지 못했다는 같은 사실이라 한 값으로 묶고,
+					**원인은 `trainees[].notAttendedReason`으로 가른다**(`NO_SHOW` · `NOT_SUBMITTED` ·
+					`ANALYSIS_FAILED`). `summary.notAttendedCount`도 이 셋의 합이며 반별 현황
+					(`class-progress`)의 같은 이름 필드와 기준이 일치한다.
+
+					🔴 **독촉·면담 대상은 `NO_SHOW`뿐이다.** 나머지 둘은 응시할 문항 자체가 없어 볼 수
+					없었던 사람이며, 제출 현황 탭에서 같은 사람이 `BLOCKED`인 것과 같은 갈래다.
 
 					💡 **`notInCode`를 따로 센다.** 그 개념이 코드에 없어 문제가 만들어지지 않은 것이라
 					**못한 것이 아니다.** 막힌 사람과 한 칸에 넣으면 매니저가 둘을 구분하지 못한다.
@@ -113,7 +123,8 @@ public class ManagerEvaluationController {
 
 					| 필드 | 설명 |
 					|---|---|
-					| `resultStatus` | `AVAILABLE` · `IN_PROGRESS` · `INCOMPLETE`(중단) · `NOT_ATTENDED` · `INVALID` |
+					| `resultStatus` | `AVAILABLE` · `IN_PROGRESS` · `INCOMPLETE`(중단) · `NOT_ATTENDED`(검증 세션을 못 함) · `INVALID` |
+					| `notAttendedReason` | `NOT_ATTENDED`일 때만. `NO_SHOW`(안 봄) · `NOT_SUBMITTED`(팀 미제출) · `ANALYSIS_FAILED`(분석 실패) |
 					| `concepts[]` | 개념별 `inCode` · `reachLevel` · `retryTarget` · `steps[]` |
 
 					### concepts[].steps[]

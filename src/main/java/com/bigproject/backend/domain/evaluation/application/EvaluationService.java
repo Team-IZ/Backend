@@ -123,6 +123,9 @@ public class EvaluationService {
 				traineeRow.className(),
 				scope.round().reportPublished(),
 				resultStatus,
+				// 무효 확정이면 resultStatus가 INVALID라 사유를 달지 않는다 -- 계약이
+				// "NOT_ATTENDED일 때만 값이 있다"이므로 상태를 보고 결정한다.
+				"NOT_ATTENDED".equals(resultStatus) ? notAttendedReason(traineeRow) : null,
 				concepts
 		);
 	}
@@ -158,6 +161,7 @@ public class EvaluationService {
 				row.classId(),
 				row.className(),
 				resultStatus,
+				"NOT_ATTENDED".equals(resultStatus) ? notAttendedReason(row) : null,
 				concepts.stream().filter(ProjectEvaluationSummaryResponse.ConceptOutcome::retryTarget).count(),
 				concepts
 		);
@@ -182,18 +186,45 @@ public class EvaluationService {
 	 * <p>{@code INCOMPLETE}(중단)를 {@code IN_PROGRESS}와 가른다. 응시 창이 닫히도록 끝내지 못한 사람은
 	 * 더 손쓸 것이 없는 확정 상태인데, 하나로 접으면 마감이 지난 뒤에도 화면에 "아직 응시 중"으로 남는다.
 	 * 제출 현황 탭이 {@code MISSED}와 {@code OPEN}을 가르는 것과 같은 원칙이다.
+	 *
+	 * <p><b>미제출·분석 실패도 미응시다.</b> 종전에는 이 둘에 해당하는 값이 없어 마지막 줄로
+	 * 떨어졌고, 그래서 <b>이미 종료된 회차에 "응시 중"인 사람이 남았다</b> — 그린컴퍼니 5·6·7기
+	 * 미프 3차에서 29명(미제출 20 · 분석 실패 9)이 그랬다. 셋 다 <b>검증 세션을 하지 못했다</b>는
+	 * 같은 사실이므로 표시 상태는 하나로 묶고, <b>왜 못 했는지는 {@link #notAttendedReason}이
+	 * 따로 낸다</b> — 매니저가 할 일이 서로 다르기 때문이다(재제출 안내 · 시스템 조치 · 학생 독촉).
+	 *
+	 * <p>원장은 이미 2층이다 — {@code status}가 상위이고 {@code terminal_reason_code}가 사유다.
+	 * 이 둘을 한 값으로 눌러 담으려던 것이 애초의 문제였다.
 	 */
 	private String resultStatus(TraineeRow row) {
 		if ("CONFIRMED_INVALID".equals(row.validityReviewStatus())) {
 			return "INVALID";
 		}
-		if ("NOT_ATTENDED".equals(row.terminalReasonCode())) {
+		if (notAttendedReason(row) != null) {
 			return "NOT_ATTENDED";
 		}
 		if ("SESSION_INCOMPLETE".equals(row.terminalReasonCode())) {
 			return "INCOMPLETE";
 		}
 		return "COMPLETED".equals(row.completionStatus()) ? SETTLED_STATUS : "IN_PROGRESS";
+	}
+
+	/**
+	 * 검증 세션을 <b>왜</b> 하지 못했는가. {@code resultStatus}가 {@code NOT_ATTENDED}일 때만 값이 있다.
+	 *
+	 * <p>{@code NO_SHOW}만 학생이 볼 수 있었는데 안 본 경우다. 나머지 둘은 응시할 문항 자체가
+	 * 만들어지지 않아 <b>볼 수 없었던</b> 경우이며, 특히 분석 실패는 시스템 귀책이라 학생 기록에
+	 * 사유 없이 "미응시"만 남기면 안 된다.
+	 *
+	 * <p>제출 현황 탭이 {@code BLOCKED}(볼 수 없었음)와 {@code MISSED}(안 봤음)를 가르는 축과 같다.
+	 */
+	private String notAttendedReason(TraineeRow row) {
+		return switch (String.valueOf(row.terminalReasonCode())) {
+			case "NOT_ATTENDED" -> "NO_SHOW";
+			case "NOT_SUBMITTED" -> "NOT_SUBMITTED";
+			case "ANALYSIS_FAILED" -> "ANALYSIS_FAILED";
+			default -> null;
+		};
 	}
 
 	private ProjectEvaluationSummaryResponse.Summary summarize(
