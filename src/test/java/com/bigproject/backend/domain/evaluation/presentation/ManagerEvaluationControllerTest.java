@@ -113,7 +113,7 @@ class ManagerEvaluationControllerTest {
 						List.of(new ProjectEvaluationSummaryResponse.Person(userId, "김민준")),
 						List.of(new ProjectEvaluationSummaryResponse.Person(userId, "김민준")))),
 				List.of(new ProjectEvaluationSummaryResponse.Trainee(
-						userId, "김민준", UUID.randomUUID(), "A반", "AVAILABLE", 1,
+						userId, "김민준", UUID.randomUUID(), "A반", "AVAILABLE", null, 1,
 						List.of(new ProjectEvaluationSummaryResponse.ConceptOutcome(
 								conceptId, "HITL 트리거", 1, true, 1, true))))
 		);
@@ -130,6 +130,7 @@ class ManagerEvaluationControllerTest {
 				"A반",
 				false,
 				"AVAILABLE",
+				null,
 				List.of(new TraineeEvaluationDetailResponse.Concept(
 						UUID.randomUUID(), "HITL 트리거", 1, true, 1, true,
 						List.of(new TraineeEvaluationDetailResponse.Step(

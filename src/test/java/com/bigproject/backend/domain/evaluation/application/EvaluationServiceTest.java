@@ -41,6 +41,8 @@ class EvaluationServiceTest {
 	private static final UUID MANAGER_ID = UUID.randomUUID();
 	private static final UUID USER_A = UUID.randomUUID();
 	private static final UUID USER_B = UUID.randomUUID();
+	private static final UUID USER_C = UUID.randomUUID();
+	private static final UUID USER_D = UUID.randomUUID();
 	private static final UUID CONCEPT_ID = UUID.randomUUID();
 	private static final UUID PROBLEM_ID = UUID.randomUUID();
 
@@ -214,6 +216,65 @@ class EvaluationServiceTest {
 		assertThat(response.trainees())
 				.extracting(ProjectEvaluationSummaryResponse.Trainee::resultStatus)
 				.containsExactly("INCOMPLETE", "IN_PROGRESS");
+	}
+
+	/**
+	 * 종료된 회차에 「응시 중」인 사람이 남던 회귀를 막는다.
+	 *
+	 * <p>미제출·분석 실패는 종료된 수행인데 {@code resultStatus}에 해당 값이 없어 마지막 줄로
+	 * 떨어졌다. 그린컴퍼니 5·6·7기 미프 3차에서 29명(미제출 20 · 분석 실패 9)이 CLOSED 회차에서
+	 * "응시 중"으로 보였다.
+	 *
+	 * <p>셋 다 검증 세션을 하지 못했다는 같은 사실이라 상태는 하나로 묶고, 원인은 사유로 가른다.
+	 */
+	@Test
+	void foldsEveryMissedSessionIntoOneStatusAndKeepsTheReason() {
+		when(repository.findTrainees(any(), any(), any(), any())).thenReturn(List.of(
+				trainee(USER_A, "가", "IN_PROGRESS", "NOT_SUBMITTED", "NOT_REQUIRED"),
+				trainee(USER_B, "나", "IN_PROGRESS", "ANALYSIS_FAILED", "NOT_REQUIRED"),
+				trainee(USER_C, "다", "NOT_STARTED", "NOT_ATTENDED", "NOT_REQUIRED"),
+				trainee(USER_D, "라", "IN_PROGRESS", null, "NOT_REQUIRED")));
+
+		var response = service.findSummary(EMAIL, PROJECT_ID, 1, null);
+
+		assertThat(response.trainees())
+				.extracting(ProjectEvaluationSummaryResponse.Trainee::resultStatus,
+						ProjectEvaluationSummaryResponse.Trainee::notAttendedReason)
+				.containsExactly(
+						tuple("NOT_ATTENDED", "NOT_SUBMITTED"),
+						tuple("NOT_ATTENDED", "ANALYSIS_FAILED"),
+						tuple("NOT_ATTENDED", "NO_SHOW"),
+						// 아직 끝나지 않은 수행은 미응시가 아니다 -- 창이 열려 있을 수 있다.
+						tuple("IN_PROGRESS", null));
+		// 반별 현황의 notAttendedCount와 같은 기준이다 -- 셋을 모두 센다.
+		assertThat(response.summary().notAttendedCount()).isEqualTo(3);
+		// AVAILABLE이 아니므로 합격·불합격 판정에는 들어가지 않는다.
+		assertThat(response.summary().attendedCount()).isZero();
+		assertThat(response.summary().failedCount()).isZero();
+	}
+
+	/** 무효 확정이 먼저다. 그때는 사유를 달지 않는다 — 계약이 "NOT_ATTENDED일 때만"이다. */
+	@Test
+	void stillReadsAnInvalidAttemptBeforeTheMissedReasons() {
+		when(repository.findTrainees(any(), any(), any(), any())).thenReturn(List.of(
+				trainee(USER_A, "가", "IN_PROGRESS", "ANALYSIS_FAILED", "CONFIRMED_INVALID")));
+
+		var trainee = service.findSummary(EMAIL, PROJECT_ID, 1, null).trainees().get(0);
+
+		assertThat(trainee.resultStatus()).isEqualTo("INVALID");
+		assertThat(trainee.notAttendedReason()).isNull();
+	}
+
+	/** 상세 조회도 목록과 같은 값을 말해야 한다. */
+	@Test
+	void carriesTheSameMissedReasonIntoTheDetail() {
+		when(repository.findTrainees(any(), any(), any(), any())).thenReturn(List.of(
+				trainee(USER_A, "가", "IN_PROGRESS", "ANALYSIS_FAILED", "NOT_REQUIRED")));
+
+		var response = service.findTraineeDetail(EMAIL, PROJECT_ID, 1, USER_A);
+
+		assertThat(response.resultStatus()).isEqualTo("NOT_ATTENDED");
+		assertThat(response.notAttendedReason()).isEqualTo("ANALYSIS_FAILED");
 	}
 
 	private RoundScope round(boolean published) {
