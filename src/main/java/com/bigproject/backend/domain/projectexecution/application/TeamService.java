@@ -53,27 +53,31 @@ public class TeamService {
     private final SubmissionQueryRepository submissionQueryRepository;
 
     /**
-     * 빈 팀 하나를 만든다. {@code classId}는 요청에 없다 — Project 엔티티엔 반 연관이 없어서,
-     * 팀을 만드는 매니저가 이 프로젝트의 기수(cohort)에서 담당하는 반을 서버가 역산한다.
-     * 매니저가 한 기수에 반을 하나만 담당한다는 전제다(정의 문서 URL·화면 어디에도 classId
-     * 파라미터가 없음) — 반이 여러 개면 400으로 막고, 필요해지면 파라미터로 받게 바꾼다.
+     * 빈 팀 하나를 만든다.
      *
      * <p>{@code min/maxMemberCount}는 임시로 1~6명을 고정값으로 둔다 — 팀 추가 모달에 이 값을
      * 입력받는 자리가 확인 안 됐다(정의 문서에 "빈 팀을 만든다"만 있음). 값을 어디서 받을지
      * (요청 파라미터 vs 프로젝트 기본값) 확인되면 그 값으로 바꾼다.
+     *
+     * @param classId 팀을 만들 반. 필수다.
      */
     @Transactional
-    public Team createTeam(UUID projectId, UUID orgId, String name, UUID managerUserId) {
-        Project project = projectRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(projectId, orgId)
-                .orElseThrow(() -> new ApiException(ProjectExecutionErrorCode.PROJECT_NOT_FOUND));
+    public Team createTeam(UUID projectId, UUID orgId, UUID classId, String name, UUID managerUserId) {
+        UUID targetClassId = resolveTargetClassId(projectId, orgId, managerUserId, classId);
 
-        UUID classId = resolveManagerClassId(project.getCohortId(), orgId, managerUserId);
-
-        int nextNumber = teamRepository.findByProjectIdAndOrgId(projectId, orgId).size() + 1;
+        /*
+         * 🔴 번호는 **그 반 안에서** 센다. 종전에는 프로젝트 전체 팀 수 + 1이었는데,
+         * 정의서·API 문서·시드는 모두 "반 안에서만 유일"을 전제한다(30차 R4의 `1팀`이
+         * 여덟 번 나오던 목록이 그 증거다). 화면에서 만든 팀만 전역 번호를 받아 규칙이
+         * 갈려 있었다.
+         */
+        int nextNumber = (int) teamRepository.findByProjectIdAndOrgId(projectId, orgId).stream()
+                .filter(team -> targetClassId.equals(team.getClassId()))
+                .count() + 1;
 
         Team team = Team.builder()
                 .projectId(projectId)
-                .classId(classId)
+                .classId(targetClassId)
                 .orgId(orgId)
                 .teamNumber(String.valueOf(nextNumber))
                 .name(name)
@@ -84,21 +88,44 @@ public class TeamService {
         return teamRepository.save(team);
     }
 
-    /** 로그인한 매니저가 이 기수에서 담당하는 반을 하나로 정한다. 0개·2개 이상이면 400. */
-    private UUID resolveManagerClassId(UUID cohortId, UUID orgId, UUID managerUserId) {
-        List<UUID> classIdsInCohort = managerAssignmentRepository
-                .findByManagerUserIdAndOrgIdAndUnassignedAtIsNull(managerUserId, orgId).stream()
-                .map(ManagerAssignment::getClassId)
-                .distinct()
-                .filter(classId -> classroomRepository.findByClassIdAndOrgIdAndDeletedAtIsNull(classId, orgId)
-                        .map(classroom -> classroom.getCohortId().equals(cohortId))
-                        .orElse(false))
-                .toList();
+    /**
+     * 요청이 지정한 반이 쓸 수 있는 반인지 검증한다. <b>반은 요청이 정한다 — 서버가 역산하지 않는다.</b>
+     *
+     * <p>담당 반인지, 이 프로젝트의 기수에 속한 반인지 둘 다 본다. 기수가 다르면 404이고 담당이
+     * 아니면 403이다 — "없는 반"과 "남의 반"은 화면이 다른 말을 해야 한다.
+     *
+     * <p>종전에는 {@code classId}가 없으면 매니저의 담당 반을 역산했고, 반이 둘 이상이면
+     * {@code MANAGER_CLASSROOM_AMBIGUOUS}로 막았다. 그 전제(매니저가 기수당 반 하나)가 애초에
+     * 사실이 아니었고(이도윤 = 7기 B·D반), 역산이 성공하는 경우에도 대상 인원은 기수 전원이라
+     * 다른 반 사람이 섞였다. 반을 요청이 정하게 되면서 역산 갈래와 그 에러 코드를 함께 지웠다.
+     */
+    private UUID resolveTargetClassId(UUID projectId, UUID orgId, UUID managerUserId, UUID requestedClassId) {
+        Project project = projectRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(projectId, orgId)
+                .orElseThrow(() -> new ApiException(ProjectExecutionErrorCode.PROJECT_NOT_FOUND));
 
-        if (classIdsInCohort.size() != 1) {
-            throw new ApiException(ProjectExecutionErrorCode.MANAGER_CLASSROOM_AMBIGUOUS);
+        if (!belongsToCohort(requestedClassId, orgId, project.getCohortId())) {
+            throw new ApiException(ProjectExecutionErrorCode.CLASS_NOT_FOUND);
         }
-        return classIdsInCohort.get(0);
+        if (!managedClassIds(orgId, managerUserId).contains(requestedClassId)) {
+            throw new ApiException(ProjectExecutionErrorCode.CLASS_NOT_MANAGED);
+        }
+        return requestedClassId;
+    }
+
+    /**
+     * 이 팀이 내가 맡은 반의 팀인가. 팀 목록이 이미 담당 반만 주므로 정상 흐름에서는 언제나 참이고,
+     * 남의 반 teamId를 직접 부르는 요청만 여기서 끊긴다.
+     */
+    private void assertManagedTeam(Team team, UUID orgId, UUID managerUserId) {
+        if (!managedClassIds(orgId, managerUserId).contains(team.getClassId())) {
+            throw new ApiException(ProjectExecutionErrorCode.CLASS_NOT_MANAGED);
+        }
+    }
+
+    private boolean belongsToCohort(UUID classId, UUID orgId, UUID cohortId) {
+        return classroomRepository.findByClassIdAndOrgIdAndDeletedAtIsNull(classId, orgId)
+                .map(classroom -> classroom.getCohortId().equals(cohortId))
+                .orElse(false);
     }
 
     public Team findTeam(UUID teamId, UUID orgId) {
@@ -117,14 +144,26 @@ public class TeamService {
      * 기수 전체 48팀이 나왔고, 팀 번호가 반마다 1부터 다시 시작해 목록에 `1팀`이 여덟 번
      * 나타났다. 같은 화면의 제출 현황 탭은 담당 반 6팀만 보여 주고 있었다.
      */
-    public List<Team> findManagedTeams(UUID projectId, UUID orgId, UUID managerUserId) {
-        List<UUID> managedClassIds = managedClassIds(orgId, managerUserId);
-        if (managedClassIds.isEmpty()) {
+    public List<Team> findManagedTeams(UUID projectId, UUID orgId, UUID managerUserId, UUID classId) {
+        List<UUID> scope = visibleClassIds(orgId, managerUserId, classId);
+        if (scope.isEmpty()) {
             return List.of();
         }
         return teamRepository.findByProjectIdAndOrgId(projectId, orgId).stream()
-                .filter(team -> managedClassIds.contains(team.getClassId()))
+                .filter(team -> scope.contains(team.getClassId()))
                 .toList();
+    }
+
+    /**
+     * 읽기 조회가 볼 반. 반을 지정했으면 그 하나로 좁히되 <b>담당 반일 때만</b>이다 —
+     * 남의 반 ID를 넣어도 빈 결과일 뿐 에러는 아니다(읽기라 존재를 알릴 필요가 없다).
+     */
+    private List<UUID> visibleClassIds(UUID orgId, UUID managerUserId, UUID classId) {
+        List<UUID> managed = managedClassIds(orgId, managerUserId);
+        if (classId == null) {
+            return managed;
+        }
+        return managed.contains(classId) ? List.of(classId) : List.of();
     }
 
     /** 지금 담당 중인 반. 네이티브 SQL 쪽 판정과 같게 {@code status}와 해제 시각을 함께 본다. */
@@ -159,16 +198,25 @@ public class TeamService {
     }
 
     @Transactional
-    public void renameTeam(UUID teamId, UUID orgId, String newName) {
-        findTeam(teamId, orgId).rename(newName);
+    public void renameTeam(UUID teamId, UUID orgId, String newName, UUID managerUserId) {
+        Team team = findTeam(teamId, orgId);
+        assertManagedTeam(team, orgId, managerUserId);
+        team.rename(newName);
     }
 
     /**
      * 이 프로젝트 참여자 중 지금 어느 팀에도 속하지 않은 사람. 정의 문서의
      * "팀에 들어가지 않은 사람이 n명 있어요" 배너가 이 목록의 크기를 쓴다.
+     *
+     * <p>🔴 <b>담당 반으로 좁힌다.</b> 종전에는 기수 전원이 나왔다 — 같은 응답의 {@code teams[]}는
+     * 이미 담당 반만 주고 있었으므로(30차 R3) 한 화면 안에서 두 목록의 모집단이 달랐다.
+     * 7기처럼 반이 열인 기수에서는 미배정 249명이 나와 배너가 늘 켜져 있었고, 그 사람들을
+     * 팀에 넣어도 목록이 줄지 않았다. 이제 두 목록이 같은 모집단을 본다.
      */
-    public List<ProjectMembershipQueryRepository.UnassignedMember> findUnassignedMembers(UUID projectId, UUID orgId) {
-        return projectMembershipQueryRepository.findUnassigned(projectId, orgId);
+    public List<ProjectMembershipQueryRepository.UnassignedMember> findUnassignedMembers(
+            UUID projectId, UUID orgId, UUID managerUserId, UUID classId) {
+        return projectMembershipQueryRepository.findUnassigned(
+                projectId, orgId, visibleClassIds(orgId, managerUserId, classId));
     }
 
     /**
@@ -183,12 +231,15 @@ public class TeamService {
     public TeamMembership assignMember(UUID teamId, UUID orgId, UUID projectId,
                                        UUID projectMembershipId, AssignmentMethod method, UUID actorUserId) {
         Team team = findTeam(teamId, orgId);
+        assertManagedTeam(team, orgId, actorUserId);
 
         if (submissionQueryRepository.hasAcceptedSubmission(teamId, orgId)) {
             throw new ApiException(ProjectExecutionErrorCode.TEAM_SUBMISSION_LOCKED);
         }
 
-        if (!projectMembershipQueryRepository.belongsToProject(projectMembershipId, projectId, orgId)) {
+        // 🔴 팀의 반까지 함께 본다 — 프로젝트 소속만 보던 종전 검사로는 다른 반 사람이 들어왔다.
+        if (!projectMembershipQueryRepository.belongsToProjectAndClass(
+                projectMembershipId, projectId, orgId, team.getClassId())) {
             throw new ApiException(ProjectExecutionErrorCode.PROJECT_MEMBERSHIP_NOT_FOUND);
         }
 
@@ -220,8 +271,9 @@ public class TeamService {
      * <p>배정과 같은 이유로, 이미 정상 접수된 제출이 있는 팀은 제외도 막는다.
      */
     @Transactional
-    public void removeMember(UUID teamId, UUID orgId, UUID projectId, UUID traineeId) {
+    public void removeMember(UUID teamId, UUID orgId, UUID projectId, UUID traineeId, UUID managerUserId) {
         Team team = findTeam(teamId, orgId);
+        assertManagedTeam(team, orgId, managerUserId);
 
         if (submissionQueryRepository.hasAcceptedSubmission(teamId, orgId)) {
             throw new ApiException(ProjectExecutionErrorCode.TEAM_SUBMISSION_LOCKED);
@@ -262,8 +314,9 @@ public class TeamService {
      * 뜬다. {@code TEAM_SUBMISSION_LOCKED}로 끊고 화면이 이유를 말하게 한다.
      */
     @Transactional
-    public void disbandTeam(UUID teamId, UUID orgId) {
+    public void disbandTeam(UUID teamId, UUID orgId, UUID managerUserId) {
         Team team = findTeam(teamId, orgId);
+        assertManagedTeam(team, orgId, managerUserId);
 
         if (submissionQueryRepository.hasAcceptedSubmission(teamId, orgId)) {
             throw new ApiException(ProjectExecutionErrorCode.TEAM_SUBMISSION_LOCKED);
@@ -285,17 +338,29 @@ public class TeamService {
      * "실력 섞기를 실행했는데 아무 근거가 없어서 실패"가 아니라 "근거가 없으면 무작위와 같다"로
      * 다루는 것이 정의 문서의 "1차라면 무작위만 쓸 수 있습니다"와 맞는다.
      *
+     * <h2>🔴 반 단위로 돈다</h2>
+     *
+     * <p>대상 인원도, "팀이 하나도 없다"는 선행 조건도 <b>그 반</b> 기준이다. 종전에는 둘 다
+     * 프로젝트 전역이라 (1) 기수 전원을 한 반의 팀으로 몰아넣었고 (2) 다른 반 매니저가 먼저
+     * 팀을 만들면 내 반은 영영 자동 배분을 쓸 수 없었다.
+     *
+     * @param classId       배분할 반. 필수다.
      * @param teamSize      팀 하나의 목표 인원(예: 3). 마지막 팀만 나머지를 더 받는다.
      * @param skillBalanced true면 실력 섞기, false면 무작위
      */
     @Transactional
-    public List<Team> autoAssign(UUID projectId, UUID orgId, int teamSize, boolean skillBalanced, UUID managerUserId) {
-        if (!teamRepository.findByProjectIdAndOrgId(projectId, orgId).isEmpty()) {
+    public List<Team> autoAssign(UUID projectId, UUID orgId, UUID classId,
+            int teamSize, boolean skillBalanced, UUID managerUserId) {
+        UUID targetClassId = resolveTargetClassId(projectId, orgId, managerUserId, classId);
+
+        boolean classAlreadyHasTeams = teamRepository.findByProjectIdAndOrgId(projectId, orgId).stream()
+                .anyMatch(team -> targetClassId.equals(team.getClassId()));
+        if (classAlreadyHasTeams) {
             throw new ApiException(ProjectExecutionErrorCode.AUTO_ASSIGN_NOT_ALLOWED);
         }
 
         List<ProjectMembershipQueryRepository.UnassignedMember> members =
-                projectMembershipQueryRepository.findUnassigned(projectId, orgId);
+                projectMembershipQueryRepository.findUnassigned(projectId, orgId, List.of(targetClassId));
         if (members.isEmpty()) {
             throw new ApiException(ProjectExecutionErrorCode.NO_MEMBERS_TO_ASSIGN);
         }
@@ -305,7 +370,7 @@ public class TeamService {
                 : shuffle(members);
 
         int teamCount = Math.max(1, (int) Math.ceil(ordered.size() / (double) teamSize));
-        List<Team> teams = createEmptyTeams(projectId, orgId, teamCount, managerUserId);
+        List<Team> teams = createEmptyTeams(projectId, orgId, targetClassId, teamCount, managerUserId);
 
         // 뱀 순서(1·2·3...3·2·1)로 배분 — 정렬 순서상 앞쪽(=강한 쪽)이 팀마다 고르게 퍼진다.
         OffsetDateTime now = OffsetDateTime.now();
@@ -379,13 +444,9 @@ public class TeamService {
         return ordered;
     }
 
-    private List<Team> createEmptyTeams(UUID projectId, UUID orgId, int teamCount, UUID managerUserId) {
-        UUID classId = resolveManagerClassId(
-                projectRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(projectId, orgId)
-                        .orElseThrow(() -> new ApiException(ProjectExecutionErrorCode.PROJECT_NOT_FOUND))
-                        .getCohortId(),
-                orgId, managerUserId);
-
+    /** 반이 이미 정해진 뒤에 불린다 — 번호도 이름도 그 반 안에서 1부터 매긴다. */
+    private List<Team> createEmptyTeams(UUID projectId, UUID orgId, UUID classId,
+            int teamCount, UUID managerUserId) {
         List<Team> teams = new ArrayList<>();
         for (int i = 1; i <= teamCount; i++) {
             teams.add(teamRepository.save(Team.builder()
@@ -405,17 +466,32 @@ public class TeamService {
     /**
      * 팀 편성 확정(정의 문서 ③→④). 전원 배정이 안 됐으면 확정할 수 없다 —
      * "미배정이 있으면 제출이 열리지 않는다"는 화면 규칙을 서버도 같이 지킨다.
+     *
+     * <p>🔴 <b>반 단위다.</b> 확정 대상도 미배정 판정도 그 반만 본다. 종전에는 둘 다 프로젝트
+     * 전역이라 <b>다른 반에 미배정이 남아 있으면 내 반 확정이 막혔다</b> — 반마다 편성 진도가
+     * 다른 것이 정상인데 가장 늦은 반이 나머지를 전부 붙잡고 있었다.
+     *
+     * @param classId 확정할 반. 필수다.
      */
     @Transactional
-    public void confirmTeams(UUID projectId, UUID orgId) {
-        List<Team> teams = teamRepository.findByProjectIdAndOrgId(projectId, orgId);
+    public void confirmTeams(UUID projectId, UUID orgId, UUID classId, UUID managerUserId) {
+        List<UUID> scope = confirmScope(projectId, orgId, classId, managerUserId);
+
+        List<Team> teams = teamRepository.findByProjectIdAndOrgId(projectId, orgId).stream()
+                .filter(team -> scope.contains(team.getClassId()))
+                .toList();
         if (teams.isEmpty()) {
             throw new ApiException(ProjectExecutionErrorCode.NO_TEAMS_TO_CONFIRM);
         }
-        if (!projectMembershipQueryRepository.findUnassigned(projectId, orgId).isEmpty()) {
+        if (!projectMembershipQueryRepository.findUnassigned(projectId, orgId, scope).isEmpty()) {
             throw new ApiException(ProjectExecutionErrorCode.TEAMS_NOT_READY);
         }
         teams.forEach(Team::confirm);
+    }
+
+    /** 확정·다시 열기가 건드릴 반. 요청이 정한 하나다(검증 후). */
+    private List<UUID> confirmScope(UUID projectId, UUID orgId, UUID classId, UUID managerUserId) {
+        return List.of(resolveTargetClassId(projectId, orgId, managerUserId, classId));
     }
 
     /**
@@ -425,7 +501,10 @@ public class TeamService {
      * 막는 기준이 같아야 하는지 아직 정의 문서로 확인되지 않아 우선 배정/제외만 막아 둔다.
      */
     @Transactional
-    public void reopenTeams(UUID projectId, UUID orgId) {
-        teamRepository.findByProjectIdAndOrgId(projectId, orgId).forEach(Team::reopen);
+    public void reopenTeams(UUID projectId, UUID orgId, UUID classId, UUID managerUserId) {
+        List<UUID> scope = confirmScope(projectId, orgId, classId, managerUserId);
+        teamRepository.findByProjectIdAndOrgId(projectId, orgId).stream()
+                .filter(team -> scope.contains(team.getClassId()))
+                .forEach(Team::reopen);
     }
 }

@@ -104,23 +104,38 @@ public enum ProjectExecutionErrorCode implements ApiErrorCode {
     TEAM_MEMBERSHIP_NOT_FOUND(HttpStatus.NOT_FOUND, "그 팀에 속한 인원이 아닙니다."),
 
     /**
-     * 팀을 만들려는 매니저가 이 프로젝트의 기수에 담당 반이 없거나, 반이 2개 이상이라
-     * 어느 반의 팀인지 하나로 정할 수 없다. Project 엔티티엔 classId가 없어 매니저의
-     * 담당 반 배정에서 역산하는데, 그 전제(매니저가 기수당 반 하나만 담당)가 깨진 경우다.
+     * 요청이 지정한 반을 그 매니저가 맡고 있지 않다. 남의 반 팀을 만들거나 남의 반 팀에
+     * 손대려는 요청이 여기로 온다.
+     *
+     * <p>여기 있던 {@code MANAGER_CLASSROOM_AMBIGUOUS}(400)를 대체한다. 그쪽은 요청에 반이 없어
+     * 서버가 담당 반을 역산하던 시절의 것으로, "매니저는 기수당 반 하나만 담당한다"는 전제가
+     * 깨지면 아무것도 못 하게 막는 코드였다. 반을 요청이 정하게 되면서 그 전제와 함께 사라졌다.
      */
-    MANAGER_CLASSROOM_AMBIGUOUS(HttpStatus.BAD_REQUEST, "담당 반을 하나로 정할 수 없습니다."),
+    CLASS_NOT_MANAGED(HttpStatus.FORBIDDEN, "담당하지 않는 반입니다."),
 
-    /** 자동 배분은 팀이 하나도 없을 때만 된다(정의 문서). 이미 팀이 있으면 여기로 온다. */
-    AUTO_ASSIGN_NOT_ALLOWED(HttpStatus.CONFLICT, "이미 팀이 편성되어 있어 자동 배분을 실행할 수 없습니다."),
+    /** 요청이 지정한 반이 없거나 이 프로젝트의 기수에 속하지 않는다. */
+    CLASS_NOT_FOUND(HttpStatus.NOT_FOUND, "이 프로젝트의 기수에 그 반이 없습니다."),
 
-    /** 배분할 미배정 인원이 없다. */
-    NO_MEMBERS_TO_ASSIGN(HttpStatus.BAD_REQUEST, "배분할 인원이 없습니다."),
+    /**
+     * 자동 배분은 <b>그 반에</b> 팀이 하나도 없을 때만 된다(정의 문서). 이미 팀이 있으면 여기로 온다.
+     *
+     * <p>판정 범위가 프로젝트 전역이던 때는 <b>다른 반 매니저가 먼저 팀을 만들면 내 반이 막혔다</b> —
+     * 미프 5차는 J반에만 시드 팀 6개가 있어서 B·D반 매니저도 이 코드를 받았다.
+     */
+    AUTO_ASSIGN_NOT_ALLOWED(HttpStatus.CONFLICT, "그 반에 이미 팀이 편성되어 있어 자동 배분을 실행할 수 없습니다."),
 
-    /** 확정하려는데 팀이 하나도 없다. */
-    NO_TEAMS_TO_CONFIRM(HttpStatus.BAD_REQUEST, "확정할 팀이 없습니다."),
+    /** 그 반에 배분할 미배정 인원이 없다. */
+    NO_MEMBERS_TO_ASSIGN(HttpStatus.BAD_REQUEST, "그 반에 배분할 인원이 없습니다."),
 
-    /** 미배정 인원이 남아있는 채로 확정하려 했다. 전원 배정이 되어야 확정할 수 있다(정의 문서 ③→④). */
-    TEAMS_NOT_READY(HttpStatus.BAD_REQUEST, "아직 팀에 들어가지 않은 인원이 있어 확정할 수 없습니다."),
+    /** 확정하려는데 그 반에 팀이 하나도 없다. */
+    NO_TEAMS_TO_CONFIRM(HttpStatus.BAD_REQUEST, "그 반에 확정할 팀이 없습니다."),
+
+    /**
+     * 그 반에 미배정 인원이 남아있는 채로 확정하려 했다. 전원 배정이 되어야 확정할 수 있다(③→④).
+     *
+     * <p>판정 범위가 프로젝트 전역이던 때는 <b>다른 반에 미배정이 남으면 내 반 확정이 막혔다.</b>
+     */
+    TEAMS_NOT_READY(HttpStatus.BAD_REQUEST, "그 반에 아직 팀에 들어가지 않은 인원이 있어 확정할 수 없습니다."),
 
     /**
      * 이 팀이 이미 정상 접수된 제출을 했다. 제출된 코드가 팀 구성에 묶여 있어 배정을 바꿀 수 없다
