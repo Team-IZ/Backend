@@ -5393,14 +5393,20 @@ create table project_requirement_assessment
             on delete restrict,
     created_at               timestamp with time zone default CURRENT_TIMESTAMP            not null,
     assessment_note          text,
+    -- [2026-08-25] PASS/FAIL 을 갈랐다. FAIL 만 evidence_summary NULL 을 허용한다 --
+    -- AI 엔진은 FAIL 판정에 근거를 요구하지 않는 것이 의도된 설계다(2026-08-05 레드팀 감사:
+    -- PASS 만 실제 소스와 대조 검증하고, 못 찾으면 FAIL 로 강등하므로 FAIL 에는 근거가 없다).
+    -- 종전 CHECK 가 그 조합을 거부해 적재 트랜잭션이 통째로 롤백됐다(2026-08-24 미프 4차 15건).
+    -- docs/migration/2026-08-25_requirement_assessment_fail_allows_no_evidence.sql
     constraint ck_project_requirement_assessment_result_fields
         check ((((result)::text = 'PENDING'::text) AND (evidence_summary IS NULL) AND (source_submission_id IS NULL) AND
-                (analysis_id IS NULL) AND (assessed_at IS NULL) AND (assessed_by IS NULL)) OR (((result)::text = ANY
-                                                                                                (ARRAY [('PASS'::character varying)::text, ('FAIL'::character varying)::text])) AND
-                                                                                               (evidence_summary IS NOT NULL) AND
-                                                                                               (source_submission_id IS NOT NULL) AND
-                                                                                               (assessed_at IS NOT NULL) AND
-                                                                                               ((analysis_id IS NOT NULL) OR (assessed_by IS NOT NULL))))
+                (analysis_id IS NULL) AND (assessed_at IS NULL) AND (assessed_by IS NULL)) OR
+               (((result)::text = 'PASS'::text) AND (evidence_summary IS NOT NULL) AND
+                (source_submission_id IS NOT NULL) AND (assessed_at IS NOT NULL) AND
+                ((analysis_id IS NOT NULL) OR (assessed_by IS NOT NULL))) OR
+               (((result)::text = 'FAIL'::text) AND
+                (source_submission_id IS NOT NULL) AND (assessed_at IS NOT NULL) AND
+                ((analysis_id IS NOT NULL) OR (assessed_by IS NOT NULL))))
 );
 
 comment on table project_requirement_assessment is '프로젝트 회차·팀의 특정 요구사항 버전을 최신 유효 제출과 분석 결과로 판정한 이력입니다. 재판정은 기존 행을 갱신하지 않고 새 버전 행으로 보존합니다. | 정의서명: ProjectRequirementAssessment | 제약·비고: • result: PENDING / PASS / FAIL, assessment_version > 0 • PENDING은 근거·분석·판정 시각·판정자가 NULL일 수 있습니다. • PASS·FAIL이면 evidence_summary·source_submission_id·analysis_id·assessed_at·assessed_by가 필수입니다. • source_submission_id와 analysis_id는 해당 팀의 동일 회차 최신 유효 제출과 그 제출에서 생성된 분석 원천이어야 합니다. • requirement_id·assessment_round_id·team_id·Submission·CodeAnalysis·org_id의 프로젝트·기관 경로가 일치해야 합니다. • evidence_locations는 코드 경로·시작/종료 줄·근거 해시를 가진 버전형 JSON Schema로 검증합니다. • 재판정은 supersedes_assessment_id로 이전 행을 가리키는 새 assessment_version을 생성하고 기존 행을 수정하지 않습니다.';
