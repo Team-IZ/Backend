@@ -154,6 +154,7 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 			       mv.excellent_assessment_sequence_nos,
 			       mv.current_round_matched_risk_type_codes AS matched_risk_type_codes,
 			       mv.current_round_primary_status_code,
+			       mv.current_round_not_attended_reason_code,
 			       mv.round_terminal_at,
 			       mv.row_aggregation_status
 			""" + ROSTER_FROM + ROSTER_MANAGER_METRICS_JOIN;
@@ -297,6 +298,7 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				       mv.excellent_assessment_sequence_nos,
 				       mv.current_round_matched_risk_type_codes AS matched_risk_type_codes,
 				       mv.current_round_primary_status_code,
+				       mv.current_round_not_attended_reason_code,
 				       mv.round_terminal_at,
 				       mv.row_aggregation_status
 				FROM page r
@@ -525,6 +527,7 @@ public class JdbcTraineeRosterRepository implements TraineeRosterRepository {
 				intArray(rs, "excellent_assessment_sequence_nos"),
 				nullableStringList(rs, "matched_risk_type_codes"),
 				rs.getString("current_round_primary_status_code"),
+				rs.getString("current_round_not_attended_reason_code"),
 				toOffsetDateTime(rs.getTimestamp("round_terminal_at")),
 				rs.getString("row_aggregation_status")
 		);

@@ -27,6 +27,8 @@ public interface TraineeDetailRepository {
 			UUID assessmentRoundId, Integer cohortRoundNo, Integer roundNo,
 			String roundName, UUID projectId, String projectName,
 			UUID attemptId, String roundResultStatus, String primaryStatusCode,
+			/** primaryStatusCode가 NOT_ATTENDED일 때만. NO_SHOW · NOT_SUBMITTED · ANALYSIS_FAILED. */
+			String notAttendedReasonCode,
 			List<String> matchedRiskTypeCodes, String riskReasonSummary,
 			OffsetDateTime roundTerminalAt, String conceptResultItems,
 			Integer expectedConceptCount, Integer lowStageConceptCount,

@@ -75,7 +75,7 @@ public interface SubmissionStatusQueryRepository {
 	 *
 	 * <h2>기준은 상세 조회와 같다</h2>
 	 *
-	 * <p>「응시 완료」는 {@code terminal_at}이 있거나 {@code completion_status='COMPLETED'}이고,
+	 * <p>「응시 완료」는 {@code completion_status='COMPLETED'}이고,
 	 * 「미제출」은 레코드 존재가 아니라 {@code submitted_at}으로 판정한다 — 접수 중인 제출을
 	 * '냈다'로 세지 않기 위해서다. 제출·분석을 팀당 한 건씩 접는 기준도 {@link #findTeams}와
 	 * 같은 {@code LATERAL}이라, 목록과 상세가 같은 팀을 두고 다른 말을 하지 않는다.
@@ -98,7 +98,15 @@ public interface SubmissionStatusQueryRepository {
 	 * 회차 × 반 × 팀 한 줄이다. 반 집계는 그 반의 팀 행마다 반복해서 담긴다.
 	 *
 	 * @param assessedCount         그 반에서 응시를 마친 인원(반 전체 값, 팀마다 반복). 화면 `응시 58/71`의 분자
-	 * @param targetCount           그 반에서 팀에 배정된 인원(반 전체 값, 팀마다 반복). 분모
+	 * @param targetCount           그 반의 <b>응시 대상</b> 인원(반 전체 값, 팀마다 반복). 분모이며
+	 *                              분석이 끝나 문항이 만들어진 사람({@code SUCCEEDED}·{@code PARTIAL})이다.
+	 *                              반별 현황의 응시율 분모와 같은 기준이다
+	 * @param blockedCount          미제출·분석 실패로 <b>응시할 방법이 없었던</b> 인원(반 전체 값, 팀마다 반복).
+	 *                              분모에서 빠진 사람이며, 화면이 `(응시 불가 29)`처럼 따로 보여줄 값이다
+	 * @param eligibleCount         그 반에서 팀에 배정된 전체 인원(반 전체 값, 팀마다 반복). 종전의 분모다.
+	 *                              분자·분모로 쓰지 않고 <b>잴 것이 있는지</b>를 가르는 데만 쓴다 —
+	 *                              0이면 회차가 아직 그 반에 닿지 않은 것이고,
+	 *                              {@code targetCount}만 0이면 전원이 응시 자체를 못 한 것이라 서로 다르다
 	 * @param submittedAt           이 팀의 최신 제출 시각. null이면 미제출
 	 * @param analysisStatus        이 팀의 최신 제출에 매인 분석 상태. {@code FAILED}면 분석 실패
 	 * @param interviewBacklogCount 면담 대기·진행 인원(34차 R7①, 반 전체 값, 팀마다 반복). <b>팀 수가
@@ -115,6 +123,8 @@ public interface SubmissionStatusQueryRepository {
 			String analysisStatus,
 			long assessedCount,
 			long targetCount,
+			long blockedCount,
+			long eligibleCount,
 			int interviewBacklogCount
 	) {
 	}
@@ -191,8 +201,10 @@ public interface SubmissionStatusQueryRepository {
 	}
 
 	/**
-	 * @param completedAt {@code measurement_attempt.terminal_at}. 응시를 실제로 마친 시각이며 화면의
-	 *                    '제출' 열이 개인 행에서 보여주는 값이다. 종료되지 않았으면 null이다.
+	 * @param completedAt 응시를 실제로 마친 시각이며 화면의 '제출' 열이 개인 행에서 보여주는 값이다.
+	 *                    <b>{@code status='COMPLETED'}일 때만 값이 있다</b> — 원천인
+	 *                    {@code measurement_attempt.terminal_at}은 FAILED·EXPIRED에서도 채워지므로
+	 *                    그대로 쓰면 미응시·분석 실패한 사람에게도 완료 시각이 실린다.
 	 */
 	record MemberRow(
 			UUID teamId,

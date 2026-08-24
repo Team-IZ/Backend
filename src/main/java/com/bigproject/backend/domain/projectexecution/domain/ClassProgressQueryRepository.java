@@ -88,11 +88,16 @@ public interface ClassProgressQueryRepository {
 			long targetTraineeCount,
 			long submittedCount,
 			long analysisSucceededCount,
+			/** 응시율의 분모. 분석이 끝나 문항이 만들어진 인원(SUCCEEDED + PARTIAL)이다. */
+			long assessmentTargetCount,
 			long analysisFailedCount,
 			long analysisPartialCount,
 			long analysisInProgressCount,
 			long assessedCount,
+			/** 검증 세션을 하지 못한 인원. 미응시 + 미제출 + 분석 실패다. */
 			long notAttendedCount,
+			/** 그중 볼 수 있었는데 안 본 인원(NOT_ATTENDED). 나머지는 볼 수 없었던 경우다. */
+			long noShowCount,
 			long sessionIncompleteCount,
 			long invalidAttemptCount,
 			List<String> managerNames
@@ -100,8 +105,9 @@ public interface ClassProgressQueryRepository {
 	}
 
 	/**
-	 * 회차 전체 합계. analysisTargetCount는 submittedCount와, assessmentTargetCount는
-	 * analysisSucceededCount와 값이 같다 — 단계별 분모를 이름으로도 명확히 드러내기 위해 따로 둔다.
+	 * 회차 전체 합계. analysisTargetCount는 submittedCount와 값이 같다 — 단계별 분모를 이름으로도
+	 * 명확히 드러내기 위해 따로 둔다. assessmentTargetCount는 analysisSucceededCount와 <b>다르다</b>:
+	 * PARTIAL도 그 문항으로 응시할 수 있어 응시 대상에 넣기 때문이다.
 	 */
 	record RoundSummaryRow(
 			long targetTraineeCount,

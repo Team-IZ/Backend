@@ -224,12 +224,22 @@ public class SubmissionStatusService {
 	 * <p>{@code BLOCKED}를 {@code MISSED}와 나누는 것이 핵심이다. 미제출·분석 실패로 <b>수행 자체가
 	 * 만들어지지 않은</b> 사람은 안 본 것이 아니라 볼 수 없었던 것이라, 독촉해도 할 수 있는 일이 없다.
 	 * 마감이 지나 창이 닫혔는지({@code MISSED}) 아직 열려 있는지({@code OPEN})는 닫히는 시각으로 가른다.
+	 *
+	 * <p><b>완료는 {@code completionStatus}로만 가른다.</b> 종전에는 {@code completedAt}(=
+	 * {@code measurement_attempt.terminal_at})이 있으면 완료로 봤는데, 그 컬럼은 FAILED·EXPIRED에서도
+	 * 채워지므로 지난 회차의 전원이 {@code DONE}이 됐다 — 아래 {@code EXPIRED} 분기가 한 번도 닿지
+	 * 않는 죽은 코드였던 것이 그 증거다.
 	 */
 	private String attendanceStatus(SubmissionStatusQueryRepository.MemberRow member, Instant now) {
-		if (member.completedAt() != null || "COMPLETED".equals(member.completionStatus())) {
+		if ("COMPLETED".equals(member.completionStatus())) {
 			return "DONE";
 		}
 		if (member.primaryAttemptId() == null || member.assessmentCloseAt() == null) {
+			return "BLOCKED";
+		}
+		// 분석 실패는 창이 열렸다 닫힌 것이 아니라 볼 수 없었던 경우다. close_at이 남아 있어도
+		// MISSED로 세면 "봤어야 했는데 안 봤다"가 되어 독촉 대상으로 잘못 읽힌다.
+		if ("FAILED".equals(member.primaryAttemptStatus())) {
 			return "BLOCKED";
 		}
 		if ("EXPIRED".equals(member.primaryAttemptStatus())) {
@@ -251,10 +261,17 @@ public class SubmissionStatusService {
 	 */
 	public record ManagerProjectProgress(Progress progress, List<ActionItem> actionItems) {
 
-		/** 화면의 `응시 58/71` + 그 아래 `C반이 12/23`. */
+		/**
+		 * 화면의 `응시 58/71` + 그 아래 `C반이 12/23`.
+		 *
+		 * <p>{@code targetTraineeCount}는 담당 반 전체가 아니라 <b>응시 대상</b>이다 — 미제출·분석
+		 * 실패로 문항이 만들어지지 않은 사람은 응시할 방법이 없어 분모가 아니다. 그 인원은
+		 * {@code blockedCount}로 따로 온다. 반별 현황(class-progress)의 응시율과 같은 기준이다.
+		 */
 		public record Progress(
 				long assessedCount,
 				long targetTraineeCount,
+				long blockedCount,
 				LaggingClass laggingClass) {
 		}
 
@@ -394,14 +411,20 @@ public class SubmissionStatusService {
 			Map<UUID, List<SubmissionStatusQueryRepository.ManagerProgressAggregate>> byClass) {
 		long assessed = 0;
 		long target = 0;
+		long blocked = 0;
+		long eligible = 0;
 		List<SubmissionStatusQueryRepository.ManagerProgressAggregate> classTotals = new ArrayList<>();
 		for (var rows : byClass.values()) {
 			var first = rows.get(0);
 			assessed += first.assessedCount();
 			target += first.targetCount();
+			blocked += first.blockedCount();
+			eligible += first.eligibleCount();
 			classTotals.add(first);
 		}
-		if (target == 0) {
+		// null은 「잴 것이 없다」는 뜻으로만 쓴다. 분모가 0이어도 사람이 있으면 그것은 「전원이 응시
+		// 자체를 못 했다」는 사실이며, 0/0 + blocked N으로 말해야 화면이 예정 회차와 구분할 수 있다.
+		if (eligible == 0) {
 			return null;
 		}
 		// 담당 반이 하나뿐이면 합계가 곧 그 반이라 따로 집어 봐야 의미가 없다.
@@ -412,7 +435,7 @@ public class SubmissionStatusService {
 				.map(row -> new ManagerProjectProgress.LaggingClass(
 						row.classId(), row.className(), row.assessedCount(), row.targetCount()))
 				.orElse(null);
-		return new ManagerProjectProgress.Progress(assessed, target, lagging);
+		return new ManagerProjectProgress.Progress(assessed, target, blocked, lagging);
 	}
 
 	/** 0건인 반·유형은 항목을 만들지 않는다 — 조치 열이 비는 것이 정상이며 화면은 그때 —를 그린다. */
@@ -479,7 +502,7 @@ public class SubmissionStatusService {
 		var members = repository.findMembers(round.assessmentRoundId(), orgId, managerUserId, classId);
 
 		return new ManagerProjectProgress(
-				calculateProgress(teams, members),
+				calculateProgress(teams, members, round.submissionDueAt()),
 				calculateActionItems(teams));
 	}
 	/**
@@ -490,48 +513,91 @@ public class SubmissionStatusService {
 	 *
 	 * <p>팀에 배정되지 않은 사람({@code teamId == null})은 분모에서 뺀다. 어느 반인지 팀을 통해서만
 	 * 알 수 있고, 미배정이 남아 있으면 애초에 제출이 열리지 않는다.
+	 *
+	 * <p><b>분모는 응시 대상이다.</b> 미제출·분석 실패로 문항이 만들어지지 않은 사람은 응시할 방법이
+	 * 없으므로 분모에서 빠지고 {@code blockedCount}로 따로 센다. 분석은 팀 단위 산출물이라 그 사람의
+	 * 팀 행에서 읽는다 — {@link #findManagerProjectProgress(String, List, UUID)}가 개인 행의
+	 * {@code analysis_status}로 세는 것과 같은 값이다.
 	 */
 	private ManagerProjectProgress.Progress calculateProgress(
 			List<SubmissionStatusQueryRepository.TeamRow> teams,
-			List<SubmissionStatusQueryRepository.MemberRow> members) {
+			List<SubmissionStatusQueryRepository.MemberRow> members,
+			Instant submissionDueAt) {
 
 		Map<UUID, SubmissionStatusQueryRepository.TeamRow> teamById = teams.stream()
 				.collect(Collectors.toMap(SubmissionStatusQueryRepository.TeamRow::teamId, team -> team));
 
-		Map<UUID, long[]> byClass = new LinkedHashMap<>();   // classId → [완료, 전체]
+		Map<UUID, long[]> byClass = new LinkedHashMap<>();   // classId → [완료, 응시 대상]
 		Map<UUID, String> classNames = new HashMap<>();
 		long assessed = 0;
 		long target = 0;
+		long blocked = 0;
+		long eligible = 0;
 
 		for (var member : members) {
 			var team = member.teamId() == null ? null : teamById.get(member.teamId());
 			if (team == null) {
 				continue;
 			}
-			boolean done = member.completedAt() != null || "COMPLETED".equals(member.completionStatus());
+			eligible++;
 			long[] counts = byClass.computeIfAbsent(team.classId(), key -> new long[2]);
 			classNames.putIfAbsent(team.classId(), team.className());
-			if (done) {
-				counts[0]++;
-				assessed++;
+
+			// 세 갈래다. 응시 대상 · 응시 불가 · 아직 어느 쪽도 아님(제출 대기·분석 중).
+			// 마지막 갈래를 분모에 넣으면 진행 중인 회차의 응시율이 0%로 시작하고,
+			// 응시 불가에 넣으면 아직 낼 수 있는 사람을 못 낸 사람으로 세게 된다.
+			if (assessable(team)) {
+				if ("COMPLETED".equals(member.completionStatus())) {
+					counts[0]++;
+					assessed++;
+				}
+				counts[1]++;
+				target++;
+			} else if (blockedFromAssessment(team, submissionDueAt)) {
+				blocked++;
 			}
-			counts[1]++;
-			target++;
 		}
 
-		if (target == 0) {
+		if (eligible == 0) {
 			return null;
 		}
 
 		// 담당 반이 하나뿐이면 합계가 곧 그 반이라 따로 집어 봐야 의미가 없다.
-		ManagerProjectProgress.LaggingClass lagging = byClass.size() < 2 ? null : byClass.entrySet().stream()
+		// 응시 대상이 0인 반은 진행률을 만들 수 없어 '가장 뒤처진 반' 후보에서 뺀다.
+		var withTargets = byClass.entrySet().stream().filter(entry -> entry.getValue()[1] > 0).toList();
+		ManagerProjectProgress.LaggingClass lagging = withTargets.size() < 2 ? null : withTargets.stream()
 				.min(Comparator.comparingDouble(entry -> (double) entry.getValue()[0] / entry.getValue()[1]))
 				.map(entry -> new ManagerProjectProgress.LaggingClass(
 						entry.getKey(), classNames.get(entry.getKey()),
 						entry.getValue()[0], entry.getValue()[1]))
 				.orElse(null);
 
-		return new ManagerProjectProgress.Progress(assessed, target, lagging);
+		return new ManagerProjectProgress.Progress(assessed, target, blocked, lagging);
+	}
+
+	/**
+	 * 마감이 지나도록 안 냈거나 분석이 실패한 팀의 팀원은 응시할 문항 자체가 없다.
+	 *
+	 * <p><b>마감 전 미제출은 여기 들어오지 않는다.</b> 아직 낼 수 있으므로 확정된 사실이 아니며,
+	 * 그렇게 세면 진행 중인 회차가 통째로 응시 불가가 된다(그린컴퍼니 7기 미프 4차에서 249명
+	 * 전원이 그랬다). 그 사람들은 분모도 응시 불가도 아니고 전체 인원에만 남는다. 뷰의
+	 * {@code submission_deadline_status}가 {@code MISSED}와 {@code OPEN}을 가르는 축과 같다.
+	 *
+	 * <p>{@code PARTIAL}은 막지 않는다 — 일부 개념만 문항이 생성된 경우이고 그 문항으로 응시할 수
+	 * 있어서다. 응시할 수 있는 사람을 분모에서 빼면 응시율이 부풀려진다.
+	 */
+	/** 분석이 끝나 문항이 만들어졌는가. 배치 SQL의 {@code analysis_status IN ('SUCCEEDED','PARTIAL')}과 같다. */
+	private boolean assessable(SubmissionStatusQueryRepository.TeamRow team) {
+		return "SUCCEEDED".equals(team.analysisStatus()) || "PARTIAL".equals(team.analysisStatus());
+	}
+
+	private boolean blockedFromAssessment(
+			SubmissionStatusQueryRepository.TeamRow team, Instant submissionDueAt) {
+		if ("FAILED".equals(team.analysisStatus())) {
+			return true;
+		}
+		return team.submittedAt() == null
+				&& submissionDueAt != null && submissionDueAt.isBefore(Instant.now());
 	}
 
 	/**

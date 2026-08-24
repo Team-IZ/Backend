@@ -154,9 +154,29 @@ public record ProjectResponse(
     @Schema(description = "매니저 담당 반 진행 합계")
     public record Progress(
             @Schema(description = "담당 반 전체에서 응시(완료)를 마친 인원") long assessedCount,
-            @Schema(description = "담당 반 전체 대상 인원") long targetTraineeCount,
-            @Schema(description = "담당 반이 둘 이상일 때, 진행률이 가장 낮은 반. 담당 반이 하나뿐이면 null",
-                    nullable = true) LaggingClass laggingClass) {
+            @Schema(description = """
+                    **응시 대상** 인원이며 담당 반 총원이 아닙니다.
+
+                    분석이 끝나 문항이 만들어진 사람(`SUCCEEDED`·`PARTIAL`)만 셉니다. 미제출·분석
+                    실패로 응시할 문항 자체가 없었던 사람은 여기서 빠지고 `blockedCount`로 옵니다 —
+                    분모에 남기면 아무리 독촉해도 줄지 않는 숫자가 됩니다.
+
+                    반별 현황(`GET /projects/{projectId}/class-progress`)의 `assessmentTargetCount`와
+                    **같은 기준**이라 두 화면의 응시율이 갈리지 않습니다.
+
+                    `assessedCount + blockedCount`가 담당 반 총원이 아닐 수 있습니다 — 분석이 아직
+                    진행 중인 사람은 어느 쪽도 아닙니다(종료된 회차에는 없습니다).""") long targetTraineeCount,
+            @Schema(description = """
+                    미제출·분석 실패로 **응시할 방법이 없었던** 인원이며 `targetTraineeCount`에서 빠진 수입니다.
+
+                    화면이 `응시 200/220 (응시 불가 29)`처럼 함께 보여줄 값입니다. 0이면 전원이
+                    응시 가능했다는 뜻이며 화면은 표시하지 않으면 됩니다.
+
+                    `targetTraineeCount`가 0인데 이 값이 0보다 크면 **전원이 응시 자체를 못 한 회차**입니다.
+                    `progress` 자체가 비는 것(= 아직 잴 것이 없다)과 다릅니다.""",
+                    example = "29") long blockedCount,
+            @Schema(description = "담당 반이 둘 이상일 때, 진행률이 가장 낮은 반. 담당 반이 하나뿐이거나 "
+                    + "응시 대상이 있는 반이 하나뿐이면 null", nullable = true) LaggingClass laggingClass) {
     }
 
     /** 담당 반 중 진행률이 가장 낮은 반. */
@@ -165,7 +185,8 @@ public record ProjectResponse(
             UUID classId,
             String className,
             @Schema(description = "그 반에서 응시(완료)를 마친 인원") long assessedCount,
-            @Schema(description = "그 반의 전체 대상 인원") long targetTraineeCount) {
+            @Schema(description = "그 반의 응시 대상 인원. 합계와 같은 기준이라 미제출·분석 실패는 빠진다")
+            long targetTraineeCount) {
     }
 
     /** 화면의 `A반 미제출 2팀` 한 줄. */

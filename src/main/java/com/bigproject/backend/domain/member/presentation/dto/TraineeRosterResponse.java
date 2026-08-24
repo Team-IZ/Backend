@@ -272,17 +272,32 @@ public record TraineeRosterResponse(
 			List<String> matchedRiskTypeCodes,
 			@Schema(description = """
 					배지 한 칸에 넣을 **단일** 코드입니다. 정책 문서 §7의 2층 구조를 그대로 담습니다 —
-					1층 응시상태(`NOT_ATTENDED` 미응시 → `SESSION_INCOMPLETE` 응시 중단 →
+					1층 응시상태(`NOT_ATTENDED` 검증 세션 못 함 → `SESSION_INCOMPLETE` 응시 중단 →
 					`INVALID_ATTEMPT` 무효 응시)가 있으면 2층 위험 유형(저기여 → 기여·이해도 괴리 →
 					단계 하락 → 지속 저점)은 보지 않습니다. 걸린 것이 없으면 `null`(정상)입니다.
+
+					🆕 **`NOT_ATTENDED`가 팀 미제출·코드 분석 실패까지 덮습니다.** 종전에는 순수 미응시만
+					이 값이었고, 팀이 제출을 안 해 응시조차 못 한 학생은 **배지 없이 「정상」으로
+					보였습니다.** 원인은 `notAttendedReasonCode`에 있습니다.
 
 					**중도 이탈은 이 값에 들어오지 않습니다** — 계정 상태의 비활성화 사유로 이미
 					드러나므로 화면은 `status=INACTIVE`일 때 그 사유·일자를 계정 칸에 그리면 됩니다.
 					""", example = "SESSION_INCOMPLETE", nullable = true)
 			String roundPrimaryStatusCode,
 			@Schema(description = """
+					검증 세션을 **왜** 하지 못했는지이며 `roundPrimaryStatusCode`가 `NOT_ATTENDED`일 때만 값이 있습니다.
+
+					`NO_SHOW`(응시할 수 있었는데 안 봄) · `NOT_SUBMITTED`(팀 미제출로 문항이 안 만들어짐) ·
+					`ANALYSIS_FAILED`(코드 분석 실패로 문항이 안 만들어짐).
+
+					🔴 **독촉·면담 대상은 `NO_SHOW`뿐입니다.** 나머지 둘은 응시할 문항 자체가 없어
+					**볼 수 없었던** 경우이며, 특히 `ANALYSIS_FAILED`는 시스템 귀책입니다.
+					결과 탭(`GET /projects/{projectId}/evaluations`)의 `notAttendedReason`과 같은 값 집합입니다.
+					""", example = "NOT_SUBMITTED", nullable = true)
+			String notAttendedReasonCode,
+			@Schema(description = """
 					`roundPrimaryStatusCode`가 `NOT_ATTENDED`·`SESSION_INCOMPLETE`일 때만 값이 있는
-					시각입니다. 그 회차엔 우수 누적을 그릴 수 없으므로, 화면이 `우수 누적` 칸에 대신
+					시각입니다(미제출·분석 실패도 `NOT_ATTENDED`이므로 값이 옵니다). 그 회차엔 우수 누적을 그릴 수 없으므로, 화면이 `우수 누적` 칸에 대신
 					`세션 중단 · 07-14`처럼 사유·일자를 그릴 때 이 값을 씁니다.
 					""", nullable = true)
 			OffsetDateTime roundTerminalAt,
@@ -317,6 +332,7 @@ public record TraineeRosterResponse(
 					row.excellentAssessmentSequenceNos(),
 					row.matchedRiskTypeCodes(),
 					row.roundPrimaryStatusCode(),
+					row.notAttendedReasonCode(),
 					row.roundTerminalAt(),
 					row.rowAggregationStatus()
 			);

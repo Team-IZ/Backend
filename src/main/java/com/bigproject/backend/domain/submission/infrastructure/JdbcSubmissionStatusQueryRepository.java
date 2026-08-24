@@ -195,17 +195,46 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 			sql.append("\tAND t.class_id = ?\n");
 			args.add(classId);
 		}
+		/*
+		 * 「응시 완료」는 completion_status='COMPLETED' 하나로 판정한다.
+		 *
+		 * 종전에는 `ma.terminal_at IS NOT NULL OR ...`이었는데, terminal_at은 COMPLETED만이 아니라
+		 * FAILED·EXPIRED에서도 항상 채워진다(ck_measurement_attempt_status_2). 미응시·미제출·
+		 * 분석 실패·응시 중단이 전부 응시 완료로 세어져, 전원이 종료 상태인 지난 회차는 결과가
+		 * 언제나 N/N이 됐다 — 그린컴퍼니 5기 미프 3차가 실제 197명인데 249/249로 나왔다.
+		 *
+		 * 반별 현황(JdbcClassProgressQueryRepository.findClassProgress)이 쓰는 기준과 같다.
+		 * 같은 회차를 두고 두 화면이 197과 249를 각각 말하던 것이 이 차이였다.
+		 *
+		 * 분모도 같은 자리에서 맞춘다. 미제출·분석 실패로 문항이 만들어지지 않은 사람은 응시할
+		 * 방법이 없으므로 응시율의 분모가 아니다 — 분모에 남기면 아무리 독촉해도 줄지 않는 숫자가
+		 * 되고, 그린컴퍼니 5기 미프 3차에서 29명이 그랬다. 반별 현황이 쓰는 단계별 깔때기
+		 * (제출 → 분석 → 응시)와 같은 기준이며, 빠진 인원은 blocked_count로 따로 낸다.
+		 *
+		 * PARTIAL은 분모에 넣는다. 일부 개념만 문항이 생성된 경우이고 그 문항으로 응시할 수 있어서다
+		 * (AnalysisServerClient — "만들어진 것은 저장해야 한다"). 응시할 수 있는 사람을 분모에서
+		 * 빼면 응시율이 부풀려진다.
+		 *
+		 * 분석 대기·진행 중(QUEUED·RUNNING)은 어느 쪽도 아니다 — 아직 응시 대상이 될지 실패할지
+		 * 정해지지 않았다. 종료된 회차에는 남아 있지 않다.
+		 *
+		 * 미제출은 `submission_deadline_status='MISSED'`(마감 후)만 응시 불가로 센다. 마감 전 미제출은
+		 * 아직 낼 수 있으므로 확정된 사실이 아니다 — 그냥 `source_submission_id IS NULL`로 세면
+		 * 진행 중인 회차가 통째로 응시 불가가 된다(그린컴퍼니 7기 미프 4차에서 249명 전원이 그랬다).
+		 * 그 사람들은 분모도 응시 불가도 아니고 eligible_count에만 남는다.
+		 */
 		sql.append("""
 				), member_stat AS (
 					SELECT ts.assessment_round_id, ts.class_id,
-						COUNT(*) AS target_count,
+						COUNT(*) AS eligible_count,
+						COUNT(*) FILTER (WHERE a.analysis_status IN ('SUCCEEDED', 'PARTIAL')) AS target_count,
 						COUNT(*) FILTER (
-							WHERE ma.terminal_at IS NOT NULL OR a.completion_status = 'COMPLETED'
-						) AS assessed_count
+							WHERE a.submission_deadline_status = 'MISSED' OR a.analysis_status = 'FAILED'
+						) AS blocked_count,
+						COUNT(*) FILTER (WHERE a.completion_status = 'COMPLETED') AS assessed_count
 					FROM assessment_round_attendance a
 					JOIN team_stat ts ON ts.assessment_round_id = a.assessment_round_id
 						AND ts.team_id = a.team_id
-					LEFT JOIN measurement_attempt ma ON ma.attempt_id = a.primary_attempt_id
 					WHERE a.org_id = ?
 					GROUP BY ts.assessment_round_id, ts.class_id
 				), interview_stat AS (
@@ -242,6 +271,8 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 					ts.submitted_at, ts.analysis_status,
 					COALESCE(ms.assessed_count, 0) AS assessed_count,
 					COALESCE(ms.target_count, 0) AS target_count,
+					COALESCE(ms.blocked_count, 0) AS blocked_count,
+					COALESCE(ms.eligible_count, 0) AS eligible_count,
 					COALESCE(ins.backlog_count, 0) AS interview_backlog_count
 				FROM team_stat ts
 				LEFT JOIN member_stat ms ON ms.assessment_round_id = ts.assessment_round_id
@@ -263,6 +294,8 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 						rs.getString("analysis_status"),
 						rs.getLong("assessed_count"),
 						rs.getLong("target_count"),
+						rs.getLong("blocked_count"),
+						rs.getLong("eligible_count"),
 						rs.getInt("interview_backlog_count")
 				),
 				args.toArray()
@@ -369,7 +402,10 @@ public class JdbcSubmissionStatusQueryRepository implements SubmissionStatusQuer
 					a.completion_status,
 					a.primary_assessment_open_at,
 					a.primary_assessment_close_at,
-					ma.terminal_at AS completed_at
+					-- terminal_at은 FAILED·EXPIRED에서도 채워지므로 그대로 쓰면 미응시·분석 실패한
+					-- 사람에게도 '응시를 마친 시각'이 실린다. 계약이 "DONE일 때만 값이 있다"이므로
+					-- COMPLETED에서만 낸다.
+					CASE WHEN ma.status = 'COMPLETED' THEN ma.terminal_at END AS completed_at
 				FROM assessment_round_attendance a
 				JOIN app_user u ON u.user_id = a.user_id
 				LEFT JOIN measurement_attempt ma ON ma.attempt_id = a.primary_attempt_id

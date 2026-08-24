@@ -3151,7 +3151,8 @@ create view manager_trainee_roster_view
              current_round_primary_status_code, current_round_matched_risk_type_codes, risk_policy_version,
              risk_evaluated_at, sort_mode, risk_sort_key, primary_action_code, action_target_user_id,
              action_unavailable_reason_code, row_aggregation_status, as_of_at, calculation_version,
-             excellent_assessment_sequence_nos, round_terminal_at, risk_reason_summary)
+             excellent_assessment_sequence_nos, round_terminal_at, risk_reason_summary,
+             current_round_not_attended_reason_code)
 as
 WITH scope AS (SELECT ma_1.org_id,
                       ma_1.manager_user_id,
@@ -3311,7 +3312,9 @@ SELECT b.org_id,
            ELSE 'AVAILABLE'::text
            END::character varying(100)                                               AS risk_profile_readiness_status,
        CASE
-           WHEN ma.terminal_reason_code::text = 'NOT_ATTENDED'::text THEN 'NOT_ATTENDED'::text
+           WHEN ma.terminal_reason_code::text = ANY
+                (ARRAY ['NOT_ATTENDED'::character varying::text, 'NOT_SUBMITTED'::character varying::text,
+                    'ANALYSIS_FAILED'::character varying::text]) THEN 'NOT_ATTENDED'::text
            WHEN ma.terminal_reason_code::text = 'SESSION_INCOMPLETE'::text THEN 'SESSION_INCOMPLETE'::text
            WHEN 'INVALID_ATTEMPT'::text = ANY (irr.codes::text[]) THEN 'INVALID_ATTEMPT'::text
            WHEN 'PERSISTENT_LOW'::text = ANY (irr.codes::text[]) THEN 'PERSISTENT_LOW'::text
@@ -3347,11 +3350,18 @@ SELECT b.org_id,
        ex.sequence_nos                                                               AS excellent_assessment_sequence_nos,
        CASE
            WHEN ma.terminal_reason_code::text = ANY
-                (ARRAY ['NOT_ATTENDED'::character varying::text, 'SESSION_INCOMPLETE'::character varying::text])
+                (ARRAY ['NOT_ATTENDED'::character varying::text, 'SESSION_INCOMPLETE'::character varying::text,
+                    'NOT_SUBMITTED'::character varying::text, 'ANALYSIS_FAILED'::character varying::text])
                THEN ma.terminal_at
            ELSE NULL::timestamp with time zone
            END                                                                       AS round_terminal_at,
-       irr.reason_summary                                                            AS risk_reason_summary
+       irr.reason_summary                                                            AS risk_reason_summary,
+       CASE ma.terminal_reason_code::text
+           WHEN 'NOT_ATTENDED'::text THEN 'NO_SHOW'::text
+           WHEN 'NOT_SUBMITTED'::text THEN 'NOT_SUBMITTED'::text
+           WHEN 'ANALYSIS_FAILED'::text THEN 'ANALYSIS_FAILED'::text
+           ELSE NULL::text
+           END::character varying(100)                                               AS current_round_not_attended_reason_code
 FROM b
          LEFT JOIN rd ON rd.cohort_id = b.cohort_id
          LEFT JOIN project_membership pm

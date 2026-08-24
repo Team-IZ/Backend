@@ -161,11 +161,22 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 					COUNT(*) AS target_trainee_count,
 					COUNT(*) FILTER (WHERE a.source_submission_id IS NOT NULL) AS submitted_count,
 					COUNT(*) FILTER (WHERE a.analysis_status = 'SUCCEEDED') AS analysis_succeeded_count,
+					-- 응시율의 분모. PARTIAL은 일부 개념만 문항이 생성된 경우이고 그 문항으로 응시할 수
+					-- 있으므로 대상에 넣는다 — 빼면 응시율이 부풀려진다.
+					COUNT(*) FILTER (WHERE a.analysis_status IN ('SUCCEEDED', 'PARTIAL'))
+						AS assessment_target_count,
 					COUNT(*) FILTER (WHERE a.analysis_status = 'FAILED') AS analysis_failed_count,
 					COUNT(*) FILTER (WHERE a.analysis_status = 'PARTIAL') AS analysis_partial_count,
 					COUNT(*) FILTER (WHERE a.analysis_status IN ('QUEUED', 'RUNNING')) AS analysis_in_progress_count,
 					COUNT(*) FILTER (WHERE a.completion_status = 'COMPLETED') AS assessed_count,
-					COUNT(*) FILTER (WHERE a.primary_terminal_reason_code = 'NOT_ATTENDED') AS not_attended_count,
+					-- 검증 세션을 하지 못한 인원. 미제출·분석 실패도 결국 세션을 못 한 것이라 함께 센다.
+					-- 결과 탭(EvaluationService.resultStatus)의 NOT_ATTENDED와 같은 기준이다.
+					COUNT(*) FILTER (
+						WHERE a.primary_terminal_reason_code
+							IN ('NOT_ATTENDED', 'NOT_SUBMITTED', 'ANALYSIS_FAILED')
+					) AS not_attended_count,
+					-- 그중 볼 수 있었는데 안 본 인원. 나머지는 볼 수 없었던 경우라 조치가 다르다.
+					COUNT(*) FILTER (WHERE a.primary_terminal_reason_code = 'NOT_ATTENDED') AS no_show_count,
 					COUNT(*) FILTER (WHERE a.primary_terminal_reason_code = 'SESSION_INCOMPLETE')
 						AS session_incomplete_count,
 					COUNT(*) FILTER (WHERE ma.validity_review_status = 'CONFIRMED_INVALID')
@@ -194,11 +205,13 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 						rs.getLong("target_trainee_count"),
 						rs.getLong("submitted_count"),
 						rs.getLong("analysis_succeeded_count"),
+						rs.getLong("assessment_target_count"),
 						rs.getLong("analysis_failed_count"),
 						rs.getLong("analysis_partial_count"),
 						rs.getLong("analysis_in_progress_count"),
 						rs.getLong("assessed_count"),
 						rs.getLong("not_attended_count"),
+						rs.getLong("no_show_count"),
 						rs.getLong("session_incomplete_count"),
 						rs.getLong("invalid_attempt_count"),
 						textArray(rs, "manager_names")
@@ -220,6 +233,8 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 					COUNT(*) AS target_trainee_count,
 					COUNT(*) FILTER (WHERE a.source_submission_id IS NOT NULL) AS submitted_count,
 					COUNT(*) FILTER (WHERE a.analysis_status = 'SUCCEEDED') AS analysis_succeeded_count,
+					COUNT(*) FILTER (WHERE a.analysis_status IN ('SUCCEEDED', 'PARTIAL'))
+						AS assessment_target_count,
 					COUNT(*) FILTER (WHERE a.completion_status = 'COMPLETED') AS assessed_count
 				FROM assessment_round_attendance a
 				WHERE a.assessment_round_id = ?
@@ -227,13 +242,12 @@ public class JdbcClassProgressQueryRepository implements ClassProgressQueryRepos
 				""" + managedClassFilter(scopedManagerId, "a.class_id"),
 				(rs, rowNum) -> {
 					long submittedCount = rs.getLong("submitted_count");
-					long analysisSucceededCount = rs.getLong("analysis_succeeded_count");
 					return new RoundSummaryRow(
 							rs.getLong("target_trainee_count"),
 							submittedCount,
 							submittedCount,
-							analysisSucceededCount,
-							analysisSucceededCount,
+							rs.getLong("analysis_succeeded_count"),
+							rs.getLong("assessment_target_count"),
 							rs.getLong("assessed_count")
 					);
 				},

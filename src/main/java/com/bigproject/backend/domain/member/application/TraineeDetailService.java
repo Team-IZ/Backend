@@ -105,6 +105,7 @@ public class TraineeDetailService {
 				row.attemptId(),
 				row.roundResultStatus(),
 				row.primaryStatusCode(),
+				row.notAttendedReasonCode(),
 				row.matchedRiskTypeCodes(),
 				com.bigproject.backend.domain.intervention.domain.RiskSummaryText
 						.stripSeverityTag(row.riskReasonSummary()),
