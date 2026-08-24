@@ -105,9 +105,9 @@ public class InterviewController {
 			@Parameter(description = "반 필터. 없으면 담당 반 전체")
 			@RequestParam(required = false) UUID classId,
 
-			@Parameter(description = "기수 ID. `assessmentRoundId`를 생략했을 때 「이번 회차」를 고르는 범위를 좁힌다. "
-					+ "생략하면 담당 기수 전부에서 고른다")
-			@RequestParam(required = false) UUID cohort,
+			@Parameter(description = "기수 ID. **필수다.** `assessmentRoundId`를 생략했을 때 「이번 회차」를 "
+					+ "고르는 범위가 이 값이다.", required = true)
+			@RequestParam UUID cohort,
 
 			Authentication authentication
 	) {
@@ -126,7 +126,15 @@ public class InterviewController {
 	}
 
 	@Operation(operationId = "findInterviewRoundOptions", summary = "[면담 목록] 면담 회차 옵션 조회 | ✅ 사용 가능", description = """
-			목록 화면의 **회차 드롭다운**을 채웁니다. 담당 기수의 회차를 프로젝트 순서대로 반환합니다.
+			목록 화면의 **회차 드롭다운**을 채웁니다. `cohort`가 가리키는 기수의 회차를
+			프로젝트 순서대로 반환합니다.
+
+			### 🔴 `cohort`가 필수입니다 (2026-08-25)
+
+			종전에는 생략할 수 있었고, 생략하면 **담당 반이 속한 기수 전부**의 회차가 섞여 나왔습니다.
+			매니저가 여러 기수에서 반을 맡으면(이도윤 = 5·6·7기) 드롭다운에 13개 회차가 섞이고,
+			화면이 마지막을 기본으로 고르면 보고 있는 기수의 것이 아니라 히트맵·교육생 상세가
+			**에러 없이 빈 채로** 그려졌습니다. 그 폴백을 없앴습니다.
 
 			### `PLANNED` 회차도 포함합니다
 
@@ -159,8 +167,8 @@ public class InterviewController {
 	})
 	@GetMapping("/rounds")
 	public ResponseEntity<List<InterviewRoundOptionResponse>> findRoundOptions(
-			@Parameter(description = "기수 ID. 생략하면 담당 기수 전부라 여러 기수의 회차가 섞인다")
-			@RequestParam(required = false) UUID cohort,
+			@Parameter(description = "기수 ID. **필수다.** 이 기수의 회차만 돌려준다.", required = true)
+			@RequestParam UUID cohort,
 			Authentication authentication) {
 		List<InterviewRoundOptionResponse> options = interviewService
 				.findRoundOptions(currentUserResolver.resolveCurrentMemberId(),
