@@ -46,6 +46,7 @@ class SubmissionStatusServiceTest {
 	private static final UUID CLASS_ID = UUID.randomUUID();
 	private static final UUID TEAM_ID = UUID.randomUUID();
 	private static final UUID OTHER_TEAM_ID = UUID.randomUUID();
+	private static final UUID FAILED_TEAM_ID = UUID.randomUUID();
 	private static final UUID MANAGER_ID = UUID.randomUUID();
 	private static final UUID UNMANAGED_CLASS_ID = UUID.randomUUID();
 
@@ -291,9 +292,154 @@ class SubmissionStatusServiceTest {
 				.containsExactly(tuple(failedTeamId, "2팀"));
 	}
 
+	/**
+	 * 종료된 회차의 전원이 {@code DONE}으로 나오던 회귀를 막는다.
+	 *
+	 * <p>{@code completedAt}(= {@code measurement_attempt.terminal_at})은 COMPLETED만이 아니라
+	 * FAILED·EXPIRED에서도 채워진다. 그것을 완료 신호로 쓰는 바람에 미응시·중단·미제출·분석 실패가
+	 * 전부 완료로 접혔고, 아래 네 사람 모두 {@code DONE}이었다.
+	 */
+	@Test
+	void doesNotTreatFailedOrExpiredAttemptsAsDone() {
+		Instant now = Instant.now();
+		Instant closed = now.minus(1, ChronoUnit.DAYS);
+		Instant terminalAt = now.minus(2, ChronoUnit.HOURS);
+		UUID notAttendedUser = UUID.randomUUID();
+		UUID incompleteUser = UUID.randomUUID();
+		UUID notSubmittedUser = UUID.randomUUID();
+		UUID analysisFailedUser = UUID.randomUUID();
+
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
+		when(repository.findMembers(any(), any(), any(), any())).thenReturn(List.of(
+				member(notAttendedUser, "가", "EXPIRED", "IN_PROGRESS", closed, terminalAt),
+				member(incompleteUser, "나", "EXPIRED", "IN_PROGRESS", closed, terminalAt),
+				// 미제출은 응시 창 자체가 열리지 않는다 -- close_at이 없다.
+				new MemberRow(TEAM_ID, notSubmittedUser, "다", UUID.randomUUID(), "FAILED",
+						"IN_PROGRESS", null, null, terminalAt),
+				// 분석 실패는 창이 남아 있어도 볼 수 없었던 경우라 MISSED가 아니라 BLOCKED다.
+				member(analysisFailedUser, "라", "FAILED", "IN_PROGRESS", closed, terminalAt)
+		));
+
+		var response = service.findSubmissionStatus(EMAIL, PROJECT_ID, 1, null);
+
+		assertThat(response.teams().get(0).members())
+				.extracting(ProjectSubmissionStatusResponse.Member::userId,
+						ProjectSubmissionStatusResponse.Member::attendanceStatus)
+				.containsExactly(
+						tuple(notAttendedUser, "MISSED"),
+						tuple(incompleteUser, "MISSED"),
+						tuple(notSubmittedUser, "BLOCKED"),
+						tuple(analysisFailedUser, "BLOCKED"));
+	}
+
+	/**
+	 * 목록의 `응시 N/M`이 종료된 회차에서 언제나 `M/M`이던 회귀를 막는다.
+	 * 그린컴퍼니 5기 미프 3차가 실제 197명인데 249/249로 나왔다.
+	 */
+	@Test
+	void countsOnlyCompletedAttemptsAsAssessed() {
+		Instant now = Instant.now();
+		Instant terminalAt = now.minus(2, ChronoUnit.HOURS);
+
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(submittedTeam()));
+		when(repository.findMembers(any(), any(), any(), any())).thenReturn(List.of(
+				member(UUID.randomUUID(), "가", "COMPLETED", "COMPLETED",
+						now.minus(1, ChronoUnit.DAYS), terminalAt),
+				member(UUID.randomUUID(), "나", "EXPIRED", "IN_PROGRESS",
+						now.minus(1, ChronoUnit.DAYS), terminalAt),
+				member(UUID.randomUUID(), "다", "FAILED", "IN_PROGRESS",
+						now.minus(1, ChronoUnit.DAYS), terminalAt),
+				member(UUID.randomUUID(), "라", "EXPIRED", "IN_PROGRESS",
+						now.minus(1, ChronoUnit.DAYS), terminalAt)
+		));
+
+		var progress = service.findManagerProjectProgress(EMAIL, PROJECT_ID, null).progress();
+
+		assertThat(progress.assessedCount()).isEqualTo(1);
+		assertThat(progress.targetTraineeCount()).isEqualTo(4);
+	}
+
+	/**
+	 * 응시할 방법이 없었던 사람은 분모가 아니다.
+	 *
+	 * <p>미제출·분석 실패로 문항이 만들어지지 않으면 아무리 독촉해도 그 사람은 응시할 수 없다.
+	 * 분모에 남기면 영원히 줄지 않는 숫자가 되고, 그린컴퍼니 5기 미프 3차에서 29명이 그랬다.
+	 * 반별 현황의 응시율 분모(응시 대상)와 같은 기준이다.
+	 */
+	@Test
+	void excludesMembersWhoCouldNotAttendFromTheDenominator() {
+		Instant now = Instant.now();
+		Instant closeAt = now.minus(1, ChronoUnit.DAYS);
+
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(
+				submittedTeam(),                                  // 분석 성공 -- 응시 대상
+				team(OTHER_TEAM_ID, "4팀", null, null),            // 미제출 -- 응시 불가
+				team(FAILED_TEAM_ID, "5팀", Instant.parse("2026-07-13T14:55:00Z"), "FAILED")));
+		when(repository.findMembers(any(), any(), any(), any())).thenReturn(List.of(
+				member(UUID.randomUUID(), "가", "COMPLETED", "COMPLETED", closeAt, now),
+				member(UUID.randomUUID(), "나", "EXPIRED", "IN_PROGRESS", closeAt, now),
+				memberOf(OTHER_TEAM_ID, "다"),
+				memberOf(OTHER_TEAM_ID, "라"),
+				memberOf(FAILED_TEAM_ID, "마")));
+
+		var progress = service.findManagerProjectProgress(EMAIL, PROJECT_ID, null).progress();
+
+		assertThat(progress.assessedCount()).isEqualTo(1);
+		assertThat(progress.targetTraineeCount()).isEqualTo(2);
+		assertThat(progress.blockedCount()).isEqualTo(3);
+	}
+
+	/**
+	 * 마감 전 미제출은 「응시 불가」가 아니다 — 아직 낼 수 있다.
+	 *
+	 * <p>마감을 보지 않고 제출 유무만으로 세면 진행 중인 회차가 통째로 응시 불가가 된다.
+	 * 그린컴퍼니 7기 미프 4차(마감 3일 뒤)에서 249명 전원이 그렇게 잡혔다.
+	 */
+	@Test
+	void doesNotBlockTeamsThatCanStillSubmit() {
+		when(repository.findRound(PROJECT_ID, 1))
+				.thenReturn(Optional.of(round("RUNNING", Instant.now().plus(3, ChronoUnit.DAYS))));
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(
+				team(TEAM_ID, "3팀", null, null)));
+		when(repository.findMembers(any(), any(), any(), any())).thenReturn(List.of(
+				memberOf(TEAM_ID, "가"),
+				memberOf(TEAM_ID, "나")));
+
+		var progress = service.findManagerProjectProgress(EMAIL, PROJECT_ID, null).progress();
+
+		// 아직 정해지지 않았으므로 분모도 응시 불가도 아니다. 그래도 progress는 온다.
+		assertThat(progress.targetTraineeCount()).isZero();
+		assertThat(progress.blockedCount()).isZero();
+		assertThat(progress.assessedCount()).isZero();
+	}
+
+	/**
+	 * 부분 성공은 분모에 남는다 — 일부 개념만 문항이 생성됐어도 그 문항으로 응시할 수 있다.
+	 * 응시할 수 있는 사람을 분모에서 빼면 응시율이 부풀려진다.
+	 */
+	@Test
+	void keepsPartiallyAnalysedMembersInTheDenominator() {
+		Instant closeAt = Instant.now().minus(1, ChronoUnit.DAYS);
+
+		when(repository.findTeams(any(), any(), any(), any(), any())).thenReturn(List.of(
+				team(TEAM_ID, "3팀", Instant.parse("2026-07-13T14:55:00Z"), "PARTIAL")));
+		when(repository.findMembers(any(), any(), any(), any())).thenReturn(List.of(
+				member(UUID.randomUUID(), "가", "COMPLETED", "COMPLETED", closeAt, Instant.now()),
+				member(UUID.randomUUID(), "나", "EXPIRED", "IN_PROGRESS", closeAt, Instant.now())));
+
+		var progress = service.findManagerProjectProgress(EMAIL, PROJECT_ID, null).progress();
+
+		assertThat(progress.targetTraineeCount()).isEqualTo(2);
+		assertThat(progress.blockedCount()).isZero();
+	}
+
 	private RoundScope round(String lifecycleStatus) {
+		return round(lifecycleStatus, Instant.parse("2026-07-14T14:59:00Z"));
+	}
+
+	private RoundScope round(String lifecycleStatus, Instant submissionDueAt) {
 		return new RoundScope(ROUND_ID, PROJECT_ID, ORG_ID, COHORT_ID, "미프 3차", 1, "3차",
-				Instant.parse("2026-07-14T14:59:00Z"), lifecycleStatus);
+				submissionDueAt, lifecycleStatus);
 	}
 
 	private TeamRow submittedTeam() {
@@ -308,5 +454,17 @@ class SubmissionStatusServiceTest {
 			Instant closeAt, Instant completedAt) {
 		return new MemberRow(TEAM_ID, userId, name, UUID.randomUUID(), attemptStatus, completionStatus,
 				closeAt.minus(1, ChronoUnit.DAYS), closeAt, completedAt);
+	}
+
+	/** 미제출·분석 실패 팀의 팀원. 수행이 만들어지지 않아 응시 창도 없다. */
+	private MemberRow memberOf(UUID teamId, String name) {
+		return new MemberRow(teamId, UUID.randomUUID(), name, null, null, "NOT_STARTED", null, null, null);
+	}
+
+	private TeamRow team(UUID teamId, String teamName, Instant submittedAt, String analysisStatus) {
+		return new TeamRow(teamId, CLASS_ID, "A반", "3", teamName, "CONFIRMED",
+				submittedAt == null ? null : UUID.randomUUID(), submittedAt,
+				null, null, null, null, null,
+				analysisStatus == null ? null : UUID.randomUUID(), analysisStatus, null, null);
 	}
 }
