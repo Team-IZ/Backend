@@ -181,11 +181,42 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			""";
 
 	/**
+	 * 발행 하한이 지났는가. <b>운영자가 정해 둔 시각만 본다.</b>
+	 *
+	 * <h2>🔴 2026-08-25 — 개인 응시 창 fallback을 뺐다</h2>
+	 *
+	 * <p>종전에는 이랬다.
+	 *
+	 * <pre>
+	 * now() &gt;= COALESCE(r.report_publish_not_before_at, ma.assessment_close_at, r.assessment_due_at)
+	 * </pre>
+	 *
+	 * <p>운영자가 시각을 안 정한 회차({@code report_publish_not_before_at IS NULL})에서 <b>본인 응시
+	 * 창이 닫힐 때까지 발행이 밀렸다.</b> 응시 창은 분석 완료 + {@code assessment.window-hours}(기본
+	 * 24시간)라, 이해도 확인을 일찍 끝낸 학생도 하루를 기다려야 리포트를 봤다. 회차 전체가 같은
+	 * 시점에 받게 하려던 {@code ROUND_BATCH}의 잔재다.
+	 *
+	 * <p>기획 확정(2026-08-25)으로 <b>먼저 끝낸 학생이 먼저 받는다.</b> 같은 반에서 리포트를 받는
+	 * 시점이 갈리는 것을 받아들인다. 그래서 fallback을 지우고 운영자가 명시한 시각만 남긴다 —
+	 * NULL이면 하한이 없다는 뜻이고, 확정되는 즉시 발행된다.
+	 *
+	 * <p><b>컬럼은 그대로 둔다.</b> "이 시각 전에는 내보내지 마라"가 필요한 회차가 여전히 있고,
+	 * 그때는 값을 채우면 종전과 똑같이 보류된다({@code ReportPublishService}가 시각이 지난 뒤 발행).
+	 *
+	 * <p>⚠️ {@code s.ended_at < COALESCE(ma.assessment_close_at, ...)}와 혼동하지 말 것. 그쪽은
+	 * <b>"응시 창 안에 끝냈는가"</b>를 보는 유효성 규칙이라 이 변경과 무관하게 그대로 있다.
+	 */
+	String PUBLISH_TIME_REACHED = """
+			(r.report_publish_not_before_at IS NULL
+			 OR now() >= r.report_publish_not_before_at)
+			""";
+
+	/**
 	 * <b>본인 응시 창</b> 종료 이전에 응시해 정상 완료한 세션 중, 아직 리포트를 만들지 않은 것들.
 	 *
-	 * <p>배치 등록 시점은 {@code COALESCE(report_publish_not_before_at, ma.assessment_close_at,
-	 * r.assessment_due_at)}이다. 맨 앞은 운영자가 "이 시각 전에는 발행하지 않는다"로 정해 둔 것이라
-	 * 언제나 우선한다. 그 값이 없으면 본인 창이 닫힌 시각부터 발행 대상이 된다.
+	 * <p>배치 등록 시점은 {@link #PUBLISH_TIME_REACHED}가 정한다 — 운영자가
+	 * {@code report_publish_not_before_at}을 채워 둔 회차만 그 시각까지 기다리고, 비어 있으면
+	 * 하한이 없다(2026-08-25 정책 변경. 종전에는 본인 응시 창이 닫힐 때까지 기다렸다).
 	 *
 	 * <p>정렬은 응시 창이 이른 것부터다 — 밀린 회차가 있으면 오래된 쪽이 먼저 나가야 한다.
 	 */
@@ -210,8 +241,7 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			   AND s.ended_at IS NOT NULL
 			   AND COALESCE(ma.assessment_close_at, r.assessment_due_at) IS NOT NULL
 			   AND s.ended_at < COALESCE(ma.assessment_close_at, r.assessment_due_at)
-			   AND now() >= COALESCE(r.report_publish_not_before_at,
-			                         ma.assessment_close_at, r.assessment_due_at)
+			   AND\s""" + PUBLISH_TIME_REACHED + """
 			   AND ma.validity_review_status <> 'CONFIRMED_INVALID'
 			   AND (s.end_reason_code IS NULL OR s.end_reason_code NOT IN (
 			           'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
@@ -407,8 +437,7 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			   AND s.ended_at IS NOT NULL
 			   AND COALESCE(ma.assessment_close_at, r.assessment_due_at) IS NOT NULL
 			   AND s.ended_at < COALESCE(ma.assessment_close_at, r.assessment_due_at)
-			   AND now() >= COALESCE(r.report_publish_not_before_at,
-			                         ma.assessment_close_at, r.assessment_due_at)
+			   AND\s""" + PUBLISH_TIME_REACHED + """
 			   AND ma.validity_review_status <> 'CONFIRMED_INVALID'
 			   AND (s.end_reason_code IS NULL OR s.end_reason_code NOT IN (
 			           'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
@@ -519,8 +548,7 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			   AND s.ended_at IS NOT NULL
 			   AND COALESCE(ma.assessment_close_at, r.assessment_due_at) IS NOT NULL
 			   AND s.ended_at < COALESCE(ma.assessment_close_at, r.assessment_due_at)
-			   AND now() >= COALESCE(r.report_publish_not_before_at,
-			                         ma.assessment_close_at, r.assessment_due_at)
+			   AND\s""" + PUBLISH_TIME_REACHED + """
 			   AND ma.validity_review_status <> 'CONFIRMED_INVALID'
 			   AND (s.end_reason_code IS NULL OR s.end_reason_code NOT IN (
 			           'POLICY_TIME_LIMIT_EXCEEDED', 'ASSESSMENT_WINDOW_EXPIRED',
@@ -632,8 +660,7 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			                'REVIEW_DUE_AT_EXPIRED', 'DATA_INTEGRITY_INVALID',
 			                'ADMIN_INVALIDATED', 'TECHNICAL_FAILURE'))
 			       )                                                            AS eligible,
-			       COALESCE(r.report_publish_not_before_at,
-			                ma.assessment_close_at, r.assessment_due_at)        AS publishNotBeforeAt,
+			       r.report_publish_not_before_at                                AS publishNotBeforeAt,
 			       (SELECT count(DISTINCT ps.problem_id)
 			          FROM problem_stage ps WHERE ps.session_id = s.session_id)  AS problemCount
 			  FROM assessment_session s
@@ -666,9 +693,12 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 	 * 걸렀고, 그때 스냅샷은 만들어 두므로 이 조회에 걸린다. 그러나 무효인 리포트를 나중에
 	 * 발행하면 안 되므로 <b>발행 배치가 다시 확인한다</b>({@link #findFinalizeContext}).
 	 *
-	 * <p>여기만 {@code measurement_attempt}가 조인돼 있지 않아 개인 창을 상관 서브쿼리로 가져온다.
-	 * 리포트는 (회차, 교육생) 단위라({@code uq_report_active_user}) 그 사람의 INITIAL 응시가
-	 * 정확히 하나이고, 다른 조회들과 같은 기준을 보게 된다.
+	 * <p>2026-08-25부터 {@link #PUBLISH_TIME_REACHED}가 {@code report_publish_not_before_at}만
+	 * 보므로 이 조회는 {@code measurement_attempt}를 볼 일이 없다. 종전에는 개인 응시 창을
+	 * 상관 서브쿼리로 가져왔는데(여기만 그 테이블이 조인돼 있지 않다) 그 자리가 통째로 사라졌다.
+	 *
+	 * <p>그래서 이 조회에 걸리는 것은 <b>운영자가 시각을 정해 둬서 보류된 리포트뿐</b>이다.
+	 * 시각을 안 정한 회차는 확정 트랜잭션이 그 자리에서 발행하므로 여기까지 오지 않는다.
 	 */
 	@Query(value = """
 			SELECT rp.report_id AS reportId
@@ -682,13 +712,7 @@ public interface ReportDispatchRepository extends Repository<ReportGenerationRun
 			 WHERE rp.published_at IS NULL
 			   AND rp.class_id IS NULL
 			   AND rp.lifecycle_status <> 'SUPERSEDED'
-			   AND now() >= COALESCE(r.report_publish_not_before_at,
-			                         (SELECT ma.assessment_close_at
-			                            FROM measurement_attempt ma
-			                           WHERE ma.assessment_round_id = rp.assessment_round_id
-			                             AND ma.user_id             = rp.user_id
-			                             AND ma.attempt_type        = 'INITIAL'),
-			                         r.assessment_due_at)
+			   AND\s""" + PUBLISH_TIME_REACHED + """
 			 ORDER BY rp.report_id
 			""", nativeQuery = true)
 	List<UUID> findReportsAwaitingPublish();
