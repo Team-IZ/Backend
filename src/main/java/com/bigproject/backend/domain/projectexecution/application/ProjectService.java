@@ -22,6 +22,14 @@ public interface ProjectService {
 
     void markRunning(UUID projectId, UUID orgId, UUID actorUserId);
 
+    /**
+     * 시작일이 지났고 편성이 끝난 프로젝트를 진행 중으로 올리고 그 회차를 연다.
+     * {@code ProjectLifecycleScheduler}가 주기적으로 부른다.
+     *
+     * @return 이번에 시작된 프로젝트 수
+     */
+    int startDueProjects();
+
     List<ProjectRequirement> replaceRequirements(
             UUID projectId, UUID orgId, List<String> requirementTitles, UUID actorUserId);
 

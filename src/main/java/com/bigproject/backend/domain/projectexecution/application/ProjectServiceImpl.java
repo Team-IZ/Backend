@@ -73,6 +73,19 @@ public class ProjectServiceImpl implements ProjectService {
         project.start(actorUserId);
     }
 
+    /**
+     * 🔴 엔티티를 거치지 않고 네이티브 UPDATE 한 문장으로 옮긴다.
+     *
+     * <p>{@code Project.start()}를 루프로 부르면 (1) 후보를 SELECT 한 뒤 갱신하게 되어, 같은 DB 에
+     * 붙은 배포본 셋이 같은 프로젝트를 집는다 (2) 회차 상태는 엔티티가 없어 어차피 SQL 이다.
+     * 조건을 전부 UPDATE 의 WHERE 에 넣으면 진 인스턴스는 0행을 갱신하고 조용히 끝난다.
+     */
+    @Override
+    @Transactional
+    public int startDueProjects() {
+        return projectDependencyRepository.startDueProjects();
+    }
+
     @Override
     @Transactional
     public List<ProjectRequirement> replaceRequirements(
