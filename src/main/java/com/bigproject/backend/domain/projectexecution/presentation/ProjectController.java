@@ -286,7 +286,8 @@ public class ProjectController {
 				: new ProjectResponse.LaggingClass(
 				progress.laggingClass().classId(), progress.laggingClass().className(),
 				progress.laggingClass().assessedCount(), progress.laggingClass().targetTraineeCount());
-		return new ProjectResponse.Progress(progress.assessedCount(), progress.targetTraineeCount(), lagging);
+		return new ProjectResponse.Progress(progress.assessedCount(), progress.targetTraineeCount(),
+				progress.blockedCount(), lagging);
 	}
 
 	private List<ProjectResponse.ActionItem> toActionItems(
@@ -932,13 +933,18 @@ public class ProjectController {
 
 					단계별 깔때기라 각 단계의 분모가 앞 단계의 분자입니다.
 					제출률은 submittedCount / targetTraineeCount,
-					응시율은 assessedCount / analysisSucceededCount 입니다.
+					응시율은 assessedCount / assessmentTargetCount 입니다.
 					응시율의 분모가 제출 단계에서 나오므로 두 지표를 나눠 호출하지 않습니다.
+
+					미제출·분석 실패는 응시할 문항 자체가 없었으므로 응시율 분모에서 빠집니다.
+					매니저 프로젝트 목록(`GET /projects`)의 `progress`도 같은 기준이라 두 화면이
+					같은 회차를 두고 다른 응시율을 말하지 않습니다.
 
 					제출은 팀 단위 원장이지만 이 화면은 인원 기준으로 환산합니다.
 
 					분석 상태는 성공·실패·부분 성공·진행 중 네 갈래를 모두 내려줍니다.
-					부분 성공(PARTIAL)은 분석 완료로 세지 않으므로 응시율 분모에서 빠집니다.
+					부분 성공(PARTIAL)은 일부 개념만 문항이 생성된 경우이며 그 문항으로 응시할 수
+					있으므로 응시율 분모에 **포함**됩니다.
 					네 값을 더하면 제출 인원과 같아 어느 열에도 잡히지 않고 사라지는 인원이 없습니다.
 
 					회차는 projectId와 roundNo로 특정합니다. round_no는 프로젝트 안에서만 유일합니다.
@@ -975,7 +981,7 @@ public class ProjectController {
 					| `submittedCount` | long | 제출을 마친 교육생 수 |
 					| `analysisTargetCount` | long | 분석 대상 교육생 수. `submittedCount`와 값이 같습니다 — 단계별 분모를 필드 이름으로도 드러내려고 따로 둡니다 |
 					| `analysisSucceededCount` | long | 분석이 성공한 교육생 수 |
-					| `assessmentTargetCount` | long | 응시 대상 교육생 수. `analysisSucceededCount`와 값이 같습니다 |
+					| `assessmentTargetCount` | long | **응시율의 분모**. 분석이 끝나 문항이 만들어진 인원(`SUCCEEDED + PARTIAL`)이며 `analysisSucceededCount`와 다를 수 있습니다 |
 					| `assessedCount` | long | 응시(INITIAL 완료)를 마친 교육생 수 |
 
 					**`classes[]`** — 반 한 행
@@ -986,12 +992,14 @@ public class ProjectController {
 					| `className` | string | 반 이름 |
 					| `targetTraineeCount` | long | 회차 수행 대상 교육생 수. 제출률의 분모 |
 					| `submittedCount` | long | 소속 팀이 제출을 마친 교육생 수 |
-					| `analysisSucceededCount` | long | 분석이 성공한 교육생 수. 응시율의 분모이며 PARTIAL은 포함하지 않음 |
+					| `analysisSucceededCount` | long | 분석이 성공한 교육생 수 |
+					| `assessmentTargetCount` | long | 이 반의 **응시율 분모**. `analysisSucceededCount + analysisPartialCount` |
 					| `analysisFailedCount` | long | 분석이 실패한 교육생 수(**인원** 기준) |
-					| `analysisPartialCount` | long | 분석이 부분 성공(PARTIAL)한 교육생 수. 응시율 분모에서 빠짐 |
+					| `analysisPartialCount` | long | 분석이 부분 성공(PARTIAL)한 교육생 수. 그 문항으로 응시할 수 있어 **응시율 분모에 포함** |
 					| `analysisInProgressCount` | long | 분석이 대기·진행 중인 교육생 수 |
 					| `assessedCount` | long | 최초 응시(INITIAL)를 완료한 교육생 수 |
-					| `notAttendedCount` | long | 미응시(NOT_ATTENDED) 교육생 수 |
+					| `notAttendedCount` | long | **검증 세션을 하지 못한** 교육생 수. 미응시 + 팀 미제출 + 분석 실패의 합이며 결과 탭의 `resultStatus = NOT_ATTENDED`와 같은 기준 |
+					| `noShowCount` | long | 그중 **응시할 수 있었는데 안 본** 인원. 독촉·면담 대상은 이 인원뿐이다 |
 					| `sessionIncompleteCount` | long | 중단(SESSION_INCOMPLETE) 교육생 수 |
 					| `invalidAttemptCount` | long | 무효 확정(CONFIRMED_INVALID) 교육생 수. 무효 확인 중(PENDING)은 미포함 |
 					| `managerNames[]` | string[] | 활성 담당 매니저 이름 목록. 비어 있으면 화면의 '담당 없음'이며 대시보드 미배정 경보와 같은 조건 |
