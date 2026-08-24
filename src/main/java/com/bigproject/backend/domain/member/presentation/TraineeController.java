@@ -519,8 +519,11 @@ public class TraineeController {
 					| `excellentOccurrenceCount` | int? | 이 교육생이 우수로 발견된 누적 횟수 |
 					| `excellentAssessmentSequenceNos` | int[] | 우수로 발견된 프로젝트 차수(`analysis_sequence_no`) 전부. **조회 회차를 포함**하므로 이 배열에 조회 차수가 있으면 이번 회차도 우수다. 최신 차수부터 내림차순, 근거 없으면 빈 배열 |
 					| `matchedRiskTypeCodes` | string[]? | 이번 회차에 걸린 위험 유형 코드 **배열**. `STAGE_DECLINE`(단계 하락) · `PERSISTENT_LOW`(지속 저점) · `INVALID_ATTEMPT`(무효 응시) · `CONTRIBUTION_UNDERSTANDING_GAP`(기여·이해도 괴리) · `LOW_PARTICIPATION`(저기여) 중 동시에 여러 개가 걸릴 수 있다. 해소(`RESOLVED`)된 사유는 들어오지 않는다. **`null`(지표 없음)과 `[]`(위험 없음)은 뜻이 다르다.** 30차 R6까지는 `"{}"` 같은 PostgreSQL 배열 리터럴 문자열이었다 |
-					| `roundPrimaryStatusCode` | enum? | 배지 한 칸에 넣을 **단일** 코드. 1층 응시상태(`NOT_ATTENDED` 미응시 → `SESSION_INCOMPLETE` 응시 중단 → `INVALID_ATTEMPT` 무효 응시)가 있으면 2층 위험 유형(`LOW_PARTICIPATION` → `CONTRIBUTION_UNDERSTANDING_GAP` → `STAGE_DECLINE` → `PERSISTENT_LOW`)은 보지 않는다. 걸린 것이 없으면 `null`(정상). 중도 이탈은 여기 들어오지 않는다 — 계정 상태의 비활성화 사유로 이미 드러난다 |
+					| `roundPrimaryStatusCode` | enum? | 배지 한 칸에 넣을 **단일** 코드. 1층 응시상태(`NOT_ATTENDED` 검증 세션 못 함 → `SESSION_INCOMPLETE` 응시 중단 → `INVALID_ATTEMPT` 무효 응시)가 있으면 2층 위험 유형(`LOW_PARTICIPATION` → `CONTRIBUTION_UNDERSTANDING_GAP` → `STAGE_DECLINE` → `PERSISTENT_LOW`)은 보지 않는다. 걸린 것이 없으면 `null`(정상). 중도 이탈은 여기 들어오지 않는다 — 계정 상태의 비활성화 사유로 이미 드러난다 |
+					| `notAttendedReasonCode` | enum? | 🆕 `roundPrimaryStatusCode`가 `NOT_ATTENDED`일 때만. `NO_SHOW`(볼 수 있었는데 안 봄) · `NOT_SUBMITTED`(팀 미제출) · `ANALYSIS_FAILED`(분석 실패). **독촉 대상은 `NO_SHOW`뿐**이며 나머지 둘은 응시할 문항 자체가 없었다 |
 					| `roundTerminalAt` | date-time? | `roundPrimaryStatusCode`가 `NOT_ATTENDED`·`SESSION_INCOMPLETE`일 때만 값이 있는 시각. 화면이 `우수 누적` 칸에 정상 결과 대신 `세션 중단 · 07-14`처럼 사유·일자를 그릴 때 쓴다 |
+
+					🆕 **`roundPrimaryStatusCode = NOT_ATTENDED`의 범위가 넓어졌다.** 종전에는 `terminal_reason_code`가 `NOT_ATTENDED`인 경우만 봐서, **팀이 제출을 안 해 응시조차 못 한 학생이 배지 없이 「정상」으로 보였다.** 이제 팀 미제출·코드 분석 실패도 이 배지가 잡고, 원인은 `notAttendedReasonCode`로 가른다. 결과 탭(`GET /projects/{projectId}/evaluations`)의 `resultStatus`·`notAttendedReason`과 같은 값 집합이다.
 					| `rowAggregationStatus` | string? | 이 행의 지표 집계 상태. 현재는 항상 `COMPLETE`다 |
 
 					#### inactivatedReasonCode 값

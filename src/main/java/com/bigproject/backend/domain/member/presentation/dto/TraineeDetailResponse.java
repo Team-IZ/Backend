@@ -82,12 +82,24 @@ public record TraineeDetailResponse(
 			String resultStatus,
 			@Schema(description = """
 					배지 한 칸에 넣을 **단일** 코드이며 정책 문서 §7의 2층 구조를 그대로 담습니다 —
-					1층 응시상태(`NOT_ATTENDED` 미응시 → `SESSION_INCOMPLETE` 응시 중단 →
+					1층 응시상태(`NOT_ATTENDED` 검증 세션 못 함 → `SESSION_INCOMPLETE` 응시 중단 →
 					`INVALID_ATTEMPT` 무효 응시)가 걸리면 2층 위험 유형(`LOW_PARTICIPATION` →
 					`CONTRIBUTION_UNDERSTANDING_GAP` → `STAGE_DECLINE` → `PERSISTENT_LOW`)은 보지 않습니다.
 					걸린 것이 없으면 null(정상)입니다.
+
+					🆕 **`NOT_ATTENDED`가 팀 미제출·코드 분석 실패까지 덮습니다.** 원인은
+					`notAttendedReasonCode`에 있습니다.
 					""", example = "STAGE_DECLINE", nullable = true)
 			String primaryStatusCode,
+			@Schema(description = """
+					검증 세션을 **왜** 하지 못했는지이며 `primaryStatusCode`가 `NOT_ATTENDED`일 때만 값이 있습니다.
+
+					`NO_SHOW`(응시할 수 있었는데 안 봄) · `NOT_SUBMITTED`(팀 미제출) ·
+					`ANALYSIS_FAILED`(코드 분석 실패 — 시스템 귀책).
+
+					🔴 **독촉·면담 대상은 `NO_SHOW`뿐입니다.** 결과 탭의 `notAttendedReason`과 같은 값 집합입니다.
+					""", example = "NOT_SUBMITTED", nullable = true)
+			String notAttendedReasonCode,
 			@Schema(description = """
 					이번 회차에 걸린 위험 유형 **전부**입니다. 동시에 여러 개가 걸릴 수 있어
 					`primaryStatusCode`와 따로 냅니다. 없으면 빈 배열입니다.
@@ -97,7 +109,7 @@ public record TraineeDetailResponse(
 			String riskReasonSummary,
 			@Schema(description = """
 					`primaryStatusCode`가 `NOT_ATTENDED`·`SESSION_INCOMPLETE`일 때만 값이 있는 시각이며
-					화면의 `세션 중단 · 07-14`가 이 값입니다.
+					화면의 `세션 중단 · 07-14`가 이 값입니다(미제출·분석 실패도 `NOT_ATTENDED`이므로 값이 옵니다).
 					""", nullable = true)
 			OffsetDateTime terminalAt,
 
