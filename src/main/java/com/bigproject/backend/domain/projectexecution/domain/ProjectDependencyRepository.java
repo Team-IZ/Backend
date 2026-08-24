@@ -123,6 +123,58 @@ public interface ProjectDependencyRepository {
 	 * @param submissionDueAt 제출 마감. DB가 NOT NULL이라 호출부가 반드시 정해서 넘긴다
 	 * @return 만들어진 회차 ID
 	 */
+	/**
+	 * 이 기수의 <b>반 배정된 활성 교육생</b>을 프로젝트 참여자로 편성한다.
+	 *
+	 * <h2>왜 여기서 하나</h2>
+	 *
+	 * <p>여태 {@code project_membership}에 INSERT 하는 코드가 <b>저장소 전체에 하나도 없었다</b>
+	 * (엔티티도 없고 생성 요청에 참여자 필드도 없다). 그래서 화면으로 만든 프로젝트는 구조적으로
+	 * 참여자가 0명이었고, {@code assessment_round_attendance} 뷰가 이 테이블을 INNER JOIN 하므로
+	 * (회차 × 사람) 행이 아예 안 생겨 <b>교육생 홈의 「예정된 일」에 회차가 뜨지 않았다.</b>
+	 * 그린컴퍼니 7기 미프 5차가 그 상태였다 — 회차도 교안도 마감도 다 있는데 참여자만 0명이었다.
+	 *
+	 * <h2>대상</h2>
+	 *
+	 * <p>① 반에 배정돼 있고({@code class_membership.unassigned_at IS NULL})
+	 * ② 기수에 실제로 들어온({@code cohort_member.status = 'ACTIVE'}) 사람이다.
+	 * ②가 {@code INVITED}(초대만 되고 미가입)를 자연히 배제하고, {@code project_membership.class_id}가
+	 * NOT NULL 이라 ① 없이는 애초에 행을 만들 수 없다. 7기 기준 250명 중 249명이다.
+	 *
+	 * <p>🔴 멱등하다 — {@code uq_project_membership_active (project_id, user_id) WHERE status='ACTIVE'}가
+	 * 이미 있어 {@code ON CONFLICT DO NOTHING}으로 받는다. 같은 질의를 소급 편성 스크립트
+	 * ({@code docs/migration/2026-08-24_enroll_project_membership_green_c7.sql})가 쓴다.
+	 *
+	 * @return 실제로 들어간 행 수
+	 */
+	int enrollCohortMembers(UUID projectId, UUID orgId, UUID cohortId, UUID actorUserId);
+
+	/**
+	 * 시작일이 지났고 편성이 끝난 프로젝트를 <b>진행 중</b>으로 올리고, 그 회차를 <b>OPEN</b>으로 연다.
+	 *
+	 * <h2>왜 배치인가</h2>
+	 *
+	 * <p>{@code Project.start()}는 있었지만 <b>부르는 곳이 없었고</b>, 회차의 PLANNED → OPEN 전환은
+	 * 코드 자체가 없어 사람이 SQL 로 옮기고 있었다({@code docs/미프3차_4차_회차상태_전환.sql}).
+	 * 회차가 PLANNED 로 남으면 {@code AssessmentRoundQueryService.pickCurrent}가 {@code isOpen()}만
+	 * 보므로 교육생 홈에서 <b>「예정」에만 머물고 「지금 할 일」로 못 올라간다</b> — 제출 화면에
+	 * 도달할 방법이 없다.
+	 *
+	 * <h2>여는 조건</h2>
+	 *
+	 * <p>시작일이 됐고, 팀이 하나 이상 있고, 그 팀이 <b>전부 CONFIRMED</b>이고, 미배정이 0명일 때만
+	 * 연다. 편성이 안 끝난 채로 열리면 팀 없는 학생에게 제출 화면이 열린다.
+	 *
+	 * <h2>🔴 멱등해야 한다</h2>
+	 *
+	 * <p>같은 운영 DB 에 붙은 배포본이 셋이라 이 배치도 셋이 동시에 돈다. 조회로 고르고 나서
+	 * 갱신하면 셋이 같은 프로젝트를 집는다 — 조건을 전부 {@code UPDATE ... WHERE} 안에 넣어
+	 * <b>한 문장</b>으로 처리한다. 진 쪽은 0행을 갱신하고 조용히 끝난다.
+	 *
+	 * @return 이번에 시작된 프로젝트 수
+	 */
+	int startDueProjects();
+
 	UUID createAssessmentRound(UUID projectId, UUID orgId, UUID cohortId, String roundName,
 			Instant submissionDueAt, UUID actorUserId);
 

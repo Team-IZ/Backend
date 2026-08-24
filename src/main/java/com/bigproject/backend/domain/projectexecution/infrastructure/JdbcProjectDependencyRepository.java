@@ -217,6 +217,78 @@ public class JdbcProjectDependencyRepository implements ProjectDependencyReposit
 	 * <b>비워 둔다.</b> 셋 다 코드 분석·응시가 끝나야 정해지는 값이라 생성 시점에 넣을 사실이 없고,
 	 * CHECK도 {@code PLANNED}에서는 비어 있는 것을 허용한다.
 	 */
+	/**
+	 * 참여자 편성. 질의는 소급 편성 스크립트와 <b>같은 것</b>이다 — 코드가 새로 만든 프로젝트와
+	 * 스크립트가 메운 프로젝트의 참여자 집합이 갈리면 안 된다.
+	 *
+	 * <p>{@code ON CONFLICT DO NOTHING}은 대상 컬럼을 안 적는다. 부분 유니크 인덱스
+	 * ({@code WHERE status='ACTIVE'})는 추론 대상으로 지정하려면 그 조건까지 적어야 하는데,
+	 * 여기서는 어떤 제약에 걸리든 조용히 넘기는 것이 맞다.
+	 */
+	/**
+	 * 한 문장으로 프로젝트와 회차를 함께 옮긴다. {@code WITH ... UPDATE ... RETURNING}이라
+	 * 프로젝트를 실제로 집은 인스턴스만 그 회차를 연다 — 조회·갱신을 나누면 배포본 셋이
+	 * 같은 프로젝트를 집는다.
+	 *
+	 * <p>회차 쪽 {@code status = 'PLANNED'} 조건은 이미 열린 회차를 다시 열지 않기 위한 것이다.
+	 * 사람이 수동 SQL 로 먼저 열어 둔 회차가 있을 수 있다.
+	 */
+	@Override
+	public int startDueProjects() {
+		return jdbcTemplate.update("""
+				WITH started AS (
+					UPDATE project p
+					   SET lifecycle_status = 'RUNNING',
+					       updated_at = CURRENT_TIMESTAMP
+					 WHERE p.lifecycle_status = 'PLANNED'
+					   AND p.deleted_at IS NULL
+					   AND p.start_date <= CURRENT_DATE
+					   AND EXISTS (SELECT 1 FROM team t
+					                WHERE t.project_id = p.project_id)
+					   AND NOT EXISTS (SELECT 1 FROM team t
+					                    WHERE t.project_id = p.project_id
+					                      AND t.status <> 'CONFIRMED')
+					   AND NOT EXISTS (SELECT 1 FROM project_membership pm
+					                    WHERE pm.project_id = p.project_id
+					                      AND pm.status = 'ACTIVE'
+					                      AND NOT EXISTS (SELECT 1 FROM team_membership tm
+					                                       WHERE tm.project_membership_id = pm.project_membership_id
+					                                         AND tm.to_at IS NULL))
+					RETURNING p.project_id
+				)
+				UPDATE project_assessment_round r
+				   SET status = 'OPEN',
+				       updated_at = CURRENT_TIMESTAMP
+				  FROM started s
+				 WHERE r.project_id = s.project_id
+				   AND r.status = 'PLANNED'
+				   AND r.deleted_at IS NULL
+				""");
+	}
+
+	@Override
+	public int enrollCohortMembers(UUID projectId, UUID orgId, UUID cohortId, UUID actorUserId) {
+		return jdbcTemplate.update("""
+				INSERT INTO project_membership (
+					project_id, user_id, org_id, class_id, class_membership_id,
+					joined_at, status, change_reason, changed_by, created_at
+				)
+				SELECT ?, cm.user_id, ?, clm.class_id, clm.class_membership_id,
+				       CURRENT_TIMESTAMP, 'ACTIVE', '프로젝트 생성 시 자동 편성', ?, CURRENT_TIMESTAMP
+				FROM class_membership clm
+				JOIN class cl         ON cl.class_id = clm.class_id
+				                     AND cl.org_id = ?
+				                     AND cl.cohort_id = ?
+				                     AND cl.deleted_at IS NULL
+				JOIN cohort_member cm ON cm.cohort_member_id = clm.cohort_member_id
+				                     AND cm.cohort_id = ?
+				                     AND cm.status = 'ACTIVE'
+				WHERE clm.unassigned_at IS NULL
+				ON CONFLICT DO NOTHING
+				""",
+				projectId, orgId, actorUserId, orgId, cohortId, cohortId);
+	}
+
 	@Override
 	public UUID createAssessmentRound(UUID projectId, UUID orgId, UUID cohortId, String roundName,
 			Instant submissionDueAt, UUID actorUserId) {
