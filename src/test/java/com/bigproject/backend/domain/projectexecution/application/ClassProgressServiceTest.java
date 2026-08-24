@@ -58,13 +58,15 @@ class ClassProgressServiceTest {
 				new ClassProgressQueryRepository.RoundScope(
 						roundId, projectId, "미프 3차", 1, "RAG 파이프라인", organizationId, cohortId,
 						java.time.Instant.parse("2026-08-06T09:00:00Z"), "ROUND_BATCH", false, 6)));
+		// 분석 성공 223 + 부분 성공 2 = 응시 대상 225. 두 값이 다른 회차를 기본값으로 둔다 —
+		// 같으면 응시율 분모가 어느 쪽인지 테스트가 구분하지 못한다.
 		when(classProgressQueryRepository.findRoundSummary(roundId, organizationId, null)).thenReturn(
-				new ClassProgressQueryRepository.RoundSummaryRow(250, 231, 231, 223, 223, 198));
+				new ClassProgressQueryRepository.RoundSummaryRow(250, 231, 231, 223, 225, 198));
 	}
 
 	@Test
 	void keepsTheFunnelDenominatorsInOneResponse() {
-		// 제출 24, 분석 성공 23, 응시 20 — 응시율 분모가 제출이 아니라 분석 성공이다.
+		// 제출 24, 응시 대상 23, 응시 20 — 응시율 분모가 제출이 아니라 응시 대상이다.
 		givenClass(25, 24, 23, 1, 0, 0, 20);
 
 		ClassProgressResponse.ClassProgress row =
@@ -78,7 +80,7 @@ class ClassProgressServiceTest {
 
 	@Test
 	void keepsPartialAndInProgressSoTheSubmittedTotalStillAddsUp() {
-		// PARTIAL 은 분석 완료로 세지 않기로 했다. 그래도 어디에도 안 잡히고 사라지면 안 된다.
+		// PARTIAL 은 분석 완료로 세지 않는다. 그래도 어디에도 안 잡히고 사라지면 안 된다.
 		givenClass(25, 24, 20, 1, 2, 1, 18);
 
 		ClassProgressResponse.ClassProgress row =
@@ -86,6 +88,10 @@ class ClassProgressServiceTest {
 
 		assertThat(row.analysisPartialCount()).isEqualTo(2);
 		assertThat(row.analysisInProgressCount()).isEqualTo(1);
+		// 분석 완료로는 세지 않지만 그 문항으로 응시할 수 있으므로 응시율 분모에는 들어간다.
+		assertThat(row.assessmentTargetCount()).isEqualTo(22);
+		assertThat(row.assessmentTargetCount())
+				.isEqualTo(row.analysisSucceededCount() + row.analysisPartialCount());
 		assertThat(row.analysisSucceededCount()
 				+ row.analysisFailedCount()
 				+ row.analysisPartialCount()
@@ -93,11 +99,35 @@ class ClassProgressServiceTest {
 				.isEqualTo(row.submittedCount());
 	}
 
+	/**
+	 * 「세션을 못 한 인원」과 「독촉 대상」은 다르다.
+	 *
+	 * <p>{@code notAttendedCount}는 미응시 + 미제출 + 분석 실패의 합이라 결과 탭의
+	 * {@code resultStatus = NOT_ATTENDED}와 같은 모수다. 그중 독촉할 수 있는 사람은
+	 * {@code noShowCount}뿐이며, 나머지는 응시할 문항 자체가 없었다.
+	 */
+	@Test
+	void separatesWhoCouldHaveAttendedFromWhoCouldNot() {
+		when(classProgressQueryRepository.findClassProgress(roundId, organizationId, null)).thenReturn(List.of(
+				// 세션을 못 한 인원 8명 중 볼 수 있었는데 안 본 사람은 2명이다.
+				new ClassProgressQueryRepository.ClassProgressRow(
+						classId, "B반", 25, 20, 17, 17, 3, 0, 0, 15, 8, 2, 1, 0, List.of("이도윤"))
+		));
+
+		ClassProgressResponse.ClassProgress row =
+				service.findClassProgress(projectId, 1, ACTOR_EMAIL).classes().get(0);
+
+		assertThat(row.notAttendedCount()).isEqualTo(8);
+		assertThat(row.noShowCount()).isEqualTo(2);
+		// 나머지 6명은 미제출·분석 실패라 독촉 대상이 아니다.
+		assertThat(row.notAttendedCount() - row.noShowCount()).isEqualTo(6);
+	}
+
 	@Test
 	void reportsAnEmptyManagerListRatherThanOmittingTheClass() {
 		when(classProgressQueryRepository.findClassProgress(roundId, organizationId, null)).thenReturn(List.of(
 				new ClassProgressQueryRepository.ClassProgressRow(
-						classId, "F반", 25, 22, 22, 0, 0, 0, 18, 3, 1, 0, List.of())
+						classId, "F반", 25, 22, 22, 22, 0, 0, 0, 18, 3, 3, 1, 0, List.of())
 		));
 
 		ClassProgressResponse.ClassProgress row =
@@ -146,7 +176,8 @@ class ClassProgressServiceTest {
 		assertThat(summary.submittedCount()).isEqualTo(231);
 		assertThat(summary.analysisTargetCount()).isEqualTo(summary.submittedCount());
 		assertThat(summary.analysisSucceededCount()).isEqualTo(223);
-		assertThat(summary.assessmentTargetCount()).isEqualTo(summary.analysisSucceededCount());
+		// 응시 대상은 분석 성공과 다르다 — PARTIAL도 그 문항으로 응시할 수 있어 포함된다.
+		assertThat(summary.assessmentTargetCount()).isEqualTo(225);
 		assertThat(summary.assessedCount()).isEqualTo(198);
 	}
 
@@ -157,9 +188,9 @@ class ClassProgressServiceTest {
 		UUID failedTeamId = UUID.randomUUID();
 		when(classProgressQueryRepository.findClassProgress(roundId, organizationId, null)).thenReturn(List.of(
 				new ClassProgressQueryRepository.ClassProgressRow(
-						classId, "B반", 25, 24, 23, 1, 0, 0, 20, 2, 1, 0, List.of("이도윤")),
+						classId, "B반", 25, 24, 23, 23, 1, 0, 0, 20, 2, 2, 1, 0, List.of("이도윤")),
 				new ClassProgressQueryRepository.ClassProgressRow(
-						otherClassId, "C반", 25, 25, 25, 0, 0, 0, 25, 0, 0, 0, List.of("박서준"))
+						otherClassId, "C반", 25, 25, 25, 25, 0, 0, 0, 25, 0, 0, 0, 0, List.of("박서준"))
 		));
 		when(classProgressQueryRepository.findFailedTeams(roundId, organizationId, null)).thenReturn(List.of(
 				new ClassProgressQueryRepository.FailedTeamRow(
@@ -237,7 +268,7 @@ class ClassProgressServiceTest {
 				.thenReturn(new ClassProgressQueryRepository.RoundSummaryRow(26, 26, 26, 25, 25, 24));
 		when(classProgressQueryRepository.findClassProgress(roundId, organizationId, managerUserId))
 				.thenReturn(List.of(new ClassProgressQueryRepository.ClassProgressRow(
-						classId, "C반", 26, 26, 25, 1, 0, 0, 24, 1, 0, 0, List.of("이도윤"))));
+						classId, "C반", 26, 26, 25, 25, 1, 0, 0, 24, 1, 1, 0, 0, List.of("이도윤"))));
 
 		ClassProgressResponse response = service.findClassProgress(projectId, 1, MANAGER_EMAIL);
 
@@ -284,8 +315,9 @@ class ClassProgressServiceTest {
 	) {
 		when(classProgressQueryRepository.findClassProgress(roundId, organizationId, null)).thenReturn(List.of(
 				new ClassProgressQueryRepository.ClassProgressRow(
-						classId, "B반", target, submitted, succeeded, failed, partial, inProgress,
-						assessed, 2, 1, 0, List.of("이도윤"))
+						classId, "B반", target, submitted, succeeded, succeeded + partial,
+						failed, partial, inProgress,
+						assessed, 2, 2, 1, 0, List.of("이도윤"))
 		));
 	}
 }
