@@ -57,6 +57,12 @@ public class ProjectCreationTransaction {
 		projectDependencyRepository.createAssessmentRound(
 				saved.getProjectId(), orgId, cohortId, name, submissionDueAt, actorUserId);
 
+		// 참여자를 함께 편성한다. 여태 project_membership 을 만드는 코드가 아예 없어서, 화면으로
+		// 만든 프로젝트는 참여자 0명인 채로 남았고 교육생 홈의 「예정된 일」에 뜨지 않았다
+		// (그린컴퍼니 7기 미프 5차). 회차와 같은 트랜잭션이라 편성이 실패하면 프로젝트도 함께
+		// 롤백된다 — 참여자 없는 프로젝트를 다시 만들지 않기 위해서다.
+		projectDependencyRepository.enrollCohortMembers(saved.getProjectId(), orgId, cohortId, actorUserId);
+
 		return saved;
 	}
 }
