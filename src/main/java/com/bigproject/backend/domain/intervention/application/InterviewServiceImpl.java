@@ -118,8 +118,10 @@ public class InterviewServiceImpl implements InterviewService {
 			return criteria.assessmentRoundId();
 		}
 
-		List<InterviewRoundRepository.RoundOption> options =
-				roundRepository.findRoundOptions(criteria.managerUserId(), criteria.orgId());
+		// 기수를 받았으면 그 기수 안에서만 고른다. 안 받았으면 종전대로 담당 기수 전부에서
+		// 고르고, 아래에서 마지막 회차의 cohortId 로 「이번 회차」를 다시 판정한다.
+		List<InterviewRoundRepository.RoundOption> options = roundRepository.findRoundOptions(
+				criteria.managerUserId(), criteria.orgId(), criteria.cohortId());
 		if (options.isEmpty()) {
 			return null;
 		}
@@ -138,11 +140,11 @@ public class InterviewServiceImpl implements InterviewService {
 
 	@Override
 	@Transactional(readOnly = true)
-	public List<RoundOptionView> findRoundOptions(UUID managerUserId, UUID orgId) {
-		return roundRepository.findRoundOptions(managerUserId, orgId).stream()
+	public List<RoundOptionView> findRoundOptions(UUID managerUserId, UUID orgId, UUID cohortId) {
+		return roundRepository.findRoundOptions(managerUserId, orgId, cohortId).stream()
 				.map(option -> new RoundOptionView(
-						option.assessmentRoundId(), option.projectId(), option.label(),
-						option.roundNo(), option.status()))
+						option.assessmentRoundId(), option.projectId(), option.cohortId(),
+						option.label(), option.roundNo(), option.status()))
 				.toList();
 	}
 

@@ -25,7 +25,7 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 	 * {@code manager_assignment}가 반 수만큼 행을 곱한다 — 회차가 중복해서 나온다.
 	 */
 	@Override
-	public List<RoundOption> findRoundOptions(UUID managerUserId, UUID orgId) {
+	public List<RoundOption> findRoundOptions(UUID managerUserId, UUID orgId, UUID cohortId) {
 		return jdbcTemplate.query("""
 				SELECT DISTINCT
 				       r.assessment_round_id,
@@ -49,6 +49,7 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 				  AND ma.org_id          = ?
 				  AND ma.status          = 'ACTIVE'
 				  AND ma.unassigned_at IS NULL
+				  AND (?::uuid IS NULL OR r.cohort_id = ?::uuid)
 				ORDER BY p.sequence_no, r.round_no
 				""",
 				(rs, rowNum) -> new RoundOption(
@@ -60,7 +61,7 @@ public class JdbcInterviewRoundRepository implements InterviewRoundRepository {
 						rs.getString("round_name"),
 						label(rs.getString("project_name"), rs.getString("round_name")),
 						rs.getString("status")),
-				managerUserId, orgId);
+				managerUserId, orgId, cohortId, cohortId);
 		// 정렬은 SQL의 p.sequence_no, r.round_no가 한다 — round_no는 프로젝트 안에서만
 		// 유일하므로 sequence_no가 앞에 와야 기수 전체에서 순서가 맞는다.
 	}

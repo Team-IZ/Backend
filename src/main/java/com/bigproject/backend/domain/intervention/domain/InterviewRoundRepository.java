@@ -27,8 +27,13 @@ public interface InterviewRoundRepository {
 	 * <p>{@code PLANNED} 회차도 뺀다 없이 담는다 — 결과가 아직 없는 회차를 고르면 화면이
 	 * "이 회차는 아직 결과가 없어요"를 그리는 것이 정의된 동작이라(§6), 목록에서 아예 빼면
 	 * 그 상태를 보여줄 방법이 없다. 삭제된 회차만 제외한다.
+	 *
+	 * @param cohortId 기수 하나로 좁힌다. {@code null}이면 담당 기수 전부다.
+	 *                 <b>한 매니저가 여러 기수에서 반을 맡으면 좁히지 않는 쪽이 위험하다</b> —
+	 *                 종료 기수와 진행 기수의 회차가 한 드롭다운에 섞이고, 화면이 고른 회차가
+	 *                 보고 있는 기수의 것이 아니면 격자·명부가 조용히 빈 채로 그려진다.
 	 */
-	List<RoundOption> findRoundOptions(UUID managerUserId, UUID orgId);
+	List<RoundOption> findRoundOptions(UUID managerUserId, UUID orgId, UUID cohortId);
 
 	/** 선택한 회차의 표시용 메타. 담당 밖 회차면 비어 있다. */
 	Optional<RoundMeta> findRoundMeta(UUID managerUserId, UUID orgId, UUID assessmentRoundId);
