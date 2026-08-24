@@ -62,6 +62,10 @@ class ProjectCreationTransactionTest {
 		order.verify(projectRepository).saveAndFlush(any(Project.class));
 		order.verify(projectDependencyRepository).createAssessmentRound(
 				any(), eq(orgId), eq(cohortId), eq("1차 미니프로젝트"), eq(dueAt), eq(actorUserId));
+		// 참여자 편성이 같은 트랜잭션 안에 있어야 한다 — 이 줄이 빠지면 화면으로 만든 프로젝트가
+		// 참여자 0명으로 남고 교육생 홈의 「예정된 일」에 회차가 뜨지 않는다(미프 5차).
+		order.verify(projectDependencyRepository).enrollCohortMembers(
+				any(), eq(orgId), eq(cohortId), eq(actorUserId));
 
 		verifyNoMoreInteractions(projectDependencyRepository);
 	}
