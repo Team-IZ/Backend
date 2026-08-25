@@ -2084,13 +2084,20 @@ create table team
     created_at       timestamp with time zone default CURRENT_TIMESTAMP          not null,
     updated_at       timestamp with time zone default CURRENT_TIMESTAMP          not null,
     deleted_at       timestamp with time zone,
-    constraint uq_team_project_id_class_id_name
-        unique (project_id, class_id, name),
-    constraint uq_team_project_id_class_id_team_number
-        unique (project_id, class_id, team_number),
     constraint ck_team_max_member_count
         check (max_member_count >= min_member_count)
 );
+
+-- 활성 범위 UNIQUE. 팀 해체는 행을 지우지 않고 deleted_at만 찍으므로, 전체 UNIQUE로 두면
+-- 해체된 팀이 이름·번호를 영구히 붙잡아 같은 이름의 팀을 다시 만들 수 없다(46차 R1).
+-- 2026-08-25_team_unique_active_scope.sql
+create unique index uq_team_project_id_class_id_name
+    on team (project_id, class_id, name)
+    where deleted_at is null;
+
+create unique index uq_team_project_id_class_id_team_number
+    on team (project_id, class_id, team_number)
+    where deleted_at is null;
 
 comment on table team is '프로젝트·반별 제출 단위와 팀 편성 상태, 안정적인 팀 번호, 인원 범위와 동시 수정 버전을 관리합니다. 프로젝트가 달라지면 같은 팀 번호라도 별개의 team_id와 팀원 구성을 가집니다. | 정의서명: Team | 제약·비고: • team_number > 0 • 활성 범위 UNIQUE(project_id, class_id, team_number), UNIQUE(project_id, class_id, name) • 상태: DRAFT / CONFIRMED • min_member_count > 0, max_member_count >= min_member_count • Project.cohort_id와 Class.cohort_id, 모든 org_id 경로가 일치해야 합니다. • 같은 project_id + class_id의 활성 팀 집합은 정상 상태에서 모두 DRAFT 또는 모두 CONFIRMED여야 하며 혼합 상태를 금지합니다. • 팀 번호는 OP-02 행 슬롯과 정렬에 사용하지만 프로젝트 간 동일 팀 계보나 동일 구성원을 뜻하지 않습니다. • 화면 team_display_key=''TEAM_NO_'' || team_number는 조회 파생값입니다. • 편성 확정은 관련 팀·참여·소속 행을 잠그고 전원 배정·팀명·인원 범위를 재검증한 뒤 모든 팀을 원자적으로 CONFIRMED로 변경합니다. • SUBMISSION_STARTED는 Team.status에 저장하지 않고 유효 Submission 존재 여부에서 파생합니다. • row_version은 팀명·팀원·잠금의 낙관적 동시성 검증에 사용합니다.';
 
