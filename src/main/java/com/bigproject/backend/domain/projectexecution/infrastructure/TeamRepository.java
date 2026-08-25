@@ -32,11 +32,12 @@ public interface TeamRepository extends JpaRepository<Team, UUID> {
     /**
      * 팀명 중복 사전 검사. <b>검사 범위를 DB 제약과 같게 맞춘다</b> —
      * {@code uq_team_project_id_class_id_name}이 활성 범위 부분 인덱스이므로 여기도
-     * {@code deleted_at IS NULL}이다(2026-08-25_team_unique_active_scope.sql).
+     * {@code deleted_at IS NULL}이다. 그 인덱스는 2026-08-25 실 DB에 적용됐다
+     * (2026-08-25_team_unique_active_scope.sql).
      *
-     * <p>사전 검사는 SELECT-then-INSERT라 동시 요청 두 건이 둘 다 통과할 수 있고, 마이그레이션이
-     * 아직 안 걸린 DB에서는 제약이 이 검사보다 넓다. 어느 쪽이든 마지막에 DB가 끊으므로
-     * {@code TeamService}가 {@code saveAndFlush} 자리에서 그 예외도 같은 도메인 코드로 옮긴다.
+     * <p>사전 검사는 SELECT-then-INSERT라 동시 요청 두 건이 둘 다 통과할 수 있다. 그때는 DB가
+     * 마지막에 끊으므로 {@code TeamService}가 {@code saveAndFlush} 자리에서 그 예외도 같은
+     * 도메인 코드로 옮긴다 — <b>적용이 끝난 지금도 그 변환은 계속 필요하다.</b>
      */
     boolean existsByProjectIdAndClassIdAndNameAndDeletedAtIsNull(UUID projectId, UUID classId, String name);
 }
