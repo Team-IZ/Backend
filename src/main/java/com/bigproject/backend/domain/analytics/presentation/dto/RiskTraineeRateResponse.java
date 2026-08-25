@@ -94,8 +94,19 @@ public record RiskTraineeRateResponse(
 			RoundAggregationStatus aggregationStatus,
 			@Schema(description = "미집계 인원을 제외한 분모입니다.", example = "24")
 			long eligibleCount,
-			@Schema(description = "위험 유형(단계 하락·지속 저점)을 하나라도 가진 고유 교육생 수입니다.", example = "6")
+			@Schema(description = """
+					분자입니다. 위험 유형(단계 하락·지속 저점)이 확정된 고유 교육생 수이며,
+					**1차 회차에서는 관찰(observedRiskCount)도 함께 셉니다**.
+					1차는 비교할 직전 회차가 없어 두 유형이 모두 `관찰`로만 등재되기 때문입니다.
+					2차 이후 열은 확정된 위험만 셉니다.
+					""", example = "6")
 			long riskCount,
+			@Schema(description = """
+					riskCount 중 관찰로 잡힌 인원이며 riskCount의 부분집합입니다. 1차 회차가 아니면 항상 0입니다.
+					1차 열의 값을 2차 이후 열과 그대로 이어 추이로 읽으면 안 된다는 신호로 쓰세요 —
+					1차 분자는 `2단 미만 문제 1개 이상`이라는 더 넓은 기준입니다.
+					""", example = "4")
+			long observedRiskCount,
 			@Schema(description = "riskCount / eligibleCount 비율이며 집계 전이거나 분모가 0이면 null입니다.", example = "0.2500",
 					nullable = true)
 			BigDecimal riskRate,

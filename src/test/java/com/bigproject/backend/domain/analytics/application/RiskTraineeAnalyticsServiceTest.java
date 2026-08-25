@@ -50,7 +50,7 @@ class RiskTraineeAnalyticsServiceTest {
 		givenPublishedRound();
 		// 반 인원 25명 중 미응시 2명·중단 1명·무효 응시 3명을 뺀 19명이 분모, 위험자는 6명.
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3, 0)
 		));
 		givenRoster(25, 0);
 
@@ -64,12 +64,47 @@ class RiskTraineeAnalyticsServiceTest {
 	}
 
 	@Test
+	void countsFirstRoundObservationInsideTheNumeratorAndKeepsItVisible() {
+		givenOperator();
+		givenPublishedRound();
+		// 1차 회차. 분자 6명 중 4명은 관찰(NOT_APPLICABLE)이며 비율은 분자 전체를 쓴다.
+		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 6, 0, 0, 0, 4)
+		));
+		givenRoster(20, 0);
+
+		RiskTraineeRateResponse.RiskCell classCell = findRates().classes().get(0).cells().get(0);
+
+		assertThat(classCell.riskCount()).isEqualTo(6);
+		assertThat(classCell.observedRiskCount()).isEqualTo(4);
+		assertThat(classCell.riskRate()).isEqualByComparingTo(new BigDecimal("0.3000"));
+	}
+
+	@Test
+	void sumsObservationAcrossClassesForTheCohortRow() {
+		givenOperator();
+		givenPublishedRound();
+		// 기수 전체 행은 반 행을 합친 값이며 관찰도 같이 합쳐져야 구성이 드러난다.
+		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 6, 0, 0, 0, 4),
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 2, 0, 0, 0, 1)
+		));
+		givenRoster(40, 0);
+
+		RiskTraineeRateResponse.RiskCell cohortCell = findRates().cohortSummary().cells().get(0);
+
+		assertThat(cohortCell.riskCount()).isEqualTo(8);
+		assertThat(cohortCell.observedRiskCount()).isEqualTo(5);
+		assertThat(cohortCell.riskRate()).isEqualByComparingTo(new BigDecimal("0.2000"));
+	}
+
+	@Test
 	void countsEveryExclusionOutsideDenominator() {
 		givenOperator();
 		givenPublishedRound();
 		// 미집계 3종은 모두 분모 밖이므로 분모와 미집계를 더하면 회차 수행 대상자 전원이 된다.
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3, 0)
 		));
 		givenRoster(25, 0);
 
@@ -89,8 +124,8 @@ class RiskTraineeAnalyticsServiceTest {
 		givenPublishedRound();
 		// 회차 시점에 반 배정이 없던 교육생(class_id = null)은 기수 전체에만 들어간다.
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3),
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, null, 3, 3, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, null, 3, 3, 0, 0, 0, 0)
 		));
 		givenRoster(25, 0);
 
@@ -109,7 +144,7 @@ class RiskTraineeAnalyticsServiceTest {
 				round(roundId, 1, "COMPLETED", false)
 		));
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 0, 0, 0, 0)
 		));
 		givenRoster(25, 0);
 
@@ -127,7 +162,7 @@ class RiskTraineeAnalyticsServiceTest {
 				round(roundId, 1, "CLOSED", true)
 		));
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 5, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 5, 0, 0, 0, 0)
 		));
 		givenRoster(25, 0);
 
@@ -156,8 +191,8 @@ class RiskTraineeAnalyticsServiceTest {
 		givenPublishedRound();
 		// C반 6/20 = 30%, D반 2/20 = 10%, 기수 전체 8/40 = 20%.
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 6, 0, 0, 0),
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 2, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 6, 0, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 2, 0, 0, 0, 0)
 		));
 		givenTwoClassRoster();
 
@@ -174,8 +209,8 @@ class RiskTraineeAnalyticsServiceTest {
 		givenPublishedRound();
 		// 두 반이 같은 비율이면 기수 전체도 같은 비율이라 둘 다 SAME이다.
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 4, 0, 0, 0),
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 4, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 4, 0, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 4, 0, 0, 0, 0)
 		));
 		givenTwoClassRoster();
 
@@ -192,7 +227,7 @@ class RiskTraineeAnalyticsServiceTest {
 				round(roundId, 1, "CLOSED", false)
 		));
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 6, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 6, 0, 0, 0, 0)
 		));
 		givenRoster(25, 0);
 
@@ -209,8 +244,8 @@ class RiskTraineeAnalyticsServiceTest {
 				round(laterRoundId, 2, "CLOSED", false)
 		));
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3),
-				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, classId, 24, 4, 1, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, classId, 24, 4, 1, 0, 0, 0)
 		));
 		givenRoster(25, 0);
 
@@ -229,7 +264,7 @@ class RiskTraineeAnalyticsServiceTest {
 				round(roundId, 1, "CLOSED", false)
 		));
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3, 0)
 		));
 		givenRoster(25, 0);
 
@@ -245,10 +280,10 @@ class RiskTraineeAnalyticsServiceTest {
 		));
 		// D반은 최근 회차만 보면 더 나빠 보이지만, 누적으로는 C반이 더 많이 빠졌다.
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 4, 5, 0, 0),
-				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, classId, 20, 4, 1, 0, 0),
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 4, 0, 0, 0),
-				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, otherClassId, 20, 4, 3, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 4, 5, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, classId, 20, 4, 1, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 4, 0, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, otherClassId, 20, 4, 3, 0, 0, 0)
 		));
 		givenTwoClassRoster();
 
@@ -265,8 +300,8 @@ class RiskTraineeAnalyticsServiceTest {
 		givenOperator();
 		givenPublishedRound();
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 2, 0, 0, 0),
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 6, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 2, 0, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 6, 0, 0, 0, 0)
 		));
 		givenTwoClassRoster();
 
@@ -283,8 +318,8 @@ class RiskTraineeAnalyticsServiceTest {
 		givenOperator();
 		givenPublishedRound();
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3),
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 24, 2, 1, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 19, 6, 2, 1, 3, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 24, 2, 1, 0, 0, 0)
 		));
 		givenTwoClassRoster();
 
@@ -304,10 +339,10 @@ class RiskTraineeAnalyticsServiceTest {
 		));
 		// C반은 1차만, D반은 두 회차 모두 기수 전체보다 나쁘다.
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 6, 0, 0, 0),
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 7, 0, 0, 0),
-				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, classId, 20, 2, 0, 0, 0),
-				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, otherClassId, 20, 8, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 6, 0, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 7, 0, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, classId, 20, 2, 0, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(laterRoundId, otherClassId, 20, 8, 0, 0, 0, 0)
 		));
 		givenTwoClassRoster();
 
@@ -323,8 +358,8 @@ class RiskTraineeAnalyticsServiceTest {
 		givenPublishedRound();
 		// C반 50%(10/20), D반 10%(2/20) → 기수 전체는 30%(12/40)이지만 팀은 소속 반(C반 50%)과 견줘야 한다.
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 10, 0, 0, 0),
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 2, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 20, 10, 0, 0, 0, 0),
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, otherClassId, 20, 2, 0, 0, 0, 0)
 		));
 		givenTwoClassRoster();
 		UUID teamAId = UUID.randomUUID();
@@ -340,8 +375,8 @@ class RiskTraineeAnalyticsServiceTest {
 		// 2팀은 30%라 기수 전체(30%) 기준이면 SAME, 소속 반(C반 50%) 기준이면 BETTER다.
 		when(riskTraineeQueryRepository.aggregateTeamRiskCells(any(), eq(classId)))
 				.thenReturn(List.of(
-						new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamAId, 10, 7, 0, 0, 0),
-						new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamBId, 10, 3, 0, 0, 0)
+						new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamAId, 10, 7, 0, 0, 0, 0),
+						new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamBId, 10, 3, 0, 0, 0, 0)
 				));
 
 		RiskTraineeRateResponse response = service.findRiskTraineeRates(
@@ -409,7 +444,7 @@ class RiskTraineeAnalyticsServiceTest {
 		givenOperator();
 		givenPublishedRound();
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 0, 0, 3, 2, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 0, 0, 3, 2, 0, 0)
 		));
 		givenRoster(5, 0);
 

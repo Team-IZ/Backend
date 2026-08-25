@@ -85,6 +85,9 @@ public interface RiskTraineeQueryRepository {
 	/**
 	 * 회차 × 반 격자 한 칸의 원시 집계.
 	 * classId가 null인 행은 회차 시점에 반 배정이 없던 교육생이며 기수 전체 집계에는 포함하고 반 행에는 넣지 않는다.
+	 *
+	 * riskCount는 분자 전체이며 1차 회차에서는 관찰(observedRiskCount)을 포함한다.
+	 * observedRiskCount는 그중 관찰로 잡힌 인원이라 riskCount의 부분집합이다.
 	 */
 	record RiskCellRow(
 			UUID assessmentRoundId,
@@ -93,7 +96,8 @@ public interface RiskTraineeQueryRepository {
 			long riskCount,
 			long notAttendedCount,
 			long sessionIncompleteCount,
-			long invalidAttemptCount
+			long invalidAttemptCount,
+			long observedRiskCount
 	) {
 	}
 
@@ -107,7 +111,8 @@ public interface RiskTraineeQueryRepository {
 			long riskCount,
 			long notAttendedCount,
 			long sessionIncompleteCount,
-			long invalidAttemptCount
+			long invalidAttemptCount,
+			long observedRiskCount
 	) {
 	}
 
