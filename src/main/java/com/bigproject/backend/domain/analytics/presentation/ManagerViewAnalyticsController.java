@@ -55,6 +55,7 @@ public class ManagerViewAnalyticsController {
                 | `asOfAt` | 집계 시각. **응답 전체의 성질**이라 셀마다 싣지 않는다 |
                 | `scope` | 고정된 상위 계층. `CLASS`는 고정 상위가 없어 `null` |
                 | `concepts[]` | 가로축(열 머리). `problemNo` · `teachesId` · `conceptName` · `groupShortfall` |
+                | | ↳ `problemNo`는 **열 순번(1..N)**이다. 문제 순번이 아니다 — 아래 ⚠️ 참고 |
                 | `summary` | 화면 상단 합계 행. `rowId`·`rowName`은 `null` |
                 | `rows[]` | 세로축. `rowId`·`rowName`·`memberCount`·`cells[]` |
                 | `navigation` | 툴바 셀렉터용 반·팀 목록. **`CLASS`에서는 비운다**(`rows`와 같은 값) |
@@ -63,11 +64,21 @@ public class ManagerViewAnalyticsController {
 
                 | 필드 | 설명 |
                 |---|---|
+                | `problemNo`·`teachesId` | 같은 순번의 `concepts[]`와 짝이 되는 **열 순번·개념** |
                 | `value` | 집계 행은 **평균**, 개인 행은 **도달 단계 원값**(0~4) |
                 | `validCount`·`notAttendedCount`·`invalidCount`·`interruptedCount` | 결과 구분별 인원 |
                 | `status` | 집계 상태 또는 개인 응시 결과 상태 |
                 | `groupShortfall` | 집단 미달. **반 행에만** 채운다 |
                 | `initialLevel`·`comparisonLevel`·`delta` | `REVIEW` 전용. `INITIAL`에서는 **키 자체가 빠진다** |
+
+                ⚠️ **`rows[].cells[]`는 언제나 `concepts[]`와 같은 길이·같은 순서다.** 그 개념에 결과가
+                없는 자리도 빈 셀로 채워 나가므로, 화면은 두 배열을 순번으로 짝지어도 되고 `teachesId`로
+                짝지어도 된다.
+
+                ⚠️ **`problemNo`는 열 순번이지 문제 순번이 아니다.** 가로축은 검증 개념(`teachesId`)이다.
+                문제 순번(`assessment_problem.problem_no`)은 팀 분석마다 다시 1부터 매겨져 한 회차 안에서도
+                팀에 따라 1번이 가리키는 개념이 다르므로 축이 될 수 없다. 개념의 식별자는 `teachesId`이고,
+                드릴다운(`GET .../concepts/{teachesId}`)도 같은 값을 쓴다.
 
                 ⚠️ **`memberCount`는 명부 인원이라 `validCount`와 다르다.** 응시하지 않은 사람을 포함한다.
 

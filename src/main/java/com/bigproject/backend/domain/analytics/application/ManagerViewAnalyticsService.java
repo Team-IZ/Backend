@@ -108,29 +108,49 @@ public class ManagerViewAnalyticsService {
 	/**
 	 * 열 머리다. {@code groupShortfall}의 기준 집단은 계층마다 다르다 — CLASS는 담당 반 중
 	 * 하나라도 미달이면 참이고, TEAM·TRAINEE는 {@code scope}의 그 반이다.
+	 *
+	 * <p>화면에 나가는 {@code problemNo}는 <b>열 순번</b>이며 여기서 매긴다. 문제 순번이 아니다 —
+	 * 그 뜻은 {@link ManagerAnalyticsRepository.HeatmapCell}의 설명을 참고한다. 셀도 같은 번호를
+	 * 싣고, 배열도 같은 길이·같은 순서다.
 	 */
 	private List<ManagerHeatmapResponse.Concept> buildConcepts(
 			List<ManagerAnalyticsRepository.ConceptAxis> concepts,
 			ManagerHeatmapResponse.Level level, UUID classroomId,
 			List<ManagerAnalyticsRepository.GroupShortfall> shortfall) {
-		return concepts.stream()
-				.map(concept -> new ManagerHeatmapResponse.Concept(
-						concept.problemNo(), concept.teachesId(), concept.conceptName(),
-						columnShortfall(shortfall, level, classroomId, concept.problemNo())))
-				.toList();
+		List<ManagerHeatmapResponse.Concept> columns = new ArrayList<>(concepts.size());
+		for (int index = 0; index < concepts.size(); index++) {
+			var concept = concepts.get(index);
+			columns.add(new ManagerHeatmapResponse.Concept(
+					index + 1, concept.teachesId(), concept.conceptName(),
+					columnShortfall(shortfall, level, classroomId, concept.teachesId())));
+		}
+		return List.copyOf(columns);
 	}
 
 	private Boolean columnShortfall(
 			List<ManagerAnalyticsRepository.GroupShortfall> shortfall,
-			ManagerHeatmapResponse.Level level, UUID classroomId, int problemNo) {
+			ManagerHeatmapResponse.Level level, UUID classroomId, UUID teachesId) {
 		var matching = shortfall.stream()
-				.filter(row -> row.problemNo() == problemNo)
+				.filter(row -> Objects.equals(row.teachesId(), teachesId))
 				.filter(row -> level == ManagerHeatmapResponse.Level.CLASS
 						|| row.classroomId().equals(classroomId))
 				.map(ManagerAnalyticsRepository.GroupShortfall::shortfall)
 				.filter(Objects::nonNull)
 				.toList();
 		return matching.isEmpty() ? null : matching.contains(Boolean.TRUE);
+	}
+
+	/**
+	 * 평면으로 온 셀을 개념으로 색인한다. 한 자리에 셀이 둘 이상이면 앞의 것을 남긴다 —
+	 * 격자는 한 칸에 값을 하나만 그릴 수 있고, 조용히 뒤엣것으로 덮이는 편보다 낫다.
+	 */
+	private Map<UUID, ManagerAnalyticsRepository.HeatmapCell> indexByConcept(
+			List<ManagerAnalyticsRepository.HeatmapCell> cells) {
+		Map<UUID, ManagerAnalyticsRepository.HeatmapCell> byConcept = new LinkedHashMap<>();
+		for (var cell : cells) {
+			byConcept.putIfAbsent(cell.teachesId(), cell);
+		}
+		return byConcept;
 	}
 
 	/**
@@ -161,14 +181,12 @@ public class ManagerViewAnalyticsService {
 		// 합계 행의 미달 판정은 TEAM·TRAINEE에서만 의미가 있다 — 그때의 합계가 곧 그 반이다.
 		UUID shortfallClassroomId = level == ManagerHeatmapResponse.Level.CLASS ? null : classroomId;
 
-		List<ManagerHeatmapResponse.Cell> cells = summaryCells.isEmpty()
-				// 유효 결과가 한 건도 없다 — 개념 축만으로 열을 세운다.
-				? concepts.stream()
-						.map(concept -> emptyCell(concept.problemNo(), extra, memberCount))
-						.toList()
-				: summaryCells.stream()
-						.map(cell -> toCell(cell, shortfall, shortfallClassroomId, review, extra, memberCount))
-						.toList();
+		List<ManagerHeatmapResponse.Cell> cells = alignToConcepts(
+				concepts, indexByConcept(summaryCells),
+				(columnNo, concept, cell) -> cell == null
+						// 유효 결과가 한 건도 없는 개념 — 열은 세우고 값만 비운다.
+						? emptyCell(columnNo, concept.teachesId(), extra, memberCount)
+						: toCell(columnNo, cell, shortfall, shortfallClassroomId, review, extra, memberCount));
 		return new ManagerHeatmapResponse.Row(null, null, memberCount, cells);
 	}
 
@@ -190,15 +208,42 @@ public class ManagerViewAnalyticsService {
 	}
 
 	/**
+	 * 한 행의 셀을 <b>개념 축 그대로</b> 세운다.
+	 *
+	 * <p>열 머리와 셀이 반드시 같은 길이·같은 순서가 되도록 모든 행이 이 한 곳을 지난다. 종전에는
+	 * 열 머리와 셀이 각각 다른 질의에서 나와, 어긋나면 그대로 어긋난 채 나갔다 — 화면은 두 배열의
+	 * 길이를 맞춰 주지 않는다. 그 개념의 결과가 없는 자리는 빈 셀로 채운다.
+	 */
+	private List<ManagerHeatmapResponse.Cell> alignToConcepts(
+			List<ManagerAnalyticsRepository.ConceptAxis> concepts,
+			Map<UUID, ManagerAnalyticsRepository.HeatmapCell> byConcept, CellFactory factory) {
+		List<ManagerHeatmapResponse.Cell> cells = new ArrayList<>(concepts.size());
+		for (int index = 0; index < concepts.size(); index++) {
+			var concept = concepts.get(index);
+			cells.add(factory.create(index + 1, concept, byConcept.get(concept.teachesId())));
+		}
+		return List.copyOf(cells);
+	}
+
+	/** {@code cell}이 {@code null}이면 그 개념에 결과가 없다는 뜻이다. */
+	@FunctionalInterface
+	private interface CellFactory {
+		ManagerHeatmapResponse.Cell create(
+				int columnNo, ManagerAnalyticsRepository.ConceptAxis concept,
+				ManagerAnalyticsRepository.HeatmapCell cell);
+	}
+
+	/**
 	 * 유효 결과가 한 건도 없는 자리의 셀이다.
 	 *
 	 * <p>{@code value}는 {@code null}이다 — 평균을 낼 표본이 없다. 상태는 뷰의 집계 상태와 같은
 	 * 말({@code NO_VALID_RESULT})을 써서, 화면이 이 셀만 다르게 읽지 않게 한다.
 	 */
 	private ManagerHeatmapResponse.Cell emptyCell(
-			int problemNo, ManagerAnalyticsRepository.UnresolvedGroup extra, Integer memberCount) {
+			int columnNo, UUID teachesId,
+			ManagerAnalyticsRepository.UnresolvedGroup extra, Integer memberCount) {
 		return new ManagerHeatmapResponse.Cell(
-				problemNo, null, "NO_VALID_RESULT",
+				columnNo, teachesId, null, "NO_VALID_RESULT",
 				0, extra.notAttendedCount(), extra.invalidCount(), extra.interruptedCount(),
 				residual(memberCount, 0, extra), null, null, null, null);
 	}
@@ -227,20 +272,23 @@ public class ManagerViewAnalyticsService {
 			}
 		}
 		Map<UUID, String> names = new LinkedHashMap<>();
-		Map<UUID, List<ManagerHeatmapResponse.Cell>> grouped = new LinkedHashMap<>();
+		Map<UUID, List<ManagerAnalyticsRepository.HeatmapCell>> grouped = new LinkedHashMap<>();
 		for (var cell : cells) {
-			// 반 행일 때만 그 행 자신이 판정 대상이다. 팀은 3~4명이라 한 사람이 판정을 뒤집는다.
-			UUID cellClassroomId = level == ManagerHeatmapResponse.Level.CLASS ? cell.rowId() : null;
 			names.putIfAbsent(cell.rowId(), cell.rowName());
-			grouped.computeIfAbsent(cell.rowId(), rowId -> new ArrayList<>())
-					.add(toCell(cell, shortfall, cellClassroomId, review,
-							extraByRow.getOrDefault(cell.rowId(), NO_EXTRA), null));
+			grouped.computeIfAbsent(cell.rowId(), rowId -> new ArrayList<>()).add(cell);
 		}
 
 		List<ManagerHeatmapResponse.Row> rows = new ArrayList<>(grouped.size());
 		for (var entry : grouped.entrySet()) {
-			rows.add(new ManagerHeatmapResponse.Row(entry.getKey(), names.get(entry.getKey()),
-					memberCounts.get(entry.getKey()), List.copyOf(entry.getValue())));
+			UUID rowId = entry.getKey();
+			// 반 행일 때만 그 행 자신이 판정 대상이다. 팀은 3~4명이라 한 사람이 판정을 뒤집는다.
+			UUID cellClassroomId = level == ManagerHeatmapResponse.Level.CLASS ? rowId : null;
+			var extra = extraByRow.getOrDefault(rowId, NO_EXTRA);
+			rows.add(new ManagerHeatmapResponse.Row(rowId, names.get(rowId), memberCounts.get(rowId),
+					alignToConcepts(concepts, indexByConcept(entry.getValue()),
+							(columnNo, concept, cell) -> cell == null
+									? emptyRowCell(level, columnNo, concept.teachesId(), extra)
+									: toCell(columnNo, cell, shortfall, cellClassroomId, review, extra, null))));
 		}
 
 		/*
@@ -273,27 +321,34 @@ public class ManagerViewAnalyticsService {
 		return List.copyOf(rows);
 	}
 
-	/**
-	 * 결과가 한 건도 없는 행의 셀이다.
-	 *
-	 * <p>개인 행은 카운터 없이 <b>그 사람의 상태</b>를 싣는다 — 화면이 「미응시」·「응시 중단」을
-	 * 그대로 그릴 수 있어야 한다. 반·팀 행은 집계 행이라 카운터를 채운다.
-	 */
+	/** 결과가 한 건도 없는 행의 셀이다. 개념 축만으로 열을 세운다. */
 	private List<ManagerHeatmapResponse.Cell> emptyRowCells(
 			ManagerHeatmapResponse.Level level,
 			List<ManagerAnalyticsRepository.ConceptAxis> concepts,
 			ManagerAnalyticsRepository.UnresolvedGroup group) {
-		if (level == ManagerHeatmapResponse.Level.TRAINEE) {
-			String status = group.dominantStatus();
-			return concepts.stream()
-					.map(concept -> new ManagerHeatmapResponse.Cell(
-							concept.problemNo(), null, status,
-							null, null, null, null, null, null, null, null, null))
-					.toList();
+		return alignToConcepts(concepts, Map.of(),
+				(columnNo, concept, cell) -> emptyRowCell(level, columnNo, concept.teachesId(), group));
+	}
+
+	/**
+	 * 결과가 없는 자리의 셀 하나.
+	 *
+	 * <p>개인 행은 카운터 없이 <b>그 사람의 상태</b>를 싣는다 — 화면이 「미응시」·「응시 중단」을
+	 * 그대로 그릴 수 있어야 한다. 반·팀 행은 집계 행이라 카운터를 채운다.
+	 *
+	 * <p>{@code group}이 빈 묶음이면 그 사람은 결과가 있는데 <b>이 개념만</b> 비어 있다는 뜻이다
+	 * (팀 분석이 그 개념을 내지 않은 경우). 미응시가 아니므로 집계 행과 같은 말을 쓴다.
+	 */
+	private ManagerHeatmapResponse.Cell emptyRowCell(
+			ManagerHeatmapResponse.Level level, int columnNo, UUID teachesId,
+			ManagerAnalyticsRepository.UnresolvedGroup group) {
+		if (level != ManagerHeatmapResponse.Level.TRAINEE) {
+			return emptyCell(columnNo, teachesId, group, null);
 		}
-		return concepts.stream()
-				.map(concept -> emptyCell(concept.problemNo(), group, null))
-				.toList();
+		String status = group.total() == 0 ? "NO_VALID_RESULT" : group.dominantStatus();
+		return new ManagerHeatmapResponse.Cell(
+				columnNo, teachesId, null, status,
+				null, null, null, null, null, null, null, null, null);
 	}
 
 	private Map<UUID, Integer> rowMemberCounts(
@@ -322,7 +377,7 @@ public class ManagerViewAnalyticsService {
 	 * 개인 셀은 애초에 카운터가 {@code null}이라 더할 자리가 없고, 그대로 {@code null}로 둔다.
 	 */
 	private ManagerHeatmapResponse.Cell toCell(
-			ManagerAnalyticsRepository.HeatmapCell cell,
+			int columnNo, ManagerAnalyticsRepository.HeatmapCell cell,
 			List<ManagerAnalyticsRepository.GroupShortfall> shortfall,
 			UUID shortfallClassroomId, boolean review,
 			ManagerAnalyticsRepository.UnresolvedGroup extra, Integer memberCount) {
@@ -330,13 +385,14 @@ public class ManagerViewAnalyticsService {
 		int gridCount = zero(cell.validCount()) + zero(cell.notAttendedCount())
 				+ zero(cell.invalidCount()) + zero(cell.interruptedCount());
 		return new ManagerHeatmapResponse.Cell(
-				cell.problemNo(), cell.value(), cell.status(),
+				columnNo, cell.teachesId(), cell.value(), cell.status(),
 				cell.validCount(),
 				plus(cell.notAttendedCount(), extra.notAttendedCount()),
 				plus(cell.invalidCount(), extra.invalidCount()),
 				plus(cell.interruptedCount(), extra.interruptedCount()),
 				residual(memberCount, gridCount, extra),
-				shortfallClassroomId == null ? null : lookupShortfall(shortfall, shortfallClassroomId, cell.problemNo()),
+				shortfallClassroomId == null
+						? null : lookupShortfall(shortfall, shortfallClassroomId, cell.teachesId()),
 				review ? cell.initialLevel() : null,
 				review ? cell.comparisonLevel() : null,
 				review ? cell.delta() : null);
@@ -351,9 +407,10 @@ public class ManagerViewAnalyticsService {
 	}
 
 	private Boolean lookupShortfall(
-			List<ManagerAnalyticsRepository.GroupShortfall> shortfall, UUID classroomId, int problemNo) {
+			List<ManagerAnalyticsRepository.GroupShortfall> shortfall, UUID classroomId, UUID teachesId) {
 		return shortfall.stream()
-				.filter(row -> row.problemNo() == problemNo && row.classroomId().equals(classroomId))
+				.filter(row -> Objects.equals(row.teachesId(), teachesId)
+						&& row.classroomId().equals(classroomId))
 				.map(ManagerAnalyticsRepository.GroupShortfall::shortfall)
 				.findFirst().orElse(null);
 	}

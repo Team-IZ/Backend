@@ -58,7 +58,11 @@ public record ManagerHeatmapResponse(
 	 */
 	@Schema(name = "HeatmapConcept")
 	public record Concept(
-			@Schema(description = "가로축 순번이며 격자 열 순서다", example = "1") int problemNo,
+			@Schema(description = """
+					**격자 열 순번(1..N)**이며 열 순서 그대로다. 문제 순번이 아니다 — 문제 순번은
+					팀 분석마다 다시 매겨져 회차 안에서 개념과 1:1이 아니다. 개념의 식별자는
+					`teachesId`다.
+					""", example = "1") int problemNo,
 			UUID teachesId,
 			@Schema(description = "화면의 **열 이름**이다", example = "API 응답 계약 설계") String conceptName,
 			@Schema(description = """
@@ -100,7 +104,12 @@ public record ManagerHeatmapResponse(
 	 */
 	@Schema(name = "HeatmapCell")
 	public record Cell(
-			int problemNo, BigDecimal value, String status,
+			@Schema(description = "같은 열의 `concepts[].problemNo`와 짝이 되는 열 순번이다", example = "1")
+			int problemNo,
+			@JsonInclude(JsonInclude.Include.NON_NULL)
+			@Schema(description = "이 칸의 개념이다. `concepts[].teachesId`와 같은 값이다")
+			UUID teachesId,
+			BigDecimal value, String status,
 			Integer validCount, Integer notAttendedCount, Integer invalidCount, Integer interruptedCount,
 			@JsonInclude(JsonInclude.Include.NON_NULL)
 			@Schema(description = """
