@@ -103,9 +103,12 @@ public class TeamService {
     /**
      * 팀명 중복을 <b>DB에 닿기 전에</b> 도메인 코드로 끊는다.
      *
-     * <p>이것만으로는 부족하다 — SELECT-then-INSERT라 동시 요청이 둘 다 통과할 수 있고,
-     * 활성 범위 마이그레이션이 아직 안 걸린 DB에서는 제약이 이 검사보다 넓다(해체된 팀의
-     * 이름까지 잡는다). 그래서 {@link #saveTeam}이 DB가 끊는 경우도 같은 코드로 옮긴다.
+     * <p><b>이것만으로는 부족하다</b> — SELECT-then-INSERT라 동시 요청 두 건이 둘 다 통과할 수
+     * 있다. 그래서 {@link #saveTeam}이 DB가 끊는 경우도 같은 코드로 옮긴다.
+     *
+     * <p>검사 범위({@code deleted_at IS NULL})는 DB 제약과 같다 — 활성 범위 부분 UNIQUE가
+     * 2026-08-25 실 DB에 적용됐다(2026-08-25_team_unique_active_scope.sql). 적용 전에는 제약이
+     * 이 검사보다 넓어 해체된 팀의 이름까지 잡았고, 그것이 47차 R1이었다.
      */
     private void assertTeamNameFree(UUID projectId, UUID classId, String name) {
         if (teamRepository.existsByProjectIdAndClassIdAndNameAndDeletedAtIsNull(projectId, classId, name)) {
@@ -644,9 +647,10 @@ public class TeamService {
             int teamCount, UUID managerUserId) {
         List<Team> teams = new ArrayList<>();
         for (int i = 1; i <= teamCount; i++) {
-            // 살아 있는 팀이 없는 반에서만 불리므로 정상 경로에서는 부딪힐 이름이 없다. 다만
-            // 활성 범위 마이그레이션 전에는 해체된 팀이 그 이름을 붙잡고 있어 여기서 끊긴다 —
-            // 그때도 fallback이 아니라 무엇이 겹쳤는지 말하는 코드가 나가야 한다.
+            // 살아 있는 팀이 없는 반에서만 불리므로 정상 경로에서는 부딪힐 이름이 없다. 그래도
+            // saveTeam으로 넣는다 — 동시 요청이 겹치면 DB가 끊는데, 그때 fallback이 아니라
+            // 무엇이 겹쳤는지 말하는 코드가 나가야 한다.
+            // (활성 범위 부분 UNIQUE 적용 전에는 해체된 팀이 이름을 붙잡아 여기서 끊겼다 — 47차 R2.)
             teams.add(saveTeam(Team.builder()
                     .projectId(projectId)
                     .classId(classId)
