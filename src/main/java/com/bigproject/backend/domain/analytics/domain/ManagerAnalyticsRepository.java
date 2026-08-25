@@ -76,8 +76,15 @@ public interface ManagerAnalyticsRepository {
 	ConceptScope findConceptScope(
 			UUID managerId, UUID cohortId, UUID assessmentRoundId, UUID classroomId, UUID teachesId);
 
+	/**
+	 * 격자 셀 하나의 원본이다.
+	 *
+	 * <p>가로축은 <b>개념({@code teachesId})</b>이다. 문제 순번({@code problem_no})이 아니다 —
+	 * 순번은 {@code uq_assessment_problem_code_analysis_id_problem_no}가 말하듯 <b>팀 분석마다</b>
+	 * 다시 1부터 매겨지므로, 한 회차 안에서도 팀에 따라 1번이 가리키는 개념이 다르다.
+	 */
 	record HeatmapCell(
-			UUID rowId, String rowName, int problemNo, BigDecimal value, String status,
+			UUID rowId, String rowName, UUID teachesId, BigDecimal value, String status,
 			Integer validCount, Integer notAttendedCount, Integer invalidCount, Integer interruptedCount,
 			Integer initialLevel, Integer comparisonLevel, Integer delta, OffsetDateTime asOfAt) {
 	}
@@ -118,10 +125,14 @@ public interface ManagerAnalyticsRepository {
 		}
 	}
 
-	record ConceptAxis(int problemNo, UUID teachesId, String conceptName) {
+	/**
+	 * 가로축 한 칸이다. 열 순번은 싣지 않는다 — 목록의 순서가 곧 순번이고, 화면에 나가는
+	 * 번호는 서비스가 이 순서대로 다시 매긴다.
+	 */
+	record ConceptAxis(UUID teachesId, String conceptName) {
 	}
 
-	record GroupShortfall(UUID classroomId, int problemNo, Boolean shortfall) {
+	record GroupShortfall(UUID classroomId, UUID teachesId, Boolean shortfall) {
 	}
 
 	record ClassParticipant(UUID classroomId, String className, int memberCount) {

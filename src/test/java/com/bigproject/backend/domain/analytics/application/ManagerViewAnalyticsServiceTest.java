@@ -28,6 +28,9 @@ class ManagerViewAnalyticsServiceTest {
 	private final UUID roundId = UUID.randomUUID();
 	private final UUID classroomId = UUID.randomUUID();
 	private final UUID teamId = UUID.randomUUID();
+	// 가로축은 개념이다. 문제 순번은 팀 분석마다 다시 매겨져 축이 될 수 없다.
+	private final UUID jwtId = UUID.randomUUID();
+	private final UUID jpaId = UUID.randomUUID();
 	private final OffsetDateTime asOf = OffsetDateTime.parse("2026-08-11T23:18:17Z");
 
 	@BeforeEach
@@ -59,11 +62,11 @@ class ManagerViewAnalyticsServiceTest {
 	void classHeatmapGroupsCellsIntoRowsAndDropsRepeatedIdentity() {
 		stubConceptsAndClassrooms();
 		when(repository.findGroupShortfall(managerId, cohortId, projectId, roundId)).thenReturn(List.of(
-				new ManagerAnalyticsRepository.GroupShortfall(classroomId, 1, false),
-				new ManagerAnalyticsRepository.GroupShortfall(classroomId, 2, true)));
+				new ManagerAnalyticsRepository.GroupShortfall(classroomId, jwtId, false),
+				new ManagerAnalyticsRepository.GroupShortfall(classroomId, jpaId, true)));
 		when(repository.findHeatmap(managerId, cohortId, projectId, roundId,
 				"CLASS", "INITIAL", null, null)).thenReturn(List.of(
-				cell(classroomId, "C반", 1, "2.625"), cell(classroomId, "C반", 2, "2.25")));
+				cell(classroomId, "C반", jwtId, "2.625"), cell(classroomId, "C반", jpaId, "2.25")));
 
 		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
 				ManagerHeatmapResponse.Level.CLASS, ManagerHeatmapResponse.AttemptView.INITIAL, null, null);
@@ -83,14 +86,52 @@ class ManagerViewAnalyticsServiceTest {
 		assertThat(response.navigation().classrooms()).isEmpty();
 	}
 
+	/**
+	 * 히트맵 머리글 5칸 · 셀 3칸으로 표가 끊겨 보이던 것.
+	 *
+	 * <p>문제 순번을 가로축으로 쓴 것이 원인이었다. 순번은 팀 분석마다 다시 매겨져 한 회차 안에서도
+	 * 팀에 따라 1번이 가리키는 개념이 다르고, 열 머리는 {@code (순번, 개념)} 조합이라 개념 수보다
+	 * 많아지는데 셀은 순번으로만 묶여 그대로였다.
+	 *
+	 * <p>이제 두 배열이 <b>같은 개념 축</b>에서 나온다. 결과가 없는 개념은 빈 셀로 자리를 채워
+	 * 어떤 행이든 열 머리와 길이가 같다.
+	 */
+	@Test
+	void everyRowHasOneCellPerConceptInTheSameOrder() {
+		UUID classroomId2 = UUID.randomUUID();
+		stubConceptsAndClassrooms();
+		when(repository.findHeatmap(managerId, cohortId, projectId, roundId,
+				"CLASS", "INITIAL", null, null)).thenReturn(List.of(
+				// C반은 두 개념이 다 있고, D반은 JPA 하나뿐이다.
+				cell(classroomId, "C반", jpaId, "2.0"), cell(classroomId, "C반", jwtId, "2.4"),
+				cell(classroomId2, "D반", jpaId, "1.5")));
+
+		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
+				ManagerHeatmapResponse.Level.CLASS, ManagerHeatmapResponse.AttemptView.INITIAL, null, null);
+
+		var axis = response.concepts().stream().map(ManagerHeatmapResponse.Concept::teachesId).toList();
+		assertThat(axis).containsExactly(jwtId, jpaId);
+		assertThat(response.rows()).allSatisfy(row -> {
+			// 셀이 도착한 순서가 아니라 열 머리 순서로 선다.
+			assertThat(row.cells()).extracting(ManagerHeatmapResponse.Cell::teachesId)
+					.containsExactlyElementsOf(axis);
+			assertThat(row.cells()).extracting(ManagerHeatmapResponse.Cell::problemNo)
+					.containsExactly(1, 2);
+		});
+		// 값이 없는 개념도 자리는 있다 — 표가 끊기지 않는다.
+		assertThat(response.rows().get(1).cells().get(0).value()).isNull();
+		assertThat(response.rows().get(1).cells().get(0).status()).isEqualTo("NO_VALID_RESULT");
+		assertThat(response.rows().get(1).cells().get(1).value()).isEqualByComparingTo("1.5");
+	}
+
 	@Test
 	void classColumnHeaderFlagsShortfallWhenAnyClassroomFails() {
 		UUID otherClassroomId = UUID.randomUUID();
 		stubConceptsAndClassrooms();
 		when(repository.findGroupShortfall(managerId, cohortId, projectId, roundId)).thenReturn(List.of(
-				new ManagerAnalyticsRepository.GroupShortfall(classroomId, 1, false),
-				new ManagerAnalyticsRepository.GroupShortfall(otherClassroomId, 1, true),
-				new ManagerAnalyticsRepository.GroupShortfall(classroomId, 2, false)));
+				new ManagerAnalyticsRepository.GroupShortfall(classroomId, jwtId, false),
+				new ManagerAnalyticsRepository.GroupShortfall(otherClassroomId, jwtId, true),
+				new ManagerAnalyticsRepository.GroupShortfall(classroomId, jpaId, false)));
 
 		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
 				ManagerHeatmapResponse.Level.CLASS, ManagerHeatmapResponse.AttemptView.INITIAL, null, null);
@@ -103,11 +144,11 @@ class ManagerViewAnalyticsServiceTest {
 	void teamHeatmapHoistsClassroomIntoScopeAndLeavesTeamRowsUnjudged() {
 		stubConceptsAndClassrooms();
 		when(repository.findGroupShortfall(managerId, cohortId, projectId, roundId)).thenReturn(List.of(
-				new ManagerAnalyticsRepository.GroupShortfall(classroomId, 1, true)));
+				new ManagerAnalyticsRepository.GroupShortfall(classroomId, jwtId, true)));
 		when(repository.findParticipatingTeams(managerId, cohortId, projectId, roundId, classroomId))
 				.thenReturn(List.of(new ManagerAnalyticsRepository.TeamParticipant(teamId, "2팀", 3)));
 		when(repository.findHeatmap(managerId, cohortId, projectId, roundId,
-				"TEAM", "INITIAL", classroomId, null)).thenReturn(List.of(cell(teamId, "2팀", 1, "1.7")));
+				"TEAM", "INITIAL", classroomId, null)).thenReturn(List.of(cell(teamId, "2팀", jwtId, "1.7")));
 
 		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
 				ManagerHeatmapResponse.Level.TEAM, ManagerHeatmapResponse.AttemptView.INITIAL, classroomId, null);
@@ -118,8 +159,8 @@ class ManagerViewAnalyticsServiceTest {
 			assertThat(row.rowId()).isEqualTo(teamId);
 			assertThat(row.memberCount()).isEqualTo(3);
 			// 팀은 3~4명이라 한 사람이 판정을 뒤집는다 — 팀 행에는 미달을 달지 않는다.
-			assertThat(row.cells()).singleElement()
-					.satisfies(cell -> assertThat(cell.groupShortfall()).isNull());
+			assertThat(row.cells()).extracting(ManagerHeatmapResponse.Cell::groupShortfall)
+					.containsOnlyNulls();
 		});
 		// 열 머리는 scope의 그 반 판정을 그대로 쓴다.
 		assertThat(response.concepts().get(0).groupShortfall()).isTrue();
@@ -134,7 +175,7 @@ class ManagerViewAnalyticsServiceTest {
 				.thenReturn(List.of(new ManagerAnalyticsRepository.TeamParticipant(teamId, "2팀", 3)));
 		when(repository.findHeatmap(managerId, cohortId, projectId, roundId,
 				"TRAINEE", "INITIAL", classroomId, teamId)).thenReturn(List.of(
-				cell(traineeId, "김민준", 1, "3")));
+				cell(traineeId, "김민준", jwtId, "3")));
 
 		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
 				ManagerHeatmapResponse.Level.TRAINEE, ManagerHeatmapResponse.AttemptView.INITIAL,
@@ -160,7 +201,7 @@ class ManagerViewAnalyticsServiceTest {
 				.thenReturn(List.of(new ManagerAnalyticsRepository.TeamParticipant(teamId, "2팀", 3)));
 		when(repository.findHeatmap(managerId, cohortId, projectId, roundId,
 				"TRAINEE", "REVIEW", classroomId, teamId)).thenReturn(List.of(
-				new ManagerAnalyticsRepository.HeatmapCell(traineeId, "김민준", 1,
+				new ManagerAnalyticsRepository.HeatmapCell(traineeId, "김민준", jwtId,
 						new BigDecimal("3"), "VALID", null, null, null, null, 1, 3, 2, asOf)));
 
 		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
@@ -178,7 +219,7 @@ class ManagerViewAnalyticsServiceTest {
 	void summaryRowCarriesRosterMemberCount() {
 		stubConceptsAndClassrooms();
 		when(repository.findSummary(managerId, cohortId, projectId, roundId, null, null))
-				.thenReturn(List.of(cell(null, null, 1, "2.4")));
+				.thenReturn(List.of(cell(null, null, jwtId, "2.4")));
 		when(repository.countMembers(managerId, cohortId, projectId, roundId, null, null)).thenReturn(21);
 
 		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
@@ -200,7 +241,7 @@ class ManagerViewAnalyticsServiceTest {
 	void summaryCountsResultlessTraineesAndExposesTheRemainder() {
 		stubConceptsAndClassrooms();
 		when(repository.findSummary(managerId, cohortId, projectId, roundId, null, null))
-				.thenReturn(List.of(cell(null, null, 1, "2.4")));
+				.thenReturn(List.of(cell(null, null, jwtId, "2.4")));
 		when(repository.findUnresolved(managerId, cohortId, projectId, roundId, "CLASS", null, null))
 				.thenReturn(List.of(new ManagerAnalyticsRepository.UnresolvedGroup(
 						classroomId, "C반", 1, 0, 0, 0)));
@@ -227,7 +268,7 @@ class ManagerViewAnalyticsServiceTest {
 						new ManagerAnalyticsRepository.TeamParticipant(teamId, "2팀", 3),
 						new ManagerAnalyticsRepository.TeamParticipant(missingTeamId, "4팀", 4)));
 		when(repository.findHeatmap(managerId, cohortId, projectId, roundId,
-				"TEAM", "INITIAL", classroomId, null)).thenReturn(List.of(cell(teamId, "2팀", 1, "1.7")));
+				"TEAM", "INITIAL", classroomId, null)).thenReturn(List.of(cell(teamId, "2팀", jwtId, "1.7")));
 		when(repository.findUnresolved(managerId, cohortId, projectId, roundId, "TEAM", classroomId, null))
 				.thenReturn(List.of(new ManagerAnalyticsRepository.UnresolvedGroup(
 						missingTeamId, "4팀", 0, 0, 4, 0)));
@@ -258,7 +299,7 @@ class ManagerViewAnalyticsServiceTest {
 				.thenReturn(List.of(new ManagerAnalyticsRepository.TeamParticipant(teamId, "2팀", 5)));
 		when(repository.findHeatmap(managerId, cohortId, projectId, roundId,
 				"TRAINEE", "INITIAL", classroomId, teamId)).thenReturn(List.of(
-				cell(gradedId, "김민준", 1, "3")));
+				cell(gradedId, "김민준", jwtId, "3")));
 		when(repository.findUnresolved(managerId, cohortId, projectId, roundId, "TRAINEE", classroomId, teamId))
 				.thenReturn(List.of(new ManagerAnalyticsRepository.UnresolvedGroup(
 						absentId, "한유진", 1, 0, 0, 0)));
@@ -294,8 +335,8 @@ class ManagerViewAnalyticsServiceTest {
 
 	private void stubConceptsAndClassrooms() {
 		when(repository.findConcepts(managerId, cohortId, projectId, roundId)).thenReturn(List.of(
-				new ManagerAnalyticsRepository.ConceptAxis(1, UUID.randomUUID(), "JWT 인증·인가"),
-				new ManagerAnalyticsRepository.ConceptAxis(2, UUID.randomUUID(), "JPA 엔티티 관계 설정")));
+				new ManagerAnalyticsRepository.ConceptAxis(jwtId, "JWT 인증·인가"),
+				new ManagerAnalyticsRepository.ConceptAxis(jpaId, "JPA 엔티티 관계 설정")));
 		when(repository.findParticipatingClassrooms(managerId, cohortId, projectId, roundId)).thenReturn(
 				List.of(new ManagerAnalyticsRepository.ClassParticipant(classroomId, "C반", 26)));
 		lenient().when(repository.countMembers(eq(managerId), eq(cohortId), eq(projectId), eq(roundId),
@@ -303,8 +344,8 @@ class ManagerViewAnalyticsServiceTest {
 	}
 
 	private ManagerAnalyticsRepository.HeatmapCell cell(
-			UUID rowId, String rowName, int problemNo, String value) {
-		return new ManagerAnalyticsRepository.HeatmapCell(rowId, rowName, problemNo,
+			UUID rowId, String rowName, UUID teachesId, String value) {
+		return new ManagerAnalyticsRepository.HeatmapCell(rowId, rowName, teachesId,
 				new BigDecimal(value), "COMPLETE", 8, 0, 0, 0, null, null, null, asOf);
 	}
 }

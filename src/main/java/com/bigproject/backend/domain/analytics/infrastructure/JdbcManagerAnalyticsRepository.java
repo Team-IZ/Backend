@@ -22,6 +22,55 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 			  AND mgr.manager_user_id = ? AND mgr.status = 'ACTIVE' AND mgr.unassigned_at IS NULL
 			""";
 
+	/**
+	 * 격자 뷰의 {@code problem_id}로 개념을 되찾는 조인이다.
+	 *
+	 * <h2>왜 {@code problem_no}가 가로축이 될 수 없나</h2>
+	 *
+	 * <p>{@code uq_assessment_problem_code_analysis_id_problem_no}가 말하듯 문제 순번은
+	 * <b>팀 분석 하나 안에서만</b> 유일하다. 팀마다 {@code code_analysis}가 따로 돌고 순번은
+	 * 그때 다시 1부터 매겨지므로, 한 회차 안에서도 어떤 팀의 1번이 다른 팀의 2번일 수 있다.
+	 * 실제로 그런 팀이 있었고, 결과가 두 가지였다 —
+	 *
+	 * <ul>
+	 *   <li>열 머리는 {@code (problem_no, teaches_id)} 조합이라 3개가 아니라 5개가 나왔고,
+	 *       셀은 {@code problem_no}로만 묶여 3개라 오른쪽 두 칸이 빈 채로 남았다</li>
+	 *   <li>더 나쁜 쪽 — 순번이 다른 그 팀의 결과가 <b>다른 개념의 열에 섞여</b> 평균에 들어갔다</li>
+	 * </ul>
+	 *
+	 * <p>그래서 가로축을 개념({@code teaches_id})으로 옮긴다. 네 격자 뷰는 {@code teaches_id}를
+	 * 내보내지 않으므로 {@code problem_id}로 되짚는다.
+	 */
+	private static final String CONCEPT_JOIN = """
+			JOIN assessment_problem ap ON ap.problem_id = h.problem_id
+			LEFT JOIN project_verification_concept pvc
+			  ON pvc.project_concept_id = ap.project_verification_concept_id
+			""";
+
+	/**
+	 * 집계 셀의 계산식이다.
+	 *
+	 * <p>{@code manager_class_heatmap_view}·{@code manager_team_heatmap_view}를 쓰지 않는다 —
+	 * 두 뷰는 이미 {@code problem_no}로 묶은 뒤 {@code problem_id}를 버려서 개념 단위로 다시
+	 * 묶을 수가 없다. 두 뷰는 개인 뷰를 한 단계 더 묶은 것에 지나지 않고(같은 CTE·같은 식·같은
+	 * {@code INITIAL} 조건), 그 한 단계를 여기서 개념 축으로 대신 낸다. {@code findSummary}가
+	 * 이미 같은 이유로 개인 뷰에서 반 평균을 낸다.
+	 */
+	private static final String AGGREGATE_CELL = """
+			  (AVG(h.highest_reached_level) FILTER (
+			    WHERE h.problem_result_status = 'VALID'))::numeric(10,4) AS value,
+			  (CASE WHEN COUNT(*) = 0 THEN 'EMPTY'
+			    WHEN COUNT(*) FILTER (WHERE h.problem_result_status = 'VALID') = 0 THEN 'NO_VALID_RESULT'
+			    ELSE 'COMPLETE' END)::varchar(20) AS status,
+			  COUNT(*) FILTER (WHERE h.problem_result_status = 'VALID')::integer AS valid_count,
+			  COUNT(*) FILTER (WHERE h.problem_result_status = 'NOT_ATTENDED')::integer AS not_attended_count,
+			  COUNT(*) FILTER (WHERE h.problem_result_status = 'INVALID')::integer AS invalid_count,
+			  COUNT(*) FILTER (WHERE h.problem_result_status = 'INTERRUPTED')::integer AS interrupted_count,
+			  NULL::integer AS initial_highest_reached_level,
+			  NULL::integer AS comparison_highest_reached_level, NULL::integer AS comparison_delta,
+			  MAX(h.as_of_at) AS as_of_at
+			""";
+
 	private final JdbcTemplate jdbcTemplate;
 
 	@Override
@@ -30,7 +79,8 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 			String level, String attemptView, UUID classroomId, UUID teamId) {
 		if ("REVIEW".equals(attemptView)) {
 			String sql = """
-					SELECT h.user_id AS row_id, u.name AS row_name, h.problem_no,
+					SELECT h.user_id AS row_id, u.name AS row_name,
+					  COALESCE(ap.teaches_id, pvc.teaches_id) AS teaches_id,
 					  h.comparison_highest_reached_level::numeric AS value,
 					  h.comparison_result_status AS status,
 					  NULL::integer AS valid_count, NULL::integer AS not_attended_count,
@@ -38,49 +88,46 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 					  h.initial_highest_reached_level, h.comparison_highest_reached_level,
 					  h.comparison_delta, h.as_of_at
 					FROM manager_retried_trainee_heatmap_view h
-					""" + MANAGER_SCOPE.formatted("h.class_id") + """
+					""" + MANAGER_SCOPE.formatted("h.class_id") + CONCEPT_JOIN + """
 					JOIN app_user u ON u.user_id = h.user_id
 					WHERE h.cohort_id = ? AND h.project_id = ? AND h.assessment_round_id = ?
 					  AND h.comparison_attempt_type = 'REVIEW'
-					  AND h.class_id = ? AND h.team_id = ? AND h.problem_no IS NOT NULL
-					ORDER BY u.name, h.problem_no
+					  AND h.class_id = ? AND h.team_id = ?
+					  AND COALESCE(ap.teaches_id, pvc.teaches_id) IS NOT NULL
+					ORDER BY u.name
 					""";
 			return jdbcTemplate.query(sql, this::mapHeatmap,
 					managerId, cohortId, projectId, assessmentRoundId, classroomId, teamId);
 		}
 		return switch (level) {
 			case "CLASS" -> jdbcTemplate.query("""
-					SELECT h.class_id AS row_id, c.name AS row_name, h.problem_no,
-					  h.average_highest_reached_level AS value, h.aggregation_status AS status,
-					  h.valid_result_count AS valid_count, h.not_attended_count,
-					  h.invalid_attempt_count AS invalid_count, h.interrupted_count,
-					  NULL::integer AS initial_highest_reached_level,
-					  NULL::integer AS comparison_highest_reached_level, NULL::integer AS comparison_delta,
-					  h.as_of_at
-					FROM manager_class_heatmap_view h
-					""" + MANAGER_SCOPE.formatted("h.class_id") + """
+					SELECT h.class_id AS row_id, c.name AS row_name,
+					  COALESCE(ap.teaches_id, pvc.teaches_id) AS teaches_id,
+					""" + AGGREGATE_CELL + """
+					FROM manager_trainee_heatmap_view h
+					""" + MANAGER_SCOPE.formatted("h.class_id") + CONCEPT_JOIN + """
 					JOIN class c ON c.class_id = h.class_id
 					WHERE h.cohort_id = ? AND h.project_id = ? AND h.assessment_round_id = ?
-					  AND h.problem_no IS NOT NULL
-					ORDER BY c.name, h.problem_no
+					  AND COALESCE(ap.teaches_id, pvc.teaches_id) IS NOT NULL
+					GROUP BY h.class_id, c.name, COALESCE(ap.teaches_id, pvc.teaches_id)
+					ORDER BY c.name
 					""", this::mapHeatmap, managerId, cohortId, projectId, assessmentRoundId);
 			case "TEAM" -> jdbcTemplate.query("""
-					SELECT h.team_id AS row_id, t.name AS row_name, h.problem_no,
-					  h.average_highest_reached_level AS value, h.aggregation_status AS status,
-					  h.valid_result_count AS valid_count, h.not_attended_count,
-					  h.invalid_attempt_count AS invalid_count, h.interrupted_count,
-					  NULL::integer AS initial_highest_reached_level,
-					  NULL::integer AS comparison_highest_reached_level, NULL::integer AS comparison_delta,
-					  h.as_of_at
-					FROM manager_team_heatmap_view h
-					""" + MANAGER_SCOPE.formatted("h.class_id") + """
+					SELECT h.team_id AS row_id, t.name AS row_name,
+					  COALESCE(ap.teaches_id, pvc.teaches_id) AS teaches_id,
+					""" + AGGREGATE_CELL + """
+					FROM manager_trainee_heatmap_view h
+					""" + MANAGER_SCOPE.formatted("h.class_id") + CONCEPT_JOIN + """
 					JOIN team t ON t.team_id = h.team_id
 					WHERE h.cohort_id = ? AND h.project_id = ? AND h.assessment_round_id = ?
-					  AND h.class_id = ? AND h.problem_no IS NOT NULL
-					ORDER BY t.name, h.problem_no
+					  AND h.class_id = ?
+					  AND COALESCE(ap.teaches_id, pvc.teaches_id) IS NOT NULL
+					GROUP BY h.team_id, t.name, COALESCE(ap.teaches_id, pvc.teaches_id)
+					ORDER BY t.name
 					""", this::mapHeatmap, managerId, cohortId, projectId, assessmentRoundId, classroomId);
 			case "TRAINEE" -> jdbcTemplate.query("""
-					SELECT h.user_id AS row_id, u.name AS row_name, h.problem_no,
+					SELECT h.user_id AS row_id, u.name AS row_name,
+					  COALESCE(ap.teaches_id, pvc.teaches_id) AS teaches_id,
 					  h.highest_reached_level::numeric AS value, h.problem_result_status AS status,
 					  NULL::integer AS valid_count, NULL::integer AS not_attended_count,
 					  NULL::integer AS invalid_count, NULL::integer AS interrupted_count,
@@ -88,11 +135,12 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 					  NULL::integer AS comparison_highest_reached_level, NULL::integer AS comparison_delta,
 					  h.as_of_at
 					FROM manager_trainee_heatmap_view h
-					""" + MANAGER_SCOPE.formatted("h.class_id") + """
+					""" + MANAGER_SCOPE.formatted("h.class_id") + CONCEPT_JOIN + """
 					JOIN app_user u ON u.user_id = h.user_id
 					WHERE h.cohort_id = ? AND h.project_id = ? AND h.assessment_round_id = ?
-					  AND h.class_id = ? AND h.team_id = ? AND h.problem_no IS NOT NULL
-					ORDER BY u.name, h.problem_no
+					  AND h.class_id = ? AND h.team_id = ?
+					  AND COALESCE(ap.teaches_id, pvc.teaches_id) IS NOT NULL
+					ORDER BY u.name
 					""", this::mapHeatmap, managerId, cohortId, projectId, assessmentRoundId, classroomId, teamId);
 			default -> List.of();
 		};
@@ -104,27 +152,16 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 			UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId,
 			UUID classroomId, UUID teamId) {
 		String sql = """
-				SELECT NULL::uuid AS row_id, NULL::text AS row_name, h.problem_no,
-				  (AVG(h.highest_reached_level) FILTER (
-				    WHERE h.problem_result_status = 'VALID'))::numeric(10,4) AS value,
-				  (CASE WHEN COUNT(*) = 0 THEN 'EMPTY'
-				    WHEN COUNT(*) FILTER (WHERE h.problem_result_status = 'VALID') = 0 THEN 'NO_VALID_RESULT'
-				    ELSE 'COMPLETE' END)::varchar(20) AS status,
-				  COUNT(*) FILTER (WHERE h.problem_result_status = 'VALID')::integer AS valid_count,
-				  COUNT(*) FILTER (WHERE h.problem_result_status = 'NOT_ATTENDED')::integer AS not_attended_count,
-				  COUNT(*) FILTER (WHERE h.problem_result_status = 'INVALID')::integer AS invalid_count,
-				  COUNT(*) FILTER (WHERE h.problem_result_status = 'INTERRUPTED')::integer AS interrupted_count,
-				  NULL::integer AS initial_highest_reached_level,
-				  NULL::integer AS comparison_highest_reached_level, NULL::integer AS comparison_delta,
-				  MAX(h.as_of_at) AS as_of_at
+				SELECT NULL::uuid AS row_id, NULL::text AS row_name,
+				  COALESCE(ap.teaches_id, pvc.teaches_id) AS teaches_id,
+				""" + AGGREGATE_CELL + """
 				FROM manager_trainee_heatmap_view h
-				""" + MANAGER_SCOPE.formatted("h.class_id") + """
+				""" + MANAGER_SCOPE.formatted("h.class_id") + CONCEPT_JOIN + """
 				WHERE h.cohort_id = ? AND h.project_id = ? AND h.assessment_round_id = ?
-				  AND h.problem_no IS NOT NULL
+				  AND COALESCE(ap.teaches_id, pvc.teaches_id) IS NOT NULL
 				  AND (?::uuid IS NULL OR h.class_id = ?::uuid)
 				  AND (?::uuid IS NULL OR h.team_id = ?::uuid)
-				GROUP BY h.problem_no
-				ORDER BY h.problem_no
+				GROUP BY COALESCE(ap.teaches_id, pvc.teaches_id)
 				""";
 		return jdbcTemplate.query(sql, this::mapHeatmap, managerId, cohortId, projectId,
 				assessmentRoundId, classroomId, classroomId, teamId, teamId);
@@ -208,13 +245,19 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 				classroomId, classroomId, teamId, teamId);
 	}
 
+	/**
+	 * 가로축이다. 회차의 개념을 한 번씩만 낸다.
+	 *
+	 * <p>순서는 문제 순번의 <b>평균</b>으로 정한다. 대다수 팀이 1번에 둔 개념이 첫 열에 오고,
+	 * 순번을 다르게 매긴 소수 팀이 순서를 흔들지 못한다. {@code MIN}을 쓰면 그 소수 팀 하나가
+	 * 열 순서를 바꿔 버린다.
+	 */
 	@Override
 	public List<ConceptAxis> findConcepts(
 			UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId) {
 		String sql = """
-				SELECT DISTINCT ap.problem_no,
-				  COALESCE(ap.teaches_id, pvc.teaches_id) AS teaches_id,
-				  t.canonical_name AS concept_name
+				SELECT COALESCE(ap.teaches_id, pvc.teaches_id) AS teaches_id,
+				  MIN(t.canonical_name) AS concept_name
 				FROM measurement_attempt ma
 				JOIN assessment_session s ON s.attempt_id = ma.attempt_id
 				JOIN problem_stage ps ON ps.session_id = s.session_id
@@ -226,10 +269,12 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 				""" + MANAGER_SCOPE.formatted("pm.class_id") + """
 				WHERE ma.cohort_id = ? AND ma.project_id = ? AND ma.assessment_round_id = ?
 				  AND ma.attempt_type = 'INITIAL'
-				ORDER BY ap.problem_no
+				  AND COALESCE(ap.teaches_id, pvc.teaches_id) IS NOT NULL
+				GROUP BY COALESCE(ap.teaches_id, pvc.teaches_id)
+				ORDER BY AVG(ap.problem_no), MIN(t.canonical_name)
 				""";
 		return jdbcTemplate.query(sql, (rs, n) -> new ConceptAxis(
-				rs.getInt("problem_no"), rs.getObject("teaches_id", UUID.class), rs.getString("concept_name")),
+				rs.getObject("teaches_id", UUID.class), rs.getString("concept_name")),
 				managerId, cohortId, projectId, assessmentRoundId);
 	}
 
@@ -238,20 +283,20 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 	public List<GroupShortfall> findGroupShortfall(
 			UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId) {
 		String sql = """
-				SELECT h.class_id, h.problem_no,
+				SELECT h.class_id, COALESCE(ap.teaches_id, pvc.teaches_id) AS teaches_id,
 				  COUNT(*) FILTER (WHERE h.problem_result_status = 'VALID')::integer AS valid_count,
 				  COUNT(*) FILTER (WHERE h.problem_result_status = 'VALID'
 				    AND h.highest_reached_level <= 2)::integer AS low_count
 				FROM manager_trainee_heatmap_view h
-				""" + MANAGER_SCOPE.formatted("h.class_id") + """
+				""" + MANAGER_SCOPE.formatted("h.class_id") + CONCEPT_JOIN + """
 				WHERE h.cohort_id = ? AND h.project_id = ? AND h.assessment_round_id = ?
-				  AND h.problem_no IS NOT NULL
-				GROUP BY h.class_id, h.problem_no
+				  AND COALESCE(ap.teaches_id, pvc.teaches_id) IS NOT NULL
+				GROUP BY h.class_id, COALESCE(ap.teaches_id, pvc.teaches_id)
 				""";
 		return jdbcTemplate.query(sql, (rs, n) -> {
 			int validCount = rs.getInt("valid_count");
 			return new GroupShortfall(
-					rs.getObject("class_id", UUID.class), rs.getInt("problem_no"),
+					rs.getObject("class_id", UUID.class), rs.getObject("teaches_id", UUID.class),
 					validCount == 0 ? null : rs.getInt("low_count") * 2 > validCount);
 		}, managerId, cohortId, projectId, assessmentRoundId);
 	}
@@ -412,7 +457,8 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 
 	private HeatmapCell mapHeatmap(ResultSet rs, int n) throws SQLException {
 		return new HeatmapCell(
-				rs.getObject("row_id", UUID.class), rs.getString("row_name"), rs.getInt("problem_no"),
+				rs.getObject("row_id", UUID.class), rs.getString("row_name"),
+				rs.getObject("teaches_id", UUID.class),
 				rs.getBigDecimal("value"), rs.getString("status"), integer(rs, "valid_count"),
 				integer(rs, "not_attended_count"), integer(rs, "invalid_count"), integer(rs, "interrupted_count"),
 				integer(rs, "initial_highest_reached_level"), integer(rs, "comparison_highest_reached_level"),
