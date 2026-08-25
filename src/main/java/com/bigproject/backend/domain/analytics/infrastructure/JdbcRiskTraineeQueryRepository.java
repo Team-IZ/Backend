@@ -32,6 +32,50 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 					+ "AND a.terminal_reason_code IS DISTINCT FROM 'SESSION_INCOMPLETE' "
 					+ "AND a.validity_review_status <> 'CONFIRMED_INVALID'";
 
+	/**
+	 * 1차 회차 판정. 기수의 미니프로젝트 회차를 운영 순서로 다시 번호 매겨 1번인 회차를 가린다.
+	 *
+	 * <p>{@code project.sequence_no}를 그대로 쓰지 않는다. 그 값은 빅프로젝트를 포함한 기수 전체
+	 * 운영 순서라 빅프로젝트가 앞에 끼면 첫 미니프로젝트가 1이 아니게 된다. 화면이 쓰는 축은
+	 * 삭제되지 않은 미니프로젝트만 다시 번호 매긴 값이며 {@code mini_project_round_sequence_view}가
+	 * 같은 식을 쓴다. 뷰를 조인하지 않고 식을 옮겨 적는 이유는 이 파일의 다른 질의와 마찬가지로
+	 * 조인 경로를 한 눈에 보이게 두기 위해서다 — 두 곳이 갈리면 1차 판정이 화면과 어긋난다.
+	 *
+	 * <p>조회 범위(projectId·회차 범위)를 여기에 걸지 않는다. 4차만 조회해도 그 회차가 1차인지는
+	 * 기수 전체를 봐야 정해진다.
+	 */
+	private static final String COHORT_ROUND_SEQUENCE_CTE = """
+			cohort_round_sequence AS (
+				SELECT
+					par.assessment_round_id,
+					DENSE_RANK() OVER (ORDER BY pj.sequence_no, pj.project_id) AS analysis_sequence_no
+				FROM project_assessment_round par
+				JOIN project pj ON pj.project_id = par.project_id AND pj.deleted_at IS NULL
+				WHERE par.cohort_id = ?
+					AND par.org_id = ?
+					AND pj.project_category = ?
+					AND par.deleted_at IS NULL
+			)
+			""";
+
+	/**
+	 * 분자 조건. 1차 회차에서만 관찰(NOT_APPLICABLE)을 위험으로 함께 센다.
+	 *
+	 * <p>1차는 비교할 직전 회차가 없어 단계 하락·지속 저점이 모두 {@code NOT_APPLICABLE}로 등재되고
+	 * ({@code FIRST_MINI_PROJECT}·{@code INSUFFICIENT_LONGITUDINAL_HISTORY}) {@code MATCHED}가 하나도
+	 * 나오지 않는다. 그대로 두면 게이트에 걸린 교육생이 면담 목록(MG-03)에는 `관찰`로 뜨는데 이 격자만
+	 * 0%로 비어, 같은 회차를 두 화면이 다르게 말한다.
+	 *
+	 * <p>2차 이상은 종전대로 {@code MATCHED}만 센다. 1차를 미응시·중단한 교육생은 2차에서도 비교 이력이
+	 * 없어 관찰로 등재되지만, 그 열의 기준은 건드리지 않는다.
+	 */
+	private static final String RISK_CONDITION =
+			"(r.matched OR (a.is_first_round AND r.observed))";
+
+	/** 위 분자 중 관찰로 잡힌 인원만. riskCount의 부분집합이라 화면이 구성을 드러낼 수 있다. */
+	private static final String OBSERVED_CONDITION =
+			"(a.is_first_round AND r.observed AND NOT r.matched)";
+
 	private final JdbcTemplate jdbcTemplate;
 
 	@Override
@@ -204,16 +248,19 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 	@Override
 	public List<RiskCellRow> aggregateRiskCells(RoundCriteria criteria) {
 		String sql = """
-				WITH round_scope AS (
+				WITH %5$s,
+				round_scope AS (
 					SELECT
 						r.assessment_round_id,
-						COALESCE(r.submission_due_at, r.scheduled_at, r.updated_at) AS class_anchor_at
+						COALESCE(r.submission_due_at, r.scheduled_at, r.updated_at) AS class_anchor_at,
+						crs.analysis_sequence_no = 1 AS is_first_round
 					FROM project_assessment_round r
 					JOIN project p ON p.project_id = r.project_id AND p.deleted_at IS NULL
+					JOIN cohort_round_sequence crs ON crs.assessment_round_id = r.assessment_round_id
 					WHERE r.cohort_id = ?
 						AND r.org_id = ?
 						AND r.deleted_at IS NULL
-						AND p.project_category = ?%s
+						AND p.project_category = ?%1$s
 						AND p.sequence_no BETWEEN ? AND ?
 				),
 				attempt_scope AS (
@@ -222,7 +269,8 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 						ma.user_id,
 						round_class.class_id,
 						ma.terminal_reason_code,
-						ma.validity_review_status
+						ma.validity_review_status,
+						rs.is_first_round
 					FROM measurement_attempt ma
 					JOIN round_scope rs ON rs.assessment_round_id = ma.assessment_round_id
 					LEFT JOIN LATERAL (
@@ -243,22 +291,27 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 						AND ma.org_id = ?
 				),
 				risk_scope AS (
-					SELECT ic.assessment_round_id, ic.user_id
+					SELECT
+						ic.assessment_round_id,
+						ic.user_id,
+						BOOL_OR(icr.evaluation_status = 'MATCHED') AS matched,
+						BOOL_OR(icr.evaluation_status = 'NOT_APPLICABLE') AS observed
 					FROM interview_candidate ic
 					JOIN interview_candidate_reason icr ON icr.candidate_id = ic.candidate_id
 					JOIN round_scope rs ON rs.assessment_round_id = ic.assessment_round_id
 					WHERE ic.cohort_id = ?
 						AND ic.org_id = ?
-						AND icr.reason_code IN (%s)
-						AND icr.evaluation_status = 'MATCHED'
+						AND icr.reason_code IN (%2$s)
+						AND icr.evaluation_status IN ('MATCHED', 'NOT_APPLICABLE')
 						AND icr.reason_status = 'ACTIVE'
 					GROUP BY ic.assessment_round_id, ic.user_id
 				)
 				SELECT
 					a.assessment_round_id,
 					a.class_id,
-					COUNT(*) FILTER (WHERE %s) AS eligible_count,
-					COUNT(*) FILTER (WHERE r.user_id IS NOT NULL AND %s) AS risk_count,
+					COUNT(*) FILTER (WHERE %3$s) AS eligible_count,
+					COUNT(*) FILTER (WHERE %4$s AND %3$s) AS risk_count,
+					COUNT(*) FILTER (WHERE %6$s AND %3$s) AS observed_risk_count,
 					COUNT(*) FILTER (WHERE a.terminal_reason_code = 'NOT_ATTENDED') AS not_attended_count,
 					COUNT(*) FILTER (WHERE a.terminal_reason_code = 'SESSION_INCOMPLETE') AS session_incomplete_count,
 					COUNT(*) FILTER (WHERE a.validity_review_status = 'CONFIRMED_INVALID') AS invalid_attempt_count
@@ -267,10 +320,21 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 					ON r.assessment_round_id = a.assessment_round_id
 					AND r.user_id = a.user_id
 				GROUP BY a.assessment_round_id, a.class_id
-				""".formatted(projectFilter(criteria), RISK_REASON_CODES, ELIGIBLE_CONDITION, ELIGIBLE_CONDITION);
+				""".formatted(
+				projectFilter(criteria),
+				RISK_REASON_CODES,
+				ELIGIBLE_CONDITION,
+				RISK_CONDITION,
+				COHORT_ROUND_SEQUENCE_CTE.strip(),
+				OBSERVED_CONDITION
+		);
 
-		// round_scope → attempt_scope → risk_scope 순서로 기수·기관 조건을 다시 바인딩한다.
-		List<Object> arguments = new ArrayList<>(List.of(appendRoundRange(scopeArguments(criteria), criteria)));
+		// cohort_round_sequence → round_scope → attempt_scope → risk_scope 순서로 다시 바인딩한다.
+		List<Object> arguments = new ArrayList<>();
+		arguments.add(criteria.cohortId());
+		arguments.add(criteria.organizationId());
+		arguments.add(criteria.projectCategory());
+		arguments.addAll(List.of(appendRoundRange(scopeArguments(criteria), criteria)));
 		arguments.add(criteria.cohortId());
 		arguments.add(criteria.organizationId());
 		arguments.add(criteria.cohortId());
@@ -285,7 +349,8 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 						rs.getLong("risk_count"),
 						rs.getLong("not_attended_count"),
 						rs.getLong("session_incomplete_count"),
-						rs.getLong("invalid_attempt_count")
+						rs.getLong("invalid_attempt_count"),
+						rs.getLong("observed_risk_count")
 				),
 				arguments.toArray()
 		);
@@ -301,16 +366,19 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 	@Override
 	public List<TeamRiskCellRow> aggregateTeamRiskCells(RoundCriteria criteria, UUID classroomId) {
 		String sql = """
-				WITH round_scope AS (
+				WITH %5$s,
+				round_scope AS (
 					SELECT
 						r.assessment_round_id,
-						COALESCE(r.submission_due_at, r.scheduled_at, r.updated_at) AS class_anchor_at
+						COALESCE(r.submission_due_at, r.scheduled_at, r.updated_at) AS class_anchor_at,
+						crs.analysis_sequence_no = 1 AS is_first_round
 					FROM project_assessment_round r
 					JOIN project p ON p.project_id = r.project_id AND p.deleted_at IS NULL
+					JOIN cohort_round_sequence crs ON crs.assessment_round_id = r.assessment_round_id
 					WHERE r.cohort_id = ?
 						AND r.org_id = ?
 						AND r.deleted_at IS NULL
-						AND p.project_category = ?%s
+						AND p.project_category = ?%1$s
 						AND p.sequence_no BETWEEN ? AND ?
 				),
 				attempt_scope AS (
@@ -319,7 +387,8 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 						ma.user_id,
 						round_team.team_id,
 						ma.terminal_reason_code,
-						ma.validity_review_status
+						ma.validity_review_status,
+						rs.is_first_round
 					FROM measurement_attempt ma
 					JOIN round_scope rs ON rs.assessment_round_id = ma.assessment_round_id
 					JOIN LATERAL (
@@ -340,22 +409,27 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 						AND ma.org_id = ?
 				),
 				risk_scope AS (
-					SELECT ic.assessment_round_id, ic.user_id
+					SELECT
+						ic.assessment_round_id,
+						ic.user_id,
+						BOOL_OR(icr.evaluation_status = 'MATCHED') AS matched,
+						BOOL_OR(icr.evaluation_status = 'NOT_APPLICABLE') AS observed
 					FROM interview_candidate ic
 					JOIN interview_candidate_reason icr ON icr.candidate_id = ic.candidate_id
 					JOIN round_scope rs ON rs.assessment_round_id = ic.assessment_round_id
 					WHERE ic.cohort_id = ?
 						AND ic.org_id = ?
-						AND icr.reason_code IN (%s)
-						AND icr.evaluation_status = 'MATCHED'
+						AND icr.reason_code IN (%2$s)
+						AND icr.evaluation_status IN ('MATCHED', 'NOT_APPLICABLE')
 						AND icr.reason_status = 'ACTIVE'
 					GROUP BY ic.assessment_round_id, ic.user_id
 				)
 				SELECT
 					a.assessment_round_id,
 					a.team_id,
-					COUNT(*) FILTER (WHERE %s) AS eligible_count,
-					COUNT(*) FILTER (WHERE r.user_id IS NOT NULL AND %s) AS risk_count,
+					COUNT(*) FILTER (WHERE %3$s) AS eligible_count,
+					COUNT(*) FILTER (WHERE %4$s AND %3$s) AS risk_count,
+					COUNT(*) FILTER (WHERE %6$s AND %3$s) AS observed_risk_count,
 					COUNT(*) FILTER (WHERE a.terminal_reason_code = 'NOT_ATTENDED') AS not_attended_count,
 					COUNT(*) FILTER (WHERE a.terminal_reason_code = 'SESSION_INCOMPLETE') AS session_incomplete_count,
 					COUNT(*) FILTER (WHERE a.validity_review_status = 'CONFIRMED_INVALID') AS invalid_attempt_count
@@ -364,9 +438,20 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 					ON r.assessment_round_id = a.assessment_round_id
 					AND r.user_id = a.user_id
 				GROUP BY a.assessment_round_id, a.team_id
-				""".formatted(projectFilter(criteria), RISK_REASON_CODES, ELIGIBLE_CONDITION, ELIGIBLE_CONDITION);
+				""".formatted(
+				projectFilter(criteria),
+				RISK_REASON_CODES,
+				ELIGIBLE_CONDITION,
+				RISK_CONDITION,
+				COHORT_ROUND_SEQUENCE_CTE.strip(),
+				OBSERVED_CONDITION
+		);
 
-		List<Object> arguments = new ArrayList<>(List.of(appendRoundRange(scopeArguments(criteria), criteria)));
+		List<Object> arguments = new ArrayList<>();
+		arguments.add(criteria.cohortId());
+		arguments.add(criteria.organizationId());
+		arguments.add(criteria.projectCategory());
+		arguments.addAll(List.of(appendRoundRange(scopeArguments(criteria), criteria)));
 		arguments.add(classroomId);
 		arguments.add(criteria.cohortId());
 		arguments.add(criteria.organizationId());
@@ -382,7 +467,8 @@ public class JdbcRiskTraineeQueryRepository implements RiskTraineeQueryRepositor
 						rs.getLong("risk_count"),
 						rs.getLong("not_attended_count"),
 						rs.getLong("session_incomplete_count"),
-						rs.getLong("invalid_attempt_count")
+						rs.getLong("invalid_attempt_count"),
+						rs.getLong("observed_risk_count")
 				),
 				arguments.toArray()
 		);
