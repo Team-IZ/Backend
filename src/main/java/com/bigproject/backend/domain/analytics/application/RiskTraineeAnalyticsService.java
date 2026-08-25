@@ -308,7 +308,8 @@ public class RiskTraineeAnalyticsService {
 				cell.riskCount(),
 				cell.notAttendedCount(),
 				cell.sessionIncompleteCount(),
-				cell.invalidAttemptCount()
+				cell.invalidAttemptCount(),
+				cell.observedRiskCount()
 		);
 	}
 
@@ -328,6 +329,7 @@ public class RiskTraineeAnalyticsService {
 			RiskTraineeQueryRepository.RiskCellRow total = totals.get(round.assessmentRoundId());
 			long eligibleCount = total == null ? 0 : total.eligibleCount();
 			long riskCount = total == null ? 0 : total.riskCount();
+			long observedRiskCount = total == null ? 0 : total.observedRiskCount();
 			BigDecimal rate = riskRate(status, eligibleCount, riskCount);
 			result.add(new RiskTraineeRateResponse.RiskCell(
 					round.assessmentRoundId(),
@@ -336,6 +338,7 @@ public class RiskTraineeAnalyticsService {
 					status,
 					eligibleCount,
 					riskCount,
+					observedRiskCount,
 					rate,
 					comparison(rate, baselineRateByRound.get(round.assessmentRoundId())),
 					new RiskTraineeRateResponse.ExclusionBreakdown(
@@ -494,7 +497,8 @@ public class RiskTraineeAnalyticsService {
 				left.riskCount() + right.riskCount(),
 				left.notAttendedCount() + right.notAttendedCount(),
 				left.sessionIncompleteCount() + right.sessionIncompleteCount(),
-				left.invalidAttemptCount() + right.invalidAttemptCount()
+				left.invalidAttemptCount() + right.invalidAttemptCount(),
+				left.observedRiskCount() + right.observedRiskCount()
 		);
 	}
 
