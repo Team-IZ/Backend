@@ -17,6 +17,8 @@ import com.bigproject.backend.domain.projectexecution.infrastructure.TeamMembers
 import com.bigproject.backend.domain.projectexecution.infrastructure.TeamRepository;
 import com.bigproject.backend.global.exception.ApiException;
 import lombok.RequiredArgsConstructor;
+import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +28,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -70,10 +73,19 @@ public class TeamService {
          * 정의서·API 문서·시드는 모두 "반 안에서만 유일"을 전제한다(30차 R4의 `1팀`이
          * 여덟 번 나오던 목록이 그 증거다). 화면에서 만든 팀만 전역 번호를 받아 규칙이
          * 갈려 있었다.
+         *
+         * 🔴 <b>개수가 아니라 최대 번호 + 1이다</b>(46차 R1). 개수로 세면 1·2·3 중 2팀을
+         * 해체한 반에서 다음 번호가 3이 되어 살아 있는 3팀과 {@code uq_team_..._team_number}가
+         * 부딪힌다 — 해체 직후 팀을 다시 못 만드는 자리였다. 번호 컬럼이 text라 숫자로
+         * 읽히는 것만 본다(자동 배분·수동 생성 모두 숫자를 넣는다).
          */
-        int nextNumber = (int) teamRepository.findByProjectIdAndOrgId(projectId, orgId).stream()
+        int nextNumber = teamRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(projectId, orgId).stream()
                 .filter(team -> targetClassId.equals(team.getClassId()))
-                .count() + 1;
+                .mapToInt(team -> parseTeamNumber(team.getTeamNumber()))
+                .max()
+                .orElse(0) + 1;
+
+        assertTeamNameFree(projectId, targetClassId, name);
 
         Team team = Team.builder()
                 .projectId(projectId)
@@ -85,7 +97,89 @@ public class TeamService {
                 .maxMemberCount(6)
                 .createdBy(managerUserId)
                 .build();
-        return teamRepository.save(team);
+        return saveTeam(team);
+    }
+
+    /**
+     * 팀명 중복을 <b>DB에 닿기 전에</b> 도메인 코드로 끊는다.
+     *
+     * <p>이것만으로는 부족하다 — SELECT-then-INSERT라 동시 요청이 둘 다 통과할 수 있고,
+     * 활성 범위 마이그레이션이 아직 안 걸린 DB에서는 제약이 이 검사보다 넓다(해체된 팀의
+     * 이름까지 잡는다). 그래서 {@link #saveTeam}이 DB가 끊는 경우도 같은 코드로 옮긴다.
+     */
+    private void assertTeamNameFree(UUID projectId, UUID classId, String name) {
+        if (teamRepository.existsByProjectIdAndClassIdAndNameAndDeletedAtIsNull(projectId, classId, name)) {
+            throw new ApiException(ProjectExecutionErrorCode.TEAM_NAME_DUPLICATED);
+        }
+    }
+
+    /**
+     * 🔴 {@code save}가 아니라 {@code saveAndFlush}다.
+     *
+     * <p>{@link Team}은 {@code GenerationType.UUID}라 {@code save()}만 쓰면 실제 INSERT(따라서
+     * 제약 검사)가 <b>트랜잭션 커밋 시점까지 미뤄질 수 있다.</b> 그러면 예외가 이 catch를 지나쳐
+     * 트랜잭션 밖에서 터지고, 잡는 코드가 없어 그대로 새 나간다 — 교안 등록(CurriculumServiceImpl)에서
+     * 실측으로 확인된 것과 같은 함정이다.
+     */
+    private Team saveTeam(Team team) {
+        try {
+            return teamRepository.saveAndFlush(team);
+        } catch (DataIntegrityViolationException exception) {
+            throw translateTeamUniqueViolation(exception);
+        }
+    }
+
+    /**
+     * DB가 끊은 UNIQUE 위반을 화면이 읽을 수 있는 코드로 옮긴다.
+     *
+     * <p>종전에는 이 예외가 전역 처리기의 fallback({@code DATA_INTEGRITY_VIOLATION} —
+     * "요청을 처리할 수 없습니다. 데이터 제약 조건에 맞지 않습니다.")으로 새 나갔다. 화면은
+     * 무엇이 잘못됐는지 말할 수 없었고, 매니저는 <b>이름을 바꾸면 된다</b>는 것을 알 수 없었다.
+     *
+     * <p>이름과 번호를 나눠 옮기는 이유는 고칠 수 있는 주체가 다르기 때문이다 — 이름은 매니저가
+     * 입력한 값이고, 번호는 서버가 매긴 값이라 다시 시도하면 다음 번호를 받는다.
+     *
+     * <p><b>모르는 제약은 감추지 않는다.</b> 우리가 아는 두 개가 아니면 원래 예외를 그대로
+     * 올려 전역 처리기가 5xx/409로 다루게 둔다 — 엉뚱한 코드로 덮으면 원인을 못 찾는다.
+     */
+    private RuntimeException translateTeamUniqueViolation(DataIntegrityViolationException exception) {
+        String detail = constraintDetail(exception);
+        if (detail.contains("uq_team_project_id_class_id_name")) {
+            return new ApiException(ProjectExecutionErrorCode.TEAM_NAME_DUPLICATED);
+        }
+        if (detail.contains("uq_team_project_id_class_id_team_number")) {
+            return new ApiException(ProjectExecutionErrorCode.TEAM_NUMBER_DUPLICATED);
+        }
+        return exception;
+    }
+
+    /**
+     * 어느 제약이 깨졌는지 찾는다. Hibernate가 제약 이름을 뽑아 주기도 하지만 드라이버·방언에
+     * 따라 {@code null}이라, 원인 사슬의 메시지도 함께 훑는다 — 이름은 어느 쪽에든 들어 있다.
+     */
+    private String constraintDetail(Throwable exception) {
+        StringBuilder detail = new StringBuilder();
+        Throwable cause = exception;
+        while (cause != null && detail.length() < 4000) {
+            if (cause instanceof ConstraintViolationException violation && violation.getConstraintName() != null) {
+                detail.append(violation.getConstraintName()).append('\n');
+            }
+            detail.append(cause.getMessage()).append('\n');
+            if (cause.getCause() == cause) {
+                break;
+            }
+            cause = cause.getCause();
+        }
+        return detail.toString();
+    }
+
+    /** 번호 컬럼이 text다. 숫자로 읽히지 않는 값은 번호 경쟁에서 빼고 0으로 본다. */
+    private int parseTeamNumber(String teamNumber) {
+        try {
+            return Integer.parseInt(teamNumber.trim());
+        } catch (NumberFormatException | NullPointerException e) {
+            return 0;
+        }
     }
 
     /**
@@ -129,12 +223,12 @@ public class TeamService {
     }
 
     public Team findTeam(UUID teamId, UUID orgId) {
-        return teamRepository.findByTeamIdAndOrgId(teamId, orgId)
+        return teamRepository.findByTeamIdAndOrgIdAndDeletedAtIsNull(teamId, orgId)
                 .orElseThrow(() -> new ApiException(ProjectExecutionErrorCode.TEAM_NOT_FOUND));
     }
 
     public List<Team> findTeams(UUID projectId, UUID orgId) {
-        return teamRepository.findByProjectIdAndOrgId(projectId, orgId);
+        return teamRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(projectId, orgId);
     }
 
     /**
@@ -149,7 +243,7 @@ public class TeamService {
         if (scope.isEmpty()) {
             return List.of();
         }
-        return teamRepository.findByProjectIdAndOrgId(projectId, orgId).stream()
+        return teamRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(projectId, orgId).stream()
                 .filter(team -> scope.contains(team.getClassId()))
                 .toList();
     }
@@ -197,11 +291,31 @@ public class TeamService {
                 .collect(Collectors.toMap(Classroom::getClassId, Classroom::getName));
     }
 
+    /**
+     * 팀 이름 변경. 중복이면 {@code TEAM_NAME_DUPLICATED}(409)다.
+     *
+     * <p>지금 이름 그대로 보내는 것은 중복이 아니다 — 화면이 편집 폼을 그대로 저장하는 흐름이
+     * 있어서, 자기 이름에 자기가 걸리면 아무것도 안 바꾸는 요청이 409가 된다.
+     *
+     * <p>🔴 이름을 바꾼 뒤 {@code flush}한다. 더티 체킹 UPDATE는 커밋 시점에 나가므로,
+     * flush하지 않으면 UNIQUE 위반이 이 메서드 밖에서 터져 도메인 코드로 옮길 자리가 없다
+     * ({@link #saveTeam}과 같은 이유다).
+     */
     @Transactional
     public void renameTeam(UUID teamId, UUID orgId, String newName, UUID managerUserId) {
         Team team = findTeam(teamId, orgId);
         assertManagedTeam(team, orgId, managerUserId);
+        if (newName.equals(team.getName())) {
+            return;
+        }
+
+        assertTeamNameFree(team.getProjectId(), team.getClassId(), newName);
         team.rename(newName);
+        try {
+            teamRepository.flush();
+        } catch (DataIntegrityViolationException exception) {
+            throw translateTeamUniqueViolation(exception);
+        }
     }
 
     /**
@@ -330,6 +444,81 @@ public class TeamService {
     }
 
     /**
+     * 반 통째로 해체(46차 R3).
+     *
+     * <p>자동 배분이 <b>한 번에 여러 팀을 만드는</b> 액션이라 되돌리는 쪽도 한 번이어야 한다.
+     * 종전에는 반 하나를 다시 짜려면 팀 수만큼 {@code DELETE}를 순서대로 눌러야 했고, 그 중
+     * 하나가 실패하면 반이 반쯤 해체된 채로 남았다.
+     *
+     * <h2>DRAFT만 해체한다</h2>
+     *
+     * <p>확정된 팀이 하나라도 섞여 있으면 {@code TEAM_CONFIRMED_LOCKED}로 끊는다 —
+     * 이 API의 용도는 <b>확정 전 되돌리기</b>이지 확정 취소가 아니다. 확정을 되돌리려면
+     * [편성 다시 열기]({@link #reopenTeams})가 이미 있고, 그쪽이 되돌리기의 정식 경로다.
+     * DDL도 한 반의 활성 팀은 전부 DRAFT이거나 전부 CONFIRMED여야 한다고 못 박으므로,
+     * 정상 상태에서 이 갈래는 "그 반은 이미 확정됐다"와 같은 뜻이다.
+     *
+     * <p>팀 하나짜리 {@link #disbandTeam}은 그대로 CONFIRMED도 해체한다 — 일괄 쪽만 좁히는
+     * 것이고 할 수 있던 일이 없어지지는 않는다.
+     *
+     * <h2>전부 아니면 아무것도 아니다</h2>
+     *
+     * <p>제출 확인을 <b>해체를 시작하기 전에</b> 한 번에 끝낸다. 트랜잭션이 있으니 중간에
+     * 던져도 롤백되지만, 일괄 작업에서 "몇 개까지 지워졌나"를 롤백에 맡기고 싶지 않다.
+     * 걸린 팀 이름을 메시지에 실어 보낸다 — 팀이 여럿인 요청이 409로 끊길 때 화면이
+     * 어느 팀 때문인지 말할 수 있어야 한다.
+     *
+     * @param classId 비울 반. 필수다.
+     * @return 해체한 팀 수와 미배정으로 돌아간 인원 수. 이미 빈 반이면 둘 다 0이다(에러가 아니다).
+     */
+    @Transactional
+    public DisbandResult disbandClassTeams(UUID projectId, UUID orgId, UUID classId, UUID managerUserId) {
+        UUID targetClassId = resolveTargetClassId(projectId, orgId, managerUserId, classId);
+
+        List<Team> teams = teamRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(projectId, orgId).stream()
+                .filter(team -> targetClassId.equals(team.getClassId()))
+                .toList();
+        // 이미 비어 있는 반은 목표 상태다. 다시 눌러도 같은 답이 나와야 한다.
+        if (teams.isEmpty()) {
+            return new DisbandResult(0, 0);
+        }
+
+        if (teams.stream().anyMatch(Team::isConfirmed)) {
+            throw new ApiException(ProjectExecutionErrorCode.TEAM_CONFIRMED_LOCKED);
+        }
+
+        Set<UUID> lockedTeamIds = submissionQueryRepository.findTeamIdsWithAcceptedSubmission(
+                teams.stream().map(Team::getTeamId).toList(), orgId);
+        if (!lockedTeamIds.isEmpty()) {
+            String lockedNames = teams.stream()
+                    .filter(team -> lockedTeamIds.contains(team.getTeamId()))
+                    .map(Team::getName)
+                    .collect(Collectors.joining(", "));
+            throw new ApiException(ProjectExecutionErrorCode.TEAM_SUBMISSION_LOCKED,
+                    "이미 제출한 팀이 있어 반을 비울 수 없습니다: " + lockedNames);
+        }
+
+        OffsetDateTime now = OffsetDateTime.now();
+        int unassignedMemberCount = 0;
+        for (Team team : teams) {
+            List<TeamMembership> memberships =
+                    teamMembershipRepository.findByTeamIdAndOrgIdAndToAtIsNull(team.getTeamId(), orgId);
+            memberships.forEach(membership -> membership.unassign(now));
+            unassignedMemberCount += memberships.size();
+            team.disband();
+        }
+        return new DisbandResult(teams.size(), unassignedMemberCount);
+    }
+
+    /**
+     * 반 통째로 해체한 결과. 화면이 "n개 팀을 해체했고 m명이 미배정으로 돌아갔습니다"를
+     * 말할 수 있도록 두 수를 함께 낸다 — 목록을 다시 받아 세는 것으로는 "몇 명이 돌아왔나"를
+     * 알 수 없다(해체 전 인원을 모르기 때문이다).
+     */
+    public record DisbandResult(int disbandedTeamCount, int unassignedMemberCount) {
+    }
+
+    /**
      * 자동 배분(정의 문서 "자동 배분이 하는 일" 4단계).
      *
      * <p>팀이 하나도 없을 때만 된다 — 이미 짜인 팀을 자동 배분이 뒤엎지 않는다(정의 문서).
@@ -353,7 +542,13 @@ public class TeamService {
             int teamSize, boolean skillBalanced, UUID managerUserId) {
         UUID targetClassId = resolveTargetClassId(projectId, orgId, managerUserId, classId);
 
-        boolean classAlreadyHasTeams = teamRepository.findByProjectIdAndOrgId(projectId, orgId).stream()
+        /*
+         * 🔴 해체된 팀은 "이미 짜인 팀"이 아니다(46차 R1). 종전에는 이 판정이 해체된 팀까지
+         * 세어, 팀을 전부 해체한 반이 자동 배분을 **영영** 못 쓰고 AUTO_ASSIGN_NOT_ALLOWED로만
+         * 막혔다 — 프론트는 이 409를 "쓰기 판정은 정확하다"는 근거로 읽었지만, 실제로는 목록이
+         * 유령 팀을 보여 준 것과 같은 원인이었다.
+         */
+        boolean classAlreadyHasTeams = teamRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(projectId, orgId).stream()
                 .anyMatch(team -> targetClassId.equals(team.getClassId()));
         if (classAlreadyHasTeams) {
             throw new ApiException(ProjectExecutionErrorCode.AUTO_ASSIGN_NOT_ALLOWED);
@@ -449,7 +644,10 @@ public class TeamService {
             int teamCount, UUID managerUserId) {
         List<Team> teams = new ArrayList<>();
         for (int i = 1; i <= teamCount; i++) {
-            teams.add(teamRepository.save(Team.builder()
+            // 살아 있는 팀이 없는 반에서만 불리므로 정상 경로에서는 부딪힐 이름이 없다. 다만
+            // 활성 범위 마이그레이션 전에는 해체된 팀이 그 이름을 붙잡고 있어 여기서 끊긴다 —
+            // 그때도 fallback이 아니라 무엇이 겹쳤는지 말하는 코드가 나가야 한다.
+            teams.add(saveTeam(Team.builder()
                     .projectId(projectId)
                     .classId(classId)
                     .orgId(orgId)
@@ -477,7 +675,7 @@ public class TeamService {
     public void confirmTeams(UUID projectId, UUID orgId, UUID classId, UUID managerUserId) {
         List<UUID> scope = confirmScope(projectId, orgId, classId, managerUserId);
 
-        List<Team> teams = teamRepository.findByProjectIdAndOrgId(projectId, orgId).stream()
+        List<Team> teams = teamRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(projectId, orgId).stream()
                 .filter(team -> scope.contains(team.getClassId()))
                 .toList();
         if (teams.isEmpty()) {
@@ -503,7 +701,7 @@ public class TeamService {
     @Transactional
     public void reopenTeams(UUID projectId, UUID orgId, UUID classId, UUID managerUserId) {
         List<UUID> scope = confirmScope(projectId, orgId, classId, managerUserId);
-        teamRepository.findByProjectIdAndOrgId(projectId, orgId).stream()
+        teamRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(projectId, orgId).stream()
                 .filter(team -> scope.contains(team.getClassId()))
                 .forEach(Team::reopen);
     }

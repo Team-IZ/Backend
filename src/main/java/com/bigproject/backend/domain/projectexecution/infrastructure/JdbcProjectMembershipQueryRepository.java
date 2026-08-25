@@ -21,6 +21,11 @@ public class JdbcProjectMembershipQueryRepository implements ProjectMembershipQu
      *
      * <p>{@code pm.status = 'ACTIVE'}도 함께 본다 — 프로젝트에서 빠진 사람(LEFT)은 배정 대상이
      * 아닌데 종전 질의는 그들까지 미배정으로 셌다.
+     *
+     * <p><b>해체된 팀의 소속은 소속이 아니다</b>(46차 R1). 해체는 팀원의 {@code to_at}을 같은
+     * 트랜잭션에서 찍으므로 정상 경로에서는 결과가 같지만, 어느 한쪽만 남은 행이 생기면 그
+     * 사람은 목록 어디에도 안 나오고 자동 배분·수동 배정 대상에서도 빠진다 — 되찾을 화면이
+     * 없는 상태라 조회 쪽에서도 팀 생사를 함께 본다.
      */
     @Override
     public List<UnassignedMember> findUnassigned(UUID projectId, UUID orgId, Collection<UUID> classIds) {
@@ -41,6 +46,7 @@ public class JdbcProjectMembershipQueryRepository implements ProjectMembershipQu
 				  AND pm.class_id IN (%s)
 				  AND NOT EXISTS (
 				      SELECT 1 FROM team_membership tm
+				      JOIN team t ON t.team_id = tm.team_id AND t.deleted_at IS NULL
 				      WHERE tm.project_membership_id = pm.project_membership_id
 				        AND tm.to_at IS NULL
 				  )
