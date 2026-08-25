@@ -111,11 +111,11 @@ class TeamServiceClassScopeTest {
 	@DisplayName("남의 반 팀은 내 반 자동 배분을 막지 않는다")
 	void otherClassTeamsDoNotBlockAutoAssign() {
 		// 미프 5차의 실제 상태: J반에만 팀이 있다.
-		when(teamRepository.findByProjectIdAndOrgId(PROJECT, ORG)).thenReturn(List.of(team(CLASS_J)));
+		when(teamRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(PROJECT, ORG)).thenReturn(List.of(team(CLASS_J)));
 		when(projectMembershipQueryRepository.findUnassigned(PROJECT, ORG, List.of(CLASS_B)))
 				.thenReturn(List.of(new ProjectMembershipQueryRepository.UnassignedMember(
 						UUID.randomUUID(), UUID.randomUUID(), "김민준", CLASS_B)));
-		when(teamRepository.save(any(Team.class))).thenAnswer(call -> call.getArgument(0));
+		when(teamRepository.saveAndFlush(any(Team.class))).thenAnswer(call -> call.getArgument(0));
 
 		List<Team> created = service.autoAssign(PROJECT, ORG, CLASS_B, 4, false, MANAGER);
 
@@ -126,14 +126,14 @@ class TeamServiceClassScopeTest {
 	@Test
 	@DisplayName("같은 반에 이미 팀이 있으면 자동 배분을 막는다")
 	void ownClassTeamsBlockAutoAssign() {
-		when(teamRepository.findByProjectIdAndOrgId(PROJECT, ORG)).thenReturn(List.of(team(CLASS_B)));
+		when(teamRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(PROJECT, ORG)).thenReturn(List.of(team(CLASS_B)));
 
 		assertThatThrownBy(() -> service.autoAssign(PROJECT, ORG, CLASS_B, 4, false, MANAGER))
 				.isInstanceOf(ApiException.class)
 				.extracting(thrown -> ((ApiException) thrown).errorCode())
 				.isEqualTo(ProjectExecutionErrorCode.AUTO_ASSIGN_NOT_ALLOWED);
 
-		verify(teamRepository, never()).save(any(Team.class));
+		verify(teamRepository, never()).saveAndFlush(any(Team.class));
 	}
 
 	@Test
@@ -160,9 +160,9 @@ class TeamServiceClassScopeTest {
 	@Test
 	@DisplayName("팀 번호는 그 반 안에서 센다 — 프로젝트 전체 팀 수가 아니다")
 	void teamNumberCountsWithinTheClass() {
-		when(teamRepository.findByProjectIdAndOrgId(PROJECT, ORG))
+		when(teamRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(PROJECT, ORG))
 				.thenReturn(List.of(team(CLASS_J), team(CLASS_J), team(CLASS_B)));
-		when(teamRepository.save(any(Team.class))).thenAnswer(call -> call.getArgument(0));
+		when(teamRepository.saveAndFlush(any(Team.class))).thenAnswer(call -> call.getArgument(0));
 
 		Team created = service.createTeam(PROJECT, ORG, CLASS_B, "2팀", MANAGER);
 
@@ -174,7 +174,7 @@ class TeamServiceClassScopeTest {
 	@DisplayName("확정은 그 반만 본다 — 다른 반의 미배정이 내 반 확정을 막지 않는다")
 	void confirmLooksOnlyAtTheGivenClass() {
 		Team mine = team(CLASS_B);
-		when(teamRepository.findByProjectIdAndOrgId(PROJECT, ORG)).thenReturn(List.of(mine, team(CLASS_J)));
+		when(teamRepository.findByProjectIdAndOrgIdAndDeletedAtIsNull(PROJECT, ORG)).thenReturn(List.of(mine, team(CLASS_J)));
 		when(projectMembershipQueryRepository.findUnassigned(PROJECT, ORG, List.of(CLASS_B)))
 				.thenReturn(List.of());
 
