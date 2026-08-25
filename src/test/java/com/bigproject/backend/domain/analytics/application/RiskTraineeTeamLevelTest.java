@@ -88,10 +88,10 @@ class RiskTraineeTeamLevelTest {
 	void buildsTeamRowsAndIncludesTheSelectedClassAsTheComparisonBaseline() {
 		givenTeamRoster();
 		when(riskTraineeQueryRepository.aggregateTeamRiskCells(any(), eq(classId))).thenReturn(List.of(
-				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamA, 5, 2, 0, 0, 0)
+				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamA, 5, 2, 0, 0, 0, 0)
 		));
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 25, 5, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 25, 5, 0, 0, 0, 0)
 		));
 
 		RiskTraineeRateResponse response = findTeamRates(projectId, List.of(classId), null);
@@ -110,7 +110,7 @@ class RiskTraineeTeamLevelTest {
 		givenTeamRoster();
 		// 1팀만 결과가 있다. 2팀이 사라지면 '팀이 없는 것'과 '결과가 없는 것'이 섞인다.
 		when(riskTraineeQueryRepository.aggregateTeamRiskCells(any(), eq(classId))).thenReturn(List.of(
-				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamA, 5, 2, 0, 0, 0)
+				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamA, 5, 2, 0, 0, 0, 0)
 		));
 
 		RiskTraineeRateResponse response = findTeamRates(projectId, List.of(classId), RiskTraineeSort.NAME);
@@ -128,11 +128,11 @@ class RiskTraineeTeamLevelTest {
 		// 반(C반)에 이 반 데이터만 있어 반 비율도 기수 비율과 같은 5/25 = 20%다.
 		// 1팀 2/5 = 40% 는 나쁨, 2팀 0/5 = 0% 는 좋음 — 기준이 C반이라도 값은 같다.
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 25, 5, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 25, 5, 0, 0, 0, 0)
 		));
 		when(riskTraineeQueryRepository.aggregateTeamRiskCells(any(), eq(classId))).thenReturn(List.of(
-				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamA, 5, 2, 0, 0, 0),
-				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamB, 5, 0, 0, 0, 0)
+				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamA, 5, 2, 0, 0, 0, 0),
+				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamB, 5, 0, 0, 0, 0, 0)
 		));
 
 		RiskTraineeRateResponse response = findTeamRates(projectId, List.of(classId), RiskTraineeSort.NAME);
@@ -147,8 +147,8 @@ class RiskTraineeTeamLevelTest {
 	void dropsTraineesWithoutATeamInsteadOfInventingARow() {
 		givenTeamRoster();
 		when(riskTraineeQueryRepository.aggregateTeamRiskCells(any(), eq(classId))).thenReturn(List.of(
-				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamA, 5, 2, 0, 0, 0),
-				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, null, 3, 3, 0, 0, 0)
+				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamA, 5, 2, 0, 0, 0, 0),
+				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, null, 3, 3, 0, 0, 0, 0)
 		));
 
 		RiskTraineeRateResponse response = findTeamRates(projectId, List.of(classId), RiskTraineeSort.NAME);
@@ -161,11 +161,11 @@ class RiskTraineeTeamLevelTest {
 	void sortsTeamRowsWithTheSameRulesAsClassRows() {
 		givenTeamRoster();
 		when(riskTraineeQueryRepository.aggregateRiskCells(any())).thenReturn(List.of(
-				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 25, 5, 0, 0, 0)
+				new RiskTraineeQueryRepository.RiskCellRow(roundId, classId, 25, 5, 0, 0, 0, 0)
 		));
 		when(riskTraineeQueryRepository.aggregateTeamRiskCells(any(), eq(classId))).thenReturn(List.of(
-				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamA, 5, 0, 0, 0, 0),
-				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamB, 5, 3, 0, 0, 0)
+				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamA, 5, 0, 0, 0, 0, 0),
+				new RiskTraineeQueryRepository.TeamRiskCellRow(roundId, teamB, 5, 3, 0, 0, 0, 0)
 		));
 
 		RiskTraineeRateResponse response =
