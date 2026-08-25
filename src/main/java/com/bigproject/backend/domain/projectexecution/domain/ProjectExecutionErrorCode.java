@@ -117,6 +117,28 @@ public enum ProjectExecutionErrorCode implements ApiErrorCode {
     CLASS_NOT_FOUND(HttpStatus.NOT_FOUND, "이 프로젝트의 기수에 그 반이 없습니다."),
 
     /**
+     * 그 반에 같은 이름의 팀이 이미 있다({@code uq_team_project_id_class_id_name}).
+     *
+     * <p>종전에는 이 충돌이 그대로 DB까지 내려가 {@code DataIntegrityViolationException} →
+     * 전역 처리기의 fallback({@code DATA_INTEGRITY_VIOLATION}, "요청을 처리할 수 없습니다.
+     * 데이터 제약 조건에 맞지 않습니다.")으로 새 나갔다. 화면은 <b>무엇이 잘못됐는지 말할 수
+     * 없어</b> 그 문구를 그대로 띄웠고, 매니저는 이름을 바꿔 보면 된다는 것을 알 수 없었다.
+     *
+     * <p>이름은 매니저가 입력하는 값이므로 <b>고칠 수 있는 실수</b>다. 코드가 그렇게 말해야 한다.
+     */
+    TEAM_NAME_DUPLICATED(HttpStatus.CONFLICT, "그 반에 같은 이름의 팀이 이미 있습니다."),
+
+    /**
+     * 그 반에 같은 번호의 팀이 이미 있다({@code uq_team_project_id_class_id_team_number}).
+     *
+     * <p>번호는 <b>서버가 매기므로</b> 매니저가 고칠 수 있는 값이 아니다 — 같은 반에 동시에
+     * 팀을 만들어 번호가 겹친 경우가 대부분이고, 다시 시도하면 다음 번호를 받는다.
+     * {@link #TEAM_NAME_DUPLICATED}와 나눠 둔 이유가 그것이다: 한쪽은 입력을 고치라는 말이고
+     * 다른 한쪽은 다시 눌러 보라는 말이라, 화면이 같은 문구를 띄우면 안 된다.
+     */
+    TEAM_NUMBER_DUPLICATED(HttpStatus.CONFLICT, "그 반에 같은 번호의 팀이 이미 있습니다. 다시 시도해 주세요."),
+
+    /**
      * 자동 배분은 <b>그 반에</b> 팀이 하나도 없을 때만 된다(정의 문서). 이미 팀이 있으면 여기로 온다.
      *
      * <p>판정 범위가 프로젝트 전역이던 때는 <b>다른 반 매니저가 먼저 팀을 만들면 내 반이 막혔다</b> —
