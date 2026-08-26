@@ -59,6 +59,14 @@ public interface ManagerAnalyticsRepository {
 
 	List<ConceptAxis> findConcepts(UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId);
 
+	/**
+	 * 코드 근거가 없어 문항을 못 만든 자리다. 그 개념을 <b>물은 적이 없다</b>는 뜻이라
+	 * 「유효 결과가 없다」와 구분해야 한다 — 격자 뷰에는 이 자리의 행이 아예 없다.
+	 */
+	List<ConceptGap> findNotGeneratedSlots(
+			UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId,
+			String level, UUID classroomId, UUID teamId);
+
 	/** 반·문항별 집단 미달 판정이다. 유효 응시자가 없으면 값이 {@code null}이다. */
 	List<GroupShortfall> findGroupShortfall(
 			UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId);
@@ -133,6 +141,13 @@ public interface ManagerAnalyticsRepository {
 	}
 
 	record GroupShortfall(UUID classroomId, UUID teachesId, Boolean shortfall) {
+	}
+
+	/**
+	 * 미출제 자리다. {@code rowId}가 {@code null}이면 조회 범위 전체를 뜻한다 —
+	 * {@link #findNotGeneratedSlots} 설명 참고.
+	 */
+	record ConceptGap(UUID rowId, UUID teachesId) {
 	}
 
 	record ClassParticipant(UUID classroomId, String className, int memberCount) {

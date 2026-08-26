@@ -101,6 +101,9 @@ public record ManagerHeatmapResponse(
 	 *
 	 * <p>{@code initialLevel}·{@code comparisonLevel}·{@code delta}는 {@code REVIEW}
 	 * 전용이라 {@code INITIAL} 응답에서는 <b>키 자체가 빠진다</b>.
+	 *
+	 * <p>{@code status}가 {@code NOT_GENERATED}이면 <b>지표가 전부 {@code null}</b>이다 —
+	 * 물은 적이 없는 개념이라 도달 단계도 인원 구분도 없다.
 	 */
 	@Schema(name = "HeatmapCell")
 	public record Cell(
@@ -109,8 +112,35 @@ public record ManagerHeatmapResponse(
 			@JsonInclude(JsonInclude.Include.NON_NULL)
 			@Schema(description = "이 칸의 개념이다. `concepts[].teachesId`와 같은 값이다")
 			UUID teachesId,
-			BigDecimal value, String status,
-			Integer validCount, Integer notAttendedCount, Integer invalidCount, Integer interruptedCount,
+			@Schema(nullable = true, description = """
+					집계 행은 **평균**, 개인 행은 **도달 단계 원값**(0~4)입니다.
+					표본이 없으면 `null`입니다 — 미출제(`status = "NOT_GENERATED"`)이거나
+					유효 결과가 한 건도 없는 칸입니다.
+					""")
+			BigDecimal value,
+			@Schema(description = """
+					집계 상태 또는 개인 응시 결과 상태입니다.
+
+					`COMPLETE` · `NO_VALID_RESULT` · `EMPTY` · `VALID` · `INVALID` · `NOT_ATTENDED` ·
+					`INTERRUPTED` · `PENDING` · **`NOT_GENERATED`**.
+
+					⚠️ **`NOT_GENERATED`은 「못 물었다」이지 「못 했다」가 아닙니다.** 코드에 근거가 없어
+					문항이 만들어지지 않은 개념이며, 그 칸은 `value`와 네 카운터가 **모두 비어 있습니다**
+					(`0`이 아닙니다 — `0`이면 「물었는데 아무도 못 했다」가 됩니다). 명부의
+					`expectedConceptCount`가 이 개념을 분모에서 빼는 것과 같은 취급입니다.
+					""", example = "COMPLETE")
+			String status,
+			@Schema(nullable = true, description = """
+					결과 구분별 인원입니다. 개인 행과 미출제 칸에서는 `null`입니다 —
+					개인은 인원 개념이 없고, 미출제는 물은 적이 없어 셀 사람이 없습니다.
+					""")
+			Integer validCount,
+			@Schema(nullable = true, description = "결과 구분별 인원. `validCount`와 같은 규칙입니다")
+			Integer notAttendedCount,
+			@Schema(nullable = true, description = "결과 구분별 인원. `validCount`와 같은 규칙입니다")
+			Integer invalidCount,
+			@Schema(nullable = true, description = "결과 구분별 인원. `validCount`와 같은 규칙입니다")
+			Integer interruptedCount,
 			@JsonInclude(JsonInclude.Include.NON_NULL)
 			@Schema(description = """
 					**명부에는 있는데 이 회차 격자에 자리가 없는 인원**이다(34차 R2). 합계 행에만 채운다.
@@ -123,7 +153,11 @@ public record ManagerHeatmapResponse(
 					종전에는 이 자리가 없어 `memberCount 5`인데 세 카운터의 합이 4인 상태가 나왔고,
 					화면이 차이를 설명할 근거가 없었다. 회차 중간 합류·이탈처럼 **수행 자체가
 					만들어지지 않은** 사람이 여기 잡힌다 — 사유를 화면이 지어내지 않아도 되도록
-					자리만 낸 것이고, 0이면 명부와 격자가 완전히 맞는다는 뜻이다.""")
+					자리만 낸 것이고, 0이면 명부와 격자가 완전히 맞는다는 뜻이다.
+
+					⚠️ **사유가 하나가 아니다.** 그 열이 자기 팀에서만 미출제였던 사람도 여기 잡힌다
+					(반 행에서 흔하다 — 같은 반이라도 팀마다 출제 여부가 다르다). 이 칸의 숫자만으로
+					사유를 단정하지 말 것. `status = "NOT_GENERATED"`인 칸에서는 이 키도 빠진다.""")
 			Integer notInRoundCount,
 			@JsonInclude(JsonInclude.Include.NON_NULL)
 			@Schema(description = "반 행에만 채운다. 그 외에는 키가 빠진다") Boolean groupShortfall,

@@ -333,6 +333,121 @@ class ManagerViewAnalyticsServiceTest {
 		verify(repository, never()).findUnresolved(any(), any(), any(), any(), any(), any(), any());
 	}
 
+	/**
+	 * 미출제 개념은 「못 물었다」이지 「못 했다」가 아니다.
+	 *
+	 * <p>코드 근거가 없어 문항이 안 만들어진 개념은 격자 뷰에 행 자체가 없어, 종전에는 그 칸이
+	 * 유효 결과가 없는 칸과 똑같이 보였다. 실측으로 한 회차에서 80팀 중 27팀이 이 상태였다.
+	 */
+	@Test
+	void notGeneratedConceptIsToldApartFromHavingNoResult() {
+		when(repository.findConcepts(managerId, cohortId, projectId, roundId)).thenReturn(List.of(
+				new ManagerAnalyticsRepository.ConceptAxis(jwtId, "JWT 인증·인가"),
+				new ManagerAnalyticsRepository.ConceptAxis(jpaId, "JPA 엔티티 관계 설정")));
+		when(repository.findParticipatingClassrooms(managerId, cohortId, projectId, roundId)).thenReturn(
+				List.of(new ManagerAnalyticsRepository.ClassParticipant(classroomId, "C반", 26)));
+		UUID postedTeamId = UUID.randomUUID();
+		when(repository.findParticipatingTeams(managerId, cohortId, projectId, roundId, classroomId))
+				.thenReturn(List.of(
+						new ManagerAnalyticsRepository.TeamParticipant(postedTeamId, "1팀", 3),
+						new ManagerAnalyticsRepository.TeamParticipant(teamId, "2팀", 3)));
+		when(repository.findHeatmap(managerId, cohortId, projectId, roundId,
+				"TEAM", "INITIAL", classroomId, null)).thenReturn(List.of(
+				cell(postedTeamId, "1팀", jwtId, "2.0"), cell(postedTeamId, "1팀", jpaId, "2.5"),
+				// 2팀은 JPA를 못 물었다 — 그래서 셀이 없다.
+				cell(teamId, "2팀", jwtId, "3.0")));
+		when(repository.findNotGeneratedSlots(managerId, cohortId, projectId, roundId,
+				"TEAM", classroomId, null)).thenReturn(List.of(
+				new ManagerAnalyticsRepository.ConceptGap(teamId, jpaId)));
+
+		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
+				ManagerHeatmapResponse.Level.TEAM, ManagerHeatmapResponse.AttemptView.INITIAL, classroomId, null);
+
+		var notPosed = response.rows().get(1).cells().get(1);
+		assertThat(notPosed.teachesId()).isEqualTo(jpaId);
+		assertThat(notPosed.status()).isEqualTo("NOT_GENERATED");
+		// 0이면 「물었는데 아무도 못 했다」로 읽힌다. 전부 null이어야 한다.
+		assertThat(notPosed.value()).isNull();
+		assertThat(notPosed.validCount()).isNull();
+		assertThat(notPosed.notAttendedCount()).isNull();
+		assertThat(notPosed.invalidCount()).isNull();
+		assertThat(notPosed.interruptedCount()).isNull();
+		// 출제된 팀은 그대로다 — 같은 열이라도 팀마다 다르다.
+		assertThat(response.rows().get(0).cells().get(1).value()).isEqualByComparingTo("2.5");
+	}
+
+	/** 범위 전체가 미출제면 합계 행도 미출제다. 개인 계층은 범위가 곧 그 팀이라 모든 행에 걸린다. */
+	@Test
+	void scopeWideNotGeneratedReachesEveryTraineeRowAndTheSummary() {
+		stubConceptsAndClassrooms();
+		when(repository.findParticipatingTeams(managerId, cohortId, projectId, roundId, classroomId))
+				.thenReturn(List.of(new ManagerAnalyticsRepository.TeamParticipant(teamId, "2팀", 3)));
+		UUID traineeId = UUID.randomUUID();
+		when(repository.findHeatmap(managerId, cohortId, projectId, roundId,
+				"TRAINEE", "INITIAL", classroomId, teamId)).thenReturn(List.of(
+				cell(traineeId, "김민준", jwtId, "3")));
+		when(repository.findSummary(managerId, cohortId, projectId, roundId, classroomId, teamId))
+				.thenReturn(List.of(cell(null, null, jwtId, "3")));
+		// rowId가 null이면 범위 전체다.
+		when(repository.findNotGeneratedSlots(managerId, cohortId, projectId, roundId,
+				"TRAINEE", classroomId, teamId)).thenReturn(List.of(
+				new ManagerAnalyticsRepository.ConceptGap(null, jpaId)));
+
+		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
+				ManagerHeatmapResponse.Level.TRAINEE, ManagerHeatmapResponse.AttemptView.INITIAL,
+				classroomId, teamId);
+
+		assertThat(response.rows().get(0).cells().get(1).status()).isEqualTo("NOT_GENERATED");
+		assertThat(response.summary().cells().get(1).status()).isEqualTo("NOT_GENERATED");
+		assertThat(response.summary().cells().get(1).notInRoundCount()).isNull();
+	}
+
+	/** 미출제가 미응시보다 앞선다 — 없는 문제에 응시할 수는 없다. */
+	@Test
+	void notGeneratedOutranksTheTraineeOwnStatus() {
+		stubConceptsAndClassrooms();
+		UUID absentId = UUID.randomUUID();
+		when(repository.findParticipatingTeams(managerId, cohortId, projectId, roundId, classroomId))
+				.thenReturn(List.of(new ManagerAnalyticsRepository.TeamParticipant(teamId, "2팀", 3)));
+		when(repository.findUnresolved(managerId, cohortId, projectId, roundId, "TRAINEE", classroomId, teamId))
+				.thenReturn(List.of(new ManagerAnalyticsRepository.UnresolvedGroup(
+						absentId, "한유진", 1, 0, 0, 0)));
+		when(repository.findNotGeneratedSlots(managerId, cohortId, projectId, roundId,
+				"TRAINEE", classroomId, teamId)).thenReturn(List.of(
+				new ManagerAnalyticsRepository.ConceptGap(null, jpaId)));
+
+		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
+				ManagerHeatmapResponse.Level.TRAINEE, ManagerHeatmapResponse.AttemptView.INITIAL,
+				classroomId, teamId);
+
+		var cells = response.rows().get(0).cells();
+		// 출제된 개념은 그 사람의 상태(미응시)를 그대로 싣는다.
+		assertThat(cells.get(0).status()).isEqualTo("NOT_ATTENDED");
+		// 미출제 개념은 응시 여부를 따질 것이 없다.
+		assertThat(cells.get(1).status()).isEqualTo("NOT_GENERATED");
+	}
+
+	/**
+	 * `findGroupShortfall`은 그 반·개념에 유효 응시자가 0명이면 `shortfall`을 `null`로 낸다
+	 * (판정 불가). 그 값을 `lookupShortfall`이 그대로 꺼내는 자리에서 `NullPointerException`이
+	 * 났었다 — `Stream.findFirst()`가 `null` 원소를 `Optional.of(null)`로 감싸려 했기 때문이다.
+	 * 실 서버에서 실제로 재현됐다.
+	 */
+	@Test
+	void unjudgeableShortfallDoesNotThrow() {
+		stubConceptsAndClassrooms();
+		// TEAM·TRAINEE에서 groupShortfall 판정은 합계 행에만 붙는다 — 팀 행 자체에는 안 붙는다.
+		when(repository.findGroupShortfall(managerId, cohortId, projectId, roundId)).thenReturn(List.of(
+				new ManagerAnalyticsRepository.GroupShortfall(classroomId, jwtId, null)));
+		when(repository.findSummary(managerId, cohortId, projectId, roundId, classroomId, null))
+				.thenReturn(List.of(cell(null, null, jwtId, "1.7")));
+
+		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
+				ManagerHeatmapResponse.Level.TEAM, ManagerHeatmapResponse.AttemptView.INITIAL, classroomId, null);
+
+		assertThat(response.summary().cells().get(0).groupShortfall()).isNull();
+	}
+
 	private void stubConceptsAndClassrooms() {
 		when(repository.findConcepts(managerId, cohortId, projectId, roundId)).thenReturn(List.of(
 				new ManagerAnalyticsRepository.ConceptAxis(jwtId, "JWT 인증·인가"),

@@ -15,9 +15,11 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -57,6 +59,11 @@ public class ManagerViewAnalyticsService {
 		var unresolved = review ? List.<ManagerAnalyticsRepository.UnresolvedGroup>of()
 				: repository.findUnresolved(managerId, cohortId, projectId, assessmentRoundId,
 						level.name(), classroomId, teamId);
+		/*
+		 * 미출제 자리. REVIEW에서도 센다 — 물은 적이 없는 개념은 다시 보기에서도 물을 수 없다.
+		 */
+		var notGenerated = foldGaps(repository.findNotGeneratedSlots(
+				managerId, cohortId, projectId, assessmentRoundId, level.name(), classroomId, teamId));
 
 		return new ManagerHeatmapResponse(
 				cohortId, projectId, assessmentRoundId, level, attemptView,
@@ -64,10 +71,37 @@ public class ManagerViewAnalyticsService {
 				buildScope(level, classroomId, teamId, classrooms, managerId, cohortId, projectId, assessmentRoundId),
 				buildConcepts(concepts, level, classroomId, shortfall),
 				buildSummary(managerId, cohortId, projectId, assessmentRoundId, classroomId, teamId, summaryCells,
-						shortfall, level, review, concepts, unresolved),
+						shortfall, level, review, concepts, unresolved, notGenerated),
 				buildRows(cells, level, classrooms, managerId, cohortId, projectId, assessmentRoundId,
-						classroomId, shortfall, review, concepts, unresolved),
+						classroomId, shortfall, review, concepts, unresolved, notGenerated),
 				buildNavigation(level, classrooms, managerId, cohortId, projectId, assessmentRoundId, classroomId));
+	}
+
+	/**
+	 * 미출제 자리를 셀 만들 때 쓰기 좋게 접는다.
+	 *
+	 * <p>{@code rowId}가 없는 자리는 조회 범위 전체를 뜻하므로 모든 행에 걸린다 — 개인 계층은
+	 * 범위가 곧 그 팀이라 이 묶음만 차고, 합계 행도 이것을 본다.
+	 */
+	private NotGenerated foldGaps(List<ManagerAnalyticsRepository.ConceptGap> gaps) {
+		Set<UUID> scope = new LinkedHashSet<>();
+		Map<UUID, Set<UUID>> byRow = new LinkedHashMap<>();
+		for (var gap : gaps) {
+			if (gap.rowId() == null) {
+				scope.add(gap.teachesId());
+			} else {
+				byRow.computeIfAbsent(gap.rowId(), rowId -> new LinkedHashSet<>()).add(gap.teachesId());
+			}
+		}
+		return new NotGenerated(scope, byRow);
+	}
+
+	/** 미출제 자리 묶음. {@code rowId}가 {@code null}인 자리(범위 전체)는 모든 행에 걸린다. */
+	private record NotGenerated(Set<UUID> scope, Map<UUID, Set<UUID>> byRow) {
+		boolean covers(UUID rowId, UUID teachesId) {
+			return scope.contains(teachesId)
+					|| byRow.getOrDefault(rowId, Set.of()).contains(teachesId);
+		}
 	}
 
 	/** 고정된 상위 계층만 싣는다. 이름은 참여 반·팀 목록에서 찾아 셀이 반복해 나르지 않게 한다. */
@@ -171,7 +205,7 @@ public class ManagerViewAnalyticsService {
 			List<ManagerAnalyticsRepository.GroupShortfall> shortfall,
 			ManagerHeatmapResponse.Level level, boolean review,
 			List<ManagerAnalyticsRepository.ConceptAxis> concepts,
-			List<ManagerAnalyticsRepository.UnresolvedGroup> unresolved) {
+			List<ManagerAnalyticsRepository.UnresolvedGroup> unresolved, NotGenerated notGenerated) {
 		var extra = fold(unresolved);
 		if (summaryCells.isEmpty() && extra.total() == 0) {
 			return null;
@@ -183,10 +217,16 @@ public class ManagerViewAnalyticsService {
 
 		List<ManagerHeatmapResponse.Cell> cells = alignToConcepts(
 				concepts, indexByConcept(summaryCells),
-				(columnNo, concept, cell) -> cell == null
-						// 유효 결과가 한 건도 없는 개념 — 열은 세우고 값만 비운다.
-						? emptyCell(columnNo, concept.teachesId(), extra, memberCount)
-						: toCell(columnNo, cell, shortfall, shortfallClassroomId, review, extra, memberCount));
+				(columnNo, concept, cell) -> {
+					if (cell != null) {
+						return toCell(columnNo, cell, shortfall, shortfallClassroomId, review, extra, memberCount);
+					}
+					// 합계 행은 범위 전체라 rowId가 없다.
+					return notGenerated.covers(null, concept.teachesId())
+							? notGeneratedCell(columnNo, concept.teachesId())
+							// 유효 결과가 한 건도 없는 개념 — 열은 세우고 값만 비운다.
+							: emptyCell(columnNo, concept.teachesId(), extra, memberCount);
+				});
 		return new ManagerHeatmapResponse.Row(null, null, memberCount, cells);
 	}
 
@@ -261,7 +301,7 @@ public class ManagerViewAnalyticsService {
 			UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId,
 			UUID classroomId, List<ManagerAnalyticsRepository.GroupShortfall> shortfall, boolean review,
 			List<ManagerAnalyticsRepository.ConceptAxis> concepts,
-			List<ManagerAnalyticsRepository.UnresolvedGroup> unresolved) {
+			List<ManagerAnalyticsRepository.UnresolvedGroup> unresolved, NotGenerated notGenerated) {
 		Map<UUID, Integer> memberCounts = rowMemberCounts(
 				level, classrooms, managerId, cohortId, projectId, assessmentRoundId, classroomId);
 		Map<UUID, ManagerAnalyticsRepository.UnresolvedGroup> extraByRow = new LinkedHashMap<>();
@@ -286,9 +326,9 @@ public class ManagerViewAnalyticsService {
 			var extra = extraByRow.getOrDefault(rowId, NO_EXTRA);
 			rows.add(new ManagerHeatmapResponse.Row(rowId, names.get(rowId), memberCounts.get(rowId),
 					alignToConcepts(concepts, indexByConcept(entry.getValue()),
-							(columnNo, concept, cell) -> cell == null
-									? emptyRowCell(level, columnNo, concept.teachesId(), extra)
-									: toCell(columnNo, cell, shortfall, cellClassroomId, review, extra, null))));
+							(columnNo, concept, cell) -> cell != null
+									? toCell(columnNo, cell, shortfall, cellClassroomId, review, extra, null)
+									: gapCell(level, columnNo, concept.teachesId(), rowId, extra, notGenerated))));
 		}
 
 		/*
@@ -305,7 +345,7 @@ public class ManagerViewAnalyticsService {
 			}
 			missing.add(new ManagerHeatmapResponse.Row(
 					group.rowId(), group.rowName(), memberCounts.get(group.rowId()),
-					emptyRowCells(level, concepts, group)));
+					emptyRowCells(level, concepts, group, notGenerated)));
 		}
 		if (missing.isEmpty()) {
 			return List.copyOf(rows);
@@ -325,29 +365,49 @@ public class ManagerViewAnalyticsService {
 	private List<ManagerHeatmapResponse.Cell> emptyRowCells(
 			ManagerHeatmapResponse.Level level,
 			List<ManagerAnalyticsRepository.ConceptAxis> concepts,
-			ManagerAnalyticsRepository.UnresolvedGroup group) {
+			ManagerAnalyticsRepository.UnresolvedGroup group, NotGenerated notGenerated) {
 		return alignToConcepts(concepts, Map.of(),
-				(columnNo, concept, cell) -> emptyRowCell(level, columnNo, concept.teachesId(), group));
+				(columnNo, concept, cell) ->
+						gapCell(level, columnNo, concept.teachesId(), group.rowId(), group, notGenerated));
 	}
 
 	/**
-	 * 결과가 없는 자리의 셀 하나.
+	 * 값이 없는 자리의 셀 하나. 이유가 둘이라 갈라서 싣는다.
 	 *
-	 * <p>개인 행은 카운터 없이 <b>그 사람의 상태</b>를 싣는다 — 화면이 「미응시」·「응시 중단」을
-	 * 그대로 그릴 수 있어야 한다. 반·팀 행은 집계 행이라 카운터를 채운다.
+	 * <p><b>미출제가 먼저다.</b> 코드 근거가 없어 문항을 못 만든 개념이면 응시 여부를 따질 것이
+	 * 없다 — 없는 문제에 응시할 수는 없다. 그래서 그 사람이 미응시든 중단이든 이 칸은
+	 * {@code NOT_GENERATED}다.
 	 *
-	 * <p>{@code group}이 빈 묶음이면 그 사람은 결과가 있는데 <b>이 개념만</b> 비어 있다는 뜻이다
-	 * (팀 분석이 그 개념을 내지 않은 경우). 미응시가 아니므로 집계 행과 같은 말을 쓴다.
+	 * <p>그 밖에는 종전대로다. 개인 행은 카운터 없이 <b>그 사람의 상태</b>를 싣고 — 화면이
+	 * 「미응시」·「응시 중단」을 그대로 그릴 수 있어야 한다 — 반·팀 행은 집계 행이라 카운터를
+	 * 채운다. {@code group}이 빈 묶음이면 그 사람은 결과가 있는데 이 개념만 비어 있다는 뜻이라
+	 * 집계 행과 같은 말({@code NO_VALID_RESULT})을 쓴다.
 	 */
-	private ManagerHeatmapResponse.Cell emptyRowCell(
-			ManagerHeatmapResponse.Level level, int columnNo, UUID teachesId,
-			ManagerAnalyticsRepository.UnresolvedGroup group) {
+	private ManagerHeatmapResponse.Cell gapCell(
+			ManagerHeatmapResponse.Level level, int columnNo, UUID teachesId, UUID rowId,
+			ManagerAnalyticsRepository.UnresolvedGroup group, NotGenerated notGenerated) {
+		if (notGenerated.covers(rowId, teachesId)) {
+			return notGeneratedCell(columnNo, teachesId);
+		}
 		if (level != ManagerHeatmapResponse.Level.TRAINEE) {
 			return emptyCell(columnNo, teachesId, group, null);
 		}
 		String status = group.total() == 0 ? "NO_VALID_RESULT" : group.dominantStatus();
 		return new ManagerHeatmapResponse.Cell(
 				columnNo, teachesId, null, status,
+				null, null, null, null, null, null, null, null, null);
+	}
+
+	/**
+	 * 미출제 자리의 셀이다.
+	 *
+	 * <p>지표를 전부 {@code null}로 둔다 — 물은 적이 없는 개념이라 도달 단계도, 인원 구분도
+	 * 없다. {@code 0}으로 채우면 「물었는데 아무도 못 했다」로 읽혀 사실과 달라진다. 명부의
+	 * {@code expectedConceptCount}가 미출제 개념을 분모에서 빼는 것과 같은 취급이다.
+	 */
+	private ManagerHeatmapResponse.Cell notGeneratedCell(int columnNo, UUID teachesId) {
+		return new ManagerHeatmapResponse.Cell(
+				columnNo, teachesId, null, "NOT_GENERATED",
 				null, null, null, null, null, null, null, null, null);
 	}
 
@@ -406,13 +466,21 @@ public class ManagerViewAnalyticsService {
 		return value == null ? 0 : value;
 	}
 
+	/**
+	 * {@code shortfall}은 그 반·개념에 유효 응시자가 없으면 {@code null}이다(판정 불가). {@code Stream}이
+	 * 그 {@code null}을 원소로 들고 있는 채로 {@code findFirst()}를 부르면 {@code Optional.of(null)}이
+	 * 되어 {@code NullPointerException}이 난다 — 그래서 {@code findFirst()}를 {@link
+	 * ManagerAnalyticsRepository.GroupShortfall} 객체(절대 {@code null}이 아니다)에 먼저 걸고,
+	 * {@code null}을 허용하는 {@link Optional#map}으로 값을 나중에 꺼낸다.
+	 */
 	private Boolean lookupShortfall(
 			List<ManagerAnalyticsRepository.GroupShortfall> shortfall, UUID classroomId, UUID teachesId) {
 		return shortfall.stream()
 				.filter(row -> Objects.equals(row.teachesId(), teachesId)
 						&& row.classroomId().equals(classroomId))
+				.findFirst()
 				.map(ManagerAnalyticsRepository.GroupShortfall::shortfall)
-				.findFirst().orElse(null);
+				.orElse(null);
 	}
 
 	/** 집계 시각은 응답 전체의 성질이라 셀마다 나르지 않는다. */

@@ -67,9 +67,16 @@ public class ManagerViewAnalyticsController {
                 | `problemNo`·`teachesId` | 같은 순번의 `concepts[]`와 짝이 되는 **열 순번·개념** |
                 | `value` | 집계 행은 **평균**, 개인 행은 **도달 단계 원값**(0~4) |
                 | `validCount`·`notAttendedCount`·`invalidCount`·`interruptedCount` | 결과 구분별 인원 |
-                | `status` | 집계 상태 또는 개인 응시 결과 상태 |
+                | `status` | 집계 상태 또는 개인 응시 결과 상태. `NOT_GENERATED`(미출제) 포함 |
                 | `groupShortfall` | 집단 미달. **반 행에만** 채운다 |
                 | `initialLevel`·`comparisonLevel`·`delta` | `REVIEW` 전용. `INITIAL`에서는 **키 자체가 빠진다** |
+
+                ⚠️ **미출제 개념도 열이 선다.** 코드에 근거가 없어 문항이 만들어지지 않은
+                개념(`NOT_GENERATED`)은 검증 세션에서 물을 수 없지만, 그 칸을 비워 두면 「물었는데
+                결과가 없다」와 구분되지 않습니다. 그런 칸은 `status = "NOT_GENERATED"`이고
+                `value`·`validCount`·`notAttendedCount`·`invalidCount`·`interruptedCount`가
+                **모두 `null`**입니다. 팀마다 다릅니다 — 같은 열이라도 어떤 팀은 출제됐고 어떤 팀은
+                미출제일 수 있어, 그 열의 반 평균은 출제된 인원만으로 냅니다.
 
                 ⚠️ **`rows[].cells[]`는 언제나 `concepts[]`와 같은 길이·같은 순서다.** 그 개념에 결과가
                 없는 자리도 빈 셀로 채워 나가므로, 화면은 두 배열을 순번으로 짝지어도 되고 `teachesId`로

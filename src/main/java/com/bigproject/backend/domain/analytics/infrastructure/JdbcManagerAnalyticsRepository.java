@@ -248,6 +248,16 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 	/**
 	 * 가로축이다. 회차의 개념을 한 번씩만 낸다.
 	 *
+	 * <p><b>문제 슬롯에서 낸다.</b> 종전에는 {@code problem_stage}를 타고 들어가서, 코드 근거를
+	 * 못 찾아 문항이 안 만들어진 개념({@code generation_status = 'NOT_GENERATED'})은 단계가 없어
+	 * 열 자체가 사라졌다. {@code assessment_problem}은 그런 개념도 슬롯 행을 남겨 미출제 상태를
+	 * 명시하도록 설계돼 있으므로(DDL 설명), 축은 슬롯에서 낸다.
+	 *
+	 * <p>슬롯이 <b>하나도 없는</b> 개념은 싣지 않는다. 회차 정본 개념 목록
+	 * ({@code project_assessment_round.concept_set_id})까지 가면 분석이 아직 안 돌아간 회차에서도
+	 * 열이 서는데, 그건 미출제가 아니라 미분석이라 뜻이 다르다. 실 DB 대조에서 슬롯에만 있고
+	 * 정본에 없는 개념은 0건이라, 분석이 돈 회차에서는 두 목록이 같다.
+	 *
 	 * <p>순서는 문제 순번의 <b>평균</b>으로 정한다. 대다수 팀이 1번에 둔 개념이 첫 열에 오고,
 	 * 순번을 다르게 매긴 소수 팀이 순서를 흔들지 못한다. {@code MIN}을 쓰면 그 소수 팀 하나가
 	 * 열 순서를 바꿔 버린다.
@@ -258,17 +268,15 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 		String sql = """
 				SELECT COALESCE(ap.teaches_id, pvc.teaches_id) AS teaches_id,
 				  MIN(t.canonical_name) AS concept_name
-				FROM measurement_attempt ma
-				JOIN assessment_session s ON s.attempt_id = ma.attempt_id
-				JOIN problem_stage ps ON ps.session_id = s.session_id
-				JOIN assessment_problem ap ON ap.problem_id = ps.problem_id
+				FROM assessment_problem ap
+				JOIN code_analysis ca ON ca.analysis_id = ap.code_analysis_id
+				JOIN project_assessment_round r ON r.assessment_round_id = ca.assessment_round_id
+				JOIN team tm ON tm.team_id = ca.team_id
 				LEFT JOIN project_verification_concept pvc
 				  ON pvc.project_concept_id = ap.project_verification_concept_id
 				LEFT JOIN teaches t ON t.teaches_id = COALESCE(ap.teaches_id, pvc.teaches_id)
-				JOIN project_membership pm ON pm.project_id = ma.project_id AND pm.user_id = ma.user_id
-				""" + MANAGER_SCOPE.formatted("pm.class_id") + """
-				WHERE ma.cohort_id = ? AND ma.project_id = ? AND ma.assessment_round_id = ?
-				  AND ma.attempt_type = 'INITIAL'
+				""" + MANAGER_SCOPE.formatted("tm.class_id") + """
+				WHERE r.cohort_id = ? AND r.project_id = ? AND ca.assessment_round_id = ?
 				  AND COALESCE(ap.teaches_id, pvc.teaches_id) IS NOT NULL
 				GROUP BY COALESCE(ap.teaches_id, pvc.teaches_id)
 				ORDER BY AVG(ap.problem_no), MIN(t.canonical_name)
@@ -276,6 +284,65 @@ public class JdbcManagerAnalyticsRepository implements ManagerAnalyticsRepositor
 		return jdbcTemplate.query(sql, (rs, n) -> new ConceptAxis(
 				rs.getObject("teaches_id", UUID.class), rs.getString("concept_name")),
 				managerId, cohortId, projectId, assessmentRoundId);
+	}
+
+	/**
+	 * 미출제 자리다 — 그 개념에 코드 근거가 없어 문항을 <b>못 만든</b> 자리.
+	 *
+	 * <p>격자 뷰로는 알 수 없다. 네 뷰 모두 {@code problem_stage}를 타고 들어가는데 미출제
+	 * 슬롯은 단계를 만들지 않아 뷰에 행 자체가 없다(실측: 미출제 49건 전부 단계 0개). 그래서
+	 * 슬롯 원장을 직접 본다.
+	 *
+	 * <p>슬롯의 grain은 <b>팀 분석</b>이다. 그래서 두 묶음을 한 번에 낸다 —
+	 *
+	 * <ul>
+	 *   <li>{@code row_id}가 있는 행: 그 반·팀의 자리. 격자 행 하나에 대응한다</li>
+	 *   <li>{@code row_id}가 {@code null}인 행: 조회 범위 전체의 자리. 합계 행이 쓰고,
+	 *       개인 계층에서는 범위가 곧 그 팀이라 모든 개인 행이 함께 쓴다</li>
+	 * </ul>
+	 *
+	 * <p>{@code HAVING}이 핵심이다 — 출제에 성공한 슬롯이 <b>하나라도</b> 있으면 미출제가 아니다.
+	 * 반 하나에 팀이 여럿이면 일부만 미출제인 경우가 흔하고(실측: 한 회차에서 80팀 중 27팀),
+	 * 그때 반 셀에는 실제 집계값이 있으므로 미출제로 덮으면 안 된다.
+	 */
+	@Override
+	public List<ConceptGap> findNotGeneratedSlots(
+			UUID managerId, UUID cohortId, UUID projectId, UUID assessmentRoundId,
+			String level, UUID classroomId, UUID teamId) {
+		if (!"CLASS".equals(level) && !"TEAM".equals(level) && !"TRAINEE".equals(level)) {
+			return List.of();
+		}
+		// 개인 계층은 범위가 곧 그 팀이라 개인마다 다를 수가 없다. 범위 묶음만 낸다.
+		String rowKey = switch (level) {
+			case "CLASS" -> "tm.class_id";
+			case "TEAM" -> "ca.team_id";
+			default -> null;
+		};
+		String concept = "COALESCE(ap.teaches_id, pvc.teaches_id)";
+		String groupBy = rowKey == null
+				? "GROUP BY " + concept
+				: "GROUP BY GROUPING SETS ((%s, %s), (%s))".formatted(rowKey, concept, concept);
+		String sql = """
+				SELECT %1$s AS row_id, %2$s AS teaches_id
+				FROM assessment_problem ap
+				JOIN code_analysis ca ON ca.analysis_id = ap.code_analysis_id
+				JOIN project_assessment_round r ON r.assessment_round_id = ca.assessment_round_id
+				JOIN team tm ON tm.team_id = ca.team_id
+				LEFT JOIN project_verification_concept pvc
+				  ON pvc.project_concept_id = ap.project_verification_concept_id
+				""".formatted(rowKey == null ? "NULL::uuid" : rowKey, concept)
+				+ MANAGER_SCOPE.formatted("tm.class_id") + """
+				WHERE r.cohort_id = ? AND r.project_id = ? AND ca.assessment_round_id = ?
+				  AND %1$s IS NOT NULL
+				  AND (?::uuid IS NULL OR tm.class_id = ?::uuid)
+				  AND (?::uuid IS NULL OR ca.team_id = ?::uuid)
+				%2$s
+				HAVING COUNT(*) FILTER (WHERE ap.generation_status = 'GENERATED') = 0
+				""".formatted(concept, groupBy);
+		return jdbcTemplate.query(sql, (rs, n) -> new ConceptGap(
+				rs.getObject("row_id", UUID.class), rs.getObject("teaches_id", UUID.class)),
+				managerId, cohortId, projectId, assessmentRoundId,
+				classroomId, classroomId, teamId, teamId);
 	}
 
 	// 유효 응시자 중 절반을 넘는 인원이 2단 이하이면 집단 미달이다. 미응시·무효·중단은 분모에서 뺀다.
