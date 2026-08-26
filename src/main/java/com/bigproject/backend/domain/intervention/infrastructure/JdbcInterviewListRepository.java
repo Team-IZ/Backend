@@ -174,13 +174,25 @@ public class JdbcInterviewListRepository implements InterviewListRepository {
 		/*
 		 * 정렬은 사용자가 못 고른다(정의서 §3). 규칙은 프론트 `sortCases`와 같아야 한다 —
 		 * ① 무효 응시는 상태·반과 무관하게 항상 최상단(9-4 "못하는 것보다 안 하는 것이 더 급하다")
-		 * ② 상태(예정·제외 먼저, 종결 나중) ③ 반 이름 ④ 이름 가나다순(동점 결정성).
+		 * ② 상태(예정·제외 먼저, 종결 나중) ③ 브리프를 아직 만들어야 하는 사람 먼저
+		 * ④ 반 이름 ⑤ 이름 가나다순(동점 결정성).
 		 *
 		 * 정렬을 서버가 갖는 이유: 화면이 페이저 없이 전량을 그대로 그리므로 순서가 곧 화면이다.
+		 *
+		 * ③의 식이 `briefState`(InterviewServiceImpl)의 NONE·FAILED와 같은 조건이다 — 버튼이
+		 * `브리프 생성`·`다시 생성`으로 뜨는, 즉 아직 할 일이 남은 케이스다. DRAFT·CONFIRMED는
+		 * 이미 만들어져 `열기`·`수정`이므로 뒤로 보낸다. 두 곳이 어긋나면 "생성 버튼인데 아래에
+		 * 있는" 행이 생기므로 조건을 바꿀 때 briefState()도 같이 봐야 한다.
+		 *
+		 * ①②보다 뒤에 두는 이유: 무효 응시 최상단은 정의서 근거가 있는 규칙이라 유지하고,
+		 * 종결보다 앞에 두면 "종결됐는데 브리프는 없는" 케이스가 상단으로 올라온다 — 이미 끝난
+		 * 일이라 매니저가 지금 할 것이 아니다.
 		 */
 		sql.append("""
 				ORDER BY CASE WHEN 'INVALID_ATTEMPT' = ANY(rsn.codes) THEN 0 ELSE 1 END,
 				         CASE WHEN v.interview_status = 'COMPLETED' THEN 1 ELSE 0 END,
+				         CASE WHEN b.status IS NULL OR b.opening_remark_text IS NULL
+				              THEN 0 ELSE 1 END,
 				         v.class_name,
 				         v.target_user_name
 				""");
@@ -207,28 +219,35 @@ public class JdbcInterviewListRepository implements InterviewListRepository {
 	}
 
 	/**
-	 * 담당 반. 회차와 무관하게 그 매니저에게 배정된 반 전부다.
+	 * 이 회차에서 면담 대상이 있는 반.
 	 *
-	 * <p>{@code DISTINCT}가 필요한 이유: 같은 반에 배정 이력이 여럿이면
-	 * {@code manager_assignment}가 행을 곱한다.
+	 * <p>🔴 <b>{@code manager_assignment}를 직접 읽지 않는다</b>(2026-08-26). 예전에는 거기서
+	 * 담당 반을 전부 긁어왔는데 <b>A반·F반이 세 번씩 나왔다.</b> 5기 A반·6기 A반·7기 A반은
+	 * 이름만 같고 {@code class_id}가 다른 별개의 행이라 {@code DISTINCT (class_id, name)}이
+	 * 접지 못한다. 회차 스코프가 아예 없던 것이 원인이다.
+	 *
+	 * <p>목록 본체와 <b>같은 뷰</b>를 쓴다. 회차는 곧 한 기수라 동명 반이 하나로 정리되고,
+	 * 뷰에는 면담 후보가 된 행만 있으므로 대상이 없는 반은 자연히 빠진다. 스코프 규칙이
+	 * 한 벌로 유지되는 것은 덤이다 — 이 클래스 상단 주석의 "목록에 보이는데 열면 404" 예방.
+	 *
+	 * <p>⚠️ {@code search}·{@code status}·{@code riskType}·{@code classId} 필터는 <b>붙이지 않는다.</b>
+	 * 반 필터를 A반으로 걸었을 때 드롭다운에서 나머지 반이 사라지면 안 된다({@code counts}와 같은 원칙).
+	 * 거는 것은 회차 스코프뿐이다.
 	 */
 	@Override
-	public List<ClassOption> findManagedClasses(UUID managerUserId, UUID orgId) {
+	public List<ClassOption> findManagedClasses(UUID managerUserId, UUID orgId, UUID assessmentRoundId) {
 		return jdbcTemplate.query("""
-				SELECT DISTINCT c.class_id, c.name
-				FROM manager_assignment ma
-				JOIN class c
-				       ON c.class_id = ma.class_id
-				WHERE ma.manager_user_id = ?
-				  AND ma.org_id          = ?
-				  AND ma.status          = 'ACTIVE'
-				  AND ma.unassigned_at IS NULL
-				ORDER BY c.name
+				SELECT DISTINCT v.class_id, v.class_name
+				FROM manager_interview_list_view v
+				WHERE v.manager_user_id     = ?
+				  AND v.org_id              = ?
+				  AND v.assessment_round_id = ?
+				ORDER BY v.class_name
 				""",
 				(rs, rowNum) -> new ClassOption(
 						rs.getObject("class_id", UUID.class),
-						rs.getString("name")),
-				managerUserId, orgId);
+						rs.getString("class_name")),
+				managerUserId, orgId, assessmentRoundId);
 	}
 
 	private InterviewListRow mapRow(ResultSet rs, int rowNum) throws SQLException {

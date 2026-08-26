@@ -88,8 +88,11 @@ public class InterviewServiceImpl implements InterviewService {
 
 		List<InterviewCaseView> items = rows.stream().map(InterviewServiceImpl::toView).toList();
 
-		List<ClassOptionView> classes = interviewListRepository
-				.findManagedClasses(criteria.managerUserId(), criteria.orgId()).stream()
+		// 회차를 못 정했으면(담당 밖 회차 ID) 반 목록도 비운다 — rows·countRows와 같은 규칙이다.
+		// 예전에는 이 자리만 회차와 무관하게 담당 반 전부를 내려서, 목록이 비었는데 드롭다운에는
+		// 다른 기수의 반이 그대로 남아 있었다.
+		List<ClassOptionView> classes = roundId == null ? List.of() : interviewListRepository
+				.findManagedClasses(criteria.managerUserId(), criteria.orgId(), roundId).stream()
 				.map(option -> new ClassOptionView(option.classId(), option.className()))
 				.toList();
 
