@@ -427,6 +427,27 @@ class ManagerViewAnalyticsServiceTest {
 		assertThat(cells.get(1).status()).isEqualTo("NOT_GENERATED");
 	}
 
+	/**
+	 * `findGroupShortfall`은 그 반·개념에 유효 응시자가 0명이면 `shortfall`을 `null`로 낸다
+	 * (판정 불가). 그 값을 `lookupShortfall`이 그대로 꺼내는 자리에서 `NullPointerException`이
+	 * 났었다 — `Stream.findFirst()`가 `null` 원소를 `Optional.of(null)`로 감싸려 했기 때문이다.
+	 * 실 서버에서 실제로 재현됐다.
+	 */
+	@Test
+	void unjudgeableShortfallDoesNotThrow() {
+		stubConceptsAndClassrooms();
+		// TEAM·TRAINEE에서 groupShortfall 판정은 합계 행에만 붙는다 — 팀 행 자체에는 안 붙는다.
+		when(repository.findGroupShortfall(managerId, cohortId, projectId, roundId)).thenReturn(List.of(
+				new ManagerAnalyticsRepository.GroupShortfall(classroomId, jwtId, null)));
+		when(repository.findSummary(managerId, cohortId, projectId, roundId, classroomId, null))
+				.thenReturn(List.of(cell(null, null, jwtId, "1.7")));
+
+		var response = service.findHeatmap("manager@example.com", cohortId, projectId, roundId,
+				ManagerHeatmapResponse.Level.TEAM, ManagerHeatmapResponse.AttemptView.INITIAL, classroomId, null);
+
+		assertThat(response.summary().cells().get(0).groupShortfall()).isNull();
+	}
+
 	private void stubConceptsAndClassrooms() {
 		when(repository.findConcepts(managerId, cohortId, projectId, roundId)).thenReturn(List.of(
 				new ManagerAnalyticsRepository.ConceptAxis(jwtId, "JWT 인증·인가"),

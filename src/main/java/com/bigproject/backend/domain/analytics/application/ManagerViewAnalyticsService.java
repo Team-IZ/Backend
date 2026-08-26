@@ -466,13 +466,21 @@ public class ManagerViewAnalyticsService {
 		return value == null ? 0 : value;
 	}
 
+	/**
+	 * {@code shortfall}은 그 반·개념에 유효 응시자가 없으면 {@code null}이다(판정 불가). {@code Stream}이
+	 * 그 {@code null}을 원소로 들고 있는 채로 {@code findFirst()}를 부르면 {@code Optional.of(null)}이
+	 * 되어 {@code NullPointerException}이 난다 — 그래서 {@code findFirst()}를 {@link
+	 * ManagerAnalyticsRepository.GroupShortfall} 객체(절대 {@code null}이 아니다)에 먼저 걸고,
+	 * {@code null}을 허용하는 {@link Optional#map}으로 값을 나중에 꺼낸다.
+	 */
 	private Boolean lookupShortfall(
 			List<ManagerAnalyticsRepository.GroupShortfall> shortfall, UUID classroomId, UUID teachesId) {
 		return shortfall.stream()
 				.filter(row -> Objects.equals(row.teachesId(), teachesId)
 						&& row.classroomId().equals(classroomId))
+				.findFirst()
 				.map(ManagerAnalyticsRepository.GroupShortfall::shortfall)
-				.findFirst().orElse(null);
+				.orElse(null);
 	}
 
 	/** 집계 시각은 응답 전체의 성질이라 셀마다 나르지 않는다. */
