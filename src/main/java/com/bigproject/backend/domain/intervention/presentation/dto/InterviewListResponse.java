@@ -14,7 +14,12 @@ import java.util.UUID;
 @Schema(description = "면담 목록 조회 결과")
 public record InterviewListResponse(
 
-		@Schema(description = "면담 케이스 목록. 정렬은 서버가 정하며 클라이언트가 바꿀 수 없다")
+		@Schema(description = """
+				면담 케이스 목록. 정렬은 서버가 정하며 클라이언트가 바꿀 수 없다.
+
+				① 무효 응시 → ② 예정·제외(종결은 뒤로) → ③ **브리프를 아직 만들어야 하는 사람**
+				(`briefState`가 `NONE`·`FAILED`) → ④ 반 이름 → ⑤ 이름 가나다순.
+				""")
 		List<InterviewCaseResponse> items,
 
 		@Schema(description = "필터가 적용된 결과 건수", example = "9")
@@ -29,11 +34,16 @@ public record InterviewListResponse(
 		Map<String, Long> riskCounts,
 
 		@Schema(description = """
-				**반 필터 드롭다운** 재료. 이 매니저의 담당 반 전부입니다.
+				**반 필터 드롭다운** 재료. **이 회차에서 면담 대상이 있는 반**입니다.
 
 				상태·위험 유형과 달리 값 집합을 고정할 수 없어 서버가 줍니다 — 매니저마다 담당이 다릅니다.
-				`counts`처럼 **필터와 무관한 전체 목록**입니다: `items[]`의 `className`으로 유도하면
+				`counts`처럼 **필터와 무관한 목록**입니다: `items[]`의 `className`으로 유도하면
 				반 필터를 걸었을 때 나머지 반이 드롭다운에서 사라집니다.
+
+				단 **회차 스코프는 걸려 있습니다**(2026-08-26). 담당 반 전부를 내리던 때에는
+				5기 A반·6기 A반·7기 A반이 이름만 같고 `classId`가 달라 **A반이 세 번** 떴습니다.
+				회차 = 한 기수이므로 이제 동명 반은 하나이고, 그 회차에 면담 대상이 없는 반은
+				아예 오지 않습니다. 담당 밖 회차 ID를 넣으면 `round`와 함께 빈 배열입니다.
 				""")
 		List<ClassOptionResponse> classes,
 

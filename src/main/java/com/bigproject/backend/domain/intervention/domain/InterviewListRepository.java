@@ -44,15 +44,21 @@ public interface InterviewListRepository {
 	List<InterviewCountRow> countByRound(UUID managerUserId, UUID orgId, UUID assessmentRoundId);
 
 	/**
-	 * 이 매니저의 담당 반. 화면 <b>반 필터 드롭다운</b>을 채운다.
+	 * 이 회차에서 면담 대상이 있는 반. 화면 <b>반 필터 드롭다운</b>을 채운다.
 	 *
 	 * <p>상태·위험 유형과 달리 값 집합을 고정할 수 없다 — 매니저마다 담당이 다르다.
 	 *
 	 * <p>{@code items[]}의 {@code className}으로 유도하지 않는 이유: 반 필터를 A반으로 걸면
 	 * 결과에 A반만 남아 <b>드롭다운에서 나머지 반이 사라진다.</b> {@code counts}와 같은 이유로
-	 * 필터와 무관하게 내려야 한다.
+	 * 필터와 무관하게 내려야 한다. 다만 <b>회차 스코프는 건다</b> — 아래 참고.
+	 *
+	 * <p>🔴 {@code assessmentRoundId}가 필요한 이유(2026-08-26): 이 값이 없던 시절에는
+	 * {@code manager_assignment}에서 담당 반을 전부 긁어왔고, 그 결과 <b>A반이 세 번 나왔다.</b>
+	 * 5기 A반·6기 A반·7기 A반은 이름만 같고 {@code class_id}가 서로 다른 별개의 행이라
+	 * {@code SELECT DISTINCT (class_id, name)}으로는 접히지 않는다. 회차는 곧 한 기수이므로
+	 * 회차로 좁히면 동명 반이 하나로 정리되고, 덤으로 그 회차에 면담 대상이 없는 반도 빠진다.
 	 */
-	List<ClassOption> findManagedClasses(UUID managerUserId, UUID orgId);
+	List<ClassOption> findManagedClasses(UUID managerUserId, UUID orgId, UUID assessmentRoundId);
 
 	record ClassOption(UUID classId, String className) {
 	}
